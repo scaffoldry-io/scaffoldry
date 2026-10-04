@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
 import { DatasetExplorer, SEEDED_DATASETS } from "./DatasetExplorer";
+import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace } from "./types";
 
 const PERSONAS: Persona[] = [
@@ -319,6 +320,7 @@ export const AdminDesk: React.FC = () => {
   const [sourceRules] = useState<SourceRule[]>(INITIAL_SOURCE_RULES);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
 
   // Navigation View State ("workspaces" | "datasets")
   const [mainView, setMainView] = useState<"workspaces" | "datasets">(() => {
@@ -670,6 +672,46 @@ export const AdminDesk: React.FC = () => {
     showToast(`Configured new application linked to ${dataset.name}`);
   };
 
+  // Install proposed application from AI Co-Builder (MCP)
+  const handleApplyAppProposal = (manifest: AppManifest) => {
+    const existing = apps.find((a) => a.slug === manifest.slug);
+    if (existing) {
+      showToast(`Application "${manifest.title}" is already installed.`);
+      setActiveStudioApp(existing);
+      setStudioOpen(true);
+      setIsAiAssistantOpen(false);
+      return;
+    }
+    const newApp: RegisteredApp = {
+      slug: manifest.slug,
+      title: manifest.title,
+      orgCode: manifest.organization_code || "UNIV",
+      department: manifest.department.toLowerCase(),
+      customDomain: `${manifest.slug}.scaffoldry.internal`,
+      verified: false,
+      hermCapability: manifest.herm_capability_id || "ACA-01-APP",
+      cedsDomain: "Higher Education / Academic Affairs",
+      status: "Published",
+      updatedAt: "Just now",
+      recordsCount: 0,
+      workspaceId: activeWorkspaceId === "all" ? "ws-bio-lab" : activeWorkspaceId,
+      collaborators: [
+        {
+          eppn: activePersona.eppn,
+          name: activePersona.name,
+          role: "owner",
+          department: activePersona.department,
+        },
+      ],
+      manifest,
+    };
+    setApps((prev) => [newApp, ...prev]);
+    setActiveStudioApp(newApp);
+    setStudioOpen(true);
+    setIsAiAssistantOpen(false);
+    showToast(`Installed AI-proposed application "${manifest.title}" with CEDS & FERPA governance.`);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
       {/* Toast Notification */}
@@ -773,6 +815,18 @@ export const AdminDesk: React.FC = () => {
 
         {/* Right: Actions, Theme & User Badge */}
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsAiAssistantOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-xs cursor-pointer transition-all"
+            title="Open Sovereign AI Co-Builder & MCP Inspector"
+          >
+            <span>✨ AI Assistant</span>
+            <span className="hidden md:inline-block px-1.5 py-0.2 rounded text-[10px] bg-white/20 font-mono">
+              MCP
+            </span>
+          </button>
+
           {!isAdminPath && (
             <button
               type="button"
@@ -1771,6 +1825,13 @@ export const AdminDesk: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* AI Assistant Drawer (MCP Native) */}
+      <AIAssistantDrawer
+        isOpen={isAiAssistantOpen}
+        onClose={() => setIsAiAssistantOpen(false)}
+        onApplyAppProposal={handleApplyAppProposal}
+      />
     </div>
   );
 };

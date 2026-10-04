@@ -3,6 +3,7 @@
 pub mod apps;
 pub mod datasets;
 pub mod governance;
+pub mod mcp;
 pub mod policy;
 pub mod records;
 pub mod scim;
@@ -24,13 +25,16 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(datasets::router())
         .merge(policy::router())
         .merge(governance::router())
+        .merge(mcp::router())
         .with_state(state.clone());
 
-    let scim_v2 = scim::router().with_state(state);
+    let scim_v2 = scim::router().with_state(state.clone());
+    let mcp_root = mcp::router().with_state(state);
 
     Router::new()
         .route("/healthz", get(health_check))
         .nest("/api/v1", api_v1)
+        .nest("/api", mcp_root)
         .nest("/scim/v2", scim_v2)
 }
 
