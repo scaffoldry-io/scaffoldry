@@ -32,6 +32,11 @@ jobs:
         run: |
           docker compose -f deploy/docker-compose.yml config
 
+      - name: Start PostgreSQL container
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d postgres
+          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
+
       - name: Hard Gate - Skills & Doctrine Audit
         run: |
           python3 governance/scripts/audit-skills.py
