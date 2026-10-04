@@ -1,0 +1,26 @@
+# Multi-stage production container for Scaffoldry Web Appliance
+# Stage 1: Build static distribution with Vite
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+COPY package*.json ./
+COPY apps/web/package*.json ./apps/web/
+RUN npm ci --workspace=@scaffoldry/web
+
+COPY apps/web ./apps/web
+WORKDIR /app/apps/web
+RUN npx vite build
+
+# Stage 2: Minimal runtime image
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+COPY --from=builder /app/apps/web/dist ./dist
+COPY deploy/server.mjs ./server.mjs
+
+ENV NODE_ENV=production
+ENV PORT=8080
+
+EXPOSE 8080
+
+CMD ["node", "server.mjs"]
