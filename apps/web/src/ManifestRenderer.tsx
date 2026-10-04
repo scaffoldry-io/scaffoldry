@@ -25,65 +25,87 @@ export const ManifestRenderer: React.FC<Props> = ({ manifest, onSubmitRecord }) 
   };
 
   return (
-    <div style={{ maxWidth: "800px", margin: "2rem auto", fontFamily: "sans-serif", padding: "1.5rem", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-      <header style={{ marginBottom: "1.5rem", borderBottom: "1px solid #cbd5e1", paddingBottom: "1rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h1 style={{ margin: 0, fontSize: "1.5rem" }}>{manifest.title}</h1>
+    <div className="max-w-3xl mx-auto rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm p-6">
+      <header className="mb-6 pb-4 border-b border-slate-200 dark:border-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-white">
+            {manifest.title}
+          </h2>
           {manifest.custom_domain && (
-            <span style={{ background: "#e0f2fe", color: "#0369a1", padding: "4px 8px", borderRadius: "4px", fontSize: "0.85rem", fontWeight: "bold" }}>
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
               DNS: {manifest.custom_domain}
             </span>
           )}
         </div>
-        <p style={{ color: "#64748b", margin: "0.5rem 0" }}>{manifest.description}</p>
-        <div style={{ display: "flex", gap: "1rem", fontSize: "0.8rem", color: "#475569" }}>
-          <span>Org: <strong>{manifest.organization_code}</strong></span>
-          <span>Dept: <strong>{manifest.department}</strong></span>
+        <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+          {manifest.description}
+        </p>
+        <div className="flex flex-wrap gap-4 text-xs text-slate-500 dark:text-slate-400 mt-3">
+          <span>Org: <strong className="text-slate-700 dark:text-slate-300">{manifest.organization_code}</strong></span>
+          <span>Dept: <strong className="text-slate-700 dark:text-slate-300">{manifest.department}</strong></span>
           {manifest.herm_capability_id && (
-            <span>HERM: <strong>{manifest.herm_capability_id}</strong></span>
+            <span>HERM: <strong className="text-slate-700 dark:text-slate-300">{manifest.herm_capability_id}</strong></span>
           )}
         </div>
       </header>
 
       {activeView && (
         <section>
-          <h2>{activeView.title}</h2>
+          <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-4">
+            {activeView.title}
+          </h3>
           {submitted ? (
-            <div style={{ padding: "1rem", background: "#f0fdf4", color: "#166534", borderRadius: "4px" }}>
-              Record submitted successfully and mapped to CEDS standards.
+            <div className="p-4 rounded-md bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-sm">
+              <div className="font-semibold mb-1">Record Registered Successfully</div>
+              <div>Submitted payload validated against Cedar departmental policies and annotated with CEDS v11 standards.</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData({});
+                  setSubmitted(false);
+                }}
+                className="mt-3 inline-flex items-center px-3 py-1.5 rounded text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+              >
+                Register Another Record
+              </button>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               {activeView.fields.map((field: FieldSpec) => (
-                <div key={field.name} style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                  <label style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                    {field.label} {field.required && <span style={{ color: "#ef4444" }}>*</span>}
+                <div key={field.name} className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                      {field.label} {field.required && <span className="text-rose-500">*</span>}
+                    </label>
                     {field.ferpa_sensitive && (
-                      <span style={{ marginLeft: "8px", fontSize: "0.75rem", background: "#fee2e2", color: "#991b1b", padding: "2px 6px", borderRadius: "3px" }}>
-                        FERPA SENSITIVE
+                      <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900">
+                        FERPA Sensitive (34 CFR § 99.30)
                       </span>
                     )}
-                  </label>
+                  </div>
                   <input
                     type={field.field_type === "Number" ? "number" : "text"}
                     required={field.required}
                     value={(formData[field.name] as string) || ""}
                     onChange={(e) => handleInputChange(field.name, e.target.value)}
-                    style={{ padding: "0.5rem", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                    placeholder={`Enter ${field.label.toLowerCase()}...`}
+                    className="w-full px-3 py-2 text-sm rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors"
                   />
                   {manifest.ceds_mappings[field.name] && (
-                    <span style={{ fontSize: "0.75rem", color: "#64748b" }}>
-                      Mapped to CEDS Element: {manifest.ceds_mappings[field.name]}
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      NCES CEDS Element: <code className="font-mono text-blue-600 dark:text-blue-400">{manifest.ceds_mappings[field.name]}</code>
                     </span>
                   )}
                 </div>
               ))}
-              <button
-                type="submit"
-                style={{ marginTop: "1rem", padding: "0.6rem 1.2rem", background: "#0284c7", color: "white", border: "none", borderRadius: "4px", fontWeight: "bold", cursor: "pointer" }}
-              >
-                Submit Record
-              </button>
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors cursor-pointer"
+                >
+                  Submit Record
+                </button>
+              </div>
             </form>
           )}
         </section>
