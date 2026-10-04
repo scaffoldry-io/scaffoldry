@@ -165,3 +165,34 @@ export interface McpOverview {
   };
 }
 
+export interface WorkflowPredicate {
+  field_name: string;
+  operator: "Equals" | "NotEquals" | "GreaterThan" | "LessThan" | "Contains";
+  expected_value: string;
+}
+
+export type WorkflowTriggerEvent =
+  | { type: "RecordCreated" }
+  | { type: "RecordUpdated" }
+  | { type: "FieldChanged"; field_name: string }
+  | { type: "StatusChanged"; to_status: string };
+
+export type WorkflowActionItem =
+  | { type: "NotifyCollaborator"; role: string; message_template: string }
+  | { type: "UpdateRecordStatus"; new_status: string }
+  | { type: "CreateLedgerAuditEntry"; summary: string; oscal_control: string }
+  | { type: "WebhookDispatch"; target_url: string };
+
+export interface WorkflowAutomationRule {
+  id: string;
+  app_slug: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  trigger: WorkflowTriggerEvent;
+  cedar_policy_guard?: string;
+  predicates: WorkflowPredicate[];
+  actions: WorkflowActionItem[];
+}
+
+

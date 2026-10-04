@@ -653,4 +653,64 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     assert!(resources.iter().any(|r| r["uri"] == "policies://cedar"));
 }
 
+#[tokio::test]
+async fn test_app_workflow_automations_and_simulation() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. List automations for seeded app
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/physics-admissions-review/automations")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let rules: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rules.as_array().unwrap().len(), 1);
+    assert_eq!(rules[0]["name"], "Honors Fellowship Notification");
+
+    // 2. Simulate workflow execution
+    let sim_payload = json!({
+        "event": {
+            "StatusChanged": {
+                "to_status": "Approved"
+            }
+        },
+        "record": {
+            "applicant_name": "Eleanor Vance",
+            "gpa": 3.95,
+            "status": "Approved"
+        },
+        "principal": "dr.smith@university.edu"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/apps/physics-admissions-review/automations/simulate")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&sim_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let sim_res: Value = serde_json::from_slice(&body).unwrap();
+    let results = sim_res.as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(results[0]["trigger_matched"].as_bool().unwrap());
+    assert!(results[0]["conditions_met"].as_bool().unwrap());
+    assert!(results[0]["cedar_authorized"].as_bool().unwrap());
+    assert_eq!(results[0]["actions_executed"].as_array().unwrap().len(), 2);
+}
+
+
 

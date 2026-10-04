@@ -3,7 +3,8 @@ import { ManifestRenderer } from "./ManifestRenderer";
 import { DatasetExplorer, SEEDED_DATASETS } from "./DatasetExplorer";
 import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
-import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace } from "./types";
+import { WorkflowBuilder } from "./WorkflowBuilder";
+import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule } from "./types";
 
 const PERSONAS: Persona[] = [
   {
@@ -278,6 +279,38 @@ const INITIAL_APPS: RegisteredApp[] = [
   },
 ];
 
+const INITIAL_AUTOMATIONS: Record<string, WorkflowAutomationRule[]> = {
+  "physics-admissions-review": [
+    {
+      id: "auto-physics-honors-admit",
+      app_slug: "physics-admissions-review",
+      name: "Auto-Admit Notification & Audit for High GPA",
+      description: "When applicant GPA is >= 3.85 and status is accepted, dispatch notification and audit to ledger.",
+      trigger: { type: "RecordUpdated" },
+      predicates: [
+        {
+          field_name: "gpa",
+          operator: "GreaterThan",
+          expected_value: "3.84",
+        },
+      ],
+      actions: [
+        {
+          type: "NotifyCollaborator",
+          role: "Physics Department Chair",
+          message_template: "High GPA candidate accepted for review",
+        },
+        {
+          type: "CreateLedgerAuditEntry",
+          summary: "Automated honors ledger entry per physics faculty criteria",
+          oscal_control: "AC-03",
+        },
+      ],
+      enabled: true,
+    },
+  ],
+};
+
 export const AdminDesk: React.FC = () => {
   // Discreet URL Path Routing State
   const [currentPath, setCurrentPath] = useState<string>(() => {
@@ -298,7 +331,35 @@ export const AdminDesk: React.FC = () => {
   // Studio & Co-Builder State
   const [studioOpen, setStudioOpen] = useState<boolean>(false);
   const [activeStudioApp, setActiveStudioApp] = useState<RegisteredApp | null>(null);
-  const [studioTab, setStudioTab] = useState<"schema" | "collaborators" | "preview" | "publish">("schema");
+  const [studioTab, setStudioTab] = useState<"schema" | "collaborators" | "automations" | "preview" | "publish">("schema");
+  const [automations, setAutomations] = useState<Record<string, WorkflowAutomationRule[]>>(INITIAL_AUTOMATIONS);
+
+  const handleSaveRule = (appSlug: string, rule: WorkflowAutomationRule) => {
+    setAutomations((prev) => {
+      const list = prev[appSlug] || [];
+      const exists = list.some((r) => r.id === rule.id);
+      const updated = exists ? list.map((r) => (r.id === rule.id ? rule : r)) : [...list, rule];
+      return { ...prev, [appSlug]: updated };
+    });
+    setNotificationToast(`Workflow automation rule "${rule.name}" saved.`);
+    setTimeout(() => setNotificationToast(null), 3500);
+  };
+
+  const handleDeleteRule = (appSlug: string, ruleId: string) => {
+    setAutomations((prev) => ({
+      ...prev,
+      [appSlug]: (prev[appSlug] || []).filter((r) => r.id !== ruleId),
+    }));
+    setNotificationToast("Workflow rule deleted.");
+    setTimeout(() => setNotificationToast(null), 3500);
+  };
+
+  const handleToggleRule = (appSlug: string, ruleId: string) => {
+    setAutomations((prev) => ({
+      ...prev,
+      [appSlug]: (prev[appSlug] || []).map((r) => (r.id === ruleId ? { ...r, enabled: !r.enabled } : r)),
+    }));
+  };
 
   // Admin Tab State (when on /admin)
   const [adminTab, setAdminTab] = useState<"org" | "policy" | "infra">("org");
@@ -1586,6 +1647,17 @@ export const AdminDesk: React.FC = () => {
               </button>
               <button
                 type="button"
+                onClick={() => setStudioTab("automations")}
+                className={`py-3 border-b-2 cursor-pointer transition-colors ${
+                  studioTab === "automations"
+                    ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                }`}
+              >
+                3. Workflow Automations &amp; Triggers ({(automations[activeStudioApp.slug] || []).length})
+              </button>
+              <button
+                type="button"
                 onClick={() => setStudioTab("preview")}
                 className={`py-3 border-b-2 cursor-pointer transition-colors ${
                   studioTab === "preview"
@@ -1593,7 +1665,7 @@ export const AdminDesk: React.FC = () => {
                     : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                 }`}
               >
-                3. Live Interactive Preview
+                4. Live Interactive Preview
               </button>
               <button
                 type="button"
@@ -1604,7 +1676,7 @@ export const AdminDesk: React.FC = () => {
                     : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                 }`}
               >
-                4. Vanity DNS &amp; Publish
+                5. Vanity DNS &amp; Publish
               </button>
             </div>
 
@@ -1755,7 +1827,20 @@ export const AdminDesk: React.FC = () => {
                 </div>
               )}
 
-              {/* TAB 3: LIVE PREVIEW */}
+              {/* TAB 3: WORKFLOW AUTOMATIONS & TRIGGERS */}
+              {studioTab === "automations" && (
+                <WorkflowBuilder
+                  appSlug={activeStudioApp.slug}
+                  appTitle={activeStudioApp.manifest.title}
+                  fields={activeStudioApp.manifest.views[0]?.fields || []}
+                  rules={automations[activeStudioApp.slug] || []}
+                  onSaveRule={(rule) => handleSaveRule(activeStudioApp.slug, rule)}
+                  onDeleteRule={(ruleId) => handleDeleteRule(activeStudioApp.slug, ruleId)}
+                  onToggleRule={(ruleId) => handleToggleRule(activeStudioApp.slug, ruleId)}
+                />
+              )}
+
+              {/* TAB 4: LIVE PREVIEW */}
               {studioTab === "preview" && (
                 <div className="space-y-4">
                   <div>

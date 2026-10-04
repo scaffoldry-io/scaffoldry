@@ -1,5 +1,8 @@
 //! Scaffoldry Dynamic Engine and Manifest Renderer (Layer 3)
 
+pub mod automation;
+pub use automation::*;
+
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine};
 use serde::{Deserialize, Serialize};
