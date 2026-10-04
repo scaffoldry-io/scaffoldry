@@ -83,14 +83,34 @@ export const ManifestRenderer: React.FC<Props> = ({ manifest, onSubmitRecord }) 
                       </span>
                     )}
                   </div>
-                  <input
-                    type={field.field_type === "Number" ? "number" : "text"}
-                    required={field.required}
-                    value={(formData[field.name] as string) || ""}
-                    onChange={(e) => handleInputChange(field.name, e.target.value)}
-                    placeholder={`Enter ${field.label.toLowerCase()}...`}
-                    className="w-full px-3 py-2 text-sm rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors"
-                  />
+                  {field.field_type === "Relation" ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 text-[11px] text-purple-600 dark:text-purple-400 font-mono">
+                        <span>🔗 Linked Dataset: {field.linked_dataset_id || "Institutional Directory"}</span>
+                      </div>
+                      <select
+                        required={field.required}
+                        value={(formData[field.name] as string) || ""}
+                        onChange={(e) => handleInputChange(field.name, e.target.value)}
+                        className="w-full px-3 py-2 text-sm rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">-- Select Linked Record --</option>
+                        <option value="dr.smith@university.edu">Dr. Sarah Smith (Physics)</option>
+                        <option value="dr.curie@science.state.edu">Dr. Marie Curie (Biology)</option>
+                        <option value="dr.alan@university.edu">Dr. Alan Turing (Computer Science)</option>
+                        <option value="einstein@physics.state.edu">Albert Einstein (Physics)</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <input
+                      type={field.field_type === "Number" ? "number" : "text"}
+                      required={field.required}
+                      value={(formData[field.name] as string) || ""}
+                      onChange={(e) => handleInputChange(field.name, e.target.value)}
+                      placeholder={`Enter ${field.label.toLowerCase()}...`}
+                      className="w-full px-3 py-2 text-sm rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors"
+                    />
+                  )}
                   {manifest.ceds_mappings[field.name] && (
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
                       NCES CEDS Element: <code className="font-mono text-blue-600 dark:text-blue-400">{manifest.ceds_mappings[field.name]}</code>

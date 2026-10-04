@@ -1,5 +1,5 @@
 export type ViewType = "Table" | "Form" | "Dashboard" | "Detail";
-export type FieldType = "Text" | "Number" | "Date" | "Select" | "Boolean";
+export type FieldType = "Text" | "Number" | "Date" | "Select" | "Boolean" | "Relation";
 
 export interface FieldSpec {
   name: string;
@@ -7,6 +7,8 @@ export interface FieldSpec {
   field_type: FieldType;
   required: boolean;
   ferpa_sensitive: boolean;
+  linked_dataset_id?: string;
+  linked_field?: string;
 }
 
 export interface AppView {
@@ -85,4 +87,41 @@ export interface RegisteredApp {
   workspaceId: string;
   collaborators: Collaborator[];
   manifest: AppManifest;
+}
+
+export type RelationshipType = "OneToOne" | "OneToMany" | "ManyToMany";
+
+export interface DatasetRelationship {
+  id: string;
+  name: string;
+  source_dataset_id: string;
+  target_dataset_id: string;
+  source_field: string;
+  target_field: string;
+  relationship_type: RelationshipType;
+  display_field: string;
+}
+
+export interface DatasetField {
+  name: string;
+  label: string;
+  field_type: string;
+  required: boolean;
+  ferpa_sensitive: boolean;
+  ceds_code?: string;
+}
+
+export interface PublishedDataset {
+  id: string;
+  name: string;
+  description: string;
+  department: string;
+  organization: string;
+  sensitivity_level: string;
+  herm_capability_id?: string;
+  fields: DatasetField[];
+  record_count: number;
+  published_at: string;
+  relationships?: DatasetRelationship[];
+  sample_data?: Record<string, any>[];
 }
