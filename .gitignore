@@ -1,0 +1,19 @@
+# Environment & Secrets
+.env
+.env.*
+*.key
+*.pem
+seed.sh
+
+# IDE & Local Tooling
+.gemini/
+.idea/
+.vscode/
+
+# Build & Dependencies
+node_modules/
+dist/
+target/
+*.log
+*.bak
+.DS_Store
