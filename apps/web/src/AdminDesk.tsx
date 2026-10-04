@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
-import { DatasetExplorer } from "./DatasetExplorer";
+import { DatasetExplorer, SEEDED_DATASETS } from "./DatasetExplorer";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace } from "./types";
 
 const PERSONAS: Persona[] = [
@@ -512,6 +512,38 @@ export const AdminDesk: React.FC = () => {
     setActiveStudioApp(updatedApp);
     setApps((prev) => prev.map((a) => (a.slug === updatedApp.slug ? updatedApp : a)));
     showToast(`Added field "${newField.label}" to schema.`);
+  };
+
+  // Add Linked Dataset Field in Co-Builder Studio
+  const handleAddLinkedDatasetField = (dataset: PublishedDataset) => {
+    if (!activeStudioApp) return;
+    const fieldKey = `${dataset.id}_ref`;
+    const newField: FieldSpec = {
+      name: fieldKey,
+      label: `Assigned ${dataset.name}`,
+      field_type: "Relation",
+      required: true,
+      ferpa_sensitive: dataset.sensitivity_level.includes("FERPA"),
+      linked_dataset_id: dataset.id,
+      linked_field: dataset.fields[0]?.name || "id",
+    };
+    const updatedManifest: AppManifest = {
+      ...activeStudioApp.manifest,
+      views: [
+        {
+          ...activeStudioApp.manifest.views[0],
+          fields: [...activeStudioApp.manifest.views[0].fields, newField],
+        },
+      ],
+    };
+    const updatedApp: RegisteredApp = {
+      ...activeStudioApp,
+      manifest: updatedManifest,
+      status: activeStudioApp.status === "Published" ? "Published" : "Collaborating",
+    };
+    setActiveStudioApp(updatedApp);
+    setApps((prev) => prev.map((a) => (a.slug === updatedApp.slug ? updatedApp : a)));
+    showToast(`Linked dataset "${dataset.name}" as relation field.`);
   };
 
   // Toggle FERPA sensitivity on field
@@ -1511,13 +1543,36 @@ export const AdminDesk: React.FC = () => {
                         Design the inputs for this application. Toggle FERPA sensitivity to automatically apply 34 CFR § 99.30 Cedar guardrails.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleAddFieldToStudioApp}
-                      className="px-3 py-1.5 text-xs font-semibold rounded bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
-                    >
-                      + Add Input Field
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <select
+                        onChange={(e) => {
+                          const ds = SEEDED_DATASETS.find((d) => d.id === e.target.value);
+                          if (ds) {
+                            handleAddLinkedDatasetField(ds);
+                            e.target.value = "";
+                          }
+                        }}
+                        defaultValue=""
+                        className="px-3 py-1.5 text-xs font-semibold rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/60 cursor-pointer focus:outline-none"
+                      >
+                        <option value="" disabled>
+                          🔗 + Link Published Dataset...
+                        </option>
+                        {SEEDED_DATASETS.map((ds) => (
+                          <option key={ds.id} value={ds.id}>
+                            {ds.name} ({ds.department})
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={handleAddFieldToStudioApp}
+                        className="px-3 py-1.5 text-xs font-semibold rounded bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                      >
+                        + Add Input Field
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
