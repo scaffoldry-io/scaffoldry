@@ -5,11 +5,11 @@
     "context": "."
   },
   "workspaceFolder": "/workspace",
-  "remoteUser": "developer",
+  "remoteUser": "ubuntu",
 
   "mounts": [
-    "source=scaffoldry-cargo-cache,target=/home/developer/.cargo/registry,type=volume",
-    "source=scaffoldry-node-cache,target=/home/developer/.npm,type=volume"
+    "source=scaffoldry-cargo-cache,target=/home/ubuntu/.cargo/registry,type=volume",
+    "source=scaffoldry-node-cache,target=/home/ubuntu/.npm,type=volume"
   ],
 
   "forwardPorts": [
@@ -23,7 +23,7 @@
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash",
         "editor.formatOnSave": true,
-        "python.defaultInterpreterPath": "/home/developer/.venv/bin/python",
+        "python.defaultInterpreterPath": "/home/ubuntu/.venv/bin/python",
         "rust-analyzer.check.command": "clippy"
       },
       "extensions": [
