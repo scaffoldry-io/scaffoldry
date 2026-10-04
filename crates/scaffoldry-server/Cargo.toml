@@ -1,0 +1,24 @@
+[package]
+name = "scaffoldry-server"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Sovereign REST, Tabular Dataset, and SCIM 2.0 API Server"
+
+[dependencies]
+scaffoldry-core = { path = "../scaffoldry-core" }
+scaffoldry-policy = { path = "../scaffoldry-policy" }
+scaffoldry-engine = { path = "../scaffoldry-engine" }
+
+axum = { version = "0.8", features = ["json"] }
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
