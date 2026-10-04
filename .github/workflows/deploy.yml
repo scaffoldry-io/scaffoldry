@@ -1,0 +1,31 @@
+name: GCP Cloud Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  id-token: write  # Required for Google Workload Identity Federation OIDC token
+
+jobs:
+  verify-cloud-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify GCP Access & Artifact Registry
+        run: |
+          gcloud auth list
+          gcloud artifacts repositories describe scaffoldry --location=${{ vars.GCP_REGION }}
