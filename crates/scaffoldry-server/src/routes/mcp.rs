@@ -263,7 +263,7 @@ async fn handle_mcp_request(
                     let list: Vec<_> = datasets
                         .values()
                         .filter(|d| {
-                            dept_filter.map_or(true, |f| {
+                            dept_filter.is_none_or(|f| {
                                 d.department.eq_ignore_ascii_case(f)
                             })
                         })
