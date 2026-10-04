@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
 import { DatasetExplorer, SEEDED_DATASETS } from "./DatasetExplorer";
 import { AIAssistantDrawer } from "./AIAssistantDrawer";
+import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace } from "./types";
 
 const PERSONAS: Persona[] = [
@@ -321,6 +322,7 @@ export const AdminDesk: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
+  const [activeWorkspaceApp, setActiveWorkspaceApp] = useState<RegisteredApp | null>(null);
 
   // Navigation View State ("workspaces" | "datasets")
   const [mainView, setMainView] = useState<"workspaces" | "datasets">(() => {
@@ -339,6 +341,7 @@ export const AdminDesk: React.FC = () => {
     if (typeof window !== "undefined") {
       window.history.pushState(null, "", path);
       setCurrentPath(path);
+      setActiveWorkspaceApp(null);
       if (path.startsWith("/datasets")) {
         setMainView("datasets");
       } else if (path === "/" || path.startsWith("/workspace")) {
@@ -351,6 +354,7 @@ export const AdminDesk: React.FC = () => {
     const handlePopState = () => {
       const p = window.location.pathname;
       setCurrentPath(p);
+      setActiveWorkspaceApp(null);
       if (p.startsWith("/datasets")) {
         setMainView("datasets");
       } else if (p === "/" || p.startsWith("/workspace")) {
@@ -677,8 +681,8 @@ export const AdminDesk: React.FC = () => {
     const existing = apps.find((a) => a.slug === manifest.slug);
     if (existing) {
       showToast(`Application "${manifest.title}" is already installed.`);
+      setActiveWorkspaceApp(existing);
       setActiveStudioApp(existing);
-      setStudioOpen(true);
       setIsAiAssistantOpen(false);
       return;
     }
@@ -706,8 +710,8 @@ export const AdminDesk: React.FC = () => {
       manifest,
     };
     setApps((prev) => [newApp, ...prev]);
+    setActiveWorkspaceApp(newApp);
     setActiveStudioApp(newApp);
-    setStudioOpen(true);
     setIsAiAssistantOpen(false);
     showToast(`Installed AI-proposed application "${manifest.title}" with CEDS & FERPA governance.`);
   };
@@ -1351,6 +1355,17 @@ export const AdminDesk: React.FC = () => {
           ) : mainView === "datasets" ? (
             /* DATASET EXPLORER & RELATIONAL LATTICE VIEW */
             <DatasetExplorer onUseInApp={handleUseDatasetInApp} />
+          ) : activeWorkspaceApp ? (
+            /* MULTI-VIEW TABULAR WORKSPACE (GRID, KANBAN, CALENDAR, GALLERY, FORM) */
+            <MultiViewWorkspace
+              app={activeWorkspaceApp}
+              onBack={() => setActiveWorkspaceApp(null)}
+              onOpenStudio={() => {
+                setActiveStudioApp(activeWorkspaceApp);
+                setStudioOpen(true);
+              }}
+              onRecordCreated={() => showToast("Registered new record with Cedar policy validation.")}
+            />
           ) : (
             /* PRIMARY END-USER WORKSPACE CANVAS (/) */
             <div className="space-y-6 max-w-7xl mx-auto">
@@ -1474,14 +1489,24 @@ export const AdminDesk: React.FC = () => {
                         ))}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleOpenStudio(app)}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 cursor-pointer"
-                      >
-                        <span>Co-Build &amp; Test</span>
-                        <span>→</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveWorkspaceApp(app)}
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer"
+                        >
+                          <span>Open Grid &amp; Views</span>
+                          <span>→</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenStudio(app)}
+                          className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          title="Configure in Studio"
+                        >
+                          ⚙️
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
