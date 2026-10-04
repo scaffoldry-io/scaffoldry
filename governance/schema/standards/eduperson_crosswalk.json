@@ -1,0 +1,26 @@
+{
+  "": "https://json-schema.org/draft/2020-12/schema",
+  "title": "eduPerson Federation Claims Schema",
+  "description": "Maps InCommon and REFEDS SAML/OIDC attributes to Scaffoldry identities",
+  "version": "202208",
+  "attributes": {
+    "eduPersonPrincipalName": {
+      "oid": "1.3.6.1.4.1.5923.1.1.1.6",
+      "type": "scoped-string",
+      "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+    },
+    "eduPersonScopedAffiliation": {
+      "oid": "1.3.6.1.4.1.5923.1.1.1.9",
+      "type": "set<scoped-string>",
+      "allowed_affiliations": [
+        "faculty",
+        "student",
+        "staff",
+        "employee",
+        "member",
+        "affiliate",
+        "alum"
+      ]
+    }
+  }
+}

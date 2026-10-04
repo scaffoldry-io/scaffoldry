@@ -1,0 +1,30 @@
+{
+  "": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CEDS Higher Education Crosswalk",
+  "description": "Maps Scaffoldry data entities to NCES Common Education Data Standards",
+  "version": "11.0",
+  "domains": {
+    "PostsecondaryStudent": {
+      "000127": {
+        "name": "GradePointAverageCumulative",
+        "definition": "A measure of average performance in all courses taken by a person.",
+        "data_type": "decimal",
+        "sensitivity": "FERPA_PROTECTED"
+      },
+      "000128": {
+        "name": "HighSchoolGraduationDate",
+        "definition": "The year, month and day on which a student graduated from high school.",
+        "data_type": "date",
+        "sensitivity": "FERPA_PROTECTED"
+      }
+    },
+    "Staff": {
+      "000569": {
+        "name": "FacultyRankType",
+        "definition": "The rank or status of a faculty member (e.g., Professor, Associate Professor).",
+        "data_type": "string",
+        "sensitivity": "DIRECTORY"
+      }
+    }
+  }
+}

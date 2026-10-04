@@ -23,6 +23,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install jsonschema
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
       - name: Verify Compose configuration
         run: |
           docker compose -f deploy/docker-compose.yml config
@@ -38,3 +43,8 @@ jobs:
       - name: Hard Gate - Architecture Boundary Audit
         run: |
           python3 governance/scripts/audit-architecture.py
+
+      - name: Hard Gate - Rust Monorepo Test & Clippy
+        run: |
+          cargo test
+          cargo clippy --all-targets -- -D warnings
