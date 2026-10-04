@@ -125,3 +125,43 @@ export interface PublishedDataset {
   relationships?: DatasetRelationship[];
   sample_data?: Record<string, any>[];
 }
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, any>;
+}
+
+export interface McpResource {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType: string;
+}
+
+export interface McpPrompt {
+  name: string;
+  description: string;
+  arguments?: { name: string; description: string; required: boolean }[];
+}
+
+export interface McpOverview {
+  protocol: string;
+  protocol_version: string;
+  server_info: {
+    name: string;
+    version: string;
+    description: string;
+  };
+  capabilities: {
+    tools: { count: number; items: string[] };
+    resources: { count: number; uris: string[] };
+    prompts: { count: number; items: string[] };
+  };
+  live_metrics: {
+    published_datasets: number;
+    dataset_relationships: number;
+    compliance_frameworks: string[];
+  };
+}
+

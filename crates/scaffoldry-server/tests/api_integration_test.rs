@@ -524,3 +524,133 @@ async fn test_published_datasets_and_relationships_api() {
     assert_eq!(rel_query["total"], 1);
 }
 
+#[tokio::test]
+async fn test_mcp_server_protocol_tools_and_resources() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. GET /api/mcp overview
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/mcp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let overview: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(overview["protocol"], "Model Context Protocol (MCP)");
+    assert_eq!(overview["protocol_version"], "2024-11-05");
+
+    // 2. Initialize
+    let init_payload = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {}
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&init_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let init_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(init_res["result"]["serverInfo"]["name"], "scaffoldry-sovereign-mcp");
+
+    // 3. Tools List
+    let tools_payload = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&tools_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let tools_res: Value = serde_json::from_slice(&body).unwrap();
+    let tools = tools_res["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|t| t["name"] == "list_datasets"));
+    assert!(tools.iter().any(|t| t["name"] == "calculate_formula"));
+    assert!(tools.iter().any(|t| t["name"] == "simulate_cedar_policy"));
+
+    // 4. Tools Call - calculate_formula
+    let calc_payload = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "calculate_formula",
+            "arguments": {
+                "formula": "SUM",
+                "values": [12.5, 27.5, 60.0]
+            }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&calc_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let calc_res: Value = serde_json::from_slice(&body).unwrap();
+    let text = calc_res["result"]["content"][0]["text"].as_str().unwrap();
+    let parsed_calc: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(parsed_calc["result"], 100.0);
+
+    // 5. Resources List
+    let res_payload = json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "resources/list"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&res_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let resources_res: Value = serde_json::from_slice(&body).unwrap();
+    let resources = resources_res["result"]["resources"].as_array().unwrap();
+    assert!(resources.iter().any(|r| r["uri"] == "datasets://catalog"));
+    assert!(resources.iter().any(|r| r["uri"] == "policies://cedar"));
+}
+
+
