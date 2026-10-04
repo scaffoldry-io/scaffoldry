@@ -574,20 +574,27 @@ export const AdminDesk: React.FC = () => {
             </svg>
           </button>
 
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-600 text-white tracking-wider">
-              SCAFFOLDRY
-            </span>
-            <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={() => navigateTo("/")}
-              className="text-sm font-semibold tracking-tight text-slate-800 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 hidden sm:inline cursor-pointer"
+              className="flex items-center gap-2 text-left cursor-pointer focus:outline-none"
             >
-              App Studio &amp; Workspaces
+              <img
+                src="/logo-mark.png"
+                alt="Scaffoldry"
+                className="h-7 w-auto object-contain shrink-0"
+              />
+              <span className="font-extrabold text-base tracking-wider text-slate-900 dark:text-white uppercase font-sans">
+                SCAFFOLDRY
+              </span>
             </button>
+            <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 hidden sm:inline">
+              The Sovereign Desk
+            </span>
             {isAdminPath && (
-              <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                 /admin console
               </span>
             )}
@@ -970,16 +977,19 @@ export const AdminDesk: React.FC = () => {
           {isAdminPath ? (
             <div className="space-y-6 max-w-6xl mx-auto animate-fade-in">
               <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-                    <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-                      Institutional Administrative Console
-                    </h1>
+                <div className="flex items-center gap-3">
+                  <img src="/logo-mark.png" alt="Scaffoldry" className="h-8 w-auto object-contain shrink-0" />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                      <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+                        Institutional Administrative Console
+                      </h1>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Discreet governance and operations center: <code className="font-mono text-amber-600 dark:text-amber-400">/admin</code>.
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    Discreet governance and operations center: <code className="font-mono text-amber-600 dark:text-amber-400">/admin</code>.
-                  </p>
                 </div>
                 <button
                   type="button"
@@ -1292,16 +1302,19 @@ export const AdminDesk: React.FC = () => {
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
             {/* Studio Header */}
             <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
-                    App Studio &amp; Co-Builder
-                  </span>
-                  <span className="font-mono text-xs text-slate-400">{activeStudioApp.slug}</span>
+              <div className="flex items-center gap-3">
+                <img src="/logo-mark.png" alt="Scaffoldry" className="h-8 w-auto object-contain shrink-0" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                      App Studio &amp; Co-Builder
+                    </span>
+                    <span className="font-mono text-xs text-slate-400">{activeStudioApp.slug}</span>
+                  </div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
+                    {activeStudioApp.title}
+                  </h2>
                 </div>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white mt-1">
-                  {activeStudioApp.title}
-                </h2>
               </div>
               <button
                 type="button"
