@@ -1,6 +1,7 @@
 //! Route Tree Aggregation
 
 pub mod apps;
+pub mod datasets;
 pub mod governance;
 pub mod policy;
 pub mod records;
@@ -20,6 +21,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(workspaces::router())
         .merge(apps::router())
         .merge(records::router())
+        .merge(datasets::router())
         .merge(policy::router())
         .merge(governance::router())
         .with_state(state.clone());

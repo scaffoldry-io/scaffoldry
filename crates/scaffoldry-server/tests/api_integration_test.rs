@@ -411,3 +411,116 @@ async fn test_cedar_policy_and_governance_endpoints() {
     let oscal: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(oscal["schema_version"], "1.1.2");
 }
+
+#[tokio::test]
+async fn test_published_datasets_and_relationships_api() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. List Seeded Published Datasets
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/datasets")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let list: Value = serde_json::from_slice(&body).unwrap();
+    assert!(list["total"].as_u64().unwrap() >= 4);
+
+    // 2. Query Specific Dataset with Pre-configured Relationships
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/datasets/courses")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let course_ds: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(course_ds["name"], "University Course Catalog");
+    assert!(course_ds["relationships"].as_array().unwrap().len() >= 2);
+
+    // 3. Publish a New Departmental Dataset
+    let new_ds = json!({
+        "id": "physics_laboratories",
+        "name": "Physics Research Laboratories",
+        "description": "Departmental laboratory spaces, equipment rosters, and faculty supervisors",
+        "department": "Physics",
+        "organization": "College of Arts & Sciences",
+        "sensitivity_level": "Directory",
+        "herm_capability_id": "RES-03-LABS",
+        "fields": [
+            { "name": "lab_id", "label": "Laboratory ID", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+            { "name": "room_number", "label": "Room Number", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+            { "name": "supervisor_eppn", "label": "Faculty Supervisor", "field_type": "Relation", "required": true, "ferpa_sensitive": false }
+        ],
+        "sample_data": [
+            { "lab_id": "LAB-PHY-101", "room_number": "Curie Hall 304", "supervisor_eppn": "dr.smith@university.edu" }
+        ]
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/datasets")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&new_ds).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 4. Create Cross-Dataset Relationship (physics_laboratories.supervisor_eppn -> faculty.eppn)
+    let rel_payload = json!({
+        "name": "Laboratory Faculty Supervisor",
+        "target_dataset_id": "faculty",
+        "source_field": "supervisor_eppn",
+        "target_field": "eppn",
+        "display_field": "full_name",
+        "relationship_type": "OneToMany"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/datasets/physics_laboratories/relationships")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&rel_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let created_rel: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(created_rel["target_dataset_id"], "faculty");
+
+    // 5. Query Relationships for physics_laboratories
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/datasets/physics_laboratories/relationships")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let rel_query: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(rel_query["total"], 1);
+}
+

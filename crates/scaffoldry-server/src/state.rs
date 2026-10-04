@@ -1,9 +1,11 @@
 //! Server State and Storage for Datasets, Workspaces, and SCIM Identity
 
+use chrono::Utc;
+use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
 use scaffoldry_engine::ManifestEngine;
 use scaffoldry_policy::ScaffoldryPolicyEngine;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -59,6 +61,8 @@ pub struct ServerState {
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
     pub collaborators: RwLock<HashMap<String, Vec<CollaboratorRecord>>>,
     pub records: RwLock<HashMap<String, Vec<DatasetRecord>>>,
+    pub datasets: RwLock<HashMap<String, PublishedDataset>>,
+    pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
 }
@@ -70,12 +74,167 @@ impl ServerState {
         let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
             .map_err(|e| format!("Failed to initialize PolicyEngine: {e}"))?;
 
+        let mut datasets = HashMap::new();
+        let mut relationships = HashMap::new();
+
+        let now = Utc::now().to_rfc3339();
+
+        // 1. Faculty Roster & PI Directory
+        datasets.insert(
+            "faculty".to_string(),
+            PublishedDataset {
+                id: "faculty".to_string(),
+                name: "Faculty & Principal Investigator Directory".to_string(),
+                description: "Institutional faculty roster, appointments, and research affiliations".to_string(),
+                department: "Academic Affairs".to_string(),
+                organization: "University".to_string(),
+                sensitivity_level: "Directory".to_string(),
+                herm_capability_id: Some("HR-01-ROSTER".to_string()),
+                fields: vec![
+                    DatasetField { name: "eppn".to_string(), label: "Identity (ePPN)".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: Some("000033".to_string()) },
+                    DatasetField { name: "full_name".to_string(), label: "Full Name".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: Some("000115".to_string()) },
+                    DatasetField { name: "title".to_string(), label: "Academic Title".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "department".to_string(), label: "Department".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "research_specialty".to_string(), label: "Research Specialty".to_string(), field_type: "Text".to_string(), required: false, ferpa_sensitive: false, ceds_code: None },
+                ],
+                record_count: 240,
+                published_at: now.clone(),
+                sample_data: vec![
+                    json!({ "eppn": "dr.smith@university.edu", "full_name": "Dr. Sarah Smith", "title": "Professor of Physics", "department": "Physics", "research_specialty": "Quantum Lattice Systems" }),
+                    json!({ "eppn": "dr.alan@university.edu", "full_name": "Dr. Alan Turing", "title": "Chair of Computing", "department": "Computer Science", "research_specialty": "Automata & Cryptography" }),
+                ],
+            },
+        );
+
+        // 2. Academic Programs & Degrees
+        datasets.insert(
+            "programs".to_string(),
+            PublishedDataset {
+                id: "programs".to_string(),
+                name: "Academic Programs & Degrees".to_string(),
+                description: "Accredited degree programs, CIP taxonomy, and departmental authority".to_string(),
+                department: "Provost & Academic Council".to_string(),
+                organization: "University".to_string(),
+                sensitivity_level: "Public".to_string(),
+                herm_capability_id: Some("ACA-02-CURRICULUM".to_string()),
+                fields: vec![
+                    DatasetField { name: "code".to_string(), label: "Program Code".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: Some("000067".to_string()) },
+                    DatasetField { name: "degree_name".to_string(), label: "Degree Name".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "department".to_string(), label: "Governing Department".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                ],
+                record_count: 58,
+                published_at: now.clone(),
+                sample_data: vec![
+                    json!({ "code": "PHYS-PHD", "degree_name": "Doctor of Philosophy in Physics", "department": "Physics" }),
+                    json!({ "code": "CS-BS", "degree_name": "Bachelor of Science in Computer Science", "department": "Computer Science" }),
+                ],
+            },
+        );
+
+        // 3. University Course Catalog
+        datasets.insert(
+            "courses".to_string(),
+            PublishedDataset {
+                id: "courses".to_string(),
+                name: "University Course Catalog".to_string(),
+                description: "Active course roster, schedule units, and designated faculty instructors".to_string(),
+                department: "Office of the Registrar".to_string(),
+                organization: "University".to_string(),
+                sensitivity_level: "Directory".to_string(),
+                herm_capability_id: Some("REG-01-CATALOG".to_string()),
+                fields: vec![
+                    DatasetField { name: "course_code".to_string(), label: "Course Code".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: Some("000062".to_string()) },
+                    DatasetField { name: "course_title".to_string(), label: "Course Title".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: Some("000064".to_string()) },
+                    DatasetField { name: "credits".to_string(), label: "Credit Units".to_string(), field_type: "Number".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "instructor_eppn".to_string(), label: "Lead Instructor".to_string(), field_type: "Relation".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "program_code".to_string(), label: "Program Plan".to_string(), field_type: "Relation".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                ],
+                record_count: 840,
+                published_at: now.clone(),
+                sample_data: vec![
+                    json!({ "course_code": "PHYS-401", "course_title": "Quantum Mechanics I", "credits": 4, "instructor_eppn": "dr.smith@university.edu", "program_code": "PHYS-PHD" }),
+                    json!({ "course_code": "CS-302", "course_title": "Theory of Computation", "credits": 3, "instructor_eppn": "dr.alan@university.edu", "program_code": "CS-BS" }),
+                ],
+            },
+        );
+
+        // 4. Sponsored Research Grants
+        datasets.insert(
+            "grants".to_string(),
+            PublishedDataset {
+                id: "grants".to_string(),
+                name: "Sponsored Research Projects & Grants".to_string(),
+                description: "Federal and private grant awards with FERPA-sensitive student stipends".to_string(),
+                department: "Office of Sponsored Research".to_string(),
+                organization: "University".to_string(),
+                sensitivity_level: "Restricted / FERPA".to_string(),
+                herm_capability_id: Some("RES-01-GRANTS".to_string()),
+                fields: vec![
+                    DatasetField { name: "award_number".to_string(), label: "Award Identifier".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "project_title".to_string(), label: "Project Title".to_string(), field_type: "Text".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "pi_eppn".to_string(), label: "Principal Investigator".to_string(), field_type: "Relation".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "amount".to_string(), label: "Total Award Amount".to_string(), field_type: "Number".to_string(), required: true, ferpa_sensitive: false, ceds_code: None },
+                    DatasetField { name: "is_ferpa_restricted".to_string(), label: "Contains Student Assistant Data".to_string(), field_type: "Boolean".to_string(), required: false, ferpa_sensitive: true, ceds_code: None },
+                ],
+                record_count: 115,
+                published_at: now,
+                sample_data: vec![
+                    json!({ "award_number": "NSF-PHY-2026-01", "project_title": "Quantum Lattice Topological Phases", "pi_eppn": "dr.smith@university.edu", "amount": 750000, "is_ferpa_restricted": true }),
+                ],
+            },
+        );
+
+        // Seed Relationships
+        relationships.insert(
+            "rel_course_instructor".to_string(),
+            DatasetRelationship {
+                id: "rel_course_instructor".to_string(),
+                name: "Course Instructor Lookup".to_string(),
+                source_dataset_id: "courses".to_string(),
+                target_dataset_id: "faculty".to_string(),
+                source_field: "instructor_eppn".to_string(),
+                target_field: "eppn".to_string(),
+                relationship_type: RelationshipType::OneToMany,
+                display_field: "full_name".to_string(),
+            },
+        );
+
+        relationships.insert(
+            "rel_course_program".to_string(),
+            DatasetRelationship {
+                id: "rel_course_program".to_string(),
+                name: "Course Degree Plan".to_string(),
+                source_dataset_id: "courses".to_string(),
+                target_dataset_id: "programs".to_string(),
+                source_field: "program_code".to_string(),
+                target_field: "code".to_string(),
+                relationship_type: RelationshipType::OneToMany,
+                display_field: "degree_name".to_string(),
+            },
+        );
+
+        relationships.insert(
+            "rel_grant_pi".to_string(),
+            DatasetRelationship {
+                id: "rel_grant_pi".to_string(),
+                name: "Grant Principal Investigator".to_string(),
+                source_dataset_id: "grants".to_string(),
+                target_dataset_id: "faculty".to_string(),
+                source_field: "pi_eppn".to_string(),
+                target_field: "eppn".to_string(),
+                relationship_type: RelationshipType::OneToMany,
+                display_field: "full_name".to_string(),
+            },
+        );
+
         Ok(Self {
             users: RwLock::new(HashMap::new()),
             groups: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(HashMap::new()),
             collaborators: RwLock::new(HashMap::new()),
             records: RwLock::new(HashMap::new()),
+            datasets: RwLock::new(datasets),
+            relationships: RwLock::new(relationships),
             engine: RwLock::new(engine),
             policy_engine,
         })
