@@ -1,0 +1,23 @@
+{
+  "": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EDUCAUSE HERM Business Capability Crosswalk",
+  "description": "Maps Scaffoldry departmental applications to the Higher Education Reference Model",
+  "version": "3.1",
+  "capabilities": {
+    "1.2.3": {
+      "domain": "LearningAndTeaching",
+      "name": "Curriculum Management",
+      "description": "Management of curriculum development, review, and accreditation."
+    },
+    "2.2.3": {
+      "domain": "Research",
+      "name": "Research Grant Administration",
+      "description": "Administration and governance of pre-award and post-award grants."
+    },
+    "5.3.1": {
+      "domain": "EnablingCapabilities",
+      "name": "Space and Facilities Management",
+      "description": "Allocation and tracking of institutional space, buildings, and lab equipment."
+    }
+  }
+}

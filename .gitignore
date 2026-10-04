@@ -18,3 +18,12 @@ target/
 *.bak
 .DS_Store
 *.tar.gz
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Node build artifacts
+node_modules/
+dist/
+.vite/
