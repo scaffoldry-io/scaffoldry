@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     tzdata \
     unzip \
+    gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu 24.04 includes the non-root 'ubuntu' user (UID 1000, GID 1000)
@@ -26,13 +27,6 @@ ARG USERNAME=ubuntu
 
 RUN echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
-
-# Install GitHub CLI (gh)
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get update && apt-get install -y github-cli \
-    && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 LTS
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
