@@ -22,27 +22,9 @@ fn sample_manifest() -> AppManifest {
                 title: "All Lab Equipment".to_string(),
                 view_type: ViewType::Table,
                 fields: vec![
-                    FieldSpec {
-                        name: "item_name".to_string(),
-                        label: "Equipment Name".to_string(),
-                        field_type: FieldType::Text,
-                        required: true,
-                        ferpa_sensitive: false,
-                    },
-                    FieldSpec {
-                        name: "serial_number".to_string(),
-                        label: "Serial Number".to_string(),
-                        field_type: FieldType::Text,
-                        required: true,
-                        ferpa_sensitive: false,
-                    },
-                    FieldSpec {
-                        name: "operator_eval".to_string(),
-                        label: "Student Operator Evaluation".to_string(),
-                        field_type: FieldType::Text,
-                        required: false,
-                        ferpa_sensitive: true, // FERPA PROTECTED!
-                    },
+                    FieldSpec::simple("item_name", "Equipment Name", FieldType::Text, true, false),
+                    FieldSpec::simple("serial_number", "Serial Number", FieldType::Text, true, false),
+                    FieldSpec::simple("operator_eval", "Student Operator Evaluation", FieldType::Text, false, true),
                 ],
             }
         ],

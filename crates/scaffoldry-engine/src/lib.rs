@@ -38,6 +38,7 @@ pub enum FieldType {
     Date,
     Select,
     Boolean,
+    Relation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +48,30 @@ pub struct FieldSpec {
     pub field_type: FieldType,
     pub required: bool,
     pub ferpa_sensitive: bool,
+    #[serde(default)]
+    pub linked_dataset_id: Option<String>,
+    #[serde(default)]
+    pub linked_field: Option<String>,
+}
+
+impl FieldSpec {
+    pub fn simple(
+        name: impl Into<String>,
+        label: impl Into<String>,
+        field_type: FieldType,
+        required: bool,
+        ferpa_sensitive: bool,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+            field_type,
+            required,
+            ferpa_sensitive,
+            linked_dataset_id: None,
+            linked_field: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
