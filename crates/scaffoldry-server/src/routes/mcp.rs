@@ -62,7 +62,7 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
         },
         "capabilities": {
             "tools": {
-                "count": 9,
+                "count": 10,
                 "items": [
                     "list_datasets",
                     "query_dataset",
@@ -72,16 +72,18 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
                     "get_governance_posture",
                     "record_governance_decision",
                     "verify_decision_ledger",
-                    "export_oscal_compliance"
+                    "export_oscal_compliance",
+                    "get_framework_spec"
                 ]
             },
             "resources": {
-                "count": 4,
+                "count": 5,
                 "uris": [
                     "datasets://catalog",
                     "policies://cedar",
                     "compliance://oscal",
-                    "scaffoldry://governance/decision-ledger"
+                    "scaffoldry://governance/decision-ledger",
+                    "scaffoldry://framework/component-spec"
                 ]
             },
             "prompts": {
@@ -272,6 +274,14 @@ async fn handle_mcp_request(
                     {
                         "name": "export_oscal_compliance",
                         "description": "Generate and export official NIST OSCAL 1.1.2 JSON component-definition with full cryptographic audit proofs.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "get_framework_spec",
+                        "description": "Retrieve the self-documenting JSON Schema specification for the TanStack-extended component catalog, approved institutional theme tokens, and data classification boundaries.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {}
@@ -570,6 +580,18 @@ async fn handle_mcp_request(
                     })
                 }
 
+                "get_framework_spec" => {
+                    let spec = crate::routes::framework::build_framework_spec_json();
+                    json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": serde_json::to_string_pretty(&spec).unwrap_or_default()
+                            }
+                        ]
+                    })
+                }
+
                 _ => json!({
                     "content": [
                         {
@@ -613,6 +635,12 @@ async fn handle_mcp_request(
                         "uri": "scaffoldry://governance/decision-ledger",
                         "name": "Cryptographic Decision Audit Ledger",
                         "description": "Append-only SHA-256 chained governance decision blocks",
+                        "mimeType": "application/json"
+                    },
+                    {
+                        "uri": "scaffoldry://framework/component-spec",
+                        "name": "Framework Component Specification",
+                        "description": "Self-documenting JSON Schema of governed components, layout slots, and approved org tokens",
                         "mimeType": "application/json"
                     }
                 ]
@@ -697,6 +725,18 @@ forbid(
                                     "total_blocks": ledger.len(),
                                     "blocks": *ledger
                                 })).unwrap_or_default()
+                            }
+                        ]
+                    })
+                }
+                "scaffoldry://framework/component-spec" => {
+                    let spec = crate::routes::framework::build_framework_spec_json();
+                    json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "application/json",
+                                "text": serde_json::to_string_pretty(&spec).unwrap_or_default()
                             }
                         ]
                     })

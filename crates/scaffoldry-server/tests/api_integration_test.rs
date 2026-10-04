@@ -840,5 +840,88 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     assert!(text.contains("ALL_BLOCKS_VALID"));
 }
 
+#[tokio::test]
+async fn test_framework_specification_api_and_mcp_integration() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. GET /api/v1/framework/spec - verify JSON Schema and catalog
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/framework/spec")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let spec: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(spec["framework_version"], "1.0.0");
+    assert_eq!(spec["standards_alignment"]["tabular_standard"], "TanStack Table v8 Headless Architecture");
+    let components = spec["component_catalog"].as_array().unwrap();
+    assert_eq!(components.len(), 7);
+    assert_eq!(components[0]["type"], "stat-metric");
+    assert_eq!(components[1]["type"], "tabular-grid");
+
+    // 2. MCP JSON-RPC 2.0 tools/call get_framework_spec
+    let mcp_tool_payload = json!({
+        "jsonrpc": "2.0",
+        "id": "test-mcp-framework-1",
+        "method": "tools/call",
+        "params": {
+            "name": "get_framework_spec",
+            "arguments": {}
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&mcp_tool_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let mcp_res: Value = serde_json::from_slice(&body).unwrap();
+    let content_text = mcp_res["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(content_text.contains("TanStack Table v8 Headless Architecture"));
+
+    // 3. MCP JSON-RPC 2.0 resources/read scaffoldry://framework/component-spec
+    let mcp_resource_payload = json!({
+        "jsonrpc": "2.0",
+        "id": "test-mcp-framework-2",
+        "method": "resources/read",
+        "params": {
+            "uri": "scaffoldry://framework/component-spec"
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&mcp_resource_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let mcp_res: Value = serde_json::from_slice(&body).unwrap();
+    let content_text = mcp_res["result"]["contents"][0]["text"].as_str().unwrap();
+    assert!(content_text.contains("stat-metric"));
+}
+
 
 
