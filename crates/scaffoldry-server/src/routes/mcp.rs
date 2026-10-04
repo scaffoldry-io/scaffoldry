@@ -62,22 +62,26 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
         },
         "capabilities": {
             "tools": {
-                "count": 6,
+                "count": 9,
                 "items": [
                     "list_datasets",
                     "query_dataset",
                     "create_app_proposal",
                     "simulate_cedar_policy",
                     "calculate_formula",
-                    "get_governance_posture"
+                    "get_governance_posture",
+                    "record_governance_decision",
+                    "verify_decision_ledger",
+                    "export_oscal_compliance"
                 ]
             },
             "resources": {
-                "count": 3,
+                "count": 4,
                 "uris": [
                     "datasets://catalog",
                     "policies://cedar",
-                    "compliance://oscal"
+                    "compliance://oscal",
+                    "scaffoldry://governance/decision-ledger"
                 ]
             },
             "prompts": {
@@ -236,6 +240,38 @@ async fn handle_mcp_request(
                     {
                         "name": "get_governance_posture",
                         "description": "Retrieve NIST OSCAL 1.1.2 compliance metrics, control implementations, and active policy rules.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "record_governance_decision",
+                        "description": "Append an approved governance decision to the immutable SHA-256 cryptographic ledger with NIST OSCAL control mapping.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "principal": { "type": "string", "description": "eduPersonPrincipalName of decision maker" },
+                                "organization_code": { "type": "string", "description": "Institutional unit code" },
+                                "app_slug": { "type": "string", "description": "Optional application slug" },
+                                "decision_type": { "type": "string", "description": "Decision classification (AppPublished, VanityDnsBound, PolicyRevision, WorkflowRuleApproved, AccessRoleGranted, DatasetAccessShared, StatutoryAttestation)" },
+                                "oscal_control_id": { "type": "string", "description": "NIST SP 800-53 / OSCAL control (e.g. AC-03, CM-03, AU-02)" },
+                                "rationale": { "type": "string", "description": "Institutional justification and review findings" }
+                            },
+                            "required": ["principal", "organization_code", "decision_type", "oscal_control_id", "rationale"]
+                        }
+                    },
+                    {
+                        "name": "verify_decision_ledger",
+                        "description": "Verify cryptographic integrity and SHA-256 block chain linkage of all recorded governance decisions from genesis.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "export_oscal_compliance",
+                        "description": "Generate and export official NIST OSCAL 1.1.2 JSON component-definition with full cryptographic audit proofs.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {}
@@ -451,6 +487,89 @@ async fn handle_mcp_request(
                     })
                 }
 
+                "record_governance_decision" => {
+                    let principal = args.get("principal").and_then(|v| v.as_str()).unwrap_or("supervisor@state.edu");
+                    let org_code = args.get("organization_code").and_then(|v| v.as_str()).unwrap_or("DIV-GOVERNANCE");
+                    let app_slug = args.get("app_slug").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let dec_str = args.get("decision_type").and_then(|v| v.as_str()).unwrap_or("StatutoryAttestation");
+                    let oscal_control = args.get("oscal_control_id").and_then(|v| v.as_str()).unwrap_or("AU-02");
+                    let rationale = args.get("rationale").and_then(|v| v.as_str()).unwrap_or("AI-initiated governance record");
+
+                    let decision_type = match dec_str {
+                        "AppPublished" => scaffoldry_core::DecisionType::AppPublished,
+                        "VanityDnsBound" => scaffoldry_core::DecisionType::VanityDnsBound,
+                        "PolicyRevision" => scaffoldry_core::DecisionType::PolicyRevision,
+                        "WorkflowRuleApproved" => scaffoldry_core::DecisionType::WorkflowRuleApproved,
+                        "AccessRoleGranted" => scaffoldry_core::DecisionType::AccessRoleGranted,
+                        "DatasetAccessShared" => scaffoldry_core::DecisionType::DatasetAccessShared,
+                        _ => scaffoldry_core::DecisionType::StatutoryAttestation,
+                    };
+
+                    match state.append_ledger_entry(crate::state::RecordDecisionInput {
+                        principal: principal.to_string(),
+                        organization_code: org_code.to_string(),
+                        app_slug,
+                        decision_type,
+                        oscal_control_id: oscal_control.to_string(),
+                        rationale: rationale.to_string(),
+                        payload: &args,
+                    }) {
+                        Ok(entry) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&json!({
+                                        "success": true,
+                                        "sequence": entry.sequence,
+                                        "entry_hash": entry.entry_hash,
+                                        "previous_hash": entry.previous_hash,
+                                        "oscal_control": entry.oscal_control_id,
+                                        "message": "Decision block cryptographically chained to ledger"
+                                    })).unwrap_or_default()
+                                }
+                            ]
+                        }),
+                        Err(e) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": format!("Failed to record governance decision: {e}")
+                                }
+                            ]
+                        }),
+                    }
+                }
+
+                "verify_decision_ledger" => {
+                    let is_valid = state.verify_ledger().unwrap_or(false);
+                    let ledger = state.ledger.read().unwrap();
+                    json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": serde_json::to_string_pretty(&json!({
+                                    "verified": is_valid,
+                                    "total_blocks": ledger.len(),
+                                    "head_hash": ledger.last().map(|e| e.entry_hash.as_str()).unwrap_or(""),
+                                    "integrity_audit": if is_valid { "ALL_BLOCKS_VALID" } else { "TAMPER_DETECTED" }
+                                })).unwrap_or_default()
+                            }
+                        ]
+                    })
+                }
+
+                "export_oscal_compliance" => {
+                    let doc = state.export_oscal_component_definition();
+                    json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": serde_json::to_string_pretty(&doc).unwrap_or_default()
+                            }
+                        ]
+                    })
+                }
+
                 _ => json!({
                     "content": [
                         {
@@ -488,6 +607,12 @@ async fn handle_mcp_request(
                         "uri": "compliance://oscal",
                         "name": "NIST OSCAL 1.1.2 Security Lattice",
                         "description": "System Security Plan controls and regulatory crosswalks",
+                        "mimeType": "application/json"
+                    },
+                    {
+                        "uri": "scaffoldry://governance/decision-ledger",
+                        "name": "Cryptographic Decision Audit Ledger",
+                        "description": "Append-only SHA-256 chained governance decision blocks",
                         "mimeType": "application/json"
                     }
                 ]
@@ -559,6 +684,23 @@ forbid(
                         }
                     ]
                 }),
+                "scaffoldry://governance/decision-ledger" => {
+                    let ledger = state.ledger.read().unwrap();
+                    let is_valid = state.verify_ledger().unwrap_or(false);
+                    json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "application/json",
+                                "text": serde_json::to_string_pretty(&json!({
+                                    "chain_valid": is_valid,
+                                    "total_blocks": ledger.len(),
+                                    "blocks": *ledger
+                                })).unwrap_or_default()
+                            }
+                        ]
+                    })
+                }
                 _ => json!({
                     "contents": []
                 }),

@@ -712,5 +712,133 @@ async fn test_app_workflow_automations_and_simulation() {
     assert_eq!(results[0]["actions_executed"].as_array().unwrap().len(), 2);
 }
 
+#[tokio::test]
+async fn test_governance_decision_ledger_and_oscal_export() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. GET /api/v1/governance/ledger - verify initial seeded entries and chain validity
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/governance/ledger")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let ledger_res: Value = serde_json::from_slice(&body).unwrap();
+    assert!(ledger_res["chain_valid"].as_bool().unwrap());
+    assert_eq!(ledger_res["total_entries"].as_u64().unwrap(), 4);
+    let entries = ledger_res["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["sequence"].as_u64().unwrap(), 0);
+    assert_eq!(entries[0]["oscal_control_id"], "CM-03");
+
+    // 2. POST /api/v1/governance/ledger/append - append an approval block
+    let append_payload = json!({
+        "principal": "prof.curie@science.state.edu",
+        "organization_code": "DIV-SCIENCES",
+        "app_slug": "physics-admissions-review",
+        "decision_type": "WorkflowRuleApproved",
+        "oscal_control_id": "AC-03",
+        "rationale": "Faculty board approved honors admissions trigger rule",
+        "payload": {
+            "rule": "auto-physics-honors-admit",
+            "approver": "prof.curie@science.state.edu"
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/governance/ledger/append")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&append_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let append_res: Value = serde_json::from_slice(&body).unwrap();
+    assert!(append_res["success"].as_bool().unwrap());
+    assert_eq!(append_res["entry"]["sequence"].as_u64().unwrap(), 4);
+    assert_eq!(append_res["entry"]["oscal_control_id"], "AC-03");
+
+    // 3. POST /api/v1/governance/ledger/verify - cryptographic verification of entire chain
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/governance/ledger/verify")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let verify_res: Value = serde_json::from_slice(&body).unwrap();
+    assert!(verify_res["verified"].as_bool().unwrap());
+    assert_eq!(verify_res["total_entries"].as_u64().unwrap(), 5);
+
+    // 4. GET /api/v1/governance/oscal/export - export official NIST OSCAL 1.1.2 JSON
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/governance/oscal/export")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let oscal_res: Value = serde_json::from_slice(&body).unwrap();
+    let comp_def = &oscal_res["component-definition"];
+    assert_eq!(comp_def["metadata"]["oscal-version"], "1.1.2");
+    let components = comp_def["components"].as_array().unwrap();
+    assert_eq!(components[0]["type"], "software");
+    let impl_reqs = components[0]["control-implementations"][0]["implemented-requirements"]
+        .as_array()
+        .unwrap();
+    assert_eq!(impl_reqs.len(), 5);
+
+    // 5. Test MCP tools: verify_decision_ledger over JSON-RPC 2.0
+    let mcp_verify_payload = json!({
+        "jsonrpc": "2.0",
+        "id": "test-mcp-verify-1",
+        "method": "tools/call",
+        "params": {
+            "name": "verify_decision_ledger",
+            "arguments": {}
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&mcp_verify_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let mcp_res: Value = serde_json::from_slice(&body).unwrap();
+    let text = mcp_res["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("ALL_BLOCKS_VALID"));
+}
+
 
 

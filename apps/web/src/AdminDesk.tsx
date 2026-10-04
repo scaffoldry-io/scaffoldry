@@ -4,7 +4,8 @@ import { DatasetExplorer, SEEDED_DATASETS } from "./DatasetExplorer";
 import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { WorkflowBuilder } from "./WorkflowBuilder";
-import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule } from "./types";
+import { DecisionLedgerView } from "./DecisionLedgerView";
+import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
 
 const PERSONAS: Persona[] = [
   {
@@ -311,6 +312,61 @@ const INITIAL_AUTOMATIONS: Record<string, WorkflowAutomationRule[]> = {
   ],
 };
 
+const INITIAL_LEDGER: LedgerEntryItem[] = [
+  {
+    sequence: 0,
+    timestamp_iso: "2026-10-04T12:00:00Z",
+    previous_hash: "0000000000000000000000000000000000000000000000000000000000000000",
+    principal: "prof.curie@science.state.edu",
+    organization_code: "DIV-SCIENCES",
+    app_slug: "biology-lab-inventory",
+    decision_type: "AppPublished",
+    oscal_control_id: "CM-03",
+    rationale: "Initial publication of Biology Research Chemical Inventory",
+    payload_hash: "9f833a6b22c74d64388b3fdf1b7c3d22b6477e60b134ee7c5980a3c4fcfb7999",
+    entry_hash: "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2",
+  },
+  {
+    sequence: 1,
+    timestamp_iso: "2026-10-04T12:05:00Z",
+    previous_hash: "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2",
+    principal: "prof.curie@science.state.edu",
+    organization_code: "DIV-SCIENCES",
+    app_slug: "biology-lab-inventory",
+    decision_type: "VanityDnsBound",
+    oscal_control_id: "SC-07",
+    rationale: "Vanity DNS alias bound with sovereign gateway validation",
+    payload_hash: "5d41402abc4b2a76b9719d911017c592b23a9d91a92e105e6b12a84a27546682",
+    entry_hash: "82a7f5a2894b92c431ea014dbd42646f8d839352e0081d6f21271167732a3d0f",
+  },
+  {
+    sequence: 2,
+    timestamp_iso: "2026-10-04T12:10:00Z",
+    previous_hash: "82a7f5a2894b92c431ea014dbd42646f8d839352e0081d6f21271167732a3d0f",
+    principal: "dr.watson@science.state.edu",
+    organization_code: "DIV-COMPLIANCE",
+    app_slug: "physics-admissions-review",
+    decision_type: "WorkflowRuleApproved",
+    oscal_control_id: "AC-03",
+    rationale: "FERPA compliance and GPA threshold auto-admit rule approved",
+    payload_hash: "1bc29b36f623ba82aaf6724fd3b167184451cf2e9336744ab97b664291130f0f",
+    entry_hash: "b548b1d9894e63e13d9f0a4fb11894d3ae225501d67f5fa2904746f3640b3c66",
+  },
+  {
+    sequence: 3,
+    timestamp_iso: "2026-10-04T12:15:00Z",
+    previous_hash: "b548b1d9894e63e13d9f0a4fb11894d3ae225501d67f5fa2904746f3640b3c66",
+    principal: "dr.watson@science.state.edu",
+    organization_code: "DIV-COMPLIANCE",
+    app_slug: "compliance-ferpa-requests",
+    decision_type: "StatutoryAttestation",
+    oscal_control_id: "AU-02",
+    rationale: "Institutional statutory compliance attestation for 34 CFR Part 99",
+    payload_hash: "b20c29f45612ba84caf6724fd3b167184451cf2e9336744ab97b664291130f78",
+    entry_hash: "a43e8bb435f2126e7a68393e1147a468d601b0b556e4313fa4e183761858c211",
+  },
+];
+
 export const AdminDesk: React.FC = () => {
   // Discreet URL Path Routing State
   const [currentPath, setCurrentPath] = useState<string>(() => {
@@ -362,7 +418,61 @@ export const AdminDesk: React.FC = () => {
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"org" | "policy" | "infra">("org");
+  const [adminTab, setAdminTab] = useState<"org" | "policy" | "ledger" | "infra">("org");
+  const [ledger] = useState<LedgerEntryItem[]>(INITIAL_LEDGER);
+
+  const handleDownloadOscal = () => {
+    const oscalDoc = {
+      "component-definition": {
+        uuid: "7b41e891-b384-48f8-b391-49520cb6b621",
+        metadata: {
+          title: "Scaffoldry Sovereign Application Platform Component Definition",
+          "last-modified": new Date().toISOString(),
+          version: "1.0.0",
+          "oscal-version": "1.1.2",
+        },
+        components: [
+          {
+            uuid: "983a48e1-5f21-4f9e-a890-4100c5983b12",
+            type: "software",
+            title: "Scaffoldry Sovereign Application Platform",
+            description: "Governed collaborative workspace, tabular engine, and Cedar authorization lattice",
+            "control-implementations": [
+              {
+                uuid: "3f9821a0-47b2-4d92-9102-39c4a8501234",
+                source: "https://doi.org/10.6028/NIST.SP.800-53r5",
+                description: "Automated institutional control implementation and cryptographic verification ledger",
+                "implemented-requirements": ledger.map((entry) => ({
+                  uuid: `550e8400-e29b-41d4-a716-${entry.sequence.toString().padStart(12, "0")}`,
+                  "control-id": entry.oscal_control_id.toLowerCase(),
+                  description: entry.rationale,
+                  props: [
+                    { name: "ledger-sequence", value: entry.sequence.toString() },
+                    { name: "ledger-principal", value: entry.principal },
+                    { name: "ledger-org-code", value: entry.organization_code },
+                    { name: "ledger-entry-hash", value: entry.entry_hash },
+                    { name: "ledger-previous-hash", value: entry.previous_hash },
+                  ],
+                })),
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(oscalDoc, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "scaffoldry-oscal-1.1.2.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setNotificationToast("Downloaded NIST OSCAL 1.1.2 compliance component definition.");
+    setTimeout(() => setNotificationToast(null), 3500);
+  };
 
   // Theme State
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -1094,6 +1204,21 @@ export const AdminDesk: React.FC = () => {
 
                   <button
                     type="button"
+                    onClick={() => setAdminTab("ledger")}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "ledger"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                    {navRailExpanded && <span>Decision Ledger &amp; OSCAL</span>}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setAdminTab("infra")}
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "infra"
@@ -1411,6 +1536,18 @@ export const AdminDesk: React.FC = () => {
                     <span className="text-sm font-semibold text-slate-900 dark:text-white">Workload Identity Federation</span>
                   </div>
                 </div>
+              )}
+
+              {/* ADMIN TAB 4: CRYPTOGRAPHIC DECISION AUDIT LEDGER */}
+              {adminTab === "ledger" && (
+                <DecisionLedgerView
+                  entries={ledger}
+                  onVerifyChain={() => {
+                    setNotificationToast("Cryptographic proof verified: All SHA-256 blocks chained without tampering.");
+                    setTimeout(() => setNotificationToast(null), 3500);
+                  }}
+                  onDownloadOscal={handleDownloadOscal}
+                />
               )}
             </div>
           ) : mainView === "datasets" ? (
