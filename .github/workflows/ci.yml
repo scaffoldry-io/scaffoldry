@@ -26,3 +26,7 @@ jobs:
       - name: Verify Compose configuration
         run: |
           docker compose -f deploy/docker-compose.yml config
+
+      - name: Audit skills and frontmatter
+        run: |
+          python3 governance/scripts/audit-skills.py
