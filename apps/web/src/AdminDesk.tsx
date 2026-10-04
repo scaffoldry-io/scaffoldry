@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
-import { AppManifest, Collaborator, FieldSpec, Persona, RegisteredApp, SourceRule, Workspace } from "./types";
+import { DatasetExplorer } from "./DatasetExplorer";
+import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace } from "./types";
 
 const PERSONAS: Persona[] = [
   {
@@ -319,6 +320,14 @@ export const AdminDesk: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
+  // Navigation View State ("workspaces" | "datasets")
+  const [mainView, setMainView] = useState<"workspaces" | "datasets">(() => {
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/datasets")) {
+      return "datasets";
+    }
+    return "workspaces";
+  });
+
   // Policy Simulator State (inside /admin policy panel)
   const [simAction, setSimAction] = useState<"read" | "write" | "export">("export");
   const [simFerpa, setSimFerpa] = useState<boolean>(true);
@@ -328,12 +337,23 @@ export const AdminDesk: React.FC = () => {
     if (typeof window !== "undefined") {
       window.history.pushState(null, "", path);
       setCurrentPath(path);
+      if (path.startsWith("/datasets")) {
+        setMainView("datasets");
+      } else if (path === "/" || path.startsWith("/workspace")) {
+        setMainView("workspaces");
+      }
     }
   };
 
   useEffect(() => {
     const handlePopState = () => {
-      setCurrentPath(window.location.pathname);
+      const p = window.location.pathname;
+      setCurrentPath(p);
+      if (p.startsWith("/datasets")) {
+        setMainView("datasets");
+      } else if (p === "/" || p.startsWith("/workspace")) {
+        setMainView("workspaces");
+      }
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -547,6 +567,75 @@ export const AdminDesk: React.FC = () => {
     setActiveStudioApp(updatedApp);
     setApps((prev) => prev.map((a) => (a.slug === updatedApp.slug ? updatedApp : a)));
     showToast(`Added ${peer.name} as editor.`);
+  };
+
+  // Launch Studio linked to a published dataset
+  const handleUseDatasetInApp = (dataset: PublishedDataset) => {
+    const newSlug = `${dataset.id}-intake-${Date.now().toString().slice(-4)}`;
+    const newApp: RegisteredApp = {
+      slug: newSlug,
+      title: `${dataset.name} Intake`,
+      orgCode: dataset.department.slice(0, 4).toUpperCase(),
+      department: dataset.department.toLowerCase(),
+      customDomain: `${newSlug}.scaffoldry.internal`,
+      verified: false,
+      hermCapability: dataset.herm_capability_id || "ACA-01-APP",
+      cedsDomain: "Higher Education / Academic Affairs",
+      status: "Draft",
+      updatedAt: "Just now",
+      recordsCount: 0,
+      workspaceId: activeWorkspaceId === "all" ? "ws-bio-lab" : activeWorkspaceId,
+      collaborators: [
+        {
+          eppn: activePersona.eppn,
+          name: activePersona.name,
+          role: "owner",
+          department: activePersona.department,
+        },
+      ],
+      manifest: {
+        slug: newSlug,
+        title: `${dataset.name} Intake Application`,
+        description: `Connected to published institutional dataset: ${dataset.name}`,
+        organization_code: dataset.department.slice(0, 4).toUpperCase(),
+        department: dataset.department.toLowerCase(),
+        custom_domain: `${newSlug}.scaffoldry.internal`,
+        custom_domain_verified: false,
+        status: "Draft",
+        workspace_id: activeWorkspaceId === "all" ? "ws-bio-lab" : activeWorkspaceId,
+        views: [
+          {
+            id: "intake-form",
+            title: "Intake Submission",
+            view_type: "Form",
+            fields: [
+              {
+                name: "reference_id",
+                label: `Linked ${dataset.name}`,
+                field_type: "Relation",
+                required: true,
+                ferpa_sensitive: dataset.sensitivity_level.includes("FERPA"),
+                linked_dataset_id: dataset.id,
+                linked_field: dataset.fields[0]?.name || "id",
+              },
+              {
+                name: "notes",
+                label: "Submission Notes & Justification",
+                field_type: "Text",
+                required: true,
+                ferpa_sensitive: false,
+              },
+            ],
+          },
+        ],
+        ceds_mappings: {},
+        collaborators: [],
+      },
+    };
+    setApps((prev) => [newApp, ...prev]);
+    setActiveStudioApp(newApp);
+    setStudioOpen(true);
+    showToast(`Configured new application linked to ${dataset.name}`);
   };
 
   return (
@@ -895,9 +984,13 @@ export const AdminDesk: React.FC = () => {
                       <button
                         key={ws.id}
                         type="button"
-                        onClick={() => setActiveWorkspaceId(ws.id)}
+                        onClick={() => {
+                          setActiveWorkspaceId(ws.id);
+                          setMainView("workspaces");
+                          navigateTo("/");
+                        }}
                         className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                          activeWorkspaceId === ws.id
+                          activeWorkspaceId === ws.id && mainView === "workspaces"
                             ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
                             : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
                         }`}
@@ -916,9 +1009,13 @@ export const AdminDesk: React.FC = () => {
                     ))}
                     <button
                       type="button"
-                      onClick={() => setActiveWorkspaceId("all")}
+                      onClick={() => {
+                        setActiveWorkspaceId("all");
+                        setMainView("workspaces");
+                        navigateTo("/");
+                      }}
                       className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                        activeWorkspaceId === "all"
+                        activeWorkspaceId === "all" && mainView === "workspaces"
                           ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
                           : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
                       }`}
@@ -932,10 +1029,34 @@ export const AdminDesk: React.FC = () => {
                 <div>
                   {navRailExpanded && (
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-2 mb-2">
-                      Studio &amp; Tools
+                      Data &amp; Studio Tools
                     </div>
                   )}
                   <nav className="space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMainView("datasets");
+                        navigateTo("/datasets");
+                      }}
+                      className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        mainView === "datasets"
+                          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
+                          : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                      }`}
+                      title="Published Institutional Datasets & Relational Lattice"
+                    >
+                      <span className="text-sm shrink-0">🗄️</span>
+                      {navRailExpanded && (
+                        <span className="flex-1 text-left flex items-center justify-between truncate">
+                          <span className="truncate">Datasets &amp; Lattice</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 font-mono font-bold">
+                            4
+                          </span>
+                        </span>
+                      )}
+                    </button>
+
                     <button
                       type="button"
                       onClick={handleCreateNewApp}
@@ -1141,6 +1262,9 @@ export const AdminDesk: React.FC = () => {
                 </div>
               )}
             </div>
+          ) : mainView === "datasets" ? (
+            /* DATASET EXPLORER & RELATIONAL LATTICE VIEW */
+            <DatasetExplorer onUseInApp={handleUseDatasetInApp} />
           ) : (
             /* PRIMARY END-USER WORKSPACE CANVAS (/) */
             <div className="space-y-6 max-w-7xl mx-auto">
@@ -1406,8 +1530,15 @@ export const AdminDesk: React.FC = () => {
                           <div className="font-semibold text-slate-800 dark:text-slate-200">
                             {field.label} {field.required && <span className="text-rose-500">*</span>}
                           </div>
-                          <div className="font-mono text-[11px] text-slate-400">
-                            key: {field.name} · type: {field.field_type}
+                          <div className="font-mono text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+                            <span>key: {field.name}</span>
+                            <span>·</span>
+                            <span>type: {field.field_type}</span>
+                            {field.linked_dataset_id && (
+                              <span className="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
+                                🔗 {field.linked_dataset_id}
+                              </span>
+                            )}
                           </div>
                         </div>
 
