@@ -9,7 +9,7 @@ permissions:
   id-token: write  # Required for Google Workload Identity Federation OIDC token
 
 jobs:
-  verify-cloud-pipeline:
+  cloud-run-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -25,7 +25,27 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify GCP Access & Artifact Registry
+      - name: Configure Docker for Artifact Registry
         run: |
-          gcloud auth list
-          gcloud artifacts repositories describe scaffoldry --location=${{ vars.GCP_REGION }}
+          gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Scaffoldry Desk Image
+        run: |
+          IMAGE_TAG="${{ vars.GCP_ARTIFACT_REGISTRY }}/scaffoldry-desk:${{ github.sha }}"
+          IMAGE_LATEST="${{ vars.GCP_ARTIFACT_REGISTRY }}/scaffoldry-desk:latest"
+          docker build -f deploy/Dockerfile.web -t "$IMAGE_TAG" -t "$IMAGE_LATEST" .
+          docker push "$IMAGE_TAG"
+          docker push "$IMAGE_LATEST"
+
+      - name: Deploy Scaffoldry Desk to Cloud Run
+        run: |
+          gcloud run deploy scaffoldry-desk \
+            --image="${{ vars.GCP_ARTIFACT_REGISTRY }}/scaffoldry-desk:${{ github.sha }}" \
+            --region="${{ vars.GCP_REGION }}" \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=8080 \
+            --cpu=1 \
+            --memory=512Mi \
+            --min-instances=0 \
+            --max-instances=5
