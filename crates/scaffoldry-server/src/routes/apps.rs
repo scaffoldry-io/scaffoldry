@@ -7,7 +7,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use scaffoldry_engine::AppManifest;
+use scaffoldry_core::{AutomationRule, TriggerEvent, WorkflowExecutionResult};
+use scaffoldry_engine::{AppManifest, AutomationEngine};
 use serde_json::{json, Value};
 
 pub fn router() -> Router<SharedState> {
@@ -15,6 +16,8 @@ pub fn router() -> Router<SharedState> {
         .route("/workspaces/{id}/apps", post(create_app_in_workspace))
         .route("/apps/{slug}", get(get_app).put(update_app))
         .route("/apps/{slug}/publish", post(publish_app))
+        .route("/apps/{slug}/automations", get(list_app_automations).post(create_app_automation))
+        .route("/apps/{slug}/automations/simulate", post(simulate_app_automation))
 }
 
 async fn create_app_in_workspace(
@@ -86,3 +89,50 @@ async fn publish_app(
 
     Ok(Json(manifest))
 }
+
+async fn list_app_automations(
+    State(state): State<SharedState>,
+    Path(slug): Path<String>,
+) -> Json<Vec<AutomationRule>> {
+    let automations = state.automations.read().unwrap();
+    let rules = automations.get(&slug).cloned().unwrap_or_default();
+    Json(rules)
+}
+
+async fn create_app_automation(
+    State(state): State<SharedState>,
+    Path(slug): Path<String>,
+    Json(payload): Json<Value>,
+) -> Result<(StatusCode, Json<AutomationRule>), (StatusCode, Json<Value>)> {
+    let mut rule: AutomationRule = serde_json::from_value(payload)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+    rule.app_slug = slug.clone();
+
+    let mut automations = state.automations.write().unwrap();
+    automations.entry(slug).or_default().push(rule.clone());
+
+    Ok((StatusCode::CREATED, Json(rule)))
+}
+
+async fn simulate_app_automation(
+    State(state): State<SharedState>,
+    Path(slug): Path<String>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Vec<WorkflowExecutionResult>>, (StatusCode, Json<Value>)> {
+    let event: TriggerEvent = serde_json::from_value(payload["event"].clone())
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": format!("Invalid trigger event: {e}")}))))?;
+    let record = payload.get("record").cloned().unwrap_or(json!({}));
+    let principal = payload["principal"].as_str().unwrap_or("dr.smith@university.edu");
+
+    let auto_engine = AutomationEngine::new(state.policy_engine.clone());
+    let automations = state.automations.read().unwrap();
+    let rules = automations.get(&slug).cloned().unwrap_or_default();
+
+    let results: Vec<WorkflowExecutionResult> = rules
+        .iter()
+        .map(|r| auto_engine.evaluate_rule(r, &event, &record, principal))
+        .collect();
+
+    Ok(Json(results))
+}
+

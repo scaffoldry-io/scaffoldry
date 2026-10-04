@@ -1,7 +1,10 @@
 //! Server State and Storage for Datasets, Workspaces, and SCIM Identity
 
 use chrono::Utc;
-use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
+use scaffoldry_core::{
+    ActionType, AutomationRule, ConditionOperator, DatasetField, DatasetRelationship,
+    FieldPredicate, PublishedDataset, RelationshipType, TriggerEvent,
+};
 use scaffoldry_engine::ManifestEngine;
 use scaffoldry_policy::ScaffoldryPolicyEngine;
 use serde::{Deserialize, Serialize};
@@ -63,6 +66,7 @@ pub struct ServerState {
     pub records: RwLock<HashMap<String, Vec<DatasetRecord>>>,
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
+    pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
 }
@@ -227,6 +231,35 @@ impl ServerState {
             },
         );
 
+        let mut automations = HashMap::new();
+        automations.insert(
+            "physics-admissions-review".to_string(),
+            vec![AutomationRule {
+                id: "rule-admissions-auto-approve".to_string(),
+                app_slug: "physics-admissions-review".to_string(),
+                name: "Honors Fellowship Notification".to_string(),
+                description: "Notifies dean and records ledger entry when candidate GPA exceeds 3.85".to_string(),
+                enabled: true,
+                trigger: TriggerEvent::StatusChanged { to_status: "Approved".to_string() },
+                cedar_policy_guard: Some("policy-ferpa-34cfr99".to_string()),
+                predicates: vec![FieldPredicate {
+                    field_name: "gpa".to_string(),
+                    operator: ConditionOperator::GreaterThan,
+                    expected_value: "3.85".to_string(),
+                }],
+                actions: vec![
+                    ActionType::NotifyCollaborator {
+                        role: "dean".to_string(),
+                        message_template: "Candidate approved for fellowship funding".to_string(),
+                    },
+                    ActionType::CreateLedgerAuditEntry {
+                        summary: "Automated fellowship approval recorded".to_string(),
+                        oscal_control: "AC-03".to_string(),
+                    },
+                ],
+            }],
+        );
+
         Ok(Self {
             users: RwLock::new(HashMap::new()),
             groups: RwLock::new(HashMap::new()),
@@ -235,6 +268,7 @@ impl ServerState {
             records: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
+            automations: RwLock::new(automations),
             engine: RwLock::new(engine),
             policy_engine,
         })

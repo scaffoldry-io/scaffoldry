@@ -43,6 +43,15 @@ pub struct ScaffoldryPolicyEngine {
     policies: PolicySet,
 }
 
+impl Clone for ScaffoldryPolicyEngine {
+    fn clone(&self) -> Self {
+        Self {
+            authorizer: Authorizer::new(),
+            policies: self.policies.clone(),
+        }
+    }
+}
+
 impl ScaffoldryPolicyEngine {
     pub fn new(policy_src: &str) -> Result<Self, PolicyError> {
         let policies: PolicySet = policy_src
