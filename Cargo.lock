@@ -1291,9 +1291,11 @@ name = "scaffoldry-engine"
 version = "0.1.0"
 dependencies = [
  "scaffoldry-core",
+ "scaffoldry-policy",
  "serde",
  "serde_json",
  "thiserror",
+ "uuid",
 ]
 
 [[package]]
