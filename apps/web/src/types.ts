@@ -16,6 +16,13 @@ export interface AppView {
   fields: FieldSpec[];
 }
 
+export interface Collaborator {
+  eppn: string;
+  name: string;
+  role: "owner" | "editor" | "viewer";
+  department: string;
+}
+
 export interface AppManifest {
   slug: string;
   title: string;
@@ -27,6 +34,19 @@ export interface AppManifest {
   custom_domain_verified: boolean;
   views: AppView[];
   ceds_mappings: Record<string, string>;
+  collaborators?: Collaborator[];
+  status?: "Published" | "Collaborating" | "Draft";
+  workspace_id?: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  department: string;
+  description: string;
+  icon: string;
+  lead: string;
+  appCount: number;
 }
 
 export interface SourceRule {
@@ -59,7 +79,10 @@ export interface RegisteredApp {
   verified: boolean;
   hermCapability: string;
   cedsDomain: string;
-  status: "Published" | "Staging" | "Draft";
+  status: "Published" | "Collaborating" | "Draft";
   updatedAt: string;
   recordsCount: number;
+  workspaceId: string;
+  collaborators: Collaborator[];
+  manifest: AppManifest;
 }
