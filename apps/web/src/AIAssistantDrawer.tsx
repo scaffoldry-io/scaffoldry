@@ -30,7 +30,7 @@ const SEEDED_MCP_OVERVIEW: McpOverview = {
   },
   capabilities: {
     tools: {
-      count: 6,
+      count: 9,
       items: [
         "list_datasets",
         "query_dataset",
@@ -38,11 +38,14 @@ const SEEDED_MCP_OVERVIEW: McpOverview = {
         "simulate_cedar_policy",
         "calculate_formula",
         "get_governance_posture",
+        "record_governance_decision",
+        "verify_decision_ledger",
+        "export_oscal_compliance",
       ],
     },
     resources: {
-      count: 3,
-      uris: ["datasets://catalog", "policies://cedar", "compliance://oscal"],
+      count: 4,
+      uris: ["datasets://catalog", "policies://cedar", "compliance://oscal", "scaffoldry://governance/decision-ledger"],
     },
     prompts: {
       count: 2,
@@ -87,6 +90,21 @@ const SEEDED_TOOLS: McpTool[] = [
     description: "Retrieve NIST OSCAL 1.1.2 compliance metrics, control implementations, and active policy rules.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "record_governance_decision",
+    description: "Append an approved governance decision to the immutable SHA-256 cryptographic ledger with NIST OSCAL control mapping.",
+    inputSchema: { type: "object", properties: { principal: { type: "string" }, oscal_control_id: { type: "string" }, rationale: { type: "string" } }, required: ["principal", "rationale"] },
+  },
+  {
+    name: "verify_decision_ledger",
+    description: "Verify cryptographic integrity and SHA-256 block chain linkage of all recorded governance decisions from genesis.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "export_oscal_compliance",
+    description: "Generate and export official NIST OSCAL 1.1.2 JSON component-definition with full cryptographic audit proofs.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 const SEEDED_RESOURCES: McpResource[] = [
@@ -106,6 +124,12 @@ const SEEDED_RESOURCES: McpResource[] = [
     uri: "compliance://oscal",
     name: "NIST OSCAL 1.1.2 Security Lattice",
     description: "System Security Plan controls and regulatory crosswalks",
+    mimeType: "application/json",
+  },
+  {
+    uri: "scaffoldry://governance/decision-ledger",
+    name: "Cryptographic Decision Audit Ledger",
+    description: "Append-only SHA-256 chained governance decision blocks",
     mimeType: "application/json",
   },
 ];

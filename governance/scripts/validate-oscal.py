@@ -53,9 +53,19 @@ def validate(path, schema):
         return f"top-level key is {keys}, not one OSCAL model out of {sorted(MODELS)}"
 
     model = keys[0]
+    prefix_map = {
+        "catalog": "catalog",
+        "profile": "profile",
+        "component-definition": "component-definition",
+        "system-security-plan": "ssp",
+        "assessment-plan": "ap",
+        "assessment-results": "ar",
+        "plan-of-action-and-milestones": "poam",
+    }
+    prefix = prefix_map.get(model, model)
     sub = {
         "definitions": schema["definitions"],
-        "$ref": f"#/definitions/oscal-complete-oscal-{model}:{model}",
+        "$ref": f"#/definitions/oscal-complete-oscal-{prefix}:{model}",
     }
 
     try:

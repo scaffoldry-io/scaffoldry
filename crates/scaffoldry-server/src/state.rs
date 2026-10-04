@@ -2,8 +2,10 @@
 
 use chrono::Utc;
 use scaffoldry_core::{
-    ActionType, AutomationRule, ConditionOperator, DatasetField, DatasetRelationship,
-    FieldPredicate, PublishedDataset, RelationshipType, TriggerEvent,
+    verify_ledger_chain, ActionType, AutomationRule, ConditionOperator, DatasetField,
+    DatasetRelationship, DecisionType, FieldPredicate, LedgerEntry, LedgerError,
+    NewLedgerEntryParams, PublishedDataset, RelationshipType, TriggerEvent,
+    GENESIS_PREVIOUS_HASH,
 };
 use scaffoldry_engine::ManifestEngine;
 use scaffoldry_policy::ScaffoldryPolicyEngine;
@@ -67,6 +69,7 @@ pub struct ServerState {
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
     pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
+    pub ledger: RwLock<Vec<LedgerEntry>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
 }
@@ -181,7 +184,7 @@ impl ServerState {
                     DatasetField { name: "is_ferpa_restricted".to_string(), label: "Contains Student Assistant Data".to_string(), field_type: "Boolean".to_string(), required: false, ferpa_sensitive: true, ceds_code: None },
                 ],
                 record_count: 115,
-                published_at: now,
+                published_at: now.clone(),
                 sample_data: vec![
                     json!({ "award_number": "NSF-PHY-2026-01", "project_title": "Quantum Lattice Topological Phases", "pi_eppn": "dr.smith@university.edu", "amount": 750000, "is_ferpa_restricted": true }),
                 ],
@@ -260,6 +263,60 @@ impl ServerState {
             }],
         );
 
+        let entry_0 = LedgerEntry::new(NewLedgerEntryParams {
+            sequence: 0,
+            timestamp_iso: now.clone(),
+            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
+            principal: "prof.curie@science.state.edu".to_string(),
+            organization_code: "DIV-SCIENCES".to_string(),
+            app_slug: Some("biology-lab-inventory".to_string()),
+            decision_type: DecisionType::AppPublished,
+            oscal_control_id: "CM-03".to_string(),
+            rationale: "Initial publication of Biology Research Chemical Inventory".to_string(),
+            payload: &json!({"status": "Published", "domain": "inventory.biology.state.edu"}),
+        });
+
+        let entry_1 = LedgerEntry::new(NewLedgerEntryParams {
+            sequence: 1,
+            timestamp_iso: now.clone(),
+            previous_hash: entry_0.entry_hash.clone(),
+            principal: "prof.curie@science.state.edu".to_string(),
+            organization_code: "DIV-SCIENCES".to_string(),
+            app_slug: Some("biology-lab-inventory".to_string()),
+            decision_type: DecisionType::VanityDnsBound,
+            oscal_control_id: "SC-07".to_string(),
+            rationale: "Vanity DNS alias bound with sovereign gateway validation".to_string(),
+            payload: &json!({"domain": "inventory.biology.state.edu", "verified": true}),
+        });
+
+        let entry_2 = LedgerEntry::new(NewLedgerEntryParams {
+            sequence: 2,
+            timestamp_iso: now.clone(),
+            previous_hash: entry_1.entry_hash.clone(),
+            principal: "dr.watson@science.state.edu".to_string(),
+            organization_code: "DIV-COMPLIANCE".to_string(),
+            app_slug: Some("physics-admissions-review".to_string()),
+            decision_type: DecisionType::WorkflowRuleApproved,
+            oscal_control_id: "AC-03".to_string(),
+            rationale: "FERPA compliance and GPA threshold auto-admit rule approved".to_string(),
+            payload: &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}),
+        });
+
+        let entry_3 = LedgerEntry::new(NewLedgerEntryParams {
+            sequence: 3,
+            timestamp_iso: now,
+            previous_hash: entry_2.entry_hash.clone(),
+            principal: "dr.watson@science.state.edu".to_string(),
+            organization_code: "DIV-COMPLIANCE".to_string(),
+            app_slug: Some("compliance-ferpa-requests".to_string()),
+            decision_type: DecisionType::StatutoryAttestation,
+            oscal_control_id: "AU-02".to_string(),
+            rationale: "Institutional statutory compliance attestation for 34 CFR Part 99".to_string(),
+            payload: &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
+        });
+
+        let ledger = vec![entry_0, entry_1, entry_2, entry_3];
+
         Ok(Self {
             users: RwLock::new(HashMap::new()),
             groups: RwLock::new(HashMap::new()),
@@ -269,8 +326,121 @@ impl ServerState {
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
             automations: RwLock::new(automations),
+            ledger: RwLock::new(ledger),
             engine: RwLock::new(engine),
             policy_engine,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordDecisionInput<'a> {
+    pub principal: String,
+    pub organization_code: String,
+    pub app_slug: Option<String>,
+    pub decision_type: DecisionType,
+    pub oscal_control_id: String,
+    pub rationale: String,
+    pub payload: &'a Value,
+}
+
+impl ServerState {
+    pub fn append_ledger_entry(
+        &self,
+        input: RecordDecisionInput<'_>,
+    ) -> Result<LedgerEntry, LedgerError> {
+        let mut ledger = self.ledger.write().unwrap();
+        let sequence = ledger.len() as u64;
+        let previous_hash = if sequence == 0 {
+            GENESIS_PREVIOUS_HASH.to_string()
+        } else {
+            ledger.last().unwrap().entry_hash.clone()
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let entry = LedgerEntry::new(NewLedgerEntryParams {
+            sequence,
+            timestamp_iso: now,
+            previous_hash,
+            principal: input.principal,
+            organization_code: input.organization_code,
+            app_slug: input.app_slug,
+            decision_type: input.decision_type,
+            oscal_control_id: input.oscal_control_id,
+            rationale: input.rationale,
+            payload: input.payload,
+        });
+        ledger.push(entry.clone());
+        Ok(entry)
+    }
+
+    pub fn verify_ledger(&self) -> Result<bool, LedgerError> {
+        let ledger = self.ledger.read().unwrap();
+        verify_ledger_chain(&ledger)
+    }
+
+    pub fn export_oscal_component_definition(&self) -> Value {
+        let ledger = self.ledger.read().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let implemented_requirements: Vec<Value> = ledger
+            .iter()
+            .map(|entry| {
+                json!({
+                    "uuid": uuid::Uuid::new_v4().to_string(),
+                    "control-id": entry.oscal_control_id.to_lowercase(),
+                    "description": entry.rationale.clone(),
+                    "props": [
+                        {
+                            "name": "ledger-sequence",
+                            "value": entry.sequence.to_string()
+                        },
+                        {
+                            "name": "ledger-principal",
+                            "value": entry.principal.clone()
+                        },
+                        {
+                            "name": "ledger-org-code",
+                            "value": entry.organization_code.clone()
+                        },
+                        {
+                            "name": "ledger-entry-hash",
+                            "value": entry.entry_hash.clone()
+                        },
+                        {
+                            "name": "ledger-previous-hash",
+                            "value": entry.previous_hash.clone()
+                        }
+                    ]
+                })
+            })
+            .collect();
+
+        json!({
+            "component-definition": {
+                "uuid": uuid::Uuid::new_v4().to_string(),
+                "metadata": {
+                    "title": "Scaffoldry Sovereign Application Platform Component Definition",
+                    "last-modified": now,
+                    "version": "1.0.0",
+                    "oscal-version": "1.1.2"
+                },
+                "components": [
+                    {
+                        "uuid": uuid::Uuid::new_v4().to_string(),
+                        "type": "software",
+                        "title": "Scaffoldry Sovereign Application Platform",
+                        "description": "Governed collaborative workspace, tabular engine, and Cedar authorization lattice",
+                        "control-implementations": [
+                            {
+                                "uuid": uuid::Uuid::new_v4().to_string(),
+                                "source": "https://doi.org/10.6028/NIST.SP.800-53r5",
+                                "description": "Automated institutional control implementation and cryptographic verification ledger",
+                                "implemented-requirements": implemented_requirements
+                            }
+                        ]
+                    }
+                ]
+            }
         })
     }
 }

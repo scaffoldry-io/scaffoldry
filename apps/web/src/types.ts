@@ -195,4 +195,18 @@ export interface WorkflowAutomationRule {
   actions: WorkflowActionItem[];
 }
 
+export interface LedgerEntryItem {
+  sequence: number;
+  timestamp_iso: string;
+  previous_hash: string;
+  principal: string;
+  organization_code: string;
+  app_slug?: string;
+  decision_type: string;
+  oscal_control_id: string;
+  rationale: string;
+  payload_hash: string;
+  entry_hash: string;
+}
+
 
