@@ -54,6 +54,9 @@ RUN python3 -m venv $HOME/.venv \
 
 ENV PATH=$HOME/.venv/bin:$PATH
 
+# Mark workspace as safe git directory
+RUN git config --global --add safe.directory /workspace
+
 # Default workspace directory inside container
 WORKDIR /workspace
 CMD ["/bin/bash"]
