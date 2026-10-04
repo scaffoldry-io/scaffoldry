@@ -1,0 +1,40 @@
+{
+  "name": "Scaffoldry Development Sandbox",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "workspaceFolder": "/workspace",
+  "remoteUser": "developer",
+
+  "mounts": [
+    "source=scaffoldry-cargo-cache,target=/home/developer/.cargo/registry,type=volume",
+    "source=scaffoldry-node-cache,target=/home/developer/.npm,type=volume"
+  ],
+
+  "forwardPorts": [
+    3000,
+    5432,
+    8000
+  ],
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "editor.formatOnSave": true,
+        "python.defaultInterpreterPath": "/home/developer/.venv/bin/python",
+        "rust-analyzer.check.command": "clippy"
+      },
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "ms-python.python",
+        "bradlc.vscode-tailwindcss",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  },
+
+  "postCreateCommand": "echo 'Scaffoldry Development Sandbox initialized.' && node --version && cargo --version && python3 --version"
+}
