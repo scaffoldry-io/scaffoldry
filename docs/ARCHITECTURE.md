@@ -175,7 +175,47 @@ Scaffoldry deploys as a single compose stack:
 
 ---
 
-## 6. Guidelines for AI Agents Working in this Repository
+## 6. Application Lifecycle: Review, Deployment, and Security Maintenance
+
+Applications created on Scaffoldry (e.g., Departmental Admissions Review, Grant Tracking) are backed by declarative definitions in Git. This architecture directly enables professional code review, automated security scanning, and fleet maintenance over time without subjecting end users to developer friction.
+
+### 6.1 The Governed Review Workflow
+
+Changes to an application never push directly to live data. Every creation, formula update, or schema alteration follows a governed path:
+
+1. **The Proposal (Branch):** When an end user or AI modifies an app, the platform generates a Git branch: `proposal/<change-summary>`.
+2. **Automated Pre-Review Checks:** Before notifying a human reviewer, the platform runs automated checks:
+   - **Data Sensitivity Scan:** Scans the schema and fields to detect FERPA, HIPAA, or restricted research data markers.
+   - **Policy Evaluation:** Asserts that the requested changes comply with institutional rules via Cedar.
+   - **Compliance Mapping:** Verifies that new data structures map to the relevant OSCAL catalog controls.
+3. **The Human Review on The Desk:** Reviewers (such as Department Chairs or Compliance Officers) review the proposed changes through a clear business UI on The Desk:
+   - Visual before-and-after view of the schema and formula changes.
+   - Data sensitivity classification and required approvals.
+   - Automated check results (Pass/Fail).
+4. **Governed Deployment:** When approved, the system merges the branch into `main` and signs the commit. The production database and calculation engine reload the new schema instantly.
+
+### 6.2 Long-Term Security Maintenance & Fleet Patching
+
+In legacy low-code tools, departmental apps become unmaintained legacy liabilities. In Scaffoldry, apps are maintained as version-controlled repositories:
+
+1. **Upstream Security Patches:** When Scaffoldry Core publishes security patches, dependency upgrades, or formula engine fixes, the system automatically opens patch proposals across the application fleet.
+2. **Automated Regression Testing:** The system tests the departmental application against the patch in an isolated sandbox to verify that existing formulas, rollups, and views continue to calculate correctly.
+3. **One-Click Approval:** Departmental administrators receive a prompt on The Desk: *"Security patch available for Admissions App. Regression tests: 100% Passed. [Apply Update]"*.
+
+### 6.3 Institutional Deployment Modes
+
+Scaffoldry supports two operating modes to accommodate both non-technical departments and enterprise IT teams:
+
+- **Mode A: The Invisible Git Workflow (Default):**
+  Faculty, staff, and departmental administrators interact entirely through The Desk. Embedded Git manages branches, approvals, and merges behind the scenes. Users experience the collaborative ease of low-code without developer tooling.
+- **Mode B: Enterprise Git Sync (Central IT Integration):**
+  The platform syncs departmental application repositories with the university's existing GitHub Enterprise or GitLab infrastructure.
+  - Central IT security tools (Dependabot, Snyk, CodeQL, Trivy) continuously scan application code and dependencies.
+  - Central enterprise engineers can review and audit departmental applications through standard GitHub Pull Requests.
+
+---
+
+## 7. Guidelines for AI Agents Working in this Repository
 
 Future AI assistants working on Scaffoldry must strictly follow these instructions:
 
@@ -184,3 +224,4 @@ Future AI assistants working on Scaffoldry must strictly follow these instructio
 3. **Never bypass human approval for production changes.** Production deployments and schema modifications must always originate from an approved merge into `main`.
 4. **Never write raw SQL migrations for user-defined fields.** User-created columns live in flexible JSONB/Arrow columnar memory; do not run dynamic `ALTER TABLE` DDL queries against PostgreSQL.
 5. **Adhere to Write for People.** Write simple, clear prose. Avoid dense sentence structures, pseudo-philosophical aphorisms, and nested subordinate clauses.
+
