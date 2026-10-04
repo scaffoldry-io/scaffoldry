@@ -15,7 +15,17 @@ fn connect_db() -> Result<Client, postgres::Error> {
 
 #[test]
 fn test_database_schema_migration_and_domain_records() {
-    let mut client = connect_db().expect("Failed to connect to test PostgreSQL database on localhost:5433");
+    let mut client = match connect_db() {
+        Ok(c) => c,
+        Err(e) => {
+            if std::env::var("CI").is_ok() {
+                panic!("CI requires PostgreSQL on 127.0.0.1:5433 but connection failed: {}", e);
+            } else {
+                eprintln!("Skipping database integration test (PostgreSQL not reachable: {})", e);
+                return;
+            }
+        }
+    };
 
     // 1. Apply Schema Migration
     client
