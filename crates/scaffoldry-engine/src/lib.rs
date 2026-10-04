@@ -64,10 +64,14 @@ pub struct AppManifest {
     pub description: String,
     pub organization_code: String,
     pub department: String,
+    #[serde(default)]
     pub herm_capability_id: Option<String>,
+    #[serde(default)]
     pub custom_domain: Option<String>,
+    #[serde(default)]
     pub custom_domain_verified: bool,
     pub views: Vec<AppView>,
+    #[serde(default)]
     pub ceds_mappings: HashMap<String, String>,
 }
 

@@ -3,6 +3,7 @@ members = [
     "crates/scaffoldry-core",
     "crates/scaffoldry-policy",
     "crates/scaffoldry-engine",
+    "crates/scaffoldry-server",
 ]
 resolver = "2"
 

@@ -1,0 +1,413 @@
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use http_body_util::BodyExt;
+use scaffoldry_server::build_app;
+use serde_json::{json, Value};
+use tower::ServiceExt;
+
+#[tokio::test]
+async fn test_health_check() {
+    let app = build_app().expect("Failed to build router");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let val: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(val["status"], "healthy");
+}
+
+#[tokio::test]
+async fn test_scim_2_provisioning_workflow() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. ServiceProviderConfig
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/scim/v2/ServiceProviderConfig")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let config: Value = serde_json::from_slice(&body).unwrap();
+    assert!(config["schemas"].as_array().unwrap().contains(&json!("urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig")));
+
+    // 2. ResourceTypes
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/scim/v2/ResourceTypes")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 3. Create User with Enterprise and eduPerson attributes
+    let user_payload = json!({
+        "schemas": [
+            "urn:ietf:params:scim:schemas:core:2.0:User",
+            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "userName": "dr.smith@university.edu",
+        "name": {
+            "formatted": "Dr. Sarah Smith",
+            "familyName": "Smith",
+            "givenName": "Sarah"
+        },
+        "active": true,
+        "emails": [
+            { "value": "dr.smith@university.edu", "primary": true, "type": "work" }
+        ],
+        "roles": [
+            { "value": "faculty@university.edu", "type": "eduPersonScopedAffiliation" }
+        ],
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+            "department": "Physics",
+            "organization": "University College"
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/scim/v2/Users")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&user_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let created_user: Value = serde_json::from_slice(&body).unwrap();
+    let user_id = created_user["id"].as_str().unwrap().to_string();
+    assert_eq!(created_user["userName"], "dr.smith@university.edu");
+
+    // 4. Get User by ID
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/scim/v2/Users/{}", user_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 5. Create Group
+    let group_payload = json!({
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "displayName": "Physics Faculty Council",
+        "members": [
+            { "value": user_id, "display": "Dr. Sarah Smith" }
+        ]
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/scim/v2/Groups")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&group_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn test_workspaces_and_dataset_collaboration_lifecycle() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. Create Workspace
+    let ws_payload = json!({
+        "name": "Department of Physics",
+        "code": "PHYS",
+        "organization": "College of Arts & Sciences"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&ws_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let created_ws: Value = serde_json::from_slice(&body).unwrap();
+    let ws_id = created_ws["id"].as_str().unwrap().to_string();
+
+    // 2. Add Collaborator
+    let collab_payload = json!({
+        "eppn": "colleague@university.edu",
+        "role": "Editor",
+        "scoped_affiliation": "faculty@university.edu"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/workspaces/{}/collaborators", ws_id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&collab_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 3. Create Application / Dataset Manifest
+    let app_payload = json!({
+        "slug": "physics-grants",
+        "title": "Physics Research Grants",
+        "description": "Tracking departmental grant proposals and FERPA-sensitive awards",
+        "organization_code": "PHYS",
+        "department": "physics",
+        "herm_capability_id": "RES-01-GRANTS",
+        "views": [
+            {
+                "id": "main-table",
+                "title": "All Proposals",
+                "view_type": "Table",
+                "fields": [
+                    { "name": "proposal_title", "label": "Proposal Title", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+                    { "name": "student_pi", "label": "Student Co-PI", "field_type": "Text", "required": false, "ferpa_sensitive": true },
+                    { "name": "amount", "label": "Requested Amount", "field_type": "Number", "required": true, "ferpa_sensitive": false }
+                ]
+            }
+        ],
+        "ceds_mappings": {
+            "student_pi": "000033"
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/workspaces/{}/apps", ws_id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&app_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 4. Publish App with Vanity DNS
+    let publish_payload = json!({
+        "custom_domain": "grants.physics.scaffoldry.internal"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/apps/physics-grants/publish")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&publish_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let published_app: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(published_app["custom_domain"], "grants.physics.scaffoldry.internal");
+    assert_eq!(published_app["custom_domain_verified"], true);
+
+    // 5. Insert Record with FERPA and CEDS evaluation
+    let record_payload = json!({
+        "caller_eppn": "dr.smith@physics.university.edu",
+        "caller_affiliation": "faculty",
+        "data": {
+            "proposal_title": "Quantum Lattice Simulation",
+            "student_pi": "Alice Walker",
+            "amount": 150000
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/apps/physics-grants/records")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&record_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let record: Value = serde_json::from_slice(&body).unwrap();
+    let record_id = record["id"].as_str().unwrap().to_string();
+    assert_eq!(record["is_ferpa_sensitive"], true);
+    assert_eq!(record["ceds_mapping"]["student_pi"], "000033");
+
+    // 6. Query Records
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/physics-grants/records")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let records_list: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(records_list["total"], 1);
+
+    // 7. Update Record
+    let update_payload = json!({
+        "data": {
+            "proposal_title": "Quantum Lattice Simulation (Revised)",
+            "student_pi": "Alice Walker",
+            "amount": 175000
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/apps/physics-grants/records/{}", record_id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 8. Delete Record
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/apps/physics-grants/records/{}", record_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn test_cedar_policy_and_governance_endpoints() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. List Policies
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/policies")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 2. Simulate Cedar Policy: Permitted departmental write
+    let sim_payload = json!({
+        "eppn": "prof.test@physics.edu",
+        "affiliation": "faculty",
+        "action": "write",
+        "app_slug": "physics-grants",
+        "department": "physics",
+        "is_ferpa_sensitive": false
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/policies/simulate")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&sim_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let sim_result: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(sim_result["decision"], "Allow");
+
+    // 3. Simulate Cedar Policy: Forbidden FERPA export without compliance affiliation
+    let sim_forbidden = json!({
+        "eppn": "student.reviewer@physics.edu",
+        "affiliation": "student",
+        "action": "export",
+        "app_slug": "physics-grants",
+        "department": "physics",
+        "is_ferpa_sensitive": true
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/policies/simulate")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&sim_forbidden).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let sim_result: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(sim_result["decision"], "Deny");
+
+    // 4. OSCAL Governance Catalog Export
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/governance/oscal")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let oscal: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(oscal["schema_version"], "1.1.2");
+}
