@@ -25,6 +25,40 @@ export interface Collaborator {
   department: string;
 }
 
+export type GovernedComponentType =
+  | "stat-metric"
+  | "tabular-grid"
+  | "kanban-stage"
+  | "intake-form"
+  | "calendar-view"
+  | "rich-banner"
+  | "action-toolbar";
+
+export interface GovernedComponentSpec {
+  id: string;
+  type: GovernedComponentType;
+  title: string;
+  slot: "header" | "main" | "sidebar" | "footer";
+  layout: {
+    width: "full" | "half" | "third" | "two-thirds";
+    order: number;
+  };
+  access_guard?: {
+    required_affiliation?: "faculty" | "staff" | "student" | "admin";
+    classification_max?: "public" | "internal" | "restricted";
+  };
+  config: Record<string, any>;
+}
+
+export interface AppPage {
+  id: string;
+  slug: string;
+  title: string;
+  icon: string;
+  description?: string;
+  components: GovernedComponentSpec[];
+}
+
 export interface AppManifest {
   slug: string;
   title: string;
@@ -35,6 +69,7 @@ export interface AppManifest {
   custom_domain?: string;
   custom_domain_verified: boolean;
   views: AppView[];
+  pages?: AppPage[];
   ceds_mappings: Record<string, string>;
   collaborators?: Collaborator[];
   status?: "Published" | "Collaborating" | "Draft";

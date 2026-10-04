@@ -5,6 +5,8 @@ import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { WorkflowBuilder } from "./WorkflowBuilder";
 import { DecisionLedgerView } from "./DecisionLedgerView";
+import { AppBuilder } from "./AppBuilder";
+import { PublishedAppView } from "./PublishedAppView";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
 
 const PERSONAS: Persona[] = [
@@ -377,6 +379,8 @@ export const AdminDesk: React.FC = () => {
   });
 
   const isAdminPath = currentPath === "/admin" || currentPath.startsWith("/admin/");
+  const isBuilderPath = currentPath === "/builder" || currentPath.startsWith("/builder/");
+  const isAppPath = currentPath === "/app" || currentPath.startsWith("/app/");
 
   // Active Workspace & Filter State
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("ws-bio-lab");
@@ -607,11 +611,17 @@ export const AdminDesk: React.FC = () => {
     return matchesWorkspace && matchesSearch && matchesStatus;
   });
 
-  // Open App in Co-Builder Studio
+  // Open App in Co-Builder Studio (Full-Page Builder)
   const handleOpenStudio = (app: RegisteredApp) => {
     setActiveStudioApp(app);
     setStudioTab("schema");
-    setStudioOpen(true);
+    navigateTo(`/builder/${app.slug}`);
+  };
+
+  // Open App in Standalone Published Runtime
+  const handleOpenPublishedApp = (app: RegisteredApp) => {
+    setActiveStudioApp(app);
+    navigateTo(`/app/${app.slug}`);
   };
 
   // Create New App in Active Workspace
@@ -886,6 +896,37 @@ export const AdminDesk: React.FC = () => {
     setIsAiAssistantOpen(false);
     showToast(`Installed AI-proposed application "${manifest.title}" with CEDS & FERPA governance.`);
   };
+
+  // Dedicated Full-Page App Builder Route (/builder/:slug)
+  if (isBuilderPath) {
+    const slug = currentPath.replace("/builder/", "").replace("/builder", "").split("/")[0] || apps[0]?.slug;
+    const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
+    return (
+      <AppBuilder
+        app={targetApp}
+        onBack={() => navigateTo("/")}
+        onOpenPublishedApp={(s) => navigateTo(`/app/${s}`)}
+        onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
+        onSaveApp={(updated) => {
+          setApps((prev) => prev.map((a) => (a.slug === updated.slug ? updated : a)));
+          setActiveStudioApp(updated);
+        }}
+      />
+    );
+  }
+
+  // Dedicated Standalone Published App Runtime Route (/app/:slug)
+  if (isAppPath) {
+    const slug = currentPath.replace("/app/", "").replace("/app", "").split("/")[0] || apps[0]?.slug;
+    const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
+    return (
+      <PublishedAppView
+        app={targetApp}
+        onOpenBuilder={(s) => navigateTo(`/builder/${s}`)}
+        onBackToDesk={() => navigateTo("/")}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
@@ -1687,22 +1728,30 @@ export const AdminDesk: React.FC = () => {
                         ))}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => setActiveWorkspaceApp(app)}
-                          className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer"
+                          onClick={() => handleOpenPublishedApp(app)}
+                          className="inline-flex items-center gap-1 text-xs font-bold px-2 py-1 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 cursor-pointer"
+                          title="Open Live Published App"
                         >
-                          <span>Open Grid &amp; Views</span>
-                          <span>→</span>
+                          <span>App ↗</span>
                         </button>
                         <button
                           type="button"
                           onClick={() => handleOpenStudio(app)}
-                          className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                          title="Configure in Studio"
+                          className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer"
+                          title="Open Full-Page App Builder"
                         >
-                          ⚙️
+                          <span>Builder ✎</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveWorkspaceApp(app)}
+                          className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          title="Quick Tabular Grid & Views"
+                        >
+                          <span>▦</span>
                         </button>
                       </div>
                     </div>
