@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     tzdata \
     unzip \
+    wget \
     gh \
     && rm -rf /var/lib/apt/lists/*
 
