@@ -55,6 +55,10 @@ pub struct FieldSpec {
     pub linked_dataset_id: Option<String>,
     #[serde(default)]
     pub linked_field: Option<String>,
+    #[serde(default)]
+    pub target_table_id: Option<String>,
+    #[serde(default)]
+    pub target_display_field: Option<String>,
 }
 
 impl FieldSpec {
@@ -73,8 +77,38 @@ impl FieldSpec {
             ferpa_sensitive,
             linked_dataset_id: None,
             linked_field: None,
+            target_table_id: None,
+            target_display_field: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRelationship {
+    pub id: String,
+    pub name: String,
+    pub source_table_id: String,
+    pub target_table_id: String,
+    pub source_field: String,
+    pub target_field: String,
+    pub relationship_type: String,
+    pub display_field: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppTable {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    pub fields: Vec<FieldSpec>,
+    #[serde(default)]
+    pub primary_field: Option<String>,
+    #[serde(default)]
+    pub sample_records: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +132,10 @@ pub struct AppManifest {
     pub custom_domain: Option<String>,
     #[serde(default)]
     pub custom_domain_verified: bool,
+    #[serde(default)]
+    pub tables: Vec<AppTable>,
+    #[serde(default)]
+    pub relationships: Vec<TableRelationship>,
     pub views: Vec<AppView>,
     #[serde(default)]
     pub ceds_mappings: HashMap<String, String>,

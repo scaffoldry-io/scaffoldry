@@ -864,6 +864,7 @@ async fn test_framework_specification_api_and_mcp_integration() {
     assert_eq!(components.len(), 7);
     assert_eq!(components[0]["type"], "stat-metric");
     assert_eq!(components[1]["type"], "tabular-grid");
+    assert!(spec["relational_architecture"]["multi_table_supported"].as_bool().unwrap());
 
     // 2. MCP JSON-RPC 2.0 tools/call get_framework_spec
     let mcp_tool_payload = json!({

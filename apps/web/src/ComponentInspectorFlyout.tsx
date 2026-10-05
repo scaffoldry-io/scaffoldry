@@ -1,5 +1,5 @@
 import React from "react";
-import { GovernedComponentSpec } from "./types";
+import { AppTable, GovernedComponentSpec } from "./types";
 
 interface ComponentInspectorFlyoutProps {
   component: GovernedComponentSpec | null;
@@ -9,6 +9,7 @@ interface ComponentInspectorFlyoutProps {
   onDeleteComponent: (id: string) => void;
   onMoveComponent: (id: string, direction: "up" | "down") => void;
   availableColumns?: string[];
+  tables?: AppTable[];
 }
 
 export const ComponentInspectorFlyout: React.FC<ComponentInspectorFlyoutProps> = ({
@@ -19,8 +20,12 @@ export const ComponentInspectorFlyout: React.FC<ComponentInspectorFlyoutProps> =
   onDeleteComponent,
   onMoveComponent,
   availableColumns = ["id", "title", "department", "status", "budget", "submitted_at"],
+  tables = [],
 }) => {
   if (!isOpen || !component) return null;
+
+  const currentTable = tables.find((t) => t.id === component.config.source_table_id) || tables[0];
+  const columnsToUse = currentTable ? currentTable.fields.map((f) => f.name) : availableColumns;
 
   const updateProp = (field: string, val: any) => {
     onUpdateComponent({
@@ -127,6 +132,23 @@ export const ComponentInspectorFlyout: React.FC<ComponentInspectorFlyoutProps> =
               ))}
             </div>
           </div>
+
+          {tables && tables.length > 0 && (
+            <div>
+              <span className="text-slate-600 dark:text-slate-300 font-medium">Source App Table</span>
+              <select
+                value={component.config.source_table_id || tables[0]?.id}
+                onChange={(e) => updateProp("source_table_id", e.target.value)}
+                className="mt-1 w-full px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              >
+                {tables.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.icon || "📑"} {t.name} ({t.fields.length} fields)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Section: Type-Specific Properties */}
@@ -199,8 +221,8 @@ export const ComponentInspectorFlyout: React.FC<ComponentInspectorFlyoutProps> =
             <div>
               <span className="text-slate-600 dark:text-slate-300 font-medium">Visible Columns (TanStack)</span>
               <div className="space-y-1.5 mt-1.5 border border-slate-200 dark:border-slate-700 rounded p-2 bg-slate-50 dark:bg-slate-800/50">
-                {availableColumns.map((col) => {
-                  const isVisible = (component.config.visible_columns || availableColumns).includes(col);
+                {columnsToUse.map((col) => {
+                  const isVisible = (component.config.visible_columns || columnsToUse).includes(col);
                   return (
                     <label key={col} className="flex items-center gap-2 cursor-pointer text-slate-700 dark:text-slate-300">
                       <input

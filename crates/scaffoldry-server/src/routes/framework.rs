@@ -42,6 +42,16 @@ pub fn build_framework_spec_json() -> serde_json::Value {
             ],
             "ferpa_guardrails": "Restricted student and employee data cannot be displayed in widgets without explicit Cedar policy authorization."
         },
+        "relational_architecture": {
+            "multi_table_supported": true,
+            "relationship_types": ["ManyToOne", "OneToMany", "ManyToMany"],
+            "features": [
+                "Foreign key relation fields with interactive record lookup badges",
+                "Cross-table rollups and count aggregations",
+                "Dynamic relational dropdowns in governed intake forms",
+                "Visual relationship lattice graph"
+            ]
+        },
         "component_catalog": [
             {
                 "type": "stat-metric",

@@ -66,13 +66,13 @@ describe("AppBuilder Usability & Interactive Component Canvas", () => {
     // Verify top bar details
     expect(screen.getByText("Physics Department Research Grants")).toBeInTheDocument();
     expect(screen.getByText("/builder/physics-grants")).toBeInTheDocument();
-    expect(screen.getByText("Published")).toBeInTheDocument();
+    expect(screen.getByText(/3 Tables · 2 Relations/i)).toBeInTheDocument();
 
     // Verify tabs
-    const tabPages = screen.getByText(/1\. Pages & Interface Canvas/i);
-    const tabData = screen.getByText(/2\. Data & Schema/i);
-    const tabAutomations = screen.getByText(/3\. Governed Automations/i);
-    const tabSettings = screen.getByText(/4\. Governance & Vanity Routing/i);
+    const tabPages = screen.getByTestId("tab-btn-pages");
+    const tabData = screen.getByTestId("tab-btn-data");
+    const tabAutomations = screen.getByTestId("tab-btn-automations");
+    const tabSettings = screen.getByTestId("tab-btn-settings");
 
     expect(tabPages).toBeInTheDocument();
     expect(tabData).toBeInTheDocument();
@@ -81,8 +81,8 @@ describe("AppBuilder Usability & Interactive Component Canvas", () => {
 
     // Switch to Settings tab
     fireEvent.click(tabSettings);
-    expect(screen.getByText("Vanity Routing & Domain Binding")).toBeInTheDocument();
-    expect(screen.getByText("EduPerson Role Scoping & Cedar ABAC")).toBeInTheDocument();
+    expect(screen.getByText("Multi-Table Storage & Vanity Routing")).toBeInTheDocument();
+    expect(screen.getByText("Relational Lattice Topology")).toBeInTheDocument();
 
     // Switch back to Pages tab
     fireEvent.click(tabPages);
@@ -114,6 +114,40 @@ describe("AppBuilder Usability & Interactive Component Canvas", () => {
 
     // Assert the component title on the visual canvas updated reactively
     expect(screen.getByText("Approved Faculty Grants")).toBeInTheDocument();
+  });
+
+  it("supports multiple tables per app and foreign key relational lookups in Data tab", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    // Switch to Data & Schema tab
+    const tabData = screen.getByTestId("tab-btn-data");
+    fireEvent.click(tabData);
+
+    // Verify multi-table switcher buttons exist
+    expect(screen.getByTestId("table-tab-proposals")).toBeInTheDocument();
+    expect(screen.getByTestId("table-tab-investigators")).toBeInTheDocument();
+    expect(screen.getByTestId("table-tab-allocations")).toBeInTheDocument();
+
+    // Verify relational badge in Proposals table
+    expect(screen.getAllByText("Dr. Marie Curie").length).toBeGreaterThan(0);
+
+    // Switch to Principal Investigators table
+    fireEvent.click(screen.getByTestId("table-tab-investigators"));
+    expect(screen.getAllByText("Principal Investigators").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Tenured and tenure-track faculty research leaders")).toBeInTheDocument();
+    expect(screen.getByText("Dr. Alan Turing")).toBeInTheDocument();
+
+    // Switch to Budget Allocations table
+    fireEvent.click(screen.getByTestId("table-tab-allocations"));
+    expect(screen.getAllByText("Budget Allocations").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Grant expenditure allocations and quarterly disbursement tranches")).toBeInTheDocument();
+    expect(screen.getByText("ALC-101")).toBeInTheDocument();
   });
 });
 
@@ -171,5 +205,35 @@ describe("PublishedAppView Standalone Runtime Usability", () => {
     // Assert new record appears in the published view
     expect(screen.getByText("Topological Superconductivity in Dirac Semimetals")).toBeInTheDocument();
     expect(screen.getByText(/committed to sovereign ledger/i)).toBeInTheDocument();
+  });
+
+  it("renders relational lookup badges and links foreign key in intake modal", () => {
+    render(
+      <PublishedAppView
+        app={mockApp}
+      />
+    );
+
+    // Verify relational badge rendered for records
+    expect(screen.getByTestId("rel-badge-APP-101")).toHaveTextContent("Dr. Marie Curie");
+    expect(screen.getByTestId("rel-badge-APP-103")).toHaveTextContent("Dr. Alan Turing");
+
+    // Open proposal modal
+    fireEvent.click(screen.getByText("+ New Proposal"));
+
+    // Select Principal Investigator
+    const piSelect = screen.getByTestId("proposal-pi-select");
+    expect(piSelect).toBeInTheDocument();
+    fireEvent.change(piSelect, { target: { value: "INV-02" } }); // Alan Turing
+
+    const titleInput = screen.getByPlaceholderText("e.g. Sub-Kelvin Topological Insulator Measurement");
+    fireEvent.change(titleInput, { target: { value: "Neural Network Morphisms" } });
+
+    // Submit form
+    fireEvent.submit(screen.getByTestId("proposal-intake-form"));
+
+    // Verify new record has Dr. Alan Turing badge
+    expect(screen.getByText("Neural Network Morphisms")).toBeInTheDocument();
+    expect(screen.getByTestId("rel-badge-APP-105")).toHaveTextContent("Dr. Alan Turing");
   });
 });
