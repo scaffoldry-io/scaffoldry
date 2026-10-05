@@ -9,6 +9,7 @@ This repository enforces strict sovereign software architecture, NIST OSCAL comp
 1. **Host Plane (Sysadmin / Platform Governor):**
    - Operates on the host outside the container.
    - Manages GCP CI/CD infrastructure, performs PR code reviews, audits drift, and handles release merges.
+   - Controls cloud appliance lifecycle and budget hibernation (see `.agents/skills/gcp-cicd-management/SKILL.md`).
    - Guarded by GitHub branch protection on `main`.
 
 2. **Container Plane (Worker / Executor):**
