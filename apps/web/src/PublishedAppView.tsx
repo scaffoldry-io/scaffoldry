@@ -14,7 +14,14 @@ interface RecordItem {
   status: string;
   budget: number;
   submitted_at: string;
+  lead_investigator_id?: string;
 }
+
+const investigators = [
+  { id: "INV-01", name: "Dr. Marie Curie", department: "Physics & Astronomy", email: "mcurie@univ.edu" },
+  { id: "INV-02", name: "Dr. Alan Turing", department: "Computer Science", email: "aturing@univ.edu" },
+  { id: "INV-03", name: "Dr. Barbara McClintock", department: "Bioengineering", email: "bmcclintock@univ.edu" },
+];
 
 export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
   app,
@@ -30,6 +37,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
       status: "Under Review",
       budget: 450000,
       submitted_at: "2026-10-02",
+      lead_investigator_id: "INV-01",
     },
     {
       id: "APP-102",
@@ -38,6 +46,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
       status: "Approved",
       budget: 820000,
       submitted_at: "2026-09-28",
+      lead_investigator_id: "INV-03",
     },
     {
       id: "APP-103",
@@ -46,6 +55,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
       status: "Funded",
       budget: 640000,
       submitted_at: "2026-09-15",
+      lead_investigator_id: "INV-02",
     },
     {
       id: "APP-104",
@@ -54,6 +64,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
       status: "Under Review",
       budget: 380000,
       submitted_at: "2026-10-01",
+      lead_investigator_id: "INV-01",
     },
   ]);
 
@@ -63,6 +74,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
   const [newTitle, setNewTitle] = useState<string>("");
   const [newDept, setNewDept] = useState<string>("Physics & Astronomy");
   const [newBudget, setNewBudget] = useState<number>(250000);
+  const [newInvestigatorId, setNewInvestigatorId] = useState<string>("INV-01");
   const [submissionFeedback, setSubmissionFeedback] = useState<string | null>(null);
 
   // Derive pages from manifest or default
@@ -162,6 +174,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
       status: "Under Review",
       budget: Number(newBudget) || 100000,
       submitted_at: new Date().toISOString().split("T")[0],
+      lead_investigator_id: newInvestigatorId,
     };
 
     setRecords((prev) => [newRecord, ...prev]);
@@ -390,6 +403,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
                               <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 font-mono text-[11px] uppercase">
                                 <th className="pb-2">Record ID</th>
                                 <th className="pb-2">Proposal Title</th>
+                                <th className="pb-2">Lead PI (Relational)</th>
                                 <th className="pb-2">Department</th>
                                 <th className="pb-2">Status</th>
                                 <th className="pb-2 text-right">Budget</th>
@@ -401,6 +415,19 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
                                 <tr key={r.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
                                   <td className="py-2.5 font-mono text-slate-500">{r.id}</td>
                                   <td className="py-2.5 font-semibold text-slate-900 dark:text-white">{r.title}</td>
+                                  <td className="py-2.5">
+                                    {r.lead_investigator_id ? (
+                                      <span
+                                        data-testid={`rel-badge-${r.id}`}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-50 text-purple-700 dark:bg-purple-950/70 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
+                                      >
+                                        <span>👥</span>
+                                        <span>{investigators.find((inv) => inv.id === r.lead_investigator_id)?.name || r.lead_investigator_id}</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 italic text-[11px]">Unassigned</span>
+                                    )}
+                                  </td>
                                   <td className="py-2.5 text-slate-600 dark:text-slate-300">{r.department}</td>
                                   <td className="py-2.5">
                                     <span
@@ -422,7 +449,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
                             </tbody>
                             <tfoot>
                               <tr className="border-t-2 border-slate-200 dark:border-slate-800 font-bold text-xs">
-                                <td colSpan={4} className="py-2.5 text-slate-600 dark:text-slate-300">
+                                <td colSpan={5} className="py-2.5 text-slate-600 dark:text-slate-300">
                                   Rollup Total (SUM)
                                 </td>
                                 <td className="py-2.5 text-right font-mono text-blue-600 dark:text-blue-400">
@@ -555,6 +582,23 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
                   placeholder="e.g. Sub-Kelvin Topological Insulator Measurement"
                   className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-blue-500"
                 />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                  Lead Principal Investigator (Relational Lookup) *
+                </label>
+                <select
+                  data-testid="proposal-pi-select"
+                  value={newInvestigatorId}
+                  onChange={(e) => setNewInvestigatorId(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  {investigators.map((inv) => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.name} - {inv.department} ({inv.id})
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

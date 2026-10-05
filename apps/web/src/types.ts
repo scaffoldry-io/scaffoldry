@@ -9,6 +9,8 @@ export interface FieldSpec {
   ferpa_sensitive: boolean;
   linked_dataset_id?: string;
   linked_field?: string;
+  target_table_id?: string;
+  target_display_field?: string;
 }
 
 export interface AppView {
@@ -59,6 +61,29 @@ export interface AppPage {
   components: GovernedComponentSpec[];
 }
 
+export interface TableRelationship {
+  id: string;
+  name: string;
+  source_table_id: string;
+  target_table_id: string;
+  source_field: string;
+  target_field: string;
+  relationship_type: "ManyToOne" | "OneToMany" | "ManyToMany";
+  display_field: string;
+}
+
+export interface AppTable {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  icon?: string;
+  primary_field?: string;
+  fields: FieldSpec[];
+  records?: Record<string, any>[];
+  relationships?: TableRelationship[];
+}
+
 export interface AppManifest {
   slug: string;
   title: string;
@@ -68,6 +93,8 @@ export interface AppManifest {
   herm_capability_id?: string;
   custom_domain?: string;
   custom_domain_verified: boolean;
+  tables?: AppTable[];
+  relationships?: TableRelationship[];
   views: AppView[];
   pages?: AppPage[];
   ceds_mappings: Record<string, string>;
