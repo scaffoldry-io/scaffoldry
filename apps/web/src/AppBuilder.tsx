@@ -17,6 +17,7 @@ import {
 } from "./types";
 import { ComponentInspectorFlyout } from "./ComponentInspectorFlyout";
 import { WorkflowBuilder } from "./WorkflowBuilder";
+import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
 import {
   applyCompoundFilter,
   applyMultiSort,
@@ -31,6 +32,7 @@ interface AppBuilderProps {
   app: RegisteredApp;
   onBack: () => void;
   onOpenPublishedApp: (slug: string) => void;
+  onOpenIntakeForm?: (tableId?: string) => void;
   onOpenAiAssistant?: () => void;
   onSaveApp?: (updated: RegisteredApp) => void;
 }
@@ -39,10 +41,12 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   app,
   onBack,
   onOpenPublishedApp,
+  onOpenIntakeForm,
   onOpenAiAssistant,
   onSaveApp,
 }) => {
-  const [activeTab, setActiveTab] = useState<"data" | "pages" | "automations" | "settings">("pages");
+  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings">("pages");
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [activePageId, setActivePageId] = useState<string>("page-overview");
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [isFlyoutOpen, setIsFlyoutOpen] = useState<boolean>(false);
@@ -804,7 +808,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans">
+    <div
+      className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-all duration-200 ${
+        isFullscreen ? "fixed inset-0 z-50 overflow-y-auto" : ""
+      }`}
+    >
       {/* Top Application Bar */}
       <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -838,6 +846,32 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
               ✓ {saveStatus}
             </span>
           )}
+
+          <button
+            type="button"
+            data-testid="fullscreen-mode-toggle"
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+              isFullscreen
+                ? "border-blue-500 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold"
+                : "border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+            }`}
+            title={isFullscreen ? "Exit Full-Screen Canvas" : "Full-Screen Canvas View"}
+          >
+            {isFullscreen ? "🗗 Exit Full-Screen" : "⛶ Full-Screen"}
+          </button>
+
+          {onOpenIntakeForm && (
+            <button
+              type="button"
+              data-testid="open-standalone-form-btn"
+              onClick={() => onOpenIntakeForm(activeTable.id)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              📋 Public Form
+            </button>
+          )}
+
           {onOpenAiAssistant && (
             <button
               type="button"
@@ -893,6 +927,18 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
           </button>
           <button
             type="button"
+            data-testid="tab-btn-forms"
+            onClick={() => setActiveTab("forms")}
+            className={`py-3 border-b-2 cursor-pointer transition-colors ${
+              activeTab === "forms"
+                ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
+                : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            }`}
+          >
+            3. Standalone Public Forms
+          </button>
+          <button
+            type="button"
             data-testid="tab-btn-automations"
             onClick={() => setActiveTab("automations")}
             className={`py-3 border-b-2 cursor-pointer transition-colors ${
@@ -901,7 +947,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                 : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
             }`}
           >
-            3. Governed Automations
+            4. Governed Automations
           </button>
           <button
             type="button"
@@ -913,7 +959,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                 : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
             }`}
           >
-            4. Governance &amp; Vanity Routing
+            5. Governance &amp; Vanity Routing
           </button>
         </div>
 
@@ -2949,7 +2995,54 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
           </div>
         )}
 
-        {/* TAB 3: WORKFLOW AUTOMATIONS */}
+        {/* TAB 3: STANDALONE INTAKE FORMS */}
+        {activeTab === "forms" && (
+          <div className="flex-1 overflow-y-auto p-6 bg-slate-100/50 dark:bg-slate-950/50">
+            <div className="max-w-4xl mx-auto space-y-6">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Standalone Public Intake Forms
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Live end-user form intake previews, direct submission endpoints, and public share URLs.
+                  </p>
+                </div>
+                {onOpenIntakeForm && (
+                  <button
+                    type="button"
+                    data-testid="launch-public-form-btn"
+                    onClick={() => onOpenIntakeForm(activeTable.id)}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                  >
+                    ↗ Open Full-Screen Standalone Form
+                  </button>
+                )}
+              </div>
+
+              {/* Embedded Standalone Form Component */}
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden bg-white dark:bg-slate-900">
+                <StandaloneIntakeForm
+                  app={app}
+                  tableId={activeTable.id}
+                  onRecordSubmitted={(tblId, rec) => {
+                    setTables((prev) =>
+                      prev.map((t) =>
+                        t.id === tblId
+                          ? { ...t, records: [rec, ...(t.records || [])] }
+                          : t
+                      )
+                    );
+                    setSaveStatus(`Form submission recorded into ${tblId}`);
+                    setTimeout(() => setSaveStatus(null), 3000);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: WORKFLOW AUTOMATIONS */}
         {activeTab === "automations" && (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-5xl mx-auto space-y-6">

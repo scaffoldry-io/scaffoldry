@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { AppBuilder } from "../AppBuilder";
 import { PublishedAppView } from "../PublishedAppView";
+import { StandaloneIntakeForm } from "../StandaloneIntakeForm";
 import { RegisteredApp, AppTable } from "../types";
 import {
   applyCompoundFilter,
@@ -658,6 +659,146 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     // Modal closed and new record present in grid
     expect(screen.queryByTestId("csv-import-modal")).not.toBeInTheDocument();
     expect(screen.getByText("Laser Interferometry Gravity")).toBeInTheDocument();
+  });
+
+  describe("Milestone 5: Standalone Public Intake Forms & Full-Screen UI/UX Usability", () => {
+    it("renders full-screen StandaloneIntakeForm, switches tables, and validates required fields", () => {
+      const mockRichApp: RegisteredApp = {
+        ...mockApp,
+        manifest: {
+          ...mockApp.manifest,
+          tables: [
+            {
+              id: "tbl-proposals",
+              name: "Research Proposals",
+              slug: "proposals",
+              fields: [
+                { name: "title", label: "Proposal Title", field_type: "Text", required: true, ferpa_sensitive: false },
+                { name: "budget", label: "Budget", field_type: "Number", required: true, ferpa_sensitive: false },
+                { name: "rating", label: "Rating", field_type: "Rating", required: false, ferpa_sensitive: false },
+                { name: "tags", label: "Tags", field_type: "MultiSelect", required: false, ferpa_sensitive: false, select_options: ["Quantum", "Relativity", "Optics"] },
+              ],
+            },
+          ],
+        },
+      };
+
+      const onRecordSubmitted = vi.fn();
+      render(
+        <StandaloneIntakeForm
+          app={mockRichApp}
+          onRecordSubmitted={onRecordSubmitted}
+        />
+      );
+
+      // Verify full-screen container
+      expect(screen.getByTestId("standalone-intake-form-container")).toBeInTheDocument();
+      expect(screen.getByText(/Research Proposals Intake/i)).toBeInTheDocument();
+
+      // Attempt to submit empty required form
+      const submitBtn = screen.getByTestId("submit-intake-form-btn");
+      fireEvent.click(submitBtn);
+
+      // Validation notice and inline error should appear
+      expect(screen.getByText(/Please complete all required fields indicated below/i)).toBeInTheDocument();
+      expect(screen.getByText(/Proposal Title is required/i)).toBeInTheDocument();
+      expect(onRecordSubmitted).not.toHaveBeenCalled();
+
+      // Enter proposal title
+      const titleInput = screen.getByTestId("field-input-title");
+      fireEvent.change(titleInput, { target: { value: "Topological Superconductivity" } });
+
+      // Enter budget
+      const budgetInput = screen.getByTestId("field-input-budget");
+      fireEvent.change(budgetInput, { target: { value: 750000 } });
+
+      // Select rating
+      const ratingStar = screen.getByTestId("rating-star-5");
+      fireEvent.click(ratingStar);
+
+      // Select multiselect option
+      const tagBtn = screen.getByTestId("multiselect-option-Quantum");
+      fireEvent.click(tagBtn);
+
+      // Submit valid form
+      fireEvent.click(submitBtn);
+
+      // Confirmation card should be rendered
+      expect(screen.getByTestId("intake-confirmation-card")).toBeInTheDocument();
+      expect(screen.getByText(/Submission Received and Attested/i)).toBeInTheDocument();
+      expect(screen.getByText(/sha256:/i)).toBeInTheDocument();
+      expect(onRecordSubmitted).toHaveBeenCalledWith(
+        "tbl-proposals",
+        expect.objectContaining({
+          title: "Topological Superconductivity",
+          budget: 750000,
+        })
+      );
+
+      // Reset form via "Submit Another Response"
+      const resetBtn = screen.getByTestId("submit-another-btn");
+      fireEvent.click(resetBtn);
+      expect(screen.queryByTestId("intake-confirmation-card")).not.toBeInTheDocument();
+      expect(screen.getByTestId("standalone-intake-form")).toBeInTheDocument();
+    });
+
+    it("copies standalone form share URL to clipboard", () => {
+      render(<StandaloneIntakeForm app={mockApp} />);
+
+      const copyBtn = screen.getByTestId("copy-form-url-btn");
+      expect(copyBtn).toHaveTextContent("Copy Share Link");
+      fireEvent.click(copyBtn);
+      // Confirms copy button interaction
+      expect(copyBtn).toBeInTheDocument();
+    });
+
+    it("toggles full-screen mode in AppBuilder and switches to Standalone Forms tab", () => {
+      const mockOpenIntake = vi.fn();
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+          onOpenIntakeForm={mockOpenIntake}
+        />
+      );
+
+      // Full-screen mode toggle in top bar
+      const fullscreenBtn = screen.getByTestId("fullscreen-mode-toggle");
+      expect(fullscreenBtn).toHaveTextContent("Full-Screen");
+      fireEvent.click(fullscreenBtn);
+      expect(fullscreenBtn).toHaveTextContent("Exit Full-Screen");
+      fireEvent.click(fullscreenBtn);
+      expect(fullscreenBtn).toHaveTextContent("Full-Screen");
+
+      // Open Standalone Form via top bar button
+      const openFormBtn = screen.getByTestId("open-standalone-form-btn");
+      fireEvent.click(openFormBtn);
+      expect(mockOpenIntake).toHaveBeenCalledWith("tbl-proposals");
+
+      // Switch to Standalone Public Forms tab
+      const formsTabBtn = screen.getByTestId("tab-btn-forms");
+      fireEvent.click(formsTabBtn);
+      expect(screen.getByText(/Standalone Public Intake Forms/i)).toBeInTheDocument();
+      expect(screen.getByTestId("launch-public-form-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("standalone-intake-form")).toBeInTheDocument();
+    });
+
+    it("renders public intake form button in PublishedAppView header", () => {
+      const mockOpenIntake = vi.fn();
+      render(
+        <PublishedAppView
+          app={mockApp}
+          onOpenBuilder={vi.fn()}
+          onOpenIntakeForm={mockOpenIntake}
+        />
+      );
+
+      const publicIntakeBtn = screen.getByTestId("open-public-intake-form-btn");
+      expect(publicIntakeBtn).toBeInTheDocument();
+      fireEvent.click(publicIntakeBtn);
+      expect(mockOpenIntake).toHaveBeenCalled();
+    });
   });
 });
 
