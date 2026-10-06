@@ -501,6 +501,165 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     fireEvent.change(groupSelect, { target: { value: "department" } });
     expect(screen.getAllByText(/Subtotal:/i).length).toBeGreaterThan(0);
   });
+
+  it("opens record detail drawer on row expand, edits properties, and closes drawer", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Click expand button on APP-001
+    const expandBtn = screen.getByTestId("row-expand-btn-APP-001");
+    fireEvent.click(expandBtn);
+
+    // Detail drawer should be visible
+    expect(screen.getByTestId("record-detail-drawer")).toBeInTheDocument();
+    expect(screen.getByTestId("detail-record-id-badge")).toHaveTextContent("APP-001");
+
+    // Title input
+    const titleInput = screen.getByTestId("detail-primary-title-input");
+    expect(titleInput).toHaveValue("Quantum Optomechanics Qubit Study");
+    fireEvent.change(titleInput, { target: { value: "Updated Quantum Proposal" } });
+    expect(titleInput).toHaveValue("Updated Quantum Proposal");
+
+    // Computed field is rendered as calculated
+    expect(screen.getByTestId("detail-computed-indirect_cost")).toBeInTheDocument();
+
+    // Close drawer
+    fireEvent.click(screen.getByTestId("detail-close-btn"));
+    expect(screen.queryByTestId("record-detail-drawer")).not.toBeInTheDocument();
+  });
+
+  it("renders reverse relational sub-tables in detail drawer and creates linked record", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Expand APP-001
+    fireEvent.click(screen.getByTestId("row-expand-btn-APP-001"));
+
+    // Reverse relational section
+    expect(screen.getByTestId("reverse-relation-section")).toBeInTheDocument();
+    expect(screen.getByText("Linked Budget Allocations")).toBeInTheDocument();
+    expect(screen.getByText("2 records")).toBeInTheDocument();
+
+    // Add linked record
+    const addLinkedBtn = screen.getByTestId("add-linked-tbl-allocations-btn");
+    fireEvent.click(addLinkedBtn);
+    expect(screen.getByText("3 records")).toBeInTheDocument();
+  });
+
+  it("adds rows inline and through toolbar, duplicates and deletes records", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Inline Add Row
+    const inlineAddRowBtn = screen.getByTestId("grid-add-row-btn");
+    fireEvent.click(inlineAddRowBtn);
+    expect(screen.getAllByText(/New Research Proposals Record/i).length).toBeGreaterThan(0);
+
+    // Toolbar Add Record
+    const toolbarAddBtn = screen.getByTestId("toolbar-add-record-btn");
+    fireEvent.click(toolbarAddBtn);
+
+    // Duplicate record APP-001
+    const duplicateBtn = screen.getByTestId("row-duplicate-btn-APP-001");
+    fireEvent.click(duplicateBtn);
+    expect(screen.getByText(/Quantum Optomechanics Qubit Study \(Copy\)/i)).toBeInTheDocument();
+
+    // Delete record APP-004
+    const deleteBtn = screen.getByTestId("row-delete-btn-APP-004");
+    fireEvent.click(deleteBtn);
+    expect(screen.queryByText("High-Entropy Alloy Catalyst Synthesis")).not.toBeInTheDocument();
+  });
+
+  it("supports bulk selection, batch duplication, and batch deletion", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Select row APP-001
+    const selectCheckbox1 = screen.getByTestId("row-select-checkbox-APP-001");
+    fireEvent.click(selectCheckbox1);
+
+    // Floating batch bar should appear
+    expect(screen.getByTestId("batch-action-bar")).toBeInTheDocument();
+    expect(screen.getByText("1 record selected")).toBeInTheDocument();
+
+    // Select all checkbox
+    const selectAllCheckbox = screen.getByTestId("select-all-checkbox");
+    fireEvent.click(selectAllCheckbox);
+    expect(screen.getByText(/records selected/i)).toBeInTheDocument();
+
+    // Clear selection
+    fireEvent.click(screen.getByTestId("batch-clear-btn"));
+    expect(screen.queryByTestId("batch-action-bar")).not.toBeInTheDocument();
+  });
+
+  it("handles CSV export and CSV import modal with column mapping", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Open CSV Import modal
+    const importCsvBtn = screen.getByTestId("toolbar-import-csv-btn");
+    fireEvent.click(importCsvBtn);
+
+    expect(screen.getByTestId("csv-import-modal")).toBeInTheDocument();
+    expect(screen.getByText(/Import CSV into Research Proposals/i)).toBeInTheDocument();
+
+    // Enter CSV text
+    const textarea = screen.getByTestId("csv-textarea-input");
+    fireEvent.change(textarea, {
+      target: {
+        value: `title,budget,status\n"Laser Interferometry Gravity",950000,Approved`,
+      },
+    });
+
+    // Verify mapping interface rendered
+    expect(screen.getByText(/1 rows found/i)).toBeInTheDocument();
+    expect(screen.getByTestId("csv-map-select-title")).toHaveValue("title");
+    expect(screen.getByTestId("csv-map-select-budget")).toHaveValue("budget");
+
+    // Execute Import
+    const executeBtn = screen.getByTestId("csv-execute-import-btn");
+    fireEvent.click(executeBtn);
+
+    // Modal closed and new record present in grid
+    expect(screen.queryByTestId("csv-import-modal")).not.toBeInTheDocument();
+    expect(screen.getByText("Laser Interferometry Gravity")).toBeInTheDocument();
+  });
 });
+
 
 

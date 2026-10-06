@@ -380,3 +380,124 @@ export function groupRecordsByField(
 
   return result;
 }
+
+/**
+ * Escapes a cell value for RFC 4180 CSV export.
+ */
+export function escapeCsvCell(cell: string): string {
+  if (cell.includes(",") || cell.includes('"') || cell.includes("\n") || cell.includes("\r")) {
+    return `"${cell.replace(/"/g, '""')}"`;
+  }
+  return cell;
+}
+
+/**
+ * Exports fields and records to an RFC 4180 CSV string.
+ */
+export function exportToCsv(
+  fields: { name: string; label?: string }[],
+  records: Record<string, any>[]
+): string {
+  const headers = fields.map((f) => escapeCsvCell(f.name));
+  const lines = [headers.join(",")];
+
+  for (const record of records) {
+    const row = fields.map((f) => {
+      const val = record[f.name];
+      if (val === undefined || val === null) return "";
+      if (Array.isArray(val)) return escapeCsvCell(val.join(", "));
+      return escapeCsvCell(String(val));
+    });
+    lines.push(row.join(","));
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Parses an RFC 4180 CSV string into headers and row objects.
+ */
+export function parseCsv(csvText: string): { headers: string[]; rows: Record<string, any>[] } {
+  const trimmed = csvText.trim();
+  if (!trimmed) return { headers: [], rows: [] };
+
+  const parsedRows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < trimmed.length && trimmed[i + 1] === '"') {
+          currentField += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        currentField += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        currentRow.push(currentField.trim());
+        currentField = "";
+      } else if (ch === "\r") {
+        if (i + 1 < trimmed.length && trimmed[i + 1] === "\n") {
+          i++;
+        }
+        currentRow.push(currentField.trim());
+        currentField = "";
+        parsedRows.push(currentRow);
+        currentRow = [];
+      } else if (ch === "\n") {
+        currentRow.push(currentField.trim());
+        currentField = "";
+        parsedRows.push(currentRow);
+        currentRow = [];
+      } else {
+        currentField += ch;
+      }
+    }
+  }
+
+  if (currentField || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    parsedRows.push(currentRow);
+  }
+
+  if (parsedRows.length === 0) return { headers: [], rows: [] };
+
+  const headers = parsedRows[0];
+  const rows: Record<string, any>[] = [];
+
+  for (let r = 1; r < parsedRows.length; r++) {
+    const rowCells = parsedRows[r];
+    if (rowCells.length === 0 || (rowCells.length === 1 && !rowCells[0])) continue;
+
+    const rowObj: Record<string, any> = {};
+    for (let c = 0; c < headers.length; c++) {
+      const header = headers[c];
+      if (!header) continue;
+      const raw = rowCells[c] ?? "";
+      const num = Number(raw);
+      if (raw !== "" && !isNaN(num)) {
+        rowObj[header] = num;
+      } else if (raw.toLowerCase() === "true") {
+        rowObj[header] = true;
+      } else if (raw.toLowerCase() === "false") {
+        rowObj[header] = false;
+      } else {
+        rowObj[header] = raw;
+      }
+    }
+    rows.push(rowObj);
+  }
+
+  return { headers, rows };
+}
+
