@@ -512,7 +512,7 @@ export const AIAssistantDrawer: React.FC<Props> = ({ isOpen, onClose, onApplyApp
                       </p>
 
                       <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        Fields: {msg.proposalManifest.views[0]?.fields.length} inputs · FERPA sensitive fields guarded
+                        Fields: {msg.proposalManifest.views[0]?.fields?.length || 0} inputs · FERPA sensitive fields guarded
                       </div>
 
                       <button

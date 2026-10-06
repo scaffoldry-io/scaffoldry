@@ -110,28 +110,30 @@ export function computeFieldValue(
       if (!field.target_table_id) return null;
       const targetTable = allTables.find((t) => t.id === field.target_table_id);
       if (!targetTable || !targetTable.records) return null;
+      const records = targetTable.records;
 
       // 1. Direct foreign key pointer (e.g. record has lead_investigator_id)
       const directKey = Object.keys(record).find(
-        (k) => k.endsWith("_id") && record[k] && targetTable.records.some((r) => r.id === record[k])
+        (k) => k.endsWith("_id") && record[k] && records.some((r) => r.id === record[k])
       );
       if (directKey) {
         const linkedId = record[directKey];
-        const match = targetTable.records.find((r) => r.id === linkedId);
+        const match = records.find((r) => r.id === linkedId);
         if (match && field.target_display_field) {
           return match[field.target_display_field] ?? null;
         }
       }
 
       // 2. Reverse relationship (target table records reference record.id)
-      const reverseMatches = targetTable.records.filter((r) =>
+      const reverseMatches = records.filter((r) =>
         Object.values(r).some((v) => v === record.id)
       );
-      if (reverseMatches.length > 0 && field.target_display_field) {
+      const displayField = field.target_display_field;
+      if (reverseMatches.length > 0 && displayField) {
         if (reverseMatches.length === 1) {
-          return reverseMatches[0][field.target_display_field] ?? null;
+          return reverseMatches[0][displayField] ?? null;
         }
-        return reverseMatches.map((r) => r[field.target_display_field]);
+        return reverseMatches.map((r) => r[displayField]);
       }
 
       return null;

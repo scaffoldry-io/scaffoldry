@@ -347,10 +347,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   // Direct Row Mutations
   const handleAddRow = () => {
     const newId = `REC-${Date.now().toString().slice(-4)}`;
+    const primaryKey = activeTable.primary_field || "name";
     const newRecord: Record<string, any> = { id: newId };
-    newRecord[activeTable.primary_field] = `New ${activeTable.name} Record`;
+    newRecord[primaryKey] = `New ${activeTable.name} Record`;
     for (const f of activeTable.fields) {
-      if (f.name === "id" || f.name === activeTable.primary_field) continue;
+      if (f.name === "id" || f.name === primaryKey) continue;
       if (f.field_type === "Number" || f.field_type === "Currency") newRecord[f.name] = 0;
       else if (f.field_type === "Checkbox") newRecord[f.name] = false;
       else if (f.field_type === "Date") newRecord[f.name] = "2026-10-06";
@@ -371,10 +372,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
     const rec = (activeTable.records || []).find((r) => r.id === recordId);
     if (!rec) return;
     const newId = `REC-${Date.now().toString().slice(-4)}`;
+    const primaryKey = activeTable.primary_field || "name";
     const copy: Record<string, any> = {
       ...rec,
       id: newId,
-      [activeTable.primary_field]: `${rec[activeTable.primary_field] || "Record"} (Copy)`,
+      [primaryKey]: `${rec[primaryKey] || "Record"} (Copy)`,
     };
     setTables((prev) =>
       prev.map((t) =>
@@ -419,10 +421,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
 
   const handleBatchDuplicate = () => {
     const toDuplicate = (activeTable.records || []).filter((r) => selectedRowIds.has(r.id));
+    const primaryKey = activeTable.primary_field || "name";
     const copies = toDuplicate.map((rec, i) => ({
       ...rec,
       id: `REC-${Date.now().toString().slice(-4)}-${i + 1}`,
-      [activeTable.primary_field]: `${rec[activeTable.primary_field] || "Record"} (Copy)`,
+      [primaryKey]: `${rec[primaryKey] || "Record"} (Copy)`,
     }));
     setTables((prev) =>
       prev.map((t) =>
@@ -2151,11 +2154,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                           <input
                             type="text"
                             data-testid="detail-primary-title-input"
-                            value={String(activeDetailRecord[activeTable.primary_field] || "")}
+                            value={String(activeDetailRecord[activeTable.primary_field || "name"] || "")}
                             onChange={(e) =>
                               handleUpdateRecordField(
                                 activeDetailRecord.id,
-                                activeTable.primary_field,
+                                activeTable.primary_field || "name",
                                 e.target.value
                               )
                             }
@@ -2408,15 +2411,17 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                             const newRelId = `REC-${Date.now()
                                               .toString()
                                               .slice(-4)}`;
+                                            const relPrimary = relTable.primary_field || "name";
+                                            const curPrimary = activeTable.primary_field || "name";
                                             const newRelRec: Record<string, any> = {
                                               id: newRelId,
                                               [relField.name]: activeDetailRecord.id,
-                                              [relTable.primary_field]: `New ${
+                                              [relPrimary]: `New ${
                                                 relTable.name
                                               } for ${
                                                 activeDetailRecord[
-                                                  activeTable.primary_field
-                                                ]
+                                                  curPrimary
+                                                ] || "Record"
                                               }`,
                                             };
                                             setTables((prev) =>

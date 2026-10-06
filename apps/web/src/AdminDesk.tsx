@@ -676,7 +676,8 @@ export const AdminDesk: React.FC = () => {
   // Add Field in Co-Builder Studio
   const handleAddFieldToStudioApp = () => {
     if (!activeStudioApp) return;
-    const fieldIndex = activeStudioApp.manifest.views[0].fields.length + 1;
+    const currentFields = activeStudioApp.manifest.views[0]?.fields || [];
+    const fieldIndex = currentFields.length + 1;
     const newField: FieldSpec = {
       name: `field_${fieldIndex}`,
       label: `Field #${fieldIndex}`,
@@ -689,7 +690,7 @@ export const AdminDesk: React.FC = () => {
       views: [
         {
           ...activeStudioApp.manifest.views[0],
-          fields: [...activeStudioApp.manifest.views[0].fields, newField],
+          fields: [...currentFields, newField],
         },
       ],
     };
@@ -716,12 +717,13 @@ export const AdminDesk: React.FC = () => {
       linked_dataset_id: dataset.id,
       linked_field: dataset.fields[0]?.name || "id",
     };
+    const currentFields = activeStudioApp.manifest.views[0]?.fields || [];
     const updatedManifest: AppManifest = {
       ...activeStudioApp.manifest,
       views: [
         {
           ...activeStudioApp.manifest.views[0],
-          fields: [...activeStudioApp.manifest.views[0].fields, newField],
+          fields: [...currentFields, newField],
         },
       ],
     };
@@ -738,7 +740,8 @@ export const AdminDesk: React.FC = () => {
   // Toggle FERPA sensitivity on field
   const handleToggleFieldFerpa = (fieldName: string) => {
     if (!activeStudioApp) return;
-    const updatedFields = activeStudioApp.manifest.views[0].fields.map((f) =>
+    const currentFields = activeStudioApp.manifest.views[0]?.fields || [];
+    const updatedFields = currentFields.map((f) =>
       f.name === fieldName ? { ...f, ferpa_sensitive: !f.ferpa_sensitive } : f
     );
     const updatedManifest: AppManifest = {
@@ -1732,7 +1735,7 @@ export const AdminDesk: React.FC = () => {
 
                       {/* Fields Count & CEDS tags */}
                       <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
-                        <div>Fields: <strong>{app.manifest.views[0]?.fields.length || 0} inputs</strong></div>
+                        <div>Fields: <strong>{app.manifest.views[0]?.fields?.length || 0} inputs</strong></div>
                         <div>HERM: <span className="text-slate-600 dark:text-slate-300">{app.hermCapability}</span></div>
                       </div>
                     </div>
@@ -1842,7 +1845,7 @@ export const AdminDesk: React.FC = () => {
                     : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                 }`}
               >
-                1. Visual Field Builder ({activeStudioApp.manifest.views[0]?.fields.length || 0})
+                1. Visual Field Builder ({activeStudioApp.manifest.views[0]?.fields?.length || 0})
               </button>
               <button
                 type="button"
@@ -1937,7 +1940,7 @@ export const AdminDesk: React.FC = () => {
                   </div>
 
                   <div className="space-y-2">
-                    {activeStudioApp.manifest.views[0]?.fields.map((field) => (
+                    {(activeStudioApp.manifest.views[0]?.fields || []).map((field) => (
                       <div
                         key={field.name}
                         className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-wrap items-center justify-between gap-3 text-xs"
