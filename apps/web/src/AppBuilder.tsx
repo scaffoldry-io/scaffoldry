@@ -21,8 +21,10 @@ import {
   applyCompoundFilter,
   applyMultiSort,
   computeFieldValue,
+  exportToCsv,
   getFieldTypeIcon,
   groupRecordsByField,
+  parseCsv,
 } from "./computedFields";
 
 interface AppBuilderProps {
@@ -234,6 +236,15 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const [newViewTitle, setNewViewTitle] = useState<string>("New View");
   const [newViewType, setNewViewType] = useState<ViewType>("Grid");
 
+  // Milestone 3: Record Mutations, Detail Drawer, Bulk Selection, and CSV
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState<boolean>(false);
+  const [csvRawText, setCsvRawText] = useState<string>("");
+  const [csvParsedHeaders, setCsvParsedHeaders] = useState<string[]>([]);
+  const [csvParsedRows, setCsvParsedRows] = useState<Record<string, any>[]>([]);
+  const [csvFieldMapping, setCsvFieldMapping] = useState<Record<string, string>>({});
+
   const currentTableViews = savedViews.filter(
     (v) => (v.table_id || "tbl-proposals") === activeTable.id
   );
@@ -328,6 +339,172 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
       })
     );
   };
+
+  // Direct Row Mutations
+  const handleAddRow = () => {
+    const newId = `REC-${Date.now().toString().slice(-4)}`;
+    const newRecord: Record<string, any> = { id: newId };
+    newRecord[activeTable.primary_field] = `New ${activeTable.name} Record`;
+    for (const f of activeTable.fields) {
+      if (f.name === "id" || f.name === activeTable.primary_field) continue;
+      if (f.field_type === "Number" || f.field_type === "Currency") newRecord[f.name] = 0;
+      else if (f.field_type === "Checkbox") newRecord[f.name] = false;
+      else if (f.field_type === "Date") newRecord[f.name] = "2026-10-06";
+      else if (f.field_type === "Select" && f.select_options && f.select_options.length > 0)
+        newRecord[f.name] = f.select_options[0];
+      else if (f.field_type === "Rating") newRecord[f.name] = 3;
+      else if (!["Formula", "Lookup", "Count", "Rollup"].includes(f.field_type))
+        newRecord[f.name] = "";
+    }
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === activeTable.id ? { ...t, records: [...(t.records || []), newRecord] } : t
+      )
+    );
+  };
+
+  const handleDuplicateRecord = (recordId: string) => {
+    const rec = (activeTable.records || []).find((r) => r.id === recordId);
+    if (!rec) return;
+    const newId = `REC-${Date.now().toString().slice(-4)}`;
+    const copy: Record<string, any> = {
+      ...rec,
+      id: newId,
+      [activeTable.primary_field]: `${rec[activeTable.primary_field] || "Record"} (Copy)`,
+    };
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === activeTable.id ? { ...t, records: [...(t.records || []), copy] } : t
+      )
+    );
+  };
+
+  const handleDeleteRecord = (recordId: string) => {
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === activeTable.id
+          ? { ...t, records: (t.records || []).filter((r) => r.id !== recordId) }
+          : t
+      )
+    );
+    if (selectedRecordId === recordId) setSelectedRecordId(null);
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      next.delete(recordId);
+      return next;
+    });
+  };
+
+  // Bulk Selection Handlers
+  const handleToggleSelectRow = (recordId: string) => {
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(recordId)) next.delete(recordId);
+      else next.add(recordId);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = (allIds: string[]) => {
+    if (selectedRowIds.size === allIds.length && allIds.length > 0) {
+      setSelectedRowIds(new Set());
+    } else {
+      setSelectedRowIds(new Set(allIds));
+    }
+  };
+
+  const handleBatchDuplicate = () => {
+    const toDuplicate = (activeTable.records || []).filter((r) => selectedRowIds.has(r.id));
+    const copies = toDuplicate.map((rec, i) => ({
+      ...rec,
+      id: `REC-${Date.now().toString().slice(-4)}-${i + 1}`,
+      [activeTable.primary_field]: `${rec[activeTable.primary_field] || "Record"} (Copy)`,
+    }));
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === activeTable.id ? { ...t, records: [...(t.records || []), ...copies] } : t
+      )
+    );
+    setSelectedRowIds(new Set());
+  };
+
+  const handleBatchDelete = () => {
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === activeTable.id
+          ? { ...t, records: (t.records || []).filter((r) => !selectedRowIds.has(r.id)) }
+          : t
+      )
+    );
+    if (selectedRecordId && selectedRowIds.has(selectedRecordId)) setSelectedRecordId(null);
+    setSelectedRowIds(new Set());
+  };
+
+  // CSV Export & Import Handlers
+  const handleExportCsv = (recordsToExport: Record<string, any>[]) => {
+    const csvContent = exportToCsv(activeTable.fields, recordsToExport);
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${activeTable.slug}-${activeView.title.toLowerCase().replace(/\s+/g, "-")}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleOpenCsvModal = () => {
+    setCsvRawText("");
+    setCsvParsedHeaders([]);
+    setCsvParsedRows([]);
+    setCsvFieldMapping({});
+    setIsCsvModalOpen(true);
+  };
+
+  const handleParseCsvText = (text: string) => {
+    setCsvRawText(text);
+    const parsed = parseCsv(text);
+    setCsvParsedHeaders(parsed.headers);
+    setCsvParsedRows(parsed.rows);
+
+    const initialMapping: Record<string, string> = {};
+    for (const h of parsed.headers) {
+      const match = activeTable.fields.find(
+        (f) =>
+          f.name.toLowerCase() === h.toLowerCase() ||
+          f.label.toLowerCase() === h.toLowerCase()
+      );
+      if (match) initialMapping[h] = match.name;
+      else initialMapping[h] = "";
+    }
+    setCsvFieldMapping(initialMapping);
+  };
+
+  const handleExecuteCsvImport = () => {
+    if (csvParsedRows.length === 0) return;
+    const importedRecords: Record<string, any>[] = csvParsedRows.map((row, idx) => {
+      const rec: Record<string, any> = {
+        id: `REC-IMP-${Date.now().toString().slice(-4)}-${idx + 1}`,
+      };
+      for (const [csvHeader, targetField] of Object.entries(csvFieldMapping)) {
+        if (targetField && row[csvHeader] !== undefined) {
+          rec[targetField] = row[csvHeader];
+        }
+      }
+      return rec;
+    });
+
+    setTables((prev) =>
+      prev.map((t) =>
+        t.id === activeTable.id
+          ? { ...t, records: [...(t.records || []), ...importedRecords] }
+          : t
+      )
+    );
+    setIsCsvModalOpen(false);
+  };
+
 
   const handleAddNewTable = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1219,8 +1396,43 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                     placeholder={`Search ${activeTable.name}...`}
                     value={tableSearchFilter}
                     onChange={(e) => setTableSearchFilter(e.target.value)}
-                    className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-white focus:outline-blue-500 w-48"
+                    className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-white focus:outline-blue-500 w-44"
                   />
+
+                  {/* CSV & RECORD ACTIONS */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      data-testid="toolbar-import-csv-btn"
+                      onClick={handleOpenCsvModal}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer flex items-center gap-1 transition-colors"
+                      title="Import records from CSV"
+                    >
+                      <span>📥</span>
+                      <span>Import CSV</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="toolbar-export-csv-btn"
+                      onClick={() => handleExportCsv(activeTable.records || [])}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer flex items-center gap-1 transition-colors"
+                      title="Export table records to CSV"
+                    >
+                      <span>📤</span>
+                      <span>Export CSV</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="toolbar-add-record-btn"
+                      onClick={handleAddRow}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center gap-1 shadow-xs transition-colors"
+                    >
+                      <span className="font-bold">+</span>
+                      <span>Add Record</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* COMPUTED DATA SHAPING */}
@@ -1291,9 +1503,20 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                   >
                                     <div className="flex items-center justify-between text-[10px]">
                                       <span className="font-mono text-slate-400">{rec.id}</span>
-                                      <span className="font-semibold text-blue-600 dark:text-blue-400">
-                                        {rec.department || "General"}
-                                      </span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-semibold text-blue-600 dark:text-blue-400">
+                                          {rec.department || "General"}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          data-testid={`card-expand-btn-${rec.id}`}
+                                          onClick={() => setSelectedRecordId(rec.id)}
+                                          className="text-slate-400 hover:text-blue-600 p-0.5 rounded cursor-pointer"
+                                          title="Expand record"
+                                        >
+                                          ⤢
+                                        </button>
+                                      </div>
                                     </div>
                                     <h4 className="text-xs font-bold text-slate-900 dark:text-white">
                                       {rec.title || rec.name || rec.id}
@@ -1361,9 +1584,20 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                       {rec.department}
                                     </div>
                                   </div>
-                                  <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                                    ${Number(rec.budget || 0).toLocaleString()}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                      ${Number(rec.budget || 0).toLocaleString()}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      data-testid={`card-expand-btn-${rec.id}`}
+                                      onClick={() => setSelectedRecordId(rec.id)}
+                                      className="text-slate-400 hover:text-blue-600 p-1 rounded cursor-pointer"
+                                      title="Expand record"
+                                    >
+                                      ⤢
+                                    </button>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -1387,15 +1621,26 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                               <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 font-bold text-slate-700 dark:text-slate-300">
                                 {rec.id}
                               </span>
-                              <span
-                                className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                                  rec.status === "Approved"
-                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                                    : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
-                                }`}
-                              >
-                                {rec.status || "Active"}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                    rec.status === "Approved"
+                                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                      : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
+                                  }`}
+                                >
+                                  {rec.status || "Active"}
+                                </span>
+                                <button
+                                  type="button"
+                                  data-testid={`card-expand-btn-${rec.id}`}
+                                  onClick={() => setSelectedRecordId(rec.id)}
+                                  className="text-slate-500 hover:text-slate-900 dark:hover:text-white p-0.5 rounded bg-white/60 dark:bg-slate-900/60 cursor-pointer"
+                                  title="Expand record"
+                                >
+                                  ⤢
+                                </button>
+                              </div>
                             </div>
                             <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
                               <div>
@@ -1424,11 +1669,26 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   }
 
                   // VIEW TYPE: GRID (DEFAULT)
+                  const allVisibleIds = sortedRecords.map((r) => r.id);
+                  const isAllSelected =
+                    allVisibleIds.length > 0 &&
+                    allVisibleIds.every((id) => selectedRowIds.has(id));
+
                   return (
                     <div data-testid="view-grid-table" className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-lg">
                       <table className="w-full text-left text-xs">
                         <thead>
                           <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-mono text-[11px] uppercase">
+                            <th className="py-2 px-2.5 w-10 text-center">
+                              <input
+                                type="checkbox"
+                                data-testid="select-all-checkbox"
+                                checked={isAllSelected}
+                                onChange={() => handleToggleSelectAll(allVisibleIds)}
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                              />
+                            </th>
+                            <th className="py-2 px-2 w-16 text-center">Actions</th>
                             {activeTable.fields.map((field) => (
                               <th key={field.name} className={`${cellPadding} font-semibold`}>
                                 <div className="flex items-center gap-1.5">
@@ -1453,7 +1713,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                               {groupByField && (
                                 <tr className="bg-slate-100/70 dark:bg-slate-800/60 font-semibold text-slate-700 dark:text-slate-300">
                                   <td
-                                    colSpan={activeTable.fields.length}
+                                    colSpan={activeTable.fields.length + 2}
                                     className="py-2 px-3 text-[11px] font-mono flex items-center justify-between"
                                   >
                                     <div className="flex items-center gap-2">
@@ -1472,11 +1732,55 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                 </tr>
                               )}
 
-                              {group.records.map((record) => (
+                              {group.records.map((record) => {
+                                const isSelected = selectedRowIds.has(record.id);
+                                return (
                                 <tr
                                   key={record.id}
-                                  className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors"
+                                  className={`hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors ${
+                                    isSelected ? "bg-blue-50/40 dark:bg-blue-950/30" : ""
+                                  }`}
                                 >
+                                  <td className="py-2 px-2.5 text-center">
+                                    <input
+                                      type="checkbox"
+                                      data-testid={`row-select-checkbox-${record.id}`}
+                                      checked={isSelected}
+                                      onChange={() => handleToggleSelectRow(record.id)}
+                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-1 text-center whitespace-nowrap">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        data-testid={`row-expand-btn-${record.id}`}
+                                        onClick={() => setSelectedRecordId(record.id)}
+                                        className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
+                                        title="Expand record"
+                                      >
+                                        ⤢
+                                      </button>
+                                      <button
+                                        type="button"
+                                        data-testid={`row-duplicate-btn-${record.id}`}
+                                        onClick={() => handleDuplicateRecord(record.id)}
+                                        className="p-1 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
+                                        title="Duplicate record"
+                                      >
+                                        ⧉
+                                      </button>
+                                      <button
+                                        type="button"
+                                        data-testid={`row-delete-btn-${record.id}`}
+                                        onClick={() => handleDeleteRecord(record.id)}
+                                        className="p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
+                                        title="Delete record"
+                                      >
+                                        🗑
+                                      </button>
+                                    </div>
+                                  </td>
                                   {activeTable.fields.map((field) => {
                                     const cellValue = [
                                       "Formula",
@@ -1700,14 +2004,558 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                     );
                                   })}
                                 </tr>
-                              ))}
-                            </React.Fragment>
-                          ))}
-                        </tbody>
-                      </table>
+                              );
+                            })}
+                          </React.Fragment>
+                        ))}
+
+                        {/* INLINE ADD ROW BUTTON */}
+                        <tr>
+                          <td
+                            colSpan={activeTable.fields.length + 2}
+                            className="py-2.5 px-4 bg-slate-50/50 dark:bg-slate-800/30 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 transition-colors"
+                          >
+                            <button
+                              type="button"
+                              data-testid="grid-add-row-btn"
+                              onClick={handleAddRow}
+                              className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                            >
+                              <span className="text-base leading-none font-bold">+</span>
+                              <span>Add Row</span>
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+
+              {/* FLOATING BATCH ACTION BAR */}
+              {selectedRowIds.size > 0 && (
+                <div
+                  data-testid="batch-action-bar"
+                  className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 dark:bg-slate-800 text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-4 border border-slate-700 animate-in fade-in slide-in-from-bottom-4 duration-200"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="text-xs font-bold font-mono">
+                      {selectedRowIds.size} record{selectedRowIds.size > 1 ? "s" : ""} selected
+                    </span>
+                  </div>
+                  <div className="h-4 w-px bg-slate-700" />
+                  <button
+                    type="button"
+                    data-testid="batch-duplicate-btn"
+                    onClick={handleBatchDuplicate}
+                    className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer flex items-center gap-1.5 transition-colors"
+                  >
+                    <span>⧉</span>
+                    <span>Duplicate</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="batch-delete-btn"
+                    onClick={handleBatchDelete}
+                    className="px-3 py-1 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-700 text-white cursor-pointer flex items-center gap-1.5 transition-colors"
+                  >
+                    <span>🗑</span>
+                    <span>Delete</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="batch-clear-btn"
+                    onClick={() => setSelectedRowIds(new Set())}
+                    className="text-xs text-slate-400 hover:text-white cursor-pointer ml-1"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+
+              {/* RECORD DETAIL DRAWER / MODAL */}
+              {(() => {
+                if (!selectedRecordId) return null;
+                const activeDetailRecord = (activeTable.records || []).find(
+                  (r) => r.id === selectedRecordId
+                );
+                if (!activeDetailRecord) return null;
+
+                return (
+                  <div
+                    data-testid="record-detail-drawer"
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+                  >
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+                      {/* DRAWER HEADER */}
+                      <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-800/40">
+                        <div className="space-y-1 flex-1 mr-4">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="text-xs font-mono px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold"
+                              data-testid="detail-record-id-badge"
+                            >
+                              {activeDetailRecord.id}
+                            </span>
+                            <span className="text-xs text-slate-400 font-medium">
+                              in {activeTable.name}
+                            </span>
+                          </div>
+                          <input
+                            type="text"
+                            data-testid="detail-primary-title-input"
+                            value={String(activeDetailRecord[activeTable.primary_field] || "")}
+                            onChange={(e) =>
+                              handleUpdateRecordField(
+                                activeDetailRecord.id,
+                                activeTable.primary_field,
+                                e.target.value
+                              )
+                            }
+                            className="text-lg font-bold text-slate-900 dark:text-white bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full py-0.5 transition-colors"
+                            placeholder="Untitled Record"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            data-testid="detail-duplicate-btn"
+                            onClick={() => handleDuplicateRecord(activeDetailRecord.id)}
+                            className="p-1.5 text-slate-400 hover:text-emerald-600 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-xs"
+                            title="Duplicate"
+                          >
+                            ⧉ Duplicate
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="detail-delete-btn"
+                            onClick={() => handleDeleteRecord(activeDetailRecord.id)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-xs"
+                            title="Delete"
+                          >
+                            🗑 Delete
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="detail-close-btn"
+                            onClick={() => setSelectedRecordId(null)}
+                            className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center font-bold cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* DRAWER CONTENT */}
+                      <div className="p-6 overflow-y-auto space-y-6 flex-1">
+                        {/* FIELDS SECTION */}
+                        <div className="space-y-4">
+                          <h4 className="text-xs font-bold font-mono text-slate-400 uppercase tracking-wider">
+                            Record Properties
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {activeTable.fields.map((field) => {
+                              const isComputed = [
+                                "Formula",
+                                "Lookup",
+                                "Count",
+                                "Rollup",
+                              ].includes(field.field_type);
+                              const computedVal = isComputed
+                                ? computeFieldValue(field, activeDetailRecord, tables)
+                                : activeDetailRecord[field.name];
+
+                              return (
+                                <div
+                                  key={field.name}
+                                  className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5"
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                      <span className="text-slate-400 font-mono text-[11px]">
+                                        {getFieldTypeIcon(field.field_type)}
+                                      </span>
+                                      <span>{field.label}</span>
+                                    </label>
+                                    {isComputed && (
+                                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold">
+                                        Calculated
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {isComputed ? (
+                                    <div
+                                      data-testid={`detail-computed-${field.name}`}
+                                      className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs text-slate-800 dark:text-slate-200"
+                                    >
+                                      {typeof computedVal === "number"
+                                        ? computedVal.toLocaleString()
+                                        : String(computedVal ?? "")}
+                                    </div>
+                                  ) : field.field_type === "Checkbox" ? (
+                                    <div className="pt-1">
+                                      <input
+                                        type="checkbox"
+                                        data-testid={`detail-input-${field.name}`}
+                                        checked={Boolean(activeDetailRecord[field.name])}
+                                        onChange={(e) =>
+                                          handleUpdateRecordField(
+                                            activeDetailRecord.id,
+                                            field.name,
+                                            e.target.checked
+                                          )
+                                        }
+                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+                                      />
+                                    </div>
+                                  ) : field.field_type === "Select" ? (
+                                    <select
+                                      data-testid={`detail-input-${field.name}`}
+                                      value={String(activeDetailRecord[field.name] || "")}
+                                      onChange={(e) =>
+                                        handleUpdateRecordField(
+                                          activeDetailRecord.id,
+                                          field.name,
+                                          e.target.value
+                                        )
+                                      }
+                                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-white"
+                                    >
+                                      {(field.select_options || [
+                                        "Under Review",
+                                        "Approved",
+                                        "Funded",
+                                        "Rejected",
+                                      ]).map((opt) => (
+                                        <option key={opt} value={opt}>
+                                          {opt}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : field.field_type === "Rating" ? (
+                                    <div className="flex items-center gap-1 pt-1">
+                                      {[1, 2, 3, 4, 5].map((star) => (
+                                        <button
+                                          key={star}
+                                          type="button"
+                                          data-testid={`detail-rating-${field.name}-${star}`}
+                                          onClick={() =>
+                                            handleUpdateRecordField(
+                                              activeDetailRecord.id,
+                                              field.name,
+                                              star
+                                            )
+                                          }
+                                          className={`text-base cursor-pointer ${
+                                            star <= Number(activeDetailRecord[field.name] || 0)
+                                              ? "text-amber-500"
+                                              : "text-slate-300 dark:text-slate-600"
+                                          }`}
+                                        >
+                                          ★
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <input
+                                      type={
+                                        field.field_type === "Number" ||
+                                        field.field_type === "Currency"
+                                          ? "number"
+                                          : "text"
+                                      }
+                                      data-testid={`detail-input-${field.name}`}
+                                      value={activeDetailRecord[field.name] ?? ""}
+                                      onChange={(e) => {
+                                        const v =
+                                          field.field_type === "Number" ||
+                                          field.field_type === "Currency"
+                                            ? Number(e.target.value)
+                                            : e.target.value;
+                                        handleUpdateRecordField(
+                                          activeDetailRecord.id,
+                                          field.name,
+                                          v
+                                        );
+                                      }}
+                                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-white font-sans"
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* REVERSE RELATIONAL SUB-TABLES */}
+                        <div
+                          data-testid="reverse-relation-section"
+                          className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800"
+                        >
+                          <h4 className="text-xs font-bold font-mono text-slate-400 uppercase tracking-wider">
+                            Reverse Relational Sub-Tables
+                          </h4>
+
+                          {(() => {
+                            const relatedTables = tables.filter(
+                              (t) => t.id !== activeTable.id
+                            );
+                            const reverseLinks = relatedTables
+                              .map((tbl) => {
+                                const relField = tbl.fields.find(
+                                  (f) =>
+                                    (f.field_type === "Relation" &&
+                                      f.target_table_id === activeTable.id) ||
+                                    f.name ===
+                                      `${activeTable.slug.replace(/s$/, "")}_id` ||
+                                    (f.name.endsWith("_id") &&
+                                      activeTable.slug.includes(
+                                        f.name.replace(/_id$/, "")
+                                      ))
+                                );
+                                if (!relField) return null;
+                                const linkedRecords = (tbl.records || []).filter(
+                                  (r) =>
+                                    String(r[relField.name]) ===
+                                    String(activeDetailRecord.id)
+                                );
+                                return { table: tbl, relField, linkedRecords };
+                              })
+                              .filter(Boolean) as {
+                              table: AppTable;
+                              relField: any;
+                              linkedRecords: Record<string, any>[];
+                            }[];
+
+                            if (reverseLinks.length === 0) {
+                              return (
+                                <p className="text-xs text-slate-400 italic">
+                                  No other tables currently reference {activeTable.name}.
+                                </p>
+                              );
+                            }
+
+                            return (
+                              <div className="space-y-4">
+                                {reverseLinks.map(
+                                  ({ table: relTable, relField, linkedRecords }) => (
+                                    <div
+                                      key={relTable.id}
+                                      className="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-white dark:bg-slate-900 space-y-3"
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <span>{relTable.icon || "📑"}</span>
+                                          <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                            Linked {relTable.name}
+                                          </span>
+                                          <span className="text-[10px] font-mono px-2 py-0.2 rounded-full bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold">
+                                            {linkedRecords.length} records
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          data-testid={`add-linked-${relTable.id}-btn`}
+                                          onClick={() => {
+                                            const newRelId = `REC-${Date.now()
+                                              .toString()
+                                              .slice(-4)}`;
+                                            const newRelRec: Record<string, any> = {
+                                              id: newRelId,
+                                              [relField.name]: activeDetailRecord.id,
+                                              [relTable.primary_field]: `New ${
+                                                relTable.name
+                                              } for ${
+                                                activeDetailRecord[
+                                                  activeTable.primary_field
+                                                ]
+                                              }`,
+                                            };
+                                            setTables((prev) =>
+                                              prev.map((t) =>
+                                                t.id === relTable.id
+                                                  ? {
+                                                      ...t,
+                                                      records: [
+                                                        ...(t.records || []),
+                                                        newRelRec,
+                                                      ],
+                                                    }
+                                                  : t
+                                              )
+                                            );
+                                          }}
+                                          className="text-xs font-semibold text-purple-600 dark:text-purple-400 hover:underline cursor-pointer"
+                                        >
+                                          + Add Linked {relTable.name}
+                                        </button>
+                                      </div>
+
+                                      {linkedRecords.length === 0 ? (
+                                        <p className="text-xs text-slate-400 italic">
+                                          No linked records yet.
+                                        </p>
+                                      ) : (
+                                        <div className="overflow-x-auto border border-slate-100 dark:border-slate-800 rounded-lg">
+                                          <table className="w-full text-left text-xs">
+                                            <thead>
+                                              <tr className="bg-slate-50 dark:bg-slate-800/60 font-mono text-[10px] text-slate-500">
+                                                {relTable.fields
+                                                  .filter((f) => f.name !== relField.name)
+                                                  .slice(0, 4)
+                                                  .map((f) => (
+                                                    <th key={f.name} className="py-1.5 px-3">
+                                                      {f.label}
+                                                    </th>
+                                                  ))}
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                              {linkedRecords.map((lr) => (
+                                                <tr key={lr.id}>
+                                                  {relTable.fields
+                                                    .filter(
+                                                      (f) => f.name !== relField.name
+                                                    )
+                                                    .slice(0, 4)
+                                                    .map((f) => (
+                                                      <td
+                                                        key={f.name}
+                                                        className="py-1.5 px-3 text-slate-700 dark:text-slate-300"
+                                                      >
+                                                        {f.field_type === "Currency" ||
+                                                        f.name.includes("amount")
+                                                          ? `$${Number(
+                                                              lr[f.name] || 0
+                                                            ).toLocaleString()}`
+                                                          : String(lr[f.name] ?? "")}
+                                                      </td>
+                                                    ))}
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
                     </div>
-                  );
-                })()}
+                  </div>
+                );
+              })()}
+
+              {/* CSV IMPORT MODAL */}
+              {isCsvModalOpen && (
+                <div
+                  data-testid="csv-import-modal"
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+                >
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-xl w-full p-6 space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <span>📥</span>
+                          <span>Import CSV into {activeTable.name}</span>
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Paste standard RFC 4180 CSV data to map columns and import records.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        data-testid="csv-modal-close-btn"
+                        onClick={() => setIsCsvModalOpen(false)}
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-white font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        CSV Text Content:
+                      </label>
+                      <textarea
+                        data-testid="csv-textarea-input"
+                        rows={5}
+                        value={csvRawText}
+                        onChange={(e) => handleParseCsvText(e.target.value)}
+                        placeholder={`title,budget,status\n"Advanced Nanomaterials",600000,Approved\n"Deep Sea Robotic Swarm",450000,Under Review`}
+                        className="w-full p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono text-xs text-slate-800 dark:text-white focus:outline-blue-500"
+                      />
+                    </div>
+
+                    {csvParsedHeaders.length > 0 && (
+                      <div className="space-y-3 pt-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                            Map Columns ({csvParsedRows.length} rows found)
+                          </span>
+                        </div>
+                        <div className="max-h-48 overflow-y-auto space-y-2 border border-slate-100 dark:border-slate-800 rounded-lg p-3">
+                          {csvParsedHeaders.map((header) => (
+                            <div
+                              key={header}
+                              className="flex items-center justify-between text-xs gap-3"
+                            >
+                              <span className="font-mono font-medium text-slate-700 dark:text-slate-300 truncate w-1/2">
+                                {header}
+                              </span>
+                              <select
+                                data-testid={`csv-map-select-${header}`}
+                                value={csvFieldMapping[header] || ""}
+                                onChange={(e) =>
+                                  setCsvFieldMapping((prev) => ({
+                                    ...prev,
+                                    [header]: e.target.value,
+                                  }))
+                                }
+                                className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs w-1/2"
+                              >
+                                <option value="">(Ignore / Skip)</option>
+                                {activeTable.fields.map((f) => (
+                                  <option key={f.name} value={f.name}>
+                                    {f.label} ({f.name})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setIsCsvModalOpen(false)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="csv-execute-import-btn"
+                        disabled={csvParsedRows.length === 0}
+                        onClick={handleExecuteCsvImport}
+                        className="px-4 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white cursor-pointer shadow-xs"
+                      >
+                        Import {csvParsedRows.length} Record
+                        {csvParsedRows.length === 1 ? "" : "s"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
 
                 {/* ADD VIEW MODAL */}
                 {isAddViewModalOpen && (

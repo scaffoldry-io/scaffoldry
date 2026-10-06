@@ -679,3 +679,166 @@ impl HostRouter for ManifestEngine {
         self.manifests_by_slug.get(slug)
     }
 }
+
+/// Formats a single cell value for RFC 4180 CSV export.
+pub fn escape_csv_cell(cell: &str) -> String {
+    if cell.contains(',') || cell.contains('"') || cell.contains('\n') || cell.contains('\r') {
+        let escaped = cell.replace('"', "\"\"");
+        format!("\"{}\"", escaped)
+    } else {
+        cell.to_string()
+    }
+}
+
+/// Generates an RFC 4180 CSV string from a slice of header names and JSON records.
+pub fn export_records_to_csv(headers: &[&str], records: &[Value]) -> String {
+    let mut out = String::new();
+
+    let header_line: Vec<String> = headers.iter().map(|h| escape_csv_cell(h)).collect();
+    out.push_str(&header_line.join(","));
+    out.push('\n');
+
+    for record in records {
+        let row: Vec<String> = headers
+            .iter()
+            .map(|&h| match record.get(h) {
+                Some(Value::String(s)) => escape_csv_cell(s),
+                Some(Value::Number(n)) => n.to_string(),
+                Some(Value::Bool(b)) => b.to_string(),
+                Some(Value::Array(arr)) => {
+                    let items: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| match v {
+                            Value::String(s) => Some(s.clone()),
+                            Value::Number(n) => Some(n.to_string()),
+                            _ => None,
+                        })
+                        .collect();
+                    escape_csv_cell(&items.join(", "))
+                }
+                Some(Value::Null) | None => String::new(),
+                Some(other) => escape_csv_cell(&other.to_string()),
+            })
+            .collect();
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+
+    out
+}
+
+/// Parses an RFC 4180 CSV text into a vector of JSON objects.
+pub fn parse_csv_to_records(csv_text: &str) -> Result<Vec<Value>, String> {
+    let trimmed = csv_text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut current_row: Vec<String> = Vec::new();
+    let mut current_field = String::new();
+    let mut in_quotes = false;
+    let mut chars = trimmed.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if in_quotes {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    current_field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                current_field.push(ch);
+            }
+        } else {
+            match ch {
+                '"' => {
+                    in_quotes = true;
+                }
+                ',' => {
+                    current_row.push(current_field.trim().to_string());
+                    current_field.clear();
+                }
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    current_row.push(current_field.trim().to_string());
+                    current_field.clear();
+                    rows.push(std::mem::take(&mut current_row));
+                }
+                '\n' => {
+                    current_row.push(current_field.trim().to_string());
+                    current_field.clear();
+                    rows.push(std::mem::take(&mut current_row));
+                }
+                _ => {
+                    current_field.push(ch);
+                }
+            }
+        }
+    }
+
+    if !current_field.is_empty() || !current_row.is_empty() {
+        current_row.push(current_field.trim().to_string());
+        rows.push(current_row);
+    }
+
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let headers = rows[0].clone();
+    let mut records = Vec::new();
+
+    for row in rows.into_iter().skip(1) {
+        if row.is_empty() || (row.len() == 1 && row[0].is_empty()) {
+            continue;
+        }
+        let mut map = serde_json::Map::new();
+        for (i, header) in headers.iter().enumerate() {
+            if header.is_empty() {
+                continue;
+            }
+            let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
+            if let Ok(num) = cell.parse::<f64>() {
+                map.insert(header.clone(), serde_json::json!(num));
+            } else if cell.eq_ignore_ascii_case("true") {
+                map.insert(header.clone(), serde_json::json!(true));
+            } else if cell.eq_ignore_ascii_case("false") {
+                map.insert(header.clone(), serde_json::json!(false));
+            } else {
+                map.insert(header.clone(), serde_json::json!(cell));
+            }
+        }
+        records.push(Value::Object(map));
+    }
+
+    Ok(records)
+}
+
+/// Duplicates a record, giving it a new ID and appending "(Copy)" to the primary field.
+pub fn duplicate_record(record: &Value, primary_field: &str, new_id: &str) -> Value {
+    let mut cloned = record.clone();
+    if let Value::Object(ref mut map) = cloned {
+        map.insert("id".to_string(), Value::String(new_id.to_string()));
+        if let Some(Value::String(val)) = map.get(primary_field) {
+            map.insert(primary_field.to_string(), Value::String(format!("{} (Copy)", val)));
+        }
+    }
+    cloned
+}
+
+/// Batch removes records whose "id" matches any id in `ids_to_delete`.
+pub fn batch_delete_records(records: &mut Vec<Value>, ids_to_delete: &[&str]) {
+    records.retain(|r| {
+        if let Some(id_val) = r.get("id").and_then(|v| v.as_str()) {
+            !ids_to_delete.contains(&id_val)
+        } else {
+            true
+        }
+    });
+}
+
