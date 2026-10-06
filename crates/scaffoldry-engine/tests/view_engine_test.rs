@@ -8,7 +8,7 @@ use serde_json::json;
 
 #[test]
 fn test_compound_filter_and_or() {
-    let records = vec![
+    let records = [
         json!({ "id": "R1", "status": "Approved", "budget": 800000.0, "dept": "Physics" }),
         json!({ "id": "R2", "status": "Under Review", "budget": 450000.0, "dept": "Bioengineering" }),
         json!({ "id": "R3", "status": "Funded", "budget": 600000.0, "dept": "Physics" }),
