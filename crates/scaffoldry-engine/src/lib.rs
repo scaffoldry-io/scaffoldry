@@ -638,7 +638,14 @@ impl ManifestEngine {
         let mut is_ferpa_sensitive = false;
         let mut applied_ceds = HashMap::new();
 
+        let record_table_id = payload.get("_table_id").and_then(|v| v.as_str());
+
         for view in &manifest.views {
+            if let (Some(rec_tid), Some(view_tid)) = (record_table_id, view.table_id.as_deref()) {
+                if rec_tid != view_tid {
+                    continue;
+                }
+            }
             for field in &view.fields {
                 let val = payload.get(&field.name);
                 if field.required && (val.is_none() || val.unwrap().is_null()) {

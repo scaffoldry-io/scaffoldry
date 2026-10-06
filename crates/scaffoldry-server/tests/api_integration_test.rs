@@ -924,5 +924,354 @@ async fn test_framework_specification_api_and_mcp_integration() {
     assert!(content_text.contains("stat-metric"));
 }
 
+#[tokio::test]
+async fn test_standardized_rest_data_and_metadata_api_parity() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. Create a workspace
+    let ws_payload = json!({
+        "name": "Collaborative Research Base",
+        "code": "COLLAB-BASE",
+        "organization": "University Systems"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&ws_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let ws_res: Value = serde_json::from_slice(&body).unwrap();
+    let ws_id = ws_res["id"].as_str().unwrap();
+
+    // 2. Create multi-table app in workspace
+    let app_payload = json!({
+        "slug": "collab-allocations",
+        "title": "Collaborative Research Allocations",
+        "description": "Multi-table relational allocations and budget tracking base",
+        "organization_code": "COLLAB-BASE",
+        "department": "physics",
+        "tables": [
+            {
+                "id": "proposals",
+                "name": "Research Proposals",
+                "slug": "proposals",
+                "fields": [
+                    { "name": "title", "label": "Title", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+                    { "name": "amount", "label": "Budget", "field_type": "Currency", "required": true, "ferpa_sensitive": false },
+                    { "name": "status", "label": "Status", "field_type": "Select", "required": false, "ferpa_sensitive": false }
+                ]
+            },
+            {
+                "id": "allocations",
+                "name": "Disbursements",
+                "slug": "allocations",
+                "fields": [
+                    { "name": "disbursement_id", "label": "ID", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+                    { "name": "proposal_id", "label": "Proposal", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+                    { "name": "amount", "label": "Amount", "field_type": "Currency", "required": true, "ferpa_sensitive": false }
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "id": "rel_proposals_allocations",
+                "name": "Proposal Disbursements",
+                "source_table_id": "proposals",
+                "target_table_id": "allocations",
+                "source_field": "title",
+                "target_field": "proposal_id",
+                "relationship_type": "one_to_many",
+                "display_field": "amount"
+            }
+        ],
+        "views": [
+            {
+                "id": "view-all-proposals",
+                "table_id": "proposals",
+                "title": "All Proposals",
+                "view_type": "Table",
+                "fields": [
+                    { "name": "title", "label": "Title", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+                    { "name": "amount", "label": "Budget", "field_type": "Currency", "required": true, "ferpa_sensitive": false },
+                    { "name": "status", "label": "Status", "field_type": "Select", "required": false, "ferpa_sensitive": false }
+                ]
+            }
+        ]
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/workspaces/{}/apps", ws_id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&app_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 3. Test GET /api/v1/apps/collab-allocations/schema
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/collab-allocations/schema")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let schema_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(schema_res["app_slug"], "collab-allocations");
+    assert_eq!(schema_res["tables"].as_array().unwrap().len(), 2);
+    assert_eq!(schema_res["relationships"].as_array().unwrap().len(), 1);
+
+    // 4. Test GET /api/v1/apps/collab-allocations/tables/proposals/schema
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/schema")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let table_schema: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(table_schema["table"]["id"], "proposals");
+    assert_eq!(table_schema["relationships"].as_array().unwrap().len(), 1);
+    assert_eq!(table_schema["views"].as_array().unwrap().len(), 1);
+
+    // 5. POST records to proposals table
+    let rec1 = json!({
+        "caller_eppn": "dr.smith@physics.university.edu",
+        "caller_affiliation": "faculty",
+        "data": {
+            "title": "Quantum Photonics",
+            "amount": 250000,
+            "status": "Approved"
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&rec1).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let r1_res: Value = serde_json::from_slice(&body).unwrap();
+    let r1_id = r1_res["id"].as_str().unwrap().to_string();
+    assert_eq!(r1_res["data"]["title"], "Quantum Photonics");
+    assert_eq!(r1_res["data"]["_table_id"], "proposals");
+
+    let rec2 = json!({
+        "caller_eppn": "dr.smith@physics.university.edu",
+        "caller_affiliation": "faculty",
+        "data": {
+            "title": "Autonomous Marine Robotics",
+            "amount": 100000,
+            "status": "Review"
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&rec2).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let rec3 = json!({
+        "caller_eppn": "dr.smith@physics.university.edu",
+        "caller_affiliation": "faculty",
+        "data": {
+            "title": "Deep Biosphere Metagenomics",
+            "amount": 400000,
+            "status": "Approved"
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&rec3).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 6. GET /api/v1/apps/collab-allocations/tables/proposals/records
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let list_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(list_res["total"], 3);
+    assert_eq!(list_res["records"].as_array().unwrap().len(), 3);
+
+    // 7. GET with filter_by_formula: {amount} > 200000
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/records?filter_by_formula=%7Bamount%7D%20%3E%20200000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let filtered_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(filtered_res["total"], 2);
+
+    // 8. GET with sort_field=amount and sort_direction=desc
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/records?sort_field=amount&sort_direction=desc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let sorted_res: Value = serde_json::from_slice(&body).unwrap();
+    let sorted_records = sorted_res["records"].as_array().unwrap();
+    assert_eq!(sorted_records[0]["data"]["title"], "Deep Biosphere Metagenomics");
+    assert_eq!(sorted_records[1]["data"]["title"], "Quantum Photonics");
+    assert_eq!(sorted_records[2]["data"]["title"], "Autonomous Marine Robotics");
+
+    // 9. GET with pagination (page_size=2, offset=0)
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/apps/collab-allocations/tables/proposals/records?page_size=2&offset=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let paged_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(paged_res["total"], 3);
+    assert_eq!(paged_res["records"].as_array().unwrap().len(), 2);
+    assert_eq!(paged_res["offset"], 2);
+
+    // 10. GET single record by ID
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let single_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(single_res["id"], r1_id);
+    assert_eq!(single_res["data"]["title"], "Quantum Photonics");
+
+    // 11. PATCH record by ID
+    let update_payload = json!({
+        "data": {
+            "title": "Quantum Photonics & Computing",
+            "amount": 275000,
+            "status": "Approved"
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let patched_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(patched_res["data"]["title"], "Quantum Photonics & Computing");
+    assert_eq!(patched_res["data"]["_table_id"], "proposals");
+
+    // 12. DELETE record by ID
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Verify record is gone
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 
 
