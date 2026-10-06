@@ -7,6 +7,7 @@ import { WorkflowBuilder } from "./WorkflowBuilder";
 import { DecisionLedgerView } from "./DecisionLedgerView";
 import { AppBuilder } from "./AppBuilder";
 import { PublishedAppView } from "./PublishedAppView";
+import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
 
 const PERSONAS: Persona[] = [
@@ -381,6 +382,7 @@ export const AdminDesk: React.FC = () => {
   const isAdminPath = currentPath === "/admin" || currentPath.startsWith("/admin/");
   const isBuilderPath = currentPath === "/builder" || currentPath.startsWith("/builder/");
   const isAppPath = currentPath === "/app" || currentPath.startsWith("/app/");
+  const isFormPath = currentPath === "/form" || currentPath.startsWith("/form/");
 
   // Active Workspace & Filter State
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("ws-bio-lab");
@@ -906,6 +908,7 @@ export const AdminDesk: React.FC = () => {
         app={targetApp}
         onBack={() => navigateTo("/")}
         onOpenPublishedApp={(s) => navigateTo(`/app/${s}`)}
+        onOpenIntakeForm={(tId) => navigateTo(tId ? `/form/${targetApp.slug}/${tId}` : `/form/${targetApp.slug}`)}
         onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
         onSaveApp={(updated) => {
           setApps((prev) => prev.map((a) => (a.slug === updated.slug ? updated : a)));
@@ -923,7 +926,28 @@ export const AdminDesk: React.FC = () => {
       <PublishedAppView
         app={targetApp}
         onOpenBuilder={(s) => navigateTo(`/builder/${s}`)}
+        onOpenIntakeForm={(tId) => navigateTo(tId ? `/form/${targetApp.slug}/${tId}` : `/form/${targetApp.slug}`)}
         onBackToDesk={() => navigateTo("/")}
+      />
+    );
+  }
+
+  // Dedicated Standalone Public Intake Form Route (/form/:slug or /form/:slug/:tableId)
+  if (isFormPath) {
+    const cleanPath = currentPath.replace("/form/", "").replace("/form", "");
+    const parts = cleanPath ? cleanPath.split("/").filter(Boolean) : [];
+    const slug = parts[0] || apps[0]?.slug;
+    const tableId = parts[1] || undefined;
+    const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
+    return (
+      <StandaloneIntakeForm
+        app={targetApp}
+        tableId={tableId}
+        onBackToDesk={() => navigateTo("/")}
+        onOpenApp={() => navigateTo(`/app/${targetApp.slug}`)}
+        onRecordSubmitted={(tblId, rec) => {
+          showToast(`Record ${rec.id} submitted to ${targetApp.title} (${tblId}).`);
+        }}
       />
     );
   }

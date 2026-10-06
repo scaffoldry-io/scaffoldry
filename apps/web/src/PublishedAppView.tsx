@@ -4,6 +4,7 @@ import { AppPage, GovernedComponentSpec, RegisteredApp } from "./types";
 interface PublishedAppViewProps {
   app: RegisteredApp;
   onOpenBuilder?: (slug: string) => void;
+  onOpenIntakeForm?: (tableId?: string) => void;
   onBackToDesk?: () => void;
 }
 
@@ -26,6 +27,7 @@ const investigators = [
 export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
   app,
   onOpenBuilder,
+  onOpenIntakeForm,
   onBackToDesk,
 }) => {
   // Seeded records state for live interactive tabular operations
@@ -249,6 +251,17 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
           >
             + New Proposal
           </button>
+
+          {onOpenIntakeForm && (
+            <button
+              type="button"
+              data-testid="open-public-intake-form-btn"
+              onClick={() => onOpenIntakeForm()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              📋 Public Intake Form
+            </button>
+          )}
 
           {onOpenBuilder && (
             <button
