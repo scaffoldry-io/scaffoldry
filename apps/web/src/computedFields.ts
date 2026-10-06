@@ -1,4 +1,4 @@
-import { AppTable, FieldSpec } from "./types";
+import { AppTable, CompoundFilter, FieldSpec, FilterClause, SortRule } from "./types";
 
 /**
  * Evaluates in-memory formulas without external dependencies.
@@ -235,4 +235,148 @@ export function getFieldTypeIcon(type: string): string {
     default:
       return "📄";
   }
+}
+
+/**
+ * Evaluates whether a record satisfies a single filter clause.
+ */
+export function matchesFilterClause(
+  record: Record<string, any>,
+  clause: FilterClause
+): boolean {
+  const cellVal = record[clause.field_name];
+
+  if (clause.operator === "is_empty") {
+    return cellVal === undefined || cellVal === null || cellVal === "";
+  }
+  if (clause.operator === "is_not_empty") {
+    return cellVal !== undefined && cellVal !== null && cellVal !== "";
+  }
+
+  const query = clause.value.trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+
+  switch (clause.operator) {
+    case "equals":
+      return String(cellVal ?? "").trim().toLowerCase() === query;
+    case "not_equals":
+      return String(cellVal ?? "").trim().toLowerCase() !== query;
+    case "contains":
+      return String(cellVal ?? "").toLowerCase().includes(query);
+    case "not_contains":
+      return !String(cellVal ?? "").toLowerCase().includes(query);
+    case "greater_than": {
+      const n1 = Number(cellVal);
+      const n2 = Number(query);
+      return !isNaN(n1) && !isNaN(n2) && n1 > n2;
+    }
+    case "less_than": {
+      const n1 = Number(cellVal);
+      const n2 = Number(query);
+      return !isNaN(n1) && !isNaN(n2) && n1 < n2;
+    }
+    default:
+      return true;
+  }
+}
+
+/**
+ * Filters records by compound AND/OR filter criteria.
+ */
+export function applyCompoundFilter(
+  records: Record<string, any>[],
+  filter?: CompoundFilter
+): Record<string, any>[] {
+  if (!filter || !filter.clauses || filter.clauses.length === 0) {
+    return records;
+  }
+
+  return records.filter((rec) => {
+    if (filter.conjunction === "AND") {
+      return filter.clauses.every((c) => matchesFilterClause(rec, c));
+    } else {
+      return filter.clauses.some((c) => matchesFilterClause(rec, c));
+    }
+  });
+}
+
+/**
+ * Sorts records by multiple sort rules.
+ */
+export function applyMultiSort(
+  records: Record<string, any>[],
+  sortRules?: SortRule[]
+): Record<string, any>[] {
+  if (!sortRules || sortRules.length === 0) {
+    return [...records];
+  }
+
+  const copy = [...records];
+  copy.sort((a, b) => {
+    for (const rule of sortRules) {
+      const valA = a[rule.field_name];
+      const valB = b[rule.field_name];
+
+      let ord = 0;
+      const numA = Number(valA);
+      const numB = Number(valB);
+
+      if (!isNaN(numA) && !isNaN(numB) && typeof valA !== "boolean") {
+        ord = numA - numB;
+      } else {
+        const strA = String(valA ?? "").toLowerCase();
+        const strB = String(valB ?? "").toLowerCase();
+        ord = strA.localeCompare(strB);
+      }
+
+      if (ord !== 0) {
+        return rule.direction === "asc" ? ord : -ord;
+      }
+    }
+    return 0;
+  });
+
+  return copy;
+}
+
+export interface RecordGroup {
+  groupValue: string;
+  records: Record<string, any>[];
+  totalBudget: number;
+}
+
+/**
+ * Groups records by a specified field with aggregated sub-totals.
+ */
+export function groupRecordsByField(
+  records: Record<string, any>[],
+  groupByField?: string
+): RecordGroup[] {
+  if (!groupByField) {
+    const total = records.reduce((acc, r) => acc + (Number(r.budget || r.allocated_amount) || 0), 0);
+    return [{ groupValue: "All Records", records, totalBudget: total }];
+  }
+
+  const groupsMap = new Map<string, Record<string, any>[]>();
+
+  for (const rec of records) {
+    const key = String(rec[groupByField] || "Unassigned");
+    if (!groupsMap.has(key)) {
+      groupsMap.set(key, []);
+    }
+    groupsMap.get(key)!.push(rec);
+  }
+
+  const result: RecordGroup[] = [];
+  for (const [groupValue, groupRecords] of groupsMap.entries()) {
+    const total = groupRecords.reduce(
+      (acc, r) => acc + (Number(r.budget || r.allocated_amount) || 0),
+      0
+    );
+    result.push({ groupValue, records: groupRecords, totalBudget: total });
+  }
+
+  return result;
 }
