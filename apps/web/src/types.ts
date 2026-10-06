@@ -1,5 +1,26 @@
 export type ViewType = "Table" | "Form" | "Dashboard" | "Detail";
-export type FieldType = "Text" | "Number" | "Date" | "Select" | "Boolean" | "Relation";
+export type FieldType =
+  | "Text"
+  | "Number"
+  | "Date"
+  | "Select"
+  | "Boolean"
+  | "Relation"
+  | "Checkbox"
+  | "MultiSelect"
+  | "Currency"
+  | "Percent"
+  | "Rating"
+  | "Email"
+  | "Phone"
+  | "Url"
+  | "Autonumber"
+  | "CreatedTime"
+  | "LastModifiedTime"
+  | "Lookup"
+  | "Count"
+  | "Rollup"
+  | "Formula";
 
 export interface FieldSpec {
   name: string;
@@ -11,6 +32,11 @@ export interface FieldSpec {
   linked_field?: string;
   target_table_id?: string;
   target_display_field?: string;
+  formula_expression?: string;
+  rollup_function?: "sum" | "avg" | "min" | "max" | "count" | "concat";
+  select_options?: string[];
+  currency_symbol?: string;
+  precision?: number;
 }
 
 export interface AppView {

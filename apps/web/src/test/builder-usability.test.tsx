@@ -4,7 +4,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { AppBuilder } from "../AppBuilder";
 import { PublishedAppView } from "../PublishedAppView";
-import { RegisteredApp } from "../types";
+import { RegisteredApp, AppTable } from "../types";
+import { computeFieldValue, evaluateClientFormula, getFieldTypeIcon } from "../computedFields";
 
 const mockApp: RegisteredApp = {
   slug: "physics-grants",
@@ -237,3 +238,132 @@ describe("PublishedAppView Standalone Runtime Usability", () => {
     expect(screen.getByTestId("rel-badge-APP-105")).toHaveTextContent("Dr. Alan Turing");
   });
 });
+
+describe("Milestone 1: Rich Field Types & Computed Field Engine Usability", () => {
+  it("evaluates in-memory formulas with token substitution and arithmetic", () => {
+    const record = {
+      budget: 500000,
+      spent: 120000,
+      first_name: "Ada",
+      last_name: "Lovelace",
+    };
+
+    expect(evaluateClientFormula("{budget}", record)).toBe(500000);
+    expect(evaluateClientFormula("{budget} * 0.20", record)).toBe(100000);
+    expect(evaluateClientFormula("{budget} / 10", record)).toBe(50000);
+    expect(evaluateClientFormula("{budget} - {spent}", record)).toBe(380000);
+    expect(evaluateClientFormula('{first_name} + " " + {last_name}', record)).toBe("Ada Lovelace");
+  });
+
+  it("computes relational lookups, counts, and rollups across tables reactively", () => {
+    const sampleTables: AppTable[] = [
+      {
+        id: "tbl-main",
+        name: "Proposals",
+        slug: "proposals",
+        primary_field: "id",
+        fields: [],
+        records: [{ id: "REC-1", lead_id: "FAC-1" }],
+      },
+      {
+        id: "tbl-faculty",
+        name: "Faculty",
+        slug: "faculty",
+        primary_field: "id",
+        fields: [],
+        records: [{ id: "FAC-1", email: "faculty@state.edu" }],
+      },
+      {
+        id: "tbl-items",
+        name: "Items",
+        slug: "items",
+        primary_field: "id",
+        fields: [],
+        records: [
+          { id: "ITM-1", parent_id: "REC-1", amount: 100 },
+          { id: "ITM-2", parent_id: "REC-1", amount: 200 },
+          { id: "ITM-3", parent_id: "REC-1", amount: 300 },
+        ],
+      },
+    ];
+
+    // Lookup
+    const lookupField = {
+      name: "lead_email",
+      label: "Lead Email",
+      field_type: "Lookup" as const,
+      required: false,
+      ferpa_sensitive: false,
+      target_table_id: "tbl-faculty",
+      target_display_field: "email",
+    };
+    expect(computeFieldValue(lookupField, { id: "REC-1", lead_id: "FAC-1" }, sampleTables)).toBe("faculty@state.edu");
+
+    // Count
+    const countField = {
+      name: "items_count",
+      label: "Items Count",
+      field_type: "Count" as const,
+      required: false,
+      ferpa_sensitive: false,
+      target_table_id: "tbl-items",
+    };
+    expect(computeFieldValue(countField, { id: "REC-1" }, sampleTables)).toBe(3);
+
+    // Rollup Sum
+    const rollupSumField = {
+      name: "total_sum",
+      label: "Total Sum",
+      field_type: "Rollup" as const,
+      required: false,
+      ferpa_sensitive: false,
+      target_table_id: "tbl-items",
+      target_display_field: "amount",
+      rollup_function: "sum" as const,
+    };
+    expect(computeFieldValue(rollupSumField, { id: "REC-1" }, sampleTables)).toBe(600);
+
+    // Rollup Avg
+    const rollupAvgField = {
+      ...rollupSumField,
+      rollup_function: "avg" as const,
+    };
+    expect(computeFieldValue(rollupAvgField, { id: "REC-1" }, sampleTables)).toBe(200);
+  });
+
+  it("renders rich field types and computed cells inside AppBuilder Data Workspace", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    // Switch to Data tab
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Check headers with icons
+    expect(screen.getAllByText("Ethics Approved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Research Tags").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Review Rating").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("PI Email").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Total Disbursed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Disbursement Count").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Indirect Cost (20%)").length).toBeGreaterThan(0);
+
+    // Check MultiSelect pills rendered
+    expect(screen.getAllByText("Quantum").length).toBeGreaterThan(0);
+    expect(screen.getByText("StemCell")).toBeInTheDocument();
+
+    // Check Lookup email rendered
+    expect(screen.getAllByText("curie@science.state.edu").length).toBeGreaterThan(0);
+
+    // Check Rollup sum ($450,000 for APP-001)
+    expect(screen.getAllByText("$450,000").length).toBeGreaterThan(0);
+
+    // Check Formula ($90,000 indirect cost for APP-001: 450,000 * 0.20)
+    expect(screen.getByText("$90,000")).toBeInTheDocument();
+  });
+});
+
