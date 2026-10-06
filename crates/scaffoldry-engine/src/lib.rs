@@ -42,6 +42,23 @@ pub enum FieldType {
     Select,
     Boolean,
     Relation,
+    // Rich Field Types
+    Checkbox,
+    MultiSelect,
+    Currency,
+    Percent,
+    Rating,
+    Email,
+    Phone,
+    Url,
+    Autonumber,
+    CreatedTime,
+    LastModifiedTime,
+    // Computed & Relational Fields
+    Lookup,
+    Count,
+    Rollup,
+    Formula,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +76,16 @@ pub struct FieldSpec {
     pub target_table_id: Option<String>,
     #[serde(default)]
     pub target_display_field: Option<String>,
+    #[serde(default)]
+    pub formula_expression: Option<String>,
+    #[serde(default)]
+    pub rollup_function: Option<String>,
+    #[serde(default)]
+    pub select_options: Vec<String>,
+    #[serde(default)]
+    pub currency_symbol: Option<String>,
+    #[serde(default)]
+    pub precision: Option<u8>,
 }
 
 impl FieldSpec {
@@ -79,7 +106,179 @@ impl FieldSpec {
             linked_field: None,
             target_table_id: None,
             target_display_field: None,
+            formula_expression: None,
+            rollup_function: None,
+            select_options: Vec::new(),
+            currency_symbol: None,
+            precision: None,
         }
+    }
+}
+
+pub fn evaluate_formula(expression: &str, record: &Value) -> Value {
+    let expr = expression.trim();
+    if expr.is_empty() {
+        return Value::Null;
+    }
+
+    // Direct single reference e.g. "{budget}"
+    if expr.starts_with('{') && expr.ends_with('}') && !expr[1..expr.len() - 1].contains('}') {
+        let field = &expr[1..expr.len() - 1];
+        return record.get(field).cloned().unwrap_or(Value::Null);
+    }
+
+    // Multiplication: {budget} * 0.15 or {a} * {b}
+    if let Some((left, right)) = expr.split_once('*') {
+        let v1 = parse_operand(left.trim(), record);
+        let v2 = parse_operand(right.trim(), record);
+        let n1 = v1.as_f64().or_else(|| v1.as_i64().map(|i| i as f64));
+        let n2 = v2.as_f64().or_else(|| v2.as_i64().map(|i| i as f64));
+        if let (Some(n1), Some(n2)) = (n1, n2) {
+            return Value::from(n1 * n2);
+        }
+    }
+
+    // Division: {budget} / 12
+    if let Some((left, right)) = expr.split_once('/') {
+        let v1 = parse_operand(left.trim(), record);
+        let v2 = parse_operand(right.trim(), record);
+        let n1 = v1.as_f64().or_else(|| v1.as_i64().map(|i| i as f64));
+        let n2 = v2.as_f64().or_else(|| v2.as_i64().map(|i| i as f64));
+        if let (Some(n1), Some(n2)) = (n1, n2) {
+            if n2 != 0.0 {
+                return Value::from(n1 / n2);
+            }
+        }
+    }
+
+    // Addition or string concatenation: {first} + " " + {last} or {a} + {b}
+    if expr.contains('+') {
+        let parts: Vec<&str> = expr.split('+').map(|s| s.trim()).collect();
+        let mut all_numbers = true;
+        let mut sum = 0.0;
+        let mut concat_str = String::new();
+
+        for part in &parts {
+            let op_val = parse_operand(part, record);
+            if let Some(n) = op_val.as_f64().or_else(|| op_val.as_i64().map(|i| i as f64)) {
+                sum += n;
+            } else {
+                all_numbers = false;
+            }
+
+            if let Some(s) = op_val.as_str() {
+                concat_str.push_str(s);
+            } else if let Some(n) = op_val.as_f64() {
+                concat_str.push_str(&n.to_string());
+            } else if let Some(i) = op_val.as_i64() {
+                concat_str.push_str(&i.to_string());
+            }
+        }
+
+        if all_numbers && parts.len() > 1 {
+            return Value::from(sum);
+        } else {
+            return Value::from(concat_str);
+        }
+    }
+
+    // Subtraction: {budget} - {spent}
+    if let Some((left, right)) = expr.split_once('-') {
+        let v1 = parse_operand(left.trim(), record);
+        let v2 = parse_operand(right.trim(), record);
+        let n1 = v1.as_f64().or_else(|| v1.as_i64().map(|i| i as f64));
+        let n2 = v2.as_f64().or_else(|| v2.as_i64().map(|i| i as f64));
+        if let (Some(n1), Some(n2)) = (n1, n2) {
+            return Value::from(n1 - n2);
+        }
+    }
+
+    parse_operand(expr, record)
+}
+
+fn parse_operand(op: &str, record: &Value) -> Value {
+    let op = op.trim();
+    if op.starts_with('{') && op.ends_with('}') {
+        let field = &op[1..op.len() - 1];
+        record.get(field).cloned().unwrap_or(Value::Null)
+    } else if (op.starts_with('"') && op.ends_with('"')) || (op.starts_with('\'') && op.ends_with('\'')) {
+        Value::from(&op[1..op.len() - 1])
+    } else if let Ok(n) = op.parse::<f64>() {
+        Value::from(n)
+    } else {
+        record.get(op).cloned().unwrap_or(Value::Null)
+    }
+}
+
+pub fn compute_field_value(
+    field: &FieldSpec,
+    record: &Value,
+    linked_records: &[Value],
+) -> Value {
+    match field.field_type {
+        FieldType::Formula => {
+            if let Some(expr) = &field.formula_expression {
+                evaluate_formula(expr, record)
+            } else {
+                Value::Null
+            }
+        }
+        FieldType::Lookup => {
+            if let Some(target_col) = &field.target_display_field {
+                let values: Vec<Value> = linked_records
+                    .iter()
+                    .filter_map(|r| r.get(target_col).cloned())
+                    .collect();
+                if values.len() == 1 {
+                    values[0].clone()
+                } else {
+                    Value::Array(values)
+                }
+            } else {
+                Value::Null
+            }
+        }
+        FieldType::Count => Value::from(linked_records.len()),
+        FieldType::Rollup => {
+            let target_col = field.target_display_field.as_deref().unwrap_or("amount");
+            let numbers: Vec<f64> = linked_records
+                .iter()
+                .filter_map(|r| {
+                    r.get(target_col)
+                        .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
+                })
+                .collect();
+            let func = field.rollup_function.as_deref().unwrap_or("sum");
+            match func.to_lowercase().as_str() {
+                "sum" => Value::from(numbers.iter().sum::<f64>()),
+                "avg" => {
+                    if numbers.is_empty() {
+                        Value::from(0.0)
+                    } else {
+                        Value::from(numbers.iter().sum::<f64>() / numbers.len() as f64)
+                    }
+                }
+                "min" => {
+                    let min = numbers.iter().cloned().fold(f64::INFINITY, f64::min);
+                    if min.is_infinite() {
+                        Value::Null
+                    } else {
+                        Value::from(min)
+                    }
+                }
+                "max" => {
+                    let max = numbers.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    if max.is_infinite() {
+                        Value::Null
+                    } else {
+                        Value::from(max)
+                    }
+                }
+                "count" => Value::from(numbers.len()),
+                _ => Value::Null,
+            }
+        }
+        _ => record.get(&field.name).cloned().unwrap_or(Value::Null),
     }
 }
 

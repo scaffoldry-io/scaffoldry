@@ -11,6 +11,7 @@ import {
 } from "./types";
 import { ComponentInspectorFlyout } from "./ComponentInspectorFlyout";
 import { WorkflowBuilder } from "./WorkflowBuilder";
+import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
 
 interface AppBuilderProps {
   app: RegisteredApp;
@@ -60,12 +61,19 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
             { name: "status", label: "Review Status", field_type: "Select", required: true, ferpa_sensitive: false },
             { name: "budget", label: "Budget ($)", field_type: "Number", required: true, ferpa_sensitive: false },
             { name: "submitted_at", label: "Submitted", field_type: "Date", required: true, ferpa_sensitive: false },
+            { name: "ethics_approved", label: "Ethics Approved", field_type: "Checkbox", required: false, ferpa_sensitive: false },
+            { name: "tags", label: "Research Tags", field_type: "MultiSelect", required: false, ferpa_sensitive: false, select_options: ["StemCell", "Quantum", "DOE-Grant", "Catalyst", "HighPriority"] },
+            { name: "rating", label: "Review Rating", field_type: "Rating", required: false, ferpa_sensitive: false },
+            { name: "lead_pi_email", label: "PI Email", field_type: "Lookup", required: false, ferpa_sensitive: false, target_table_id: "tbl-investigators", target_display_field: "email" },
+            { name: "total_allocations", label: "Total Disbursed", field_type: "Rollup", required: false, ferpa_sensitive: false, target_table_id: "tbl-allocations", target_display_field: "allocated_amount", rollup_function: "sum" },
+            { name: "allocations_count", label: "Disbursement Count", field_type: "Count", required: false, ferpa_sensitive: false, target_table_id: "tbl-allocations" },
+            { name: "indirect_cost", label: "Indirect Cost (20%)", field_type: "Formula", required: false, ferpa_sensitive: false, formula_expression: "{budget} * 0.20" },
           ],
           records: [
-            { id: "APP-001", title: "Quantum Optomechanics Qubit Study", department: "Physics", lead_investigator_id: "INV-01", status: "Under Review", budget: 450000, submitted_at: "2026-10-02" },
-            { id: "APP-002", title: "Neural Stem Cell Regeneration", department: "Bioengineering", lead_investigator_id: "INV-02", status: "Approved", budget: 820000, submitted_at: "2026-09-28" },
-            { id: "APP-003", title: "Edge Sensor Fusion Lattice", department: "Computer Science", lead_investigator_id: "INV-02", status: "Funded", budget: 640000, submitted_at: "2026-09-15" },
-            { id: "APP-004", title: "High-Entropy Alloy Catalyst Synthesis", department: "Materials Science", lead_investigator_id: "INV-03", status: "Under Review", budget: 380000, submitted_at: "2026-10-01" },
+            { id: "APP-001", title: "Quantum Optomechanics Qubit Study", department: "Physics", lead_investigator_id: "INV-01", status: "Under Review", budget: 450000, submitted_at: "2026-10-02", ethics_approved: true, tags: ["Quantum", "HighPriority"], rating: 5 },
+            { id: "APP-002", title: "Neural Stem Cell Regeneration", department: "Bioengineering", lead_investigator_id: "INV-02", status: "Approved", budget: 820000, submitted_at: "2026-09-28", ethics_approved: true, tags: ["StemCell", "DOE-Grant"], rating: 4 },
+            { id: "APP-003", title: "Edge Sensor Fusion Lattice", department: "Computer Science", lead_investigator_id: "INV-02", status: "Funded", budget: 640000, submitted_at: "2026-09-15", ethics_approved: false, tags: ["Quantum"], rating: 3 },
+            { id: "APP-004", title: "High-Entropy Alloy Catalyst Synthesis", department: "Materials Science", lead_investigator_id: "INV-03", status: "Under Review", budget: 380000, submitted_at: "2026-10-01", ethics_approved: true, tags: ["Catalyst"], rating: 4 },
           ],
         },
         {
@@ -748,7 +756,8 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                       <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-mono text-[11px] uppercase">
                         {activeTable.fields.map((field) => (
                           <th key={field.name} className="py-2.5 px-3 font-semibold">
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-slate-400 font-mono text-[11px]">{getFieldTypeIcon(field.field_type)}</span>
                               <span>{field.label}</span>
                               {field.field_type === "Relation" && (
                                 <span className="text-purple-500" title="Relational Linked Record">🔗</span>
@@ -772,7 +781,9 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                             className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors"
                           >
                             {activeTable.fields.map((field) => {
-                              const cellValue = record[field.name];
+                              const cellValue = ["Formula", "Lookup", "Count", "Rollup"].includes(field.field_type)
+                                ? computeFieldValue(field, record, tables)
+                                : record[field.name];
 
                               // RELATIONAL LOOKUP FIELD RESOLUTION
                               if (field.field_type === "Relation" && field.target_table_id) {
@@ -804,10 +815,122 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                 );
                               }
 
+                              // CHECKBOX
+                              if (field.field_type === "Checkbox") {
+                                return (
+                                  <td key={field.name} className="py-2.5 px-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(cellValue)}
+                                      onChange={(e) => handleUpdateRecordField(record.id, field.name, e.target.checked)}
+                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+                                    />
+                                  </td>
+                                );
+                              }
+
+                              // MULTI-SELECT
+                              if (field.field_type === "MultiSelect") {
+                                const items = Array.isArray(cellValue) ? cellValue : cellValue ? [String(cellValue)] : [];
+                                return (
+                                  <td key={field.name} className="py-2.5 px-3">
+                                    <div className="flex flex-wrap gap-1">
+                                      {items.map((opt: string) => (
+                                        <span
+                                          key={opt}
+                                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200"
+                                        >
+                                          {opt}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                );
+                              }
+
+                              // RATING
+                              if (field.field_type === "Rating") {
+                                const score = Number(cellValue || 0);
+                                return (
+                                  <td key={field.name} className="py-2.5 px-3">
+                                    <div className="flex items-center gap-0.5 text-amber-500">
+                                      {[1, 2, 3, 4, 5].map((star) => (
+                                        <span key={star} className="text-xs">
+                                          {star <= score ? "★" : "☆"}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                );
+                              }
+
+                              // LOOKUP
+                              if (field.field_type === "Lookup") {
+                                return (
+                                  <td key={field.name} className="py-2.5 px-3">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                      <span className="text-[10px]">🔍</span>
+                                      {String(cellValue ?? "")}
+                                    </span>
+                                  </td>
+                                );
+                              }
+
+                              // ROLLUP
+                              if (field.field_type === "Rollup") {
+                                return (
+                                  <td key={field.name} className="py-2.5 px-3">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                      <span className="text-[10px]">Σ</span>
+                                      ${Number(cellValue || 0).toLocaleString()}
+                                    </span>
+                                  </td>
+                                );
+                              }
+
+                              // COUNT
+                              if (field.field_type === "Count") {
+                                return (
+                                  <td key={field.name} className="py-2.5 px-3">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                      <span className="text-[10px]">#</span>
+                                      {cellValue}
+                                    </span>
+                                  </td>
+                                );
+                              }
+
+                              // FORMULA
+                              if (field.field_type === "Formula") {
+                                return (
+                                  <td key={field.name} className="py-2.5 px-3">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                      <span className="text-[10px]">ƒx</span>
+                                      {typeof cellValue === "number" ? `$${cellValue.toLocaleString()}` : String(cellValue ?? "")}
+                                    </span>
+                                  </td>
+                                );
+                              }
+
                               return (
                                 <td key={field.name} className="py-2.5 px-3 text-slate-800 dark:text-slate-200">
-                                  {field.name === "budget" || field.name === "allocated_amount" ? (
+                                  {field.name === "budget" || field.name === "allocated_amount" || field.field_type === "Currency" ? (
                                     <span className="font-mono font-medium">${Number(cellValue || 0).toLocaleString()}</span>
+                                  ) : field.field_type === "Percent" ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono text-xs">{cellValue}%</span>
+                                      <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                                        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, Math.max(0, Number(cellValue || 0)))}%` }} />
+                                      </div>
+                                    </div>
+                                  ) : field.field_type === "Email" ? (
+                                    <a href={`mailto:${cellValue}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
+                                      <span className="text-[10px]">✉</span>{cellValue}
+                                    </a>
+                                  ) : field.field_type === "Url" ? (
+                                    <a href={String(cellValue)} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
+                                      <span className="text-[10px]">🌐</span>{cellValue}
+                                    </a>
                                   ) : field.name === "status" || field.name === "disbursement_status" ? (
                                     <span
                                       className={`px-2 py-0.5 rounded text-[10px] font-bold ${
