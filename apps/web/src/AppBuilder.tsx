@@ -3,15 +3,27 @@ import {
   AppManifest,
   AppPage,
   AppTable,
+  AppView,
+  CompoundFilter,
+  FilterClause,
   GovernedComponentSpec,
   GovernedComponentType,
   RegisteredApp,
+  RowDensity,
+  SortRule,
   TableRelationship,
+  ViewType,
   WorkflowAutomationRule,
 } from "./types";
 import { ComponentInspectorFlyout } from "./ComponentInspectorFlyout";
 import { WorkflowBuilder } from "./WorkflowBuilder";
-import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
+import {
+  applyCompoundFilter,
+  applyMultiSort,
+  computeFieldValue,
+  getFieldTypeIcon,
+  groupRecordsByField,
+} from "./computedFields";
 
 interface AppBuilderProps {
   app: RegisteredApp;
@@ -162,6 +174,140 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const [newTableIcon, setNewTableIcon] = useState<string>("📋");
 
   const activeTable = tables.find((t) => t.id === activeTableId) || tables[0];
+
+  const defaultSavedViews: AppView[] = [
+    {
+      id: "view-proposals-grid",
+      table_id: "tbl-proposals",
+      title: "All Proposals",
+      view_type: "Grid",
+      row_density: "medium",
+    },
+    {
+      id: "view-proposals-kanban",
+      table_id: "tbl-proposals",
+      title: "Status Kanban",
+      view_type: "Kanban",
+      kanban_column_field: "status",
+    },
+    {
+      id: "view-proposals-calendar",
+      table_id: "tbl-proposals",
+      title: "Submission Timeline",
+      view_type: "Calendar",
+      calendar_date_field: "submitted_at",
+    },
+    {
+      id: "view-proposals-gallery",
+      table_id: "tbl-proposals",
+      title: "Grant Showcase",
+      view_type: "Gallery",
+    },
+    {
+      id: "view-investigators-grid",
+      table_id: "tbl-investigators",
+      title: "Faculty Grid",
+      view_type: "Grid",
+      row_density: "medium",
+    },
+    {
+      id: "view-allocations-grid",
+      table_id: "tbl-allocations",
+      title: "Allocations Grid",
+      view_type: "Grid",
+      row_density: "medium",
+    },
+  ];
+
+  const [savedViews, setSavedViews] = useState<AppView[]>(defaultSavedViews);
+  const [activeViewId, setActiveViewId] = useState<string>("view-proposals-grid");
+  const [compoundFilter, setCompoundFilter] = useState<CompoundFilter>({
+    conjunction: "AND",
+    clauses: [],
+  });
+  const [sortRules, setSortRules] = useState<SortRule[]>([]);
+  const [groupByField, setGroupByField] = useState<string | null>(null);
+  const [rowDensity, setRowDensity] = useState<RowDensity>("medium");
+  const [isFilterPopoverOpen, setIsFilterPopoverOpen] = useState<boolean>(false);
+  const [isSortPopoverOpen, setIsSortPopoverOpen] = useState<boolean>(false);
+  const [isAddViewModalOpen, setIsAddViewModalOpen] = useState<boolean>(false);
+  const [newViewTitle, setNewViewTitle] = useState<string>("New View");
+  const [newViewType, setNewViewType] = useState<ViewType>("Grid");
+
+  const currentTableViews = savedViews.filter(
+    (v) => (v.table_id || "tbl-proposals") === activeTable.id
+  );
+
+  const activeView =
+    currentTableViews.find((v) => v.id === activeViewId) ||
+    currentTableViews[0] ||
+    savedViews[0];
+
+  const handleAddFilterClause = () => {
+    const firstField = activeTable.fields[0]?.name || "id";
+    const newClause: FilterClause = {
+      id: `filter-${Date.now()}`,
+      field_name: firstField,
+      operator: "equals",
+      value: "",
+    };
+    setCompoundFilter((prev) => ({
+      ...prev,
+      clauses: [...prev.clauses, newClause],
+    }));
+  };
+
+  const handleUpdateFilterClause = (id: string, updates: Partial<FilterClause>) => {
+    setCompoundFilter((prev) => ({
+      ...prev,
+      clauses: prev.clauses.map((c) => (c.id === id ? { ...c, ...updates } : c)),
+    }));
+  };
+
+  const handleRemoveFilterClause = (id: string) => {
+    setCompoundFilter((prev) => ({
+      ...prev,
+      clauses: prev.clauses.filter((c) => c.id !== id),
+    }));
+  };
+
+  const handleAddSortRule = () => {
+    const firstField = activeTable.fields[0]?.name || "id";
+    const newRule: SortRule = {
+      id: `sort-${Date.now()}`,
+      field_name: firstField,
+      direction: "asc",
+    };
+    setSortRules((prev) => [...prev, newRule]);
+  };
+
+  const handleUpdateSortRule = (id: string, updates: Partial<SortRule>) => {
+    setSortRules((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
+    );
+  };
+
+  const handleRemoveSortRule = (id: string) => {
+    setSortRules((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const handleCreateNewView = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newViewTitle.trim()) return;
+    const created: AppView = {
+      id: `view-${Date.now()}`,
+      table_id: activeTable.id,
+      title: newViewTitle.trim(),
+      view_type: newViewType,
+      row_density: "medium",
+      kanban_column_field: newViewType === "Kanban" ? "status" : undefined,
+      calendar_date_field: newViewType === "Calendar" ? "submitted_at" : undefined,
+    };
+    setSavedViews((prev) => [...prev, created]);
+    setActiveViewId(created.id);
+    setIsAddViewModalOpen(false);
+    setNewViewTitle("");
+  };
 
   // Helper to resolve linked record value from another table
   const resolveLinkedDisplay = (targetTableId: string, recordId: string, displayField: string = "name"): string => {
@@ -701,7 +847,8 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
 
               {/* ACTIVE TABLE SCHEMA & RECORDS GRID */}
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs space-y-4">
-                <div className="flex items-center justify-between">
+                {/* VIEW SWITCHER & TABLE HEADER */}
+                <div className="flex items-center justify-between flex-wrap gap-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-lg">{activeTable.icon || "📑"}</span>
@@ -714,248 +861,950 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                       <p className="text-xs text-slate-500 mt-0.5">{activeTable.description}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="text"
-                      placeholder={`Search ${activeTable.name}...`}
-                      value={tableSearchFilter}
-                      onChange={(e) => setTableSearchFilter(e.target.value)}
-                      className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-white focus:outline-blue-500"
-                    />
+
+                  {/* SAVED VIEW SWITCHER TABS */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-100 dark:bg-slate-800/60 p-1 rounded-xl">
+                    {currentTableViews.map((v) => {
+                      const isSel = v.id === activeView.id;
+                      const icon =
+                        v.view_type === "Grid"
+                          ? "▦"
+                          : v.view_type === "Kanban"
+                          ? "☷"
+                          : v.view_type === "Calendar"
+                          ? "📅"
+                          : "🖼";
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          data-testid={`view-tab-${v.id}`}
+                          onClick={() => setActiveViewId(v.id)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                            isSel
+                              ? "bg-white text-slate-900 dark:bg-slate-900 dark:text-white shadow-xs font-bold"
+                              : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-white/50"
+                          }`}
+                        >
+                          <span className="text-blue-500">{icon}</span>
+                          <span>{v.title}</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-mono">
+                            {v.view_type}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      data-testid="btn-add-view"
+                      onClick={() => setIsAddViewModalOpen(true)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:text-blue-600 hover:bg-white dark:hover:bg-slate-900 cursor-pointer transition-colors"
+                      title="Create New Saved View"
+                    >
+                      <span>+</span>
+                      <span>View</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* Table Columns and Relational Types List */}
-                <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-100 dark:border-slate-800">
-                  <span className="text-[11px] font-bold text-slate-400 shrink-0 uppercase tracking-wider">
-                    Columns:
-                  </span>
-                  {activeTable.fields.map((f) => (
-                    <span
-                      key={f.name}
-                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
-                    >
-                      <span className="font-semibold">{f.label}</span>
-                      <span
-                        className={`text-[9px] uppercase px-1 rounded font-bold ${
-                          f.field_type === "Relation"
-                            ? "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
-                            : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                {/* DATA SHAPING TOOLBAR (Filter, Sort, Group, Density, Search) */}
+                <div className="flex items-center justify-between flex-wrap gap-2 py-2.5 px-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-xl">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* COMPOUND FILTER BUTTON & POPOVER */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        data-testid="toolbar-filter-btn"
+                        onClick={() => {
+                          setIsFilterPopoverOpen((prev) => !prev);
+                          setIsSortPopoverOpen(false);
+                        }}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer transition-colors ${
+                          compoundFilter.clauses.length > 0
+                            ? "bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950 dark:border-blue-700 dark:text-blue-300"
+                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
                         }`}
                       >
-                        {f.field_type === "Relation" ? "Relation 🔗" : f.field_type}
-                      </span>
-                    </span>
-                  ))}
+                        <span>⚡ Filter</span>
+                        {compoundFilter.clauses.length > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                            {compoundFilter.clauses.length}
+                          </span>
+                        )}
+                      </button>
+
+                      {isFilterPopoverOpen && (
+                        <div
+                          data-testid="filter-popover"
+                          className="absolute left-0 top-full mt-2 w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-4 z-40 space-y-3"
+                        >
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                              Compound Filter Conditions
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-slate-400">Match:</span>
+                              <div className="inline-flex rounded border border-slate-200 dark:border-slate-700 p-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCompoundFilter((p) => ({ ...p, conjunction: "AND" }))
+                                  }
+                                  className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                                    compoundFilter.conjunction === "AND"
+                                      ? "bg-blue-600 text-white"
+                                      : "text-slate-500"
+                                  }`}
+                                >
+                                  AND
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCompoundFilter((p) => ({ ...p, conjunction: "OR" }))
+                                  }
+                                  className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                                    compoundFilter.conjunction === "OR"
+                                      ? "bg-blue-600 text-white"
+                                      : "text-slate-500"
+                                  }`}
+                                >
+                                  OR
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {compoundFilter.clauses.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-2 text-center">
+                              No filter conditions configured. All rows shown.
+                            </p>
+                          ) : (
+                            <div className="space-y-2 max-h-60 overflow-y-auto">
+                              {compoundFilter.clauses.map((clause, idx) => (
+                                <div key={clause.id} className="flex items-center gap-1.5 text-xs">
+                                  <span className="text-[10px] text-slate-400 w-8">
+                                    {idx === 0 ? "Where" : compoundFilter.conjunction}
+                                  </span>
+                                  <select
+                                    value={clause.field_name}
+                                    onChange={(e) =>
+                                      handleUpdateFilterClause(clause.id, {
+                                        field_name: e.target.value,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs w-28"
+                                  >
+                                    {activeTable.fields.map((f) => (
+                                      <option key={f.name} value={f.name}>
+                                        {f.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <select
+                                    value={clause.operator}
+                                    onChange={(e) =>
+                                      handleUpdateFilterClause(clause.id, {
+                                        operator: e.target.value as any,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs w-24"
+                                  >
+                                    <option value="equals">is</option>
+                                    <option value="not_equals">is not</option>
+                                    <option value="contains">contains</option>
+                                    <option value="not_contains">not contains</option>
+                                    <option value="greater_than">&gt;</option>
+                                    <option value="less_than">&lt;</option>
+                                    <option value="is_empty">is empty</option>
+                                    <option value="is_not_empty">not empty</option>
+                                  </select>
+                                  {!["is_empty", "is_not_empty"].includes(clause.operator) && (
+                                    <input
+                                      type="text"
+                                      value={clause.value}
+                                      onChange={(e) =>
+                                        handleUpdateFilterClause(clause.id, {
+                                          value: e.target.value,
+                                        })
+                                      }
+                                      placeholder="Value..."
+                                      className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs flex-1"
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveFilterClause(clause.id)}
+                                    className="text-slate-400 hover:text-red-500 px-1 font-bold"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+                            <button
+                              type="button"
+                              onClick={handleAddFilterClause}
+                              className="text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer"
+                            >
+                              + Add Condition
+                            </button>
+                            {compoundFilter.clauses.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setCompoundFilter({ conjunction: "AND", clauses: [] })}
+                                className="text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                              >
+                                Clear All
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* MULTI-COLUMN SORT BUTTON & POPOVER */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        data-testid="toolbar-sort-btn"
+                        onClick={() => {
+                          setIsSortPopoverOpen((prev) => !prev);
+                          setIsFilterPopoverOpen(false);
+                        }}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer transition-colors ${
+                          sortRules.length > 0
+                            ? "bg-purple-50 border-purple-300 text-purple-700 dark:bg-purple-950 dark:border-purple-700 dark:text-purple-300"
+                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                        }`}
+                      >
+                        <span>⇅ Sort</span>
+                        {sortRules.length > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-purple-600 text-white text-[10px] font-bold">
+                            {sortRules.length}
+                          </span>
+                        )}
+                      </button>
+
+                      {isSortPopoverOpen && (
+                        <div
+                          data-testid="sort-popover"
+                          className="absolute left-0 top-full mt-2 w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-4 z-40 space-y-3"
+                        >
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                              Multi-Column Sorting
+                            </span>
+                            {sortRules.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSortRules([])}
+                                className="text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+
+                          {sortRules.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-2 text-center">
+                              No sort rules active. Default ordering applied.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {sortRules.map((rule, idx) => (
+                                <div key={rule.id} className="flex items-center gap-2 text-xs">
+                                  <span className="text-[10px] text-slate-400 w-10">
+                                    {idx === 0 ? "Sort by" : "Then by"}
+                                  </span>
+                                  <select
+                                    value={rule.field_name}
+                                    onChange={(e) =>
+                                      handleUpdateSortRule(rule.id, {
+                                        field_name: e.target.value,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs flex-1"
+                                  >
+                                    {activeTable.fields.map((f) => (
+                                      <option key={f.name} value={f.name}>
+                                        {f.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <select
+                                    value={rule.direction}
+                                    onChange={(e) =>
+                                      handleUpdateSortRule(rule.id, {
+                                        direction: e.target.value as any,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs w-20"
+                                  >
+                                    <option value="asc">Asc (A-Z)</option>
+                                    <option value="desc">Desc (Z-A)</option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveSortRule(rule.id)}
+                                    className="text-slate-400 hover:text-red-500 px-1 font-bold"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <button
+                              type="button"
+                              onClick={handleAddSortRule}
+                              className="text-purple-600 dark:text-purple-400 font-semibold hover:underline text-xs cursor-pointer"
+                            >
+                              + Add Sort Rule
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ROW GROUPING SELECTOR */}
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-slate-400">Group by:</span>
+                      <select
+                        data-testid="toolbar-group-select"
+                        value={groupByField || ""}
+                        onChange={(e) => setGroupByField(e.target.value || null)}
+                        className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 font-medium"
+                      >
+                        <option value="">None (Ungrouped)</option>
+                        {activeTable.fields.map((f) => (
+                          <option key={f.name} value={f.name}>
+                            {f.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* ROW DENSITY / HEIGHT SELECTOR */}
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-slate-400">Density:</span>
+                      <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 bg-white dark:bg-slate-800">
+                        {(["compact", "medium", "tall", "extra_tall"] as RowDensity[]).map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            data-testid={`density-btn-${d}`}
+                            onClick={() => setRowDensity(d)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase transition-all ${
+                              rowDensity === d
+                                ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xs"
+                                : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                            }`}
+                          >
+                            {d.replace("_", " ")}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* QUICK SEARCH */}
+                  <input
+                    type="text"
+                    placeholder={`Search ${activeTable.name}...`}
+                    value={tableSearchFilter}
+                    onChange={(e) => setTableSearchFilter(e.target.value)}
+                    className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-white focus:outline-blue-500 w-48"
+                  />
                 </div>
 
-                {/* TanStack Interactive Records Grid with Relational Resolution */}
-                <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-lg">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-mono text-[11px] uppercase">
-                        {activeTable.fields.map((field) => (
-                          <th key={field.name} className="py-2.5 px-3 font-semibold">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-slate-400 font-mono text-[11px]">{getFieldTypeIcon(field.field_type)}</span>
-                              <span>{field.label}</span>
-                              {field.field_type === "Relation" && (
-                                <span className="text-purple-500" title="Relational Linked Record">🔗</span>
-                              )}
-                            </div>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {(activeTable.records || [])
-                        .filter((rec) => {
-                          if (!tableSearchFilter.trim()) return true;
-                          return Object.values(rec).some((val) =>
-                            String(val).toLowerCase().includes(tableSearchFilter.toLowerCase())
+                {/* COMPUTED DATA SHAPING */}
+                {(() => {
+                  const rawRecords = activeTable.records || [];
+                  const searchFiltered = rawRecords.filter((rec) => {
+                    if (!tableSearchFilter.trim()) return true;
+                    return Object.values(rec).some((val) =>
+                      String(val).toLowerCase().includes(tableSearchFilter.toLowerCase())
+                    );
+                  });
+                  const compoundFiltered = applyCompoundFilter(searchFiltered, compoundFilter);
+                  const sortedRecords = applyMultiSort(compoundFiltered, sortRules);
+                  const recordGroups = groupRecordsByField(sortedRecords, groupByField || undefined);
+
+                  // Density padding classes
+                  const cellPadding =
+                    rowDensity === "compact"
+                      ? "py-1.5 px-3 text-xs"
+                      : rowDensity === "tall"
+                      ? "py-4 px-3 text-xs"
+                      : rowDensity === "extra_tall"
+                      ? "py-6 px-3 text-xs"
+                      : "py-2.5 px-3 text-xs";
+
+                  // VIEW TYPE: KANBAN
+                  if (activeView.view_type === "Kanban") {
+                    const stageCol = activeView.kanban_column_field || "status";
+                    const statuses = ["Under Review", "Approved", "Funded"];
+
+                    return (
+                      <div data-testid="view-kanban-board" className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                        {statuses.map((stage) => {
+                          const stageRecords = sortedRecords.filter(
+                            (r) => String(r[stageCol] || "") === stage
                           );
-                        })
-                        .map((record) => (
-                          <tr
-                            key={record.id}
-                            className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors"
-                          >
-                            {activeTable.fields.map((field) => {
-                              const cellValue = ["Formula", "Lookup", "Count", "Rollup"].includes(field.field_type)
-                                ? computeFieldValue(field, record, tables)
-                                : record[field.name];
+                          const stageTotal = stageRecords.reduce(
+                            (acc, r) => acc + (Number(r.budget || r.allocated_amount) || 0),
+                            0
+                          );
 
-                              // RELATIONAL LOOKUP FIELD RESOLUTION
-                              if (field.field_type === "Relation" && field.target_table_id) {
-                                const targetTable = tables.find((t) => t.id === field.target_table_id);
-                                const targetRecords = targetTable?.records || [];
+                          return (
+                            <div
+                              key={stage}
+                              data-testid={`kanban-column-${stage.toLowerCase().replace(/\s+/g, "-")}`}
+                              className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col space-y-3"
+                            >
+                              <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
+                                    {stage}
+                                  </span>
+                                  <span className="text-[10px] font-mono px-2 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                                    {stageRecords.length}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-400">
+                                  ${stageTotal.toLocaleString()}
+                                </span>
+                              </div>
 
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <div className="relative inline-block">
-                                      <select
-                                        value={cellValue || ""}
-                                        onChange={(e) =>
-                                          handleUpdateRecordField(record.id, field.name, e.target.value)
-                                        }
-                                        className="appearance-none inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/70 dark:hover:bg-purple-900/70 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 cursor-pointer pr-5"
-                                        title={`Linked to ${targetTable?.name || "Table"}`}
-                                      >
-                                        {targetRecords.map((tr) => (
-                                          <option key={tr.id} value={tr.id}>
-                                            {tr[field.target_display_field || "name"] || tr.name || tr.title || tr.id}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-purple-500">
-                                        ▾
+                              <div className="space-y-2.5 flex-1 overflow-y-auto">
+                                {stageRecords.map((rec) => (
+                                  <div
+                                    key={rec.id}
+                                    data-testid={`kanban-card-${rec.id}`}
+                                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 shadow-xs hover:border-blue-400 transition-colors space-y-2"
+                                  >
+                                    <div className="flex items-center justify-between text-[10px]">
+                                      <span className="font-mono text-slate-400">{rec.id}</span>
+                                      <span className="font-semibold text-blue-600 dark:text-blue-400">
+                                        {rec.department || "General"}
                                       </span>
                                     </div>
-                                  </td>
-                                );
-                              }
-
-                              // CHECKBOX
-                              if (field.field_type === "Checkbox") {
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean(cellValue)}
-                                      onChange={(e) => handleUpdateRecordField(record.id, field.name, e.target.checked)}
-                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
-                                    />
-                                  </td>
-                                );
-                              }
-
-                              // MULTI-SELECT
-                              if (field.field_type === "MultiSelect") {
-                                const items = Array.isArray(cellValue) ? cellValue : cellValue ? [String(cellValue)] : [];
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <div className="flex flex-wrap gap-1">
-                                      {items.map((opt: string) => (
-                                        <span
-                                          key={opt}
-                                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200"
-                                        >
-                                          {opt}
+                                    <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                                      {rec.title || rec.name || rec.id}
+                                    </h4>
+                                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+                                      <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                        ${Number(rec.budget || 0).toLocaleString()}
+                                      </span>
+                                      {rec.rating && (
+                                        <span className="text-amber-500 font-bold">
+                                          {"★".repeat(Number(rec.rating))}
                                         </span>
-                                      ))}
+                                      )}
                                     </div>
-                                  </td>
-                                );
-                              }
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  }
 
-                              // RATING
-                              if (field.field_type === "Rating") {
-                                const score = Number(cellValue || 0);
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <div className="flex items-center gap-0.5 text-amber-500">
-                                      {[1, 2, 3, 4, 5].map((star) => (
-                                        <span key={star} className="text-xs">
-                                          {star <= score ? "★" : "☆"}
-                                        </span>
-                                      ))}
+                  // VIEW TYPE: CALENDAR
+                  if (activeView.view_type === "Calendar") {
+                    const dateCol = activeView.calendar_date_field || "submitted_at";
+                    const datesMap = new Map<string, Record<string, any>[]>();
+                    for (const r of sortedRecords) {
+                      const d = String(r[dateCol] || "Unscheduled");
+                      if (!datesMap.has(d)) datesMap.set(d, []);
+                      datesMap.get(d)!.push(r);
+                    }
+
+                    return (
+                      <div data-testid="view-calendar-timeline" className="space-y-4 pt-2">
+                        {Array.from(datesMap.entries()).map(([dateStr, dRecords]) => (
+                          <div
+                            key={dateStr}
+                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs space-y-3"
+                          >
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                              <div className="flex items-center gap-2">
+                                <span className="text-blue-500 text-sm">📅</span>
+                                <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                  {dateStr}
+                                </span>
+                                <span className="text-[10px] font-mono px-2 py-0.2 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                  {dRecords.length} Events
+                                </span>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {dRecords.map((rec) => (
+                                <div
+                                  key={rec.id}
+                                  className="p-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between"
+                                >
+                                  <div>
+                                    <div className="font-mono text-[10px] text-slate-400">{rec.id}</div>
+                                    <div className="text-xs font-bold text-slate-900 dark:text-white mt-0.5">
+                                      {rec.title || rec.name}
                                     </div>
-                                  </td>
-                                );
-                              }
-
-                              // LOOKUP
-                              if (field.field_type === "Lookup") {
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                                      <span className="text-[10px]">🔍</span>
-                                      {String(cellValue ?? "")}
-                                    </span>
-                                  </td>
-                                );
-                              }
-
-                              // ROLLUP
-                              if (field.field_type === "Rollup") {
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                                      <span className="text-[10px]">Σ</span>
-                                      ${Number(cellValue || 0).toLocaleString()}
-                                    </span>
-                                  </td>
-                                );
-                              }
-
-                              // COUNT
-                              if (field.field_type === "Count") {
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                                      <span className="text-[10px]">#</span>
-                                      {cellValue}
-                                    </span>
-                                  </td>
-                                );
-                              }
-
-                              // FORMULA
-                              if (field.field_type === "Formula") {
-                                return (
-                                  <td key={field.name} className="py-2.5 px-3">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                                      <span className="text-[10px]">ƒx</span>
-                                      {typeof cellValue === "number" ? `$${cellValue.toLocaleString()}` : String(cellValue ?? "")}
-                                    </span>
-                                  </td>
-                                );
-                              }
-
-                              return (
-                                <td key={field.name} className="py-2.5 px-3 text-slate-800 dark:text-slate-200">
-                                  {field.name === "budget" || field.name === "allocated_amount" || field.field_type === "Currency" ? (
-                                    <span className="font-mono font-medium">${Number(cellValue || 0).toLocaleString()}</span>
-                                  ) : field.field_type === "Percent" ? (
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="font-mono text-xs">{cellValue}%</span>
-                                      <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                                        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, Math.max(0, Number(cellValue || 0)))}%` }} />
-                                      </div>
+                                    <div className="text-[10px] text-slate-500 mt-0.5">
+                                      {rec.department}
                                     </div>
-                                  ) : field.field_type === "Email" ? (
-                                    <a href={`mailto:${cellValue}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
-                                      <span className="text-[10px]">✉</span>{cellValue}
-                                    </a>
-                                  ) : field.field_type === "Url" ? (
-                                    <a href={String(cellValue)} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
-                                      <span className="text-[10px]">🌐</span>{cellValue}
-                                    </a>
-                                  ) : field.name === "status" || field.name === "disbursement_status" ? (
-                                    <span
-                                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                        cellValue === "Approved" || cellValue === "Disbursed"
-                                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-                                          : cellValue === "Funded"
-                                          ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                                          : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-                                      }`}
-                                    >
-                                      {cellValue}
-                                    </span>
-                                  ) : field.name === "id" ? (
-                                    <span className="font-mono text-slate-500">{cellValue}</span>
-                                  ) : (
-                                    <span>{String(cellValue ?? "")}</span>
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
+                                  </div>
+                                  <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                    ${Number(rec.budget || 0).toLocaleString()}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </div>
+                    );
+                  }
+
+                  // VIEW TYPE: GALLERY
+                  if (activeView.view_type === "Gallery") {
+                    return (
+                      <div data-testid="view-gallery-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                        {sortedRecords.map((rec) => (
+                          <div
+                            key={rec.id}
+                            data-testid={`gallery-card-${rec.id}`}
+                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs hover:border-blue-400 transition-all flex flex-col"
+                          >
+                            <div className="h-20 bg-linear-to-r from-blue-600/20 via-purple-600/20 to-emerald-600/20 p-3 flex items-start justify-between">
+                              <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 font-bold text-slate-700 dark:text-slate-300">
+                                {rec.id}
+                              </span>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                  rec.status === "Approved"
+                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                    : "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
+                                }`}
+                              >
+                                {rec.status || "Active"}
+                              </span>
+                            </div>
+                            <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                              <div>
+                                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                                  {rec.title || rec.name}
+                                </h4>
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                  {rec.department || "Academic Unit"}
+                                </p>
+                              </div>
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+                                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                  ${Number(rec.budget || 0).toLocaleString()}
+                                </span>
+                                {rec.rating && (
+                                  <span className="text-amber-500 text-xs">
+                                    {"★".repeat(Number(rec.rating))}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  // VIEW TYPE: GRID (DEFAULT)
+                  return (
+                    <div data-testid="view-grid-table" className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-lg">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-mono text-[11px] uppercase">
+                            {activeTable.fields.map((field) => (
+                              <th key={field.name} className={`${cellPadding} font-semibold`}>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-slate-400 font-mono text-[11px]">
+                                    {getFieldTypeIcon(field.field_type)}
+                                  </span>
+                                  <span>{field.label}</span>
+                                  {field.field_type === "Relation" && (
+                                    <span className="text-purple-500" title="Relational Linked Record">
+                                      🔗
+                                    </span>
+                                  )}
+                                </div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {recordGroups.map((group) => (
+                            <React.Fragment key={group.groupValue}>
+                              {/* GROUP HEADER ROW */}
+                              {groupByField && (
+                                <tr className="bg-slate-100/70 dark:bg-slate-800/60 font-semibold text-slate-700 dark:text-slate-300">
+                                  <td
+                                    colSpan={activeTable.fields.length}
+                                    className="py-2 px-3 text-[11px] font-mono flex items-center justify-between"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-slate-400">▾</span>
+                                      <span className="font-bold text-slate-900 dark:text-white">
+                                        {group.groupValue}
+                                      </span>
+                                      <span className="px-2 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px]">
+                                        {group.records.length} records
+                                      </span>
+                                    </div>
+                                    <span className="text-slate-500">
+                                      Subtotal: ${group.totalBudget.toLocaleString()}
+                                    </span>
+                                  </td>
+                                </tr>
+                              )}
+
+                              {group.records.map((record) => (
+                                <tr
+                                  key={record.id}
+                                  className="hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors"
+                                >
+                                  {activeTable.fields.map((field) => {
+                                    const cellValue = [
+                                      "Formula",
+                                      "Lookup",
+                                      "Count",
+                                      "Rollup",
+                                    ].includes(field.field_type)
+                                      ? computeFieldValue(field, record, tables)
+                                      : record[field.name];
+
+                                    // RELATIONAL LOOKUP
+                                    if (field.field_type === "Relation" && field.target_table_id) {
+                                      const targetTable = tables.find(
+                                        (t) => t.id === field.target_table_id
+                                      );
+                                      const targetRecords = targetTable?.records || [];
+
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <div className="relative inline-block">
+                                            <select
+                                              value={cellValue || ""}
+                                              onChange={(e) =>
+                                                handleUpdateRecordField(
+                                                  record.id,
+                                                  field.name,
+                                                  e.target.value
+                                                )
+                                              }
+                                              className="appearance-none inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/70 dark:hover:bg-purple-900/70 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 cursor-pointer pr-5"
+                                            >
+                                              {targetRecords.map((tr) => (
+                                                <option key={tr.id} value={tr.id}>
+                                                  {tr[field.target_display_field || "name"] ||
+                                                    tr.name ||
+                                                    tr.title ||
+                                                    tr.id}
+                                                </option>
+                                              ))}
+                                            </select>
+                                            <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-purple-500">
+                                              ▾
+                                            </span>
+                                          </div>
+                                        </td>
+                                      );
+                                    }
+
+                                    // CHECKBOX
+                                    if (field.field_type === "Checkbox") {
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <input
+                                            type="checkbox"
+                                            checked={Boolean(cellValue)}
+                                            onChange={(e) =>
+                                              handleUpdateRecordField(
+                                                record.id,
+                                                field.name,
+                                                e.target.checked
+                                              )
+                                            }
+                                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+                                          />
+                                        </td>
+                                      );
+                                    }
+
+                                    // MULTI-SELECT
+                                    if (field.field_type === "MultiSelect") {
+                                      const items = Array.isArray(cellValue)
+                                        ? cellValue
+                                        : cellValue
+                                        ? [String(cellValue)]
+                                        : [];
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <div className="flex flex-wrap gap-1">
+                                            {items.map((opt: string) => (
+                                              <span
+                                                key={opt}
+                                                className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200"
+                                              >
+                                                {opt}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </td>
+                                      );
+                                    }
+
+                                    // RATING
+                                    if (field.field_type === "Rating") {
+                                      const score = Number(cellValue || 0);
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <div className="flex items-center gap-0.5 text-amber-500">
+                                            {[1, 2, 3, 4, 5].map((star) => (
+                                              <span key={star} className="text-xs">
+                                                {star <= score ? "★" : "☆"}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </td>
+                                      );
+                                    }
+
+                                    // LOOKUP
+                                    if (field.field_type === "Lookup") {
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                            <span className="text-[10px]">🔍</span>
+                                            {String(cellValue ?? "")}
+                                          </span>
+                                        </td>
+                                      );
+                                    }
+
+                                    // ROLLUP
+                                    if (field.field_type === "Rollup") {
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                            <span className="text-[10px]">Σ</span>
+                                            ${Number(cellValue || 0).toLocaleString()}
+                                          </span>
+                                        </td>
+                                      );
+                                    }
+
+                                    // COUNT
+                                    if (field.field_type === "Count") {
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                            <span className="text-[10px]">#</span>
+                                            {cellValue}
+                                          </span>
+                                        </td>
+                                      );
+                                    }
+
+                                    // FORMULA
+                                    if (field.field_type === "Formula") {
+                                      return (
+                                        <td key={field.name} className={cellPadding}>
+                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                            <span className="text-[10px]">ƒx</span>
+                                            {typeof cellValue === "number"
+                                              ? `$${cellValue.toLocaleString()}`
+                                              : String(cellValue ?? "")}
+                                          </span>
+                                        </td>
+                                      );
+                                    }
+
+                                    return (
+                                      <td
+                                        key={field.name}
+                                        className={`${cellPadding} text-slate-800 dark:text-slate-200`}
+                                      >
+                                        {field.name === "budget" ||
+                                        field.name === "allocated_amount" ||
+                                        field.field_type === "Currency" ? (
+                                          <span className="font-mono font-medium">
+                                            ${Number(cellValue || 0).toLocaleString()}
+                                          </span>
+                                        ) : field.field_type === "Percent" ? (
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="font-mono text-xs">{cellValue}%</span>
+                                            <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                                              <div
+                                                className="h-full bg-blue-500 rounded-full"
+                                                style={{
+                                                  width: `${Math.min(
+                                                    100,
+                                                    Math.max(0, Number(cellValue || 0))
+                                                  )}%`,
+                                                }}
+                                              />
+                                            </div>
+                                          </div>
+                                        ) : field.field_type === "Email" ? (
+                                          <a
+                                            href={`mailto:${cellValue}`}
+                                            className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                                          >
+                                            <span className="text-[10px]">✉</span>
+                                            {cellValue}
+                                          </a>
+                                        ) : field.field_type === "Url" ? (
+                                          <a
+                                            href={String(cellValue)}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                                          >
+                                            <span className="text-[10px]">🌐</span>
+                                            {cellValue}
+                                          </a>
+                                        ) : field.name === "status" ||
+                                          field.name === "disbursement_status" ? (
+                                          <span
+                                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                              cellValue === "Approved" || cellValue === "Disbursed"
+                                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                                                : cellValue === "Funded"
+                                                ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                                                : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                                            }`}
+                                          >
+                                            {cellValue}
+                                          </span>
+                                        ) : field.name === "id" ? (
+                                          <span className="font-mono text-slate-500">{cellValue}</span>
+                                        ) : (
+                                          <span>{String(cellValue ?? "")}</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+
+                {/* ADD VIEW MODAL */}
+                {isAddViewModalOpen && (
+                  <div
+                    data-testid="modal-add-view"
+                    className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4"
+                  >
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                          Create New Saved View
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => setIsAddViewModalOpen(false)}
+                          className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <form onSubmit={handleCreateNewView} className="space-y-4 text-xs">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                            View Title
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. Approved Grants Kanban"
+                            value={newViewTitle}
+                            onChange={(e) => setNewViewTitle(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                            View Type
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            {(["Grid", "Kanban", "Calendar", "Gallery"] as ViewType[]).map((vt) => (
+                              <button
+                                key={vt}
+                                type="button"
+                                onClick={() => setNewViewType(vt)}
+                                className={`p-2.5 rounded-lg border text-left cursor-pointer transition-all ${
+                                  newViewType === vt
+                                    ? "border-blue-600 bg-blue-50/60 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                                    : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                                }`}
+                              >
+                                <div className="font-bold flex items-center gap-1.5">
+                                  <span>
+                                    {vt === "Grid"
+                                      ? "▦"
+                                      : vt === "Kanban"
+                                      ? "☷"
+                                      : vt === "Calendar"
+                                      ? "📅"
+                                      : "🖼"}
+                                  </span>
+                                  <span>{vt}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  {vt === "Grid"
+                                    ? "Tabular records matrix"
+                                    : vt === "Kanban"
+                                    ? "Card stage progression"
+                                    : vt === "Calendar"
+                                    ? "Timeline agenda"
+                                    : "Visual card gallery"}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                          <button
+                            type="button"
+                            onClick={() => setIsAddViewModalOpen(false)}
+                            className="px-3.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 font-semibold cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs cursor-pointer"
+                          >
+                            Create View
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

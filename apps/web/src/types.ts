@@ -1,4 +1,46 @@
-export type ViewType = "Table" | "Form" | "Dashboard" | "Detail";
+export type ViewType =
+  | "Grid"
+  | "Kanban"
+  | "Calendar"
+  | "Gallery"
+  | "Table"
+  | "Form"
+  | "Dashboard"
+  | "Detail";
+
+export type FilterOperator =
+  | "equals"
+  | "not_equals"
+  | "contains"
+  | "not_contains"
+  | "greater_than"
+  | "less_than"
+  | "is_empty"
+  | "is_not_empty";
+
+export type FilterConjunction = "AND" | "OR";
+
+export interface FilterClause {
+  id: string;
+  field_name: string;
+  operator: FilterOperator;
+  value: string;
+}
+
+export interface CompoundFilter {
+  conjunction: FilterConjunction;
+  clauses: FilterClause[];
+}
+
+export type SortDirection = "asc" | "desc";
+
+export interface SortRule {
+  id: string;
+  field_name: string;
+  direction: SortDirection;
+}
+
+export type RowDensity = "compact" | "medium" | "tall" | "extra_tall";
 export type FieldType =
   | "Text"
   | "Number"
@@ -41,9 +83,16 @@ export interface FieldSpec {
 
 export interface AppView {
   id: string;
+  table_id?: string;
   title: string;
   view_type: ViewType;
-  fields: FieldSpec[];
+  fields?: FieldSpec[];
+  filters?: CompoundFilter;
+  sort_rules?: SortRule[];
+  group_by_field?: string;
+  row_density?: RowDensity;
+  kanban_column_field?: string;
+  calendar_date_field?: string;
 }
 
 export interface Collaborator {

@@ -17,16 +17,16 @@ fn sample_manifest() -> AppManifest {
         custom_domain: Some("bio-inventory.science.state.edu".to_string()),
         custom_domain_verified: true,
         views: vec![
-            AppView {
-                id: "inventory-table".to_string(),
-                title: "All Lab Equipment".to_string(),
-                view_type: ViewType::Table,
-                fields: vec![
+            AppView::table(
+                "inventory-table",
+                "All Lab Equipment",
+                ViewType::Table,
+                vec![
                     FieldSpec::simple("item_name", "Equipment Name", FieldType::Text, true, false),
                     FieldSpec::simple("serial_number", "Serial Number", FieldType::Text, true, false),
                     FieldSpec::simple("operator_eval", "Student Operator Evaluation", FieldType::Text, false, true),
                 ],
-            }
+            )
         ],
         ceds_mappings: [
             ("item_name".to_string(), "000185".to_string()), // CEDS FacilityIdentifier / Equipment

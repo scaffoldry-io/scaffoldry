@@ -29,9 +29,66 @@ pub enum EngineError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ViewType {
     Table,
+    Grid,
+    Kanban,
+    Calendar,
+    Gallery,
     Form,
     Dashboard,
     Detail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FilterOperator {
+    Equals,
+    NotEquals,
+    Contains,
+    NotContains,
+    GreaterThan,
+    LessThan,
+    IsEmpty,
+    IsNotEmpty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FilterConjunction {
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterClause {
+    pub id: String,
+    pub field_name: String,
+    pub operator: FilterOperator,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompoundFilter {
+    pub conjunction: FilterConjunction,
+    pub clauses: Vec<FilterClause>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SortRule {
+    pub id: String,
+    pub field_name: String,
+    pub direction: SortDirection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RowDensity {
+    Compact,
+    Medium,
+    Tall,
+    ExtraTall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,9 +370,172 @@ pub struct AppTable {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppView {
     pub id: String,
+    #[serde(default)]
+    pub table_id: Option<String>,
     pub title: String,
     pub view_type: ViewType,
+    #[serde(default)]
     pub fields: Vec<FieldSpec>,
+    #[serde(default)]
+    pub filters: Option<CompoundFilter>,
+    #[serde(default)]
+    pub sort_rules: Vec<SortRule>,
+    #[serde(default)]
+    pub group_by_field: Option<String>,
+    #[serde(default)]
+    pub row_density: Option<RowDensity>,
+    #[serde(default)]
+    pub kanban_column_field: Option<String>,
+    #[serde(default)]
+    pub calendar_date_field: Option<String>,
+}
+
+impl AppView {
+    pub fn table(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        view_type: ViewType,
+        fields: Vec<FieldSpec>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            table_id: None,
+            title: title.into(),
+            view_type,
+            fields,
+            filters: None,
+            sort_rules: Vec::new(),
+            group_by_field: None,
+            row_density: None,
+            kanban_column_field: None,
+            calendar_date_field: None,
+        }
+    }
+}
+
+pub fn matches_filter(record: &Value, filter: &CompoundFilter) -> bool {
+    if filter.clauses.is_empty() {
+        return true;
+    }
+    match filter.conjunction {
+        FilterConjunction::And => filter.clauses.iter().all(|c| matches_clause(record, c)),
+        FilterConjunction::Or => filter.clauses.iter().any(|c| matches_clause(record, c)),
+    }
+}
+
+pub fn matches_clause(record: &Value, clause: &FilterClause) -> bool {
+    let cell_val = record.get(&clause.field_name);
+    if clause.operator != FilterOperator::IsEmpty
+        && clause.operator != FilterOperator::IsNotEmpty
+        && clause.value.trim().is_empty()
+    {
+        return true;
+    }
+    match clause.operator {
+        FilterOperator::IsEmpty => {
+            cell_val.is_none()
+                || cell_val == Some(&Value::Null)
+                || cell_val == Some(&Value::String(String::new()))
+        }
+        FilterOperator::IsNotEmpty => {
+            cell_val.is_some()
+                && cell_val != Some(&Value::Null)
+                && cell_val != Some(&Value::String(String::new()))
+        }
+        FilterOperator::Equals => {
+            let s = cell_val
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
+            s.eq_ignore_ascii_case(&clause.value)
+        }
+        FilterOperator::NotEquals => {
+            let s = cell_val
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
+            !s.eq_ignore_ascii_case(&clause.value)
+        }
+        FilterOperator::Contains => {
+            let s = cell_val
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
+            s.to_lowercase().contains(&clause.value.to_lowercase())
+        }
+        FilterOperator::NotContains => {
+            let s = cell_val
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
+            !s.to_lowercase().contains(&clause.value.to_lowercase())
+        }
+        FilterOperator::GreaterThan => {
+            let n1 = cell_val.and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)));
+            let n2 = clause.value.parse::<f64>().ok();
+            match (n1, n2) {
+                (Some(a), Some(b)) => a > b,
+                _ => false,
+            }
+        }
+        FilterOperator::LessThan => {
+            let n1 = cell_val.and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)));
+            let n2 = clause.value.parse::<f64>().ok();
+            match (n1, n2) {
+                (Some(a), Some(b)) => a < b,
+                _ => false,
+            }
+        }
+    }
+}
+
+pub fn sort_records(records: &mut [Value], rules: &[SortRule]) {
+    records.sort_by(|a, b| {
+        for rule in rules {
+            let va = a.get(&rule.field_name);
+            let vb = b.get(&rule.field_name);
+            let ord = compare_values(va, vb);
+            let directed = match rule.direction {
+                SortDirection::Asc => ord,
+                SortDirection::Desc => ord.reverse(),
+            };
+            if !directed.is_eq() {
+                return directed;
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+}
+
+fn compare_values(a: Option<&Value>, b: Option<&Value>) -> std::cmp::Ordering {
+    match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(va), Some(vb)) => {
+            if let (Some(na), Some(nb)) = (va.as_f64(), vb.as_f64()) {
+                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+            } else if let (Some(sa), Some(sb)) = (va.as_str(), vb.as_str()) {
+                sa.cmp(sb)
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

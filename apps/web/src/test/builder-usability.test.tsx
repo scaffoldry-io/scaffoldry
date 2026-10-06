@@ -5,7 +5,14 @@ import "@testing-library/jest-dom";
 import { AppBuilder } from "../AppBuilder";
 import { PublishedAppView } from "../PublishedAppView";
 import { RegisteredApp, AppTable } from "../types";
-import { computeFieldValue, evaluateClientFormula, getFieldTypeIcon } from "../computedFields";
+import {
+  applyCompoundFilter,
+  applyMultiSort,
+  computeFieldValue,
+  evaluateClientFormula,
+  getFieldTypeIcon,
+  groupRecordsByField,
+} from "../computedFields";
 
 const mockApp: RegisteredApp = {
   slug: "physics-grants",
@@ -366,4 +373,134 @@ describe("Milestone 1: Rich Field Types & Computed Field Engine Usability", () =
     expect(screen.getByText("$90,000")).toBeInTheDocument();
   });
 });
+
+describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
+  const records = [
+    { id: "R1", title: "Study A", department: "Physics", status: "Approved", budget: 800000 },
+    { id: "R2", title: "Study B", department: "Bioengineering", status: "Under Review", budget: 450000 },
+    { id: "R3", title: "Study C", department: "Physics", status: "Funded", budget: 600000 },
+  ];
+
+  it("filters records with compound AND/OR logic", () => {
+    // AND
+    const andFiltered = applyCompoundFilter(records, {
+      conjunction: "AND",
+      clauses: [
+        { id: "c1", field_name: "department", operator: "equals", value: "Physics" },
+        { id: "c2", field_name: "budget", operator: "greater_than", value: "700000" },
+      ],
+    });
+    expect(andFiltered.length).toBe(1);
+    expect(andFiltered[0].id).toBe("R1");
+
+    // OR
+    const orFiltered = applyCompoundFilter(records, {
+      conjunction: "OR",
+      clauses: [
+        { id: "c1", field_name: "status", operator: "equals", value: "Under Review" },
+        { id: "c2", field_name: "budget", operator: "greater_than", value: "750000" },
+      ],
+    });
+    expect(orFiltered.length).toBe(2);
+  });
+
+  it("sorts records across multiple columns", () => {
+    const sorted = applyMultiSort(records, [
+      { id: "s1", field_name: "department", direction: "asc" },
+      { id: "s2", field_name: "budget", direction: "desc" },
+    ]);
+    expect(sorted[0].id).toBe("R2"); // Bioengineering
+    expect(sorted[1].id).toBe("R1"); // Physics 800k
+    expect(sorted[2].id).toBe("R3"); // Physics 600k
+  });
+
+  it("groups records by field and calculates group subtotals", () => {
+    const groups = groupRecordsByField(records, "department");
+    expect(groups.length).toBe(2);
+
+    const physicsGroup = groups.find((g) => g.groupValue === "Physics");
+    expect(physicsGroup).toBeDefined();
+    expect(physicsGroup?.records.length).toBe(2);
+    expect(physicsGroup?.totalBudget).toBe(1400000);
+  });
+
+  it("switches between Grid, Kanban, and Gallery views interactively in AppBuilder", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    // Switch to Data tab
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Verify view tabs exist
+    expect(screen.getByTestId("view-tab-view-proposals-grid")).toBeInTheDocument();
+    expect(screen.getByTestId("view-tab-view-proposals-kanban")).toBeInTheDocument();
+    expect(screen.getByTestId("view-tab-view-proposals-calendar")).toBeInTheDocument();
+    expect(screen.getByTestId("view-tab-view-proposals-gallery")).toBeInTheDocument();
+
+    // Default view is Grid
+    expect(screen.getByTestId("view-grid-table")).toBeInTheDocument();
+
+    // Switch to Kanban View
+    fireEvent.click(screen.getByTestId("view-tab-view-proposals-kanban"));
+    expect(screen.getByTestId("view-kanban-board")).toBeInTheDocument();
+    expect(screen.getByTestId("kanban-column-under-review")).toBeInTheDocument();
+    expect(screen.getByTestId("kanban-column-approved")).toBeInTheDocument();
+    expect(screen.getByTestId("kanban-column-funded")).toBeInTheDocument();
+
+    // Switch to Gallery View
+    fireEvent.click(screen.getByTestId("view-tab-view-proposals-gallery"));
+    expect(screen.getByTestId("view-gallery-grid")).toBeInTheDocument();
+    expect(screen.getByTestId("gallery-card-APP-001")).toBeInTheDocument();
+
+    // Switch back to Grid View
+    fireEvent.click(screen.getByTestId("view-tab-view-proposals-grid"));
+    expect(screen.getByTestId("view-grid-table")).toBeInTheDocument();
+  });
+
+  it("opens filter popover, toggles conjunction, and applies row density presets", () => {
+    render(
+      <AppBuilder
+        app={mockApp}
+        onBack={vi.fn()}
+        onOpenPublishedApp={vi.fn()}
+      />
+    );
+
+    // Switch to Data tab
+    fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+    // Open Filter Popover
+    const filterBtn = screen.getByTestId("toolbar-filter-btn");
+    fireEvent.click(filterBtn);
+    expect(screen.getByTestId("filter-popover")).toBeInTheDocument();
+    expect(screen.getByText("Compound Filter Conditions")).toBeInTheDocument();
+
+    // Add Condition
+    fireEvent.click(screen.getByText("+ Add Condition"));
+    expect(screen.getByPlaceholderText("Value...")).toBeInTheDocument();
+
+    // Open Sort Popover
+    const sortBtn = screen.getByTestId("toolbar-sort-btn");
+    fireEvent.click(sortBtn);
+    expect(screen.getByTestId("sort-popover")).toBeInTheDocument();
+    expect(screen.getByText("Multi-Column Sorting")).toBeInTheDocument();
+
+    // Test row density buttons
+    const densityCompact = screen.getByTestId("density-btn-compact");
+    const densityTall = screen.getByTestId("density-btn-tall");
+    fireEvent.click(densityCompact);
+    fireEvent.click(densityTall);
+
+    // Test group by selector
+    const groupSelect = screen.getByTestId("toolbar-group-select");
+    fireEvent.change(groupSelect, { target: { value: "department" } });
+    expect(screen.getAllByText(/Subtotal:/i).length).toBeGreaterThan(0);
+  });
+});
+
 
