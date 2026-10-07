@@ -7,11 +7,15 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use scaffoldry_server::{build_app, build_app_with_state, state::ServerState};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
+
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[tokio::test]
 async fn test_production_boot_refuses_default_jwt_secret() {
+    let _lock = TEST_LOCK.lock().unwrap();
+
     // 1. In production with no JWT secret set, build_app must refuse to boot
     std::env::set_var("SCAFFOLDRY_ENV", "production");
     std::env::remove_var("SCAFFOLDRY_JWT_SECRET");
@@ -41,6 +45,7 @@ async fn test_production_boot_refuses_default_jwt_secret() {
 
 #[tokio::test]
 async fn test_default_body_limit_enforced() {
+    let _lock = TEST_LOCK.lock().unwrap();
     let app = build_app().expect("router");
 
     let admin_token = scaffoldry_server::jwt::mint_test_jwt(scaffoldry_server::jwt::TestJwtParams {

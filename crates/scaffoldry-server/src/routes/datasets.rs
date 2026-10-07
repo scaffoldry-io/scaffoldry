@@ -185,6 +185,9 @@ async fn publish_dataset(
     };
 
     state.datasets.write().map_err(|_| lock_err())?.insert(id, dataset.clone());
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_published_dataset(&dataset);
+    }
     Ok((StatusCode::CREATED, Json(dataset)))
 }
 
@@ -249,7 +252,11 @@ async fn create_relationship(
         _ => RelationshipType::OneToMany,
     };
 
-    let id = format!("rel_{}", Uuid::new_v4().simple());
+    let id = payload
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("rel_{}_{}_{}", source_id, target_dataset_id, source_field));
     let rel = DatasetRelationship {
         id: id.clone(),
         name,
@@ -262,5 +269,8 @@ async fn create_relationship(
     };
 
     state.relationships.write().map_err(|_| lock_err())?.insert(id, rel.clone());
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_dataset_relationship(&rel);
+    }
     Ok((StatusCode::CREATED, Json(rel)))
 }
