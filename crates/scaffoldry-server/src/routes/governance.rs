@@ -1,14 +1,14 @@
-//! NIST OSCAL 1.1.2 Compliance Catalog, Cryptographic Ledger, and Governance Export
-
+use crate::guard::session_user;
 use crate::state::{RecordDecisionInput, SharedState};
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use scaffoldry_core::{DecisionType, GENESIS_PREVIOUS_HASH};
+use scaffoldry_policy::PolicyDecision;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -23,7 +23,8 @@ pub fn router() -> Router<SharedState> {
 
 #[derive(Debug, Deserialize)]
 pub struct AppendDecisionRequest {
-    pub principal: String,
+    #[serde(default)]
+    pub principal: Option<String>,
     pub organization_code: String,
     pub app_slug: Option<String>,
     pub decision_type: DecisionType,
@@ -55,10 +56,32 @@ async fn get_governance_ledger(State(state): State<SharedState>) -> impl IntoRes
 
 async fn append_ledger_decision(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(payload): Json<AppendDecisionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    let auth = state
+        .policy_engine
+        .authorize_institutional_action(
+            &user.eppn,
+            &user.affiliation,
+            &user.department,
+            "record_decision",
+            "governance-ledger",
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    if auth.decision == PolicyDecision::Deny {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Forbidden: Cedar policy denied ledger append", "success": false})),
+        ));
+    }
+
     match state.append_ledger_entry(RecordDecisionInput {
-        principal: payload.principal,
+        principal: user.eppn,
         organization_code: payload.organization_code,
         app_slug: payload.app_slug,
         decision_type: payload.decision_type,

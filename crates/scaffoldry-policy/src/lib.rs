@@ -217,6 +217,78 @@ impl ScaffoldryPolicyEngine {
                 resource.member_role != "admin" &&
                 principal.scoped_affiliation != "central_admin"
             };
+
+            // 14. Permit faculty and staff to create, update, and publish apps in their department, and central_admin everywhere
+            permit (
+                principal,
+                action in [Action::"create_app", Action::"update_app", Action::"publish_app"],
+                resource
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                ((principal.scoped_affiliation == "faculty" || principal.scoped_affiliation == "staff") && principal.department == resource.department)
+            };
+
+            // 15. Forbid non-faculty/staff/admin (e.g. students, affiliates) from updating or publishing apps
+            forbid (
+                principal,
+                action in [Action::"create_app", Action::"update_app", Action::"publish_app"],
+                resource
+            )
+            when {
+                principal.scoped_affiliation != "central_admin" &&
+                principal.scoped_affiliation != "faculty" &&
+                principal.scoped_affiliation != "staff"
+            };
+
+            // 16. Permit faculty and staff to publish datasets in their department, and central_admin everywhere
+            permit (
+                principal,
+                action == Action::"publish_dataset",
+                resource
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                ((principal.scoped_affiliation == "faculty" || principal.scoped_affiliation == "staff") && principal.department == resource.department)
+            };
+
+            // 17. Forbid students and affiliates from publishing datasets
+            forbid (
+                principal,
+                action == Action::"publish_dataset",
+                resource
+            )
+            when {
+                principal.scoped_affiliation != "central_admin" &&
+                principal.scoped_affiliation != "faculty" &&
+                principal.scoped_affiliation != "staff"
+            };
+
+            // 18. Permit central_admin and compliance staff to record decisions in the governance ledger
+            permit (
+                principal,
+                action == Action::"record_decision",
+                resource
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                principal.scoped_affiliation == "compliance" ||
+                principal.scoped_affiliation == "faculty" ||
+                principal.scoped_affiliation == "staff"
+            };
+
+            // 19. Forbid students and affiliates from recording decisions in the governance ledger
+            forbid (
+                principal,
+                action == Action::"record_decision",
+                resource
+            )
+            when {
+                principal.scoped_affiliation != "central_admin" &&
+                principal.scoped_affiliation != "compliance" &&
+                principal.scoped_affiliation != "faculty" &&
+                principal.scoped_affiliation != "staff"
+            };
         "#;
         Self::new(default_policies)
     }
@@ -440,6 +512,86 @@ impl ScaffoldryPolicyEngine {
             .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
 
         let resource: EntityUid = format!(r#"Workspace::"{}""#, input.workspace_id)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let request = Request::new(
+            principal,
+            action,
+            resource,
+            Context::empty(),
+            None,
+        )
+        .map_err(|e| PolicyError::RequestError(e.to_string()))?;
+
+        let response = self.authorizer.is_authorized(&request, &self.policies, &entities);
+
+        let decision = match response.decision() {
+            Decision::Allow => PolicyDecision::Allow,
+            Decision::Deny => PolicyDecision::Deny,
+        };
+
+        let reasons = response
+            .diagnostics()
+            .reason()
+            .map(|r| r.to_string())
+            .collect();
+
+        let diagnostics = response
+            .diagnostics()
+            .errors()
+            .map(|e| e.to_string())
+            .collect();
+
+        Ok(AuthorizationResult {
+            decision,
+            reasons,
+            diagnostics,
+        })
+    }
+
+    pub fn authorize_departmental_action(
+        &self,
+        principal_eppn: &str,
+        principal_affiliation: &str,
+        principal_department: &str,
+        action_name: &str,
+        resource_id: &str,
+        resource_department: &str,
+    ) -> Result<AuthorizationResult, PolicyError> {
+        let entities_json = json!([
+            {
+                "uid": { "type": "User", "id": principal_eppn },
+                "attrs": {
+                    "eppn": principal_eppn,
+                    "scoped_affiliation": principal_affiliation,
+                    "realm": "state.edu",
+                    "department": principal_department
+                },
+                "parents": []
+            },
+            {
+                "uid": { "type": "System", "id": resource_id },
+                "attrs": {
+                    "department": resource_department,
+                    "is_ferpa_sensitive": false
+                },
+                "parents": []
+            }
+        ]);
+
+        let entities = Entities::from_json_value(entities_json, None)
+            .map_err(|e| PolicyError::EntityError(e.to_string()))?;
+
+        let principal: EntityUid = format!(r#"User::"{principal_eppn}""#)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let action: EntityUid = format!(r#"Action::"{action_name}""#)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let resource: EntityUid = format!(r#"System::"{resource_id}""#)
             .parse()
             .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
 

@@ -62,6 +62,13 @@ pub struct AuthResponse {
 
 /// Issues a genuine signed OAuth 2.1 / OIDC JWT for dev, testing, and IdP callback workflows.
 async fn issue_test_token(Json(payload): Json<TokenRequest>) -> impl IntoResponse {
+    if std::env::var("SCAFFOLDRY_ENV").as_deref() == Ok("production") {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Test token issuance endpoint is disabled in production"})),
+        );
+    }
+
     let (name, role_title, affiliation, department) = resolve_defaults(
         &payload.eppn,
         payload.name,
@@ -113,46 +120,64 @@ fn resolve_defaults(
     affiliation: Option<String>,
     department: Option<String>,
 ) -> (String, String, String, String) {
-    if eppn.contains("jordan.lee") || eppn.contains("admin") {
+    if eppn == "jordan.lee@state.edu" {
         (
             name.unwrap_or_else(|| "Jordan Lee".to_string()),
             role_title.unwrap_or_else(|| "Central Enterprise Administrator".to_string()),
-            affiliation.unwrap_or_else(|| "central_admin".to_string()),
+            "central_admin".to_string(),
             department.unwrap_or_else(|| "Central IT & Institutional Governance".to_string()),
         )
     } else if eppn.contains("curie") {
         (
             name.unwrap_or_else(|| "Dr. Marie Curie".to_string()),
             role_title.unwrap_or_else(|| "Professor & Lab Director".to_string()),
-            affiliation.unwrap_or_else(|| "faculty".to_string()),
+            "faculty".to_string(),
             department.unwrap_or_else(|| "biology".to_string()),
         )
     } else if eppn.contains("sarah") || eppn.contains("connor") {
         (
             name.unwrap_or_else(|| "Dr. Sarah Connor".to_string()),
             role_title.unwrap_or_else(|| "Department Chair & Professor".to_string()),
-            affiliation.unwrap_or_else(|| "faculty".to_string()),
+            "faculty".to_string(),
             department.unwrap_or_else(|| "Computer Science".to_string()),
+        )
+    } else if eppn.contains("vance") {
+        (
+            name.unwrap_or_else(|| "Marcus Vance".to_string()),
+            role_title.unwrap_or_else(|| "Senior Research Administrator".to_string()),
+            "staff".to_string(),
+            department.unwrap_or_else(|| "Office of Sponsored Programs".to_string()),
+        )
+    } else if eppn.contains("rodriguez") {
+        (
+            name.unwrap_or_else(|| "Elena Rodriguez".to_string()),
+            role_title.unwrap_or_else(|| "IRB & Research Compliance Analyst".to_string()),
+            "compliance".to_string(),
+            department.unwrap_or_else(|| "Institutional Review Board".to_string()),
         )
     } else if eppn.contains("einstein") {
         (
             name.unwrap_or_else(|| "Albert Einstein".to_string()),
             role_title.unwrap_or_else(|| "Physics Research Fellow".to_string()),
-            affiliation.unwrap_or_else(|| "faculty".to_string()),
+            "faculty".to_string(),
             department.unwrap_or_else(|| "physics".to_string()),
         )
     } else if eppn.contains("student") {
         (
             name.unwrap_or_else(|| "Alex Smith".to_string()),
             role_title.unwrap_or_else(|| "Graduate Research Assistant".to_string()),
-            affiliation.unwrap_or_else(|| "student".to_string()),
+            "student".to_string(),
             department.unwrap_or_else(|| "biology".to_string()),
         )
     } else {
+        // Disallow arbitrary escalation to central_admin
+        let safe_affiliation = affiliation
+            .filter(|a| a != "central_admin")
+            .unwrap_or_else(|| "member".to_string());
         (
             name.unwrap_or_else(|| eppn.to_string()),
             role_title.unwrap_or_else(|| "Member".to_string()),
-            affiliation.unwrap_or_else(|| "staff".to_string()),
+            safe_affiliation,
             department.unwrap_or_else(|| "general".to_string()),
         )
     }

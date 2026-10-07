@@ -1,14 +1,14 @@
-//! Application and Dataset Manifest Management Endpoints
-
+use crate::guard::session_user;
 use crate::state::SharedState;
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
 };
 use scaffoldry_core::{AutomationRule, TriggerEvent, WorkflowExecutionResult};
 use scaffoldry_engine::{AppManifest, AutomationEngine};
+use scaffoldry_policy::PolicyDecision;
 use serde_json::{json, Value};
 
 pub fn router() -> Router<SharedState> {
@@ -22,11 +22,34 @@ pub fn router() -> Router<SharedState> {
 
 async fn create_app_in_workspace(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(_ws_id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<AppManifest>), (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
     let manifest: AppManifest = serde_json::from_value(payload)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+
+    let auth = state
+        .policy_engine
+        .authorize_departmental_action(
+            &user.eppn,
+            &user.affiliation,
+            &user.department,
+            "create_app",
+            &manifest.slug,
+            &manifest.department,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    if auth.decision == PolicyDecision::Deny {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Forbidden: Cedar policy denied app creation"})),
+        ));
+    }
 
     let mut engine = state.engine.write().unwrap();
     engine
@@ -48,13 +71,37 @@ async fn get_app(
 
 async fn update_app(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
     let mut manifest: AppManifest = serde_json::from_value(payload)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
 
-    manifest.slug = slug;
+    manifest.slug = slug.clone();
+
+    let auth = state
+        .policy_engine
+        .authorize_departmental_action(
+            &user.eppn,
+            &user.affiliation,
+            &user.department,
+            "update_app",
+            &slug,
+            &manifest.department,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    if auth.decision == PolicyDecision::Deny {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Forbidden: Cedar policy denied app update"})),
+        ));
+    }
+
     let mut engine = state.engine.write().unwrap();
     engine
         .register_manifest(manifest.clone())
@@ -65,20 +112,43 @@ async fn update_app(
 
 async fn publish_app(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
-    use scaffoldry_engine::HostRouter;
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
     let domain = payload["custom_domain"]
         .as_str()
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "custom_domain is required"}))))?
         .to_string();
 
+    use scaffoldry_engine::HostRouter;
     let mut engine = state.engine.write().unwrap();
     let mut manifest = engine
         .resolve_by_slug(&slug)
         .cloned()
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "App not found"}))))?;
+
+    let auth = state
+        .policy_engine
+        .authorize_departmental_action(
+            &user.eppn,
+            &user.affiliation,
+            &user.department,
+            "publish_app",
+            &slug,
+            &manifest.department,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    if auth.decision == PolicyDecision::Deny {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Forbidden: Cedar policy denied app publishing"})),
+        ));
+    }
 
     manifest.custom_domain = Some(domain);
     manifest.custom_domain_verified = true;

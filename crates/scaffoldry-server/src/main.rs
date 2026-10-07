@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .parse()
         .unwrap_or(8080);
 
-    let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 
     let app = build_app()?;

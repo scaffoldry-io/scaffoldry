@@ -560,25 +560,22 @@ impl ServerState {
         };
 
         if let Some(ref repo) = repository {
+            // Always ensure default institutional workspaces and collaborators are seeded in Postgres
+            for ws in workspaces.values() {
+                let _ = repo.upsert_workspace(ws);
+            }
+            for list in collaborators.values() {
+                for c in list {
+                    let _ = repo.upsert_collaborator(c);
+                }
+            }
+
             if let Ok(persisted_ws) = repo.list_workspaces() {
-                if persisted_ws.is_empty() {
-                    for ws in workspaces.values() {
-                        let _ = repo.upsert_workspace(ws);
+                for ws in persisted_ws {
+                    if let Ok(collabs) = repo.get_collaborators(&ws.id) {
+                        collaborators.insert(ws.id.clone(), collabs);
                     }
-                    for list in collaborators.values() {
-                        for c in list {
-                            let _ = repo.upsert_collaborator(c);
-                        }
-                    }
-                } else {
-                    workspaces.clear();
-                    collaborators.clear();
-                    for ws in persisted_ws {
-                        if let Ok(collabs) = repo.get_collaborators(&ws.id) {
-                            collaborators.insert(ws.id.clone(), collabs);
-                        }
-                        workspaces.insert(ws.id.clone(), ws);
-                    }
+                    workspaces.insert(ws.id.clone(), ws);
                 }
             }
 
