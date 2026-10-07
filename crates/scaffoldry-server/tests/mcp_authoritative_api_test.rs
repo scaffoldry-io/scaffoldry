@@ -15,7 +15,7 @@ async fn login_user(app: &Router, eppn: &str) -> String {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/auth/login")
+                .uri("/api/v1/auth/token")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&json!({ "eppn": eppn })).unwrap()))
                 .unwrap(),

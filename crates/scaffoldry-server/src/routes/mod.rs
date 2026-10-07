@@ -3,6 +3,7 @@
 pub mod apps;
 pub mod auth;
 pub mod datasets;
+pub mod discovery;
 pub mod framework;
 pub mod governance;
 pub mod mcp;
@@ -38,10 +39,12 @@ pub fn api_router(state: SharedState) -> Router {
             state.clone(),
             crate::guard::require_scim_credential,
         ));
-    let mcp_root = mcp::router().with_state(state);
+    let mcp_root = mcp::router().with_state(state.clone());
+    let discovery_routes = discovery::router().with_state(state);
 
     Router::new()
         .route("/healthz", get(health_check))
+        .merge(discovery_routes)
         .nest("/api/v1", api_v1)
         .nest("/api", mcp_root)
         .nest("/scim/v2", scim_v2)

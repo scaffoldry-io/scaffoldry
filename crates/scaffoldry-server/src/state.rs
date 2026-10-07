@@ -127,7 +127,6 @@ pub struct ServerState {
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
     pub sessions: RwLock<HashMap<String, AuthSession>>,
-    pub directory: RwLock<Vec<AuthUser>>,
     pub scim_token: Option<String>,
     pub repository: Option<Arc<crate::repository::PostgresRepository>>,
 }
@@ -375,87 +374,7 @@ impl ServerState {
 
         let mut ledger = vec![entry_0, entry_1, entry_2, entry_3];
 
-        let directory = vec![
-            AuthUser {
-                eppn: "sarah.connor@state.edu".to_string(),
-                name: "Dr. Sarah Connor".to_string(),
-                role_title: "Department Chair & Professor".to_string(),
-                affiliation: "faculty".to_string(),
-                department: "Computer Science".to_string(),
-            },
-            AuthUser {
-                eppn: "marcus.vance@state.edu".to_string(),
-                name: "Marcus Vance".to_string(),
-                role_title: "Senior Research Administrator".to_string(),
-                affiliation: "staff".to_string(),
-                department: "Office of Sponsored Programs".to_string(),
-            },
-            AuthUser {
-                eppn: "elena.rodriguez@state.edu".to_string(),
-                name: "Elena Rodriguez".to_string(),
-                role_title: "IRB & Research Compliance Analyst".to_string(),
-                affiliation: "compliance".to_string(),
-                department: "Institutional Review Board".to_string(),
-            },
-            AuthUser {
-                eppn: "jordan.lee@state.edu".to_string(),
-                name: "Jordan Lee".to_string(),
-                role_title: "Enterprise Identity & Security Architect".to_string(),
-                affiliation: "central_admin".to_string(),
-                department: "Central Enterprise IT".to_string(),
-            },
-            AuthUser {
-                eppn: "prof.curie@science.state.edu".to_string(),
-                name: "Dr. Marie Curie".to_string(),
-                role_title: "Professor & Lab Director".to_string(),
-                affiliation: "faculty".to_string(),
-                department: "biology".to_string(),
-            },
-            AuthUser {
-                eppn: "student.smith@science.state.edu".to_string(),
-                name: "Alex Smith".to_string(),
-                role_title: "Graduate Research Assistant".to_string(),
-                affiliation: "student".to_string(),
-                department: "biology".to_string(),
-            },
-            AuthUser {
-                eppn: "dr.watson@science.state.edu".to_string(),
-                name: "Dr. Arthur Watson".to_string(),
-                role_title: "Campus FERPA & Export Officer".to_string(),
-                affiliation: "staff".to_string(),
-                department: "compliance".to_string(),
-            },
-            AuthUser {
-                eppn: "einstein@physics.state.edu".to_string(),
-                name: "Albert Einstein".to_string(),
-                role_title: "Physics Research Fellow".to_string(),
-                affiliation: "student".to_string(),
-                department: "physics".to_string(),
-            },
-        ];
-
         let mut sessions = HashMap::new();
-        let admin_user = directory[3].clone();
-        sessions.insert(
-            "sct_admin_token".to_string(),
-            AuthSession {
-                token: "sct_admin_token".to_string(),
-                user: admin_user,
-                original_admin: None,
-                created_at: Utc::now().to_rfc3339(),
-            },
-        );
-
-        let faculty_user = directory[0].clone();
-        sessions.insert(
-            "sct_faculty_token".to_string(),
-            AuthSession {
-                token: "sct_faculty_token".to_string(),
-                user: faculty_user,
-                original_admin: None,
-                created_at: Utc::now().to_rfc3339(),
-            },
-        );
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
@@ -693,7 +612,6 @@ impl ServerState {
             engine: RwLock::new(engine),
             policy_engine,
             sessions: RwLock::new(sessions),
-            directory: RwLock::new(directory),
             scim_token,
             repository,
         })
@@ -795,8 +713,9 @@ impl ServerState {
 
     pub fn verify_ledger(&self) -> Result<bool, LedgerError> {
         if let Some(ref repo) = self.repository {
-            if repo.verify_and_initialize_ledger().is_err() {
-                return Ok(false);
+            match repo.verify_and_initialize_ledger() {
+                Ok(()) => return Ok(true),
+                Err(_) => return Ok(false),
             }
         }
         let ledger = self.ledger.read().unwrap();
@@ -804,10 +723,14 @@ impl ServerState {
     }
 
     pub fn export_oscal_component_definition(&self) -> Value {
-        let ledger = self.ledger.read().unwrap();
+        let entries = if let Some(ref repo) = self.repository {
+            repo.get_ledger().unwrap_or_else(|_| self.ledger.read().unwrap().clone())
+        } else {
+            self.ledger.read().unwrap().clone()
+        };
         let now = chrono::Utc::now().to_rfc3339();
 
-        let implemented_requirements: Vec<Value> = ledger
+        let implemented_requirements: Vec<Value> = entries
             .iter()
             .map(|entry| {
                 json!({
