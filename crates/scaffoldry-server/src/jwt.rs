@@ -171,7 +171,7 @@ pub struct TestJwtParams {
 }
 
 /// Mints a signed JWT for local development and test suites.
-pub fn mint_test_jwt(params: TestJwtParams) -> String {
+pub fn mint_test_jwt(params: TestJwtParams) -> Result<String, JwtError> {
     let now = Utc::now().timestamp();
     let claims = JwtClaims {
         iss: get_jwt_issuer(),
@@ -185,7 +185,7 @@ pub fn mint_test_jwt(params: TestJwtParams) -> String {
         department: Some(params.department),
         original_admin: None,
     };
-    sign_jwt(&claims, &get_jwt_secret()).expect("Sign test JWT")
+    sign_jwt(&claims, &get_jwt_secret())
 }
 
 /// Mints an impersonation JWT signed by the test issuer.
@@ -193,7 +193,7 @@ pub fn mint_impersonation_jwt(
     target_user: &AuthUser,
     real_admin: &AuthUser,
     expires_in_secs: i64,
-) -> String {
+) -> Result<String, JwtError> {
     let now = Utc::now().timestamp();
     let claims = JwtClaims {
         iss: get_jwt_issuer(),
@@ -207,5 +207,5 @@ pub fn mint_impersonation_jwt(
         department: Some(target_user.department.clone()),
         original_admin: Some(real_admin.clone()),
     };
-    sign_jwt(&claims, &get_jwt_secret()).expect("Sign impersonation JWT")
+    sign_jwt(&claims, &get_jwt_secret())
 }

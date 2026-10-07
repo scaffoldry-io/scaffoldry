@@ -27,7 +27,7 @@ async fn test_oauth2_oidc_jwt_bearer_validation() {
         affiliation: "faculty".to_string(),
         department: "biology".to_string(),
         expires_in_secs: 3600,
-    });
+    }).expect("mint test jwt");
 
     let resp = app
         .clone()
@@ -70,7 +70,7 @@ async fn test_oauth2_oidc_jwt_bearer_validation() {
         affiliation: "faculty".to_string(),
         department: "biology".to_string(),
         expires_in_secs: -3600, // expired 1 hour ago
-    });
+    }).expect("mint test jwt");
 
     let resp = app
         .clone()
@@ -251,7 +251,7 @@ async fn test_impersonation_remains_cedar_guarded_and_ledger_recorded() {
         affiliation: "faculty".to_string(),
         department: "biology".to_string(),
         expires_in_secs: 3600,
-    });
+    }).expect("mint test jwt");
 
     let resp = app
         .clone()
@@ -281,7 +281,7 @@ async fn test_impersonation_remains_cedar_guarded_and_ledger_recorded() {
         affiliation: "central_admin".to_string(),
         department: "Central IT & Institutional Governance".to_string(),
         expires_in_secs: 3600,
-    });
+    }).expect("mint test jwt");
 
     let resp = app
         .clone()

@@ -648,7 +648,7 @@ impl ManifestEngine {
             }
             for field in &view.fields {
                 let val = payload.get(&field.name);
-                if field.required && (val.is_none() || val.unwrap().is_null()) {
+                if field.required && val.is_none_or(|v| v.is_null()) {
                     return Err(EngineError::ValidationError(format!(
                         "Required field '{}' is missing in payload",
                         field.name

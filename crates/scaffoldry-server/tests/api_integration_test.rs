@@ -16,7 +16,7 @@ fn authed_req() -> axum::http::request::Builder {
         affiliation: "central_admin".to_string(),
         department: "Central IT & Institutional Governance".to_string(),
         expires_in_secs: 3600,
-    });
+    }).expect("mint test jwt");
     Request::builder().header("authorization", format!("Bearer {token}"))
 }
 
@@ -1506,7 +1506,7 @@ async fn test_workspace_sharing_security_and_configuration() {
         affiliation: "faculty".to_string(),
         department: "Computer Science".to_string(),
         expires_in_secs: 3600,
-    });
+    }).expect("mint test jwt");
 
     // 1. Faculty caller (Dr. Sarah Connor) lists workspaces:
     // Only sees workspaces where they are member/owner (ws-cs-research)

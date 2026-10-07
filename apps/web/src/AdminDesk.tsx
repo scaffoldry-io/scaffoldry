@@ -1,16 +1,16 @@
-import React, { useState, useEffect, useRef } from "react";
-import { ManifestRenderer } from "./ManifestRenderer";
-import { DatasetExplorer, SEEDED_DATASETS } from "./DatasetExplorer";
+import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
+import { DatasetExplorer } from "./DatasetExplorer";
 import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
-import { WorkflowBuilder } from "./WorkflowBuilder";
-import { DecisionLedgerView } from "./DecisionLedgerView";
-import { AppBuilder } from "./AppBuilder";
-import { PublishedAppView } from "./PublishedAppView";
-import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
+import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient } from "./api";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
+
+const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
+const PublishedAppView = lazy(() => import("./PublishedAppView").then((m) => ({ default: m.PublishedAppView })));
+const StandaloneIntakeForm = lazy(() => import("./StandaloneIntakeForm").then((m) => ({ default: m.StandaloneIntakeForm })));
+import { AdminConsoleView } from "./AdminConsoleView";
 
 const PERSONAS: Persona[] = [
   {
@@ -1225,17 +1225,19 @@ export const AdminDesk: React.FC = () => {
     const slug = currentPath.replace("/builder/", "").replace("/builder", "").split("/")[0] || apps[0]?.slug;
     const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
     return (
-      <AppBuilder
-        app={targetApp}
-        onBack={() => navigateTo("/")}
-        onOpenPublishedApp={(s) => navigateTo(`/app/${s}`)}
-        onOpenIntakeForm={(tId) => navigateTo(tId ? `/form/${targetApp.slug}/${tId}` : `/form/${targetApp.slug}`)}
-        onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
-        onSaveApp={(updated) => {
-          setApps((prev) => prev.map((a) => (a.slug === updated.slug ? updated : a)));
-          setActiveStudioApp(updated);
-        }}
-      />
+      <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading App Builder...</div>}>
+        <AppBuilder
+          app={targetApp}
+          onBack={() => navigateTo("/")}
+          onOpenPublishedApp={(s) => navigateTo(`/app/${s}`)}
+          onOpenIntakeForm={(tId) => navigateTo(tId ? `/form/${targetApp.slug}/${tId}` : `/form/${targetApp.slug}`)}
+          onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
+          onSaveApp={(updated) => {
+            setApps((prev) => prev.map((a) => (a.slug === updated.slug ? updated : a)));
+            setActiveStudioApp(updated);
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -1244,12 +1246,14 @@ export const AdminDesk: React.FC = () => {
     const slug = currentPath.replace("/app/", "").replace("/app", "").split("/")[0] || apps[0]?.slug;
     const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
     return (
-      <PublishedAppView
-        app={targetApp}
-        onOpenBuilder={(s) => navigateTo(`/builder/${s}`)}
-        onOpenIntakeForm={(tId) => navigateTo(tId ? `/form/${targetApp.slug}/${tId}` : `/form/${targetApp.slug}`)}
-        onBackToDesk={() => navigateTo("/")}
-      />
+      <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading Published App...</div>}>
+        <PublishedAppView
+          app={targetApp}
+          onOpenBuilder={(s) => navigateTo(`/builder/${s}`)}
+          onOpenIntakeForm={(tId) => navigateTo(tId ? `/form/${targetApp.slug}/${tId}` : `/form/${targetApp.slug}`)}
+          onBackToDesk={() => navigateTo("/")}
+        />
+      </Suspense>
     );
   }
 
@@ -1261,15 +1265,17 @@ export const AdminDesk: React.FC = () => {
     const tableId = parts[1] || undefined;
     const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
     return (
-      <StandaloneIntakeForm
-        app={targetApp}
-        tableId={tableId}
-        onBackToDesk={() => navigateTo("/")}
-        onOpenApp={() => navigateTo(`/app/${targetApp.slug}`)}
-        onRecordSubmitted={(tblId, rec) => {
-          showToast(`Record ${rec.id} submitted to ${targetApp.title} (${tblId}).`);
-        }}
-      />
+      <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading Intake Form...</div>}>
+        <StandaloneIntakeForm
+          app={targetApp}
+          tableId={tableId}
+          onBackToDesk={() => navigateTo("/")}
+          onOpenApp={() => navigateTo(`/app/${targetApp.slug}`)}
+          onRecordSubmitted={(tblId, rec) => {
+            showToast(`Record ${rec.id} submitted to ${targetApp.title} (${tblId}).`);
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -1863,313 +1869,26 @@ export const AdminDesk: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100/50 dark:bg-slate-950">
           {/* DISCREET ADMIN CONSOLE VIEW (/admin) */}
           {isAdminPath ? (
-            activePersona.affiliation !== "central_admin" ? (
-              <div data-testid="admin-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
-                <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
-                  🛡️
-                </div>
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                  403 Forbidden: Cedar Policy Authorization Required
-                </h2>
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Active principal <strong>{activePersona.name}</strong> ({activePersona.eppn}) holds affiliation <strong>{activePersona.affiliation}</strong>. Institutional security policy strictly restricts the Administrative Console to <strong>central_admin</strong> principals.
-                </p>
-                {isImpersonating && realAdmin && (
-                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-lg text-amber-800 dark:text-amber-300 text-xs text-left">
-                    You are currently impersonating this user. Return to your administrator session (<strong>{realAdmin.name}</strong>) to regain administrative access.
-                  </div>
-                )}
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  {isImpersonating ? (
-                    <button
-                      type="button"
-                      data-testid="access-denied-exit-imp-btn"
-                      onClick={handleStopImpersonation}
-                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg transition-colors cursor-pointer"
-                    >
-                      Exit Impersonation &amp; Restore Admin
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => navigateTo("/")}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg transition-colors cursor-pointer"
-                    >
-                      Return to Workspace
-                    </button>
-                  )}
-                </div>
-              </div>
-            ) : (
-            <div className="space-y-6 max-w-6xl mx-auto animate-fade-in">
-              <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
-                <div className="flex items-center gap-3">
-                  <img src="/logo-mark.png" alt="Scaffoldry" className="h-8 w-auto object-contain shrink-0" />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-                      <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-                        Institutional Administrative Console
-                      </h1>
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      Discreet governance and operations center: <code className="font-mono text-amber-600 dark:text-amber-400">/admin</code>.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => navigateTo("/")}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 shadow-xs cursor-pointer transition-colors"
-                >
-                  ← Exit to Workspace (/)
-                </button>
-              </div>
-
-              {/* ADMIN TAB 1: ORG & DNS MANAGER */}
-              {adminTab === "org" && (
-                <div className="space-y-4">
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs space-y-4">
-                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                      Department Realms &amp; DNS Vanity Routing
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Sub-millisecond host-header routing table configured across all university departments without open inbound ports.
-                    </p>
-                    <div className="space-y-2">
-                      {apps.map((app) => (
-                        <div
-                          key={app.slug}
-                          className="flex flex-wrap items-center justify-between p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-xs gap-2"
-                        >
-                          <div>
-                            <div className="font-semibold text-slate-800 dark:text-slate-200">{app.title}</div>
-                            <div className="font-mono text-[11px] text-blue-600 dark:text-blue-400">{app.customDomain}</div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-[11px] text-slate-500">{app.orgCode}</span>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800">
-                              ✓ 0.4 ms · Active
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ADMIN TAB 2: POLICY & OSCAL LATTICE */}
-              {adminTab === "policy" && (
-                <div className="space-y-6">
-                  {/* Source Rules Matrix */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs space-y-4">
-                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                      Statutory Rules to Cedar Policy Crosswalk (NIST OSCAL 1.1.2)
-                    </h2>
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase text-[10px]">
-                          <th className="py-2.5 px-3">Statutory Source</th>
-                          <th className="py-2.5 px-3">OSCAL Control</th>
-                          <th className="py-2.5 px-3">Executable Cedar Policy</th>
-                          <th className="py-2.5 px-3">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {sourceRules.map((rule) => (
-                          <tr key={rule.id}>
-                            <td className="py-2.5 px-3 font-semibold text-slate-800 dark:text-slate-200">{rule.source}</td>
-                            <td className="py-2.5 px-3 font-mono text-purple-600 dark:text-purple-400">{rule.oscalControl}</td>
-                            <td className="py-2.5 px-3">
-                              <code className="p-1 rounded bg-slate-900 text-sky-300 font-mono text-[10px] block max-w-sm overflow-x-auto">
-                                {rule.cedarSnippet}
-                              </code>
-                            </td>
-                            <td className="py-2.5 px-3 text-emerald-600 font-medium">✓ {rule.status}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Policy Decision Simulator */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs space-y-3">
-                    <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-                      Interactive Cedar Authorization Simulator
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs text-slate-500 mb-1">Requested Action:</label>
-                        <select
-                          value={simAction}
-                          onChange={(e) => setSimAction(e.target.value as "read" | "write" | "export")}
-                          className="w-full text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-1.5"
-                        >
-                          <option value="read">Action::&quot;read&quot;</option>
-                          <option value="write">Action::&quot;write&quot;</option>
-                          <option value="export">Action::&quot;export&quot; (FERPA Guard)</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-500 mb-1">Record Sensitivity:</label>
-                        <select
-                          value={simFerpa ? "true" : "false"}
-                          onChange={(e) => setSimFerpa(e.target.value === "true")}
-                          className="w-full text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-1.5"
-                        >
-                          <option value="false">Standard Department Record</option>
-                          <option value="true">FERPA Sensitive Student Record</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-500 mb-1">Target Department:</label>
-                        <input
-                          type="text"
-                          disabled
-                          value="biology"
-                          className="w-full text-xs rounded border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/40 p-1.5 text-slate-500"
-                        />
-                      </div>
-                    </div>
-                    <div
-                      className={`p-3 rounded-lg border text-xs flex items-center justify-between ${
-                        simResult.decision === "ALLOW"
-                          ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
-                          : "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200"
-                      }`}
-                    >
-                      <div>
-                        <strong className="mr-2">CEDAR {simResult.decision}</strong>
-                        <span>{simResult.reason}</span>
-                      </div>
-                      <span className="font-mono text-[10px] opacity-70">{simResult.rule}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ADMIN TAB 3: INFRASTRUCTURE TOPOLOGY */}
-              {adminTab === "infra" && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 shadow-xs">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Live Endpoint</span>
-                    <span className="font-mono text-xs text-blue-600 dark:text-blue-400 break-all">https://scaffoldry-desk-ljbhpnq7oa-uc.a.run.app</span>
-                  </div>
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 shadow-xs">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">GCP Region</span>
-                    <span className="text-sm font-semibold text-slate-900 dark:text-white">us-central1 (scaffoldry-io)</span>
-                  </div>
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 shadow-xs">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Auth Lattice</span>
-                    <span className="text-sm font-semibold text-slate-900 dark:text-white">Workload Identity Federation</span>
-                  </div>
-                </div>
-              )}
-
-              {/* ADMIN TAB 4: CRYPTOGRAPHIC DECISION AUDIT LEDGER */}
-              {adminTab === "ledger" && (
-                <DecisionLedgerView
-                  entries={ledger}
-                  onVerifyChain={() => {
-                    setNotificationToast("Cryptographic proof verified: All SHA-256 blocks chained without tampering.");
-                    setTimeout(() => setNotificationToast(null), 3500);
-                  }}
-                  onDownloadOscal={handleDownloadOscal}
-                />
-              )}
-
-              {/* ADMIN TAB 5: INSTITUTIONAL IDENTITY & IMPERSONATION HUB */}
-              {adminTab === "impersonation" && (
-                <div data-testid="impersonation-panel" className="space-y-4 animate-fade-in">
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                          Institutional Identity &amp; User Impersonation Hub
-                        </h2>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          OSCAL Control AC-02 (Account Management &amp; Privileged Session Execution). Allows security administrators to temporarily assume user sessions for diagnostic verification.
-                        </p>
-                      </div>
-                      <span className="px-2.5 py-1 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-xs font-mono font-semibold">
-                        Cedar Guarded: Action::impersonate
-                      </span>
-                    </div>
-
-                    <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2.5">
-                      <span className="text-amber-500 font-bold shrink-0">ℹ️</span>
-                      <div>
-                        All impersonation sessions are permanently recorded in the cryptographic Git decision ledger with caller attribution (<code className="font-mono text-amber-600 dark:text-amber-400">{realAdmin?.eppn || activePersona.eppn}</code>). Impersonated activity cannot forge ledger signatures.
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Directory Table */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xs overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-                        InCommon Directory Users ({PERSONAS.length})
-                      </h3>
-                      <span className="text-xs text-slate-400">Select an institutional identity to begin session</span>
-                    </div>
-                    <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {PERSONAS.map((p) => {
-                        const isCurrent = p.eppn === activePersona.eppn;
-                        return (
-                          <div
-                            key={p.eppn}
-                            className={`p-4 flex flex-wrap items-center justify-between gap-4 transition-colors ${
-                              isCurrent ? "bg-blue-50/50 dark:bg-blue-950/20" : "hover:bg-slate-50 dark:hover:bg-slate-800/30"
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shrink-0">
-                                {p.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
-                              </div>
-                              <div>
-                                <div className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-                                  {p.name}
-                                  {isCurrent && (
-                                    <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 rounded font-mono font-medium">
-                                      Active Identity
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400">
-                                  {p.roleTitle} · {p.department}
-                                </div>
-                                <div className="text-[11px] font-mono text-slate-400">{p.eppn}</div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 uppercase">
-                                {p.affiliation}
-                              </span>
-                              <button
-                                type="button"
-                                data-testid={`impersonate-${p.eppn}-btn`}
-                                disabled={isCurrent}
-                                onClick={() => handleStartImpersonation(p)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                                  isCurrent
-                                    ? "opacity-40 cursor-not-allowed bg-slate-200 dark:bg-slate-800 text-slate-500"
-                                    : "bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
-                                }`}
-                              >
-                                {isCurrent ? "Active" : "Impersonate User"}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-            )
+            <AdminConsoleView
+                activePersona={activePersona}
+                isImpersonating={isImpersonating}
+                realAdmin={realAdmin}
+                handleStopImpersonation={handleStopImpersonation}
+                navigateTo={navigateTo}
+                adminTab={adminTab}
+                apps={apps}
+                sourceRules={sourceRules}
+                simAction={simAction}
+                setSimAction={setSimAction}
+                simFerpa={simFerpa}
+                setSimFerpa={setSimFerpa}
+                simResult={simResult}
+                ledger={ledger}
+                setNotificationToast={setNotificationToast}
+                handleDownloadOscal={handleDownloadOscal}
+                personas={PERSONAS}
+                handleStartImpersonation={handleStartImpersonation}
+              />
           ) : mainView === "datasets" ? (
             /* DATASET EXPLORER & RELATIONAL LATTICE VIEW */
             <DatasetExplorer onUseInApp={handleUseDatasetInApp} />
@@ -2441,348 +2160,26 @@ export const AdminDesk: React.FC = () => {
       </div>
 
       {/* CO-BUILDER STUDIO MODAL */}
-      {studioOpen && activeStudioApp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-            {/* Studio Header */}
-            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <img src="/logo-mark.png" alt="Scaffoldry" className="h-8 w-auto object-contain shrink-0" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
-                      App Studio &amp; Co-Builder
-                    </span>
-                    <span className="font-mono text-xs text-slate-400">{activeStudioApp.slug}</span>
-                  </div>
-                  <h2 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
-                    {activeStudioApp.title}
-                  </h2>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setStudioOpen(false)}
-                className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Studio Sub-Navigation */}
-            <div className="px-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 text-xs font-medium bg-slate-50/60 dark:bg-slate-800/30">
-              <button
-                type="button"
-                onClick={() => setStudioTab("schema")}
-                className={`py-3 border-b-2 cursor-pointer transition-colors ${
-                  studioTab === "schema"
-                    ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                }`}
-              >
-                1. Visual Field Builder ({activeStudioApp.manifest.views[0]?.fields?.length || 0})
-              </button>
-              <button
-                type="button"
-                onClick={() => setStudioTab("collaborators")}
-                className={`py-3 border-b-2 cursor-pointer transition-colors ${
-                  studioTab === "collaborators"
-                    ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                }`}
-              >
-                2. Team Collaborators ({activeStudioApp.collaborators.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setStudioTab("automations")}
-                className={`py-3 border-b-2 cursor-pointer transition-colors ${
-                  studioTab === "automations"
-                    ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                }`}
-              >
-                3. Workflow Automations &amp; Triggers ({(automations[activeStudioApp.slug] || []).length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setStudioTab("preview")}
-                className={`py-3 border-b-2 cursor-pointer transition-colors ${
-                  studioTab === "preview"
-                    ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                }`}
-              >
-                4. Live Interactive Preview
-              </button>
-              <button
-                type="button"
-                onClick={() => setStudioTab("publish")}
-                className={`py-3 border-b-2 cursor-pointer transition-colors ${
-                  studioTab === "publish"
-                    ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                }`}
-              >
-                5. Vanity DNS &amp; Publish
-              </button>
-            </div>
-
-            {/* Studio Body */}
-            <div className="p-6 flex-1 overflow-y-auto">
-              {/* TAB 1: VISUAL FIELD BUILDER */}
-              {studioTab === "schema" && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-                        Form Schema &amp; Data Fields
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Design the inputs for this application. Toggle FERPA sensitivity to automatically apply 34 CFR § 99.30 Cedar guardrails.
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <select
-                        onChange={(e) => {
-                          const ds = SEEDED_DATASETS.find((d) => d.id === e.target.value);
-                          if (ds) {
-                            handleAddLinkedDatasetField(ds);
-                            e.target.value = "";
-                          }
-                        }}
-                        defaultValue=""
-                        className="px-3 py-1.5 text-xs font-semibold rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/60 cursor-pointer focus:outline-none"
-                      >
-                        <option value="" disabled>
-                          🔗 + Link Published Dataset...
-                        </option>
-                        {SEEDED_DATASETS.map((ds) => (
-                          <option key={ds.id} value={ds.id}>
-                            {ds.name} ({ds.department})
-                          </option>
-                        ))}
-                      </select>
-
-                      <button
-                        type="button"
-                        onClick={handleAddFieldToStudioApp}
-                        className="px-3 py-1.5 text-xs font-semibold rounded bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
-                      >
-                        + Add Input Field
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    {(activeStudioApp.manifest.views[0]?.fields || []).map((field) => (
-                      <div
-                        key={field.name}
-                        className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-wrap items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="flex-1 min-w-[200px]">
-                          <div className="font-semibold text-slate-800 dark:text-slate-200">
-                            {field.label} {field.required && <span className="text-rose-500">*</span>}
-                          </div>
-                          <div className="font-mono text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
-                            <span>key: {field.name}</span>
-                            <span>·</span>
-                            <span>type: {field.field_type}</span>
-                            {field.linked_dataset_id && (
-                              <span className="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
-                                🔗 {field.linked_dataset_id}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleFieldFerpa(field.name)}
-                            className={`px-2.5 py-1 rounded text-[11px] font-medium border cursor-pointer transition-colors ${
-                              field.ferpa_sensitive
-                                ? "bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-900"
-                                : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700"
-                            }`}
-                          >
-                            {field.ferpa_sensitive ? "🔒 FERPA Sensitive (Protected)" : "Standard Field"}
-                          </button>
-
-                          <span className="text-[11px] font-mono text-slate-400">
-                            {activeStudioApp.manifest.ceds_mappings[field.name]
-                              ? `CEDS: ${activeStudioApp.manifest.ceds_mappings[field.name]}`
-                              : "No CEDS tag"}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 2: TEAM COLLABORATORS */}
-              {studioTab === "collaborators" && (
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-                      Co-Building Team &amp; Permissions
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Share and co-build this application with peers in your department or cross-functional compliance officers.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    {activeStudioApp.collaborators.map((c) => (
-                      <div
-                        key={c.eppn}
-                        className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between text-xs"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase">
-                            {c.name[0]}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-slate-800 dark:text-slate-200">{c.name}</div>
-                            <div className="font-mono text-[11px] text-slate-400">{c.eppn}</div>
-                          </div>
-                        </div>
-                        <span className="font-mono text-xs uppercase px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 font-bold">
-                          {c.role}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
-                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                      Invite Peer to Co-Build:
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {PERSONAS.filter((p) => !activeStudioApp.collaborators.some((c) => c.eppn === p.eppn)).map((peer) => (
-                        <button
-                          key={peer.eppn}
-                          type="button"
-                          onClick={() => handleAddCollaborator(peer)}
-                          className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-medium cursor-pointer"
-                        >
-                          + {peer.name} ({peer.roleTitle})
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 3: WORKFLOW AUTOMATIONS & TRIGGERS */}
-              {studioTab === "automations" && (
-                <WorkflowBuilder
-                  appSlug={activeStudioApp.slug}
-                  appTitle={activeStudioApp.manifest.title}
-                  fields={activeStudioApp.manifest.views[0]?.fields || []}
-                  rules={automations[activeStudioApp.slug] || []}
-                  onSaveRule={(rule) => handleSaveRule(activeStudioApp.slug, rule)}
-                  onDeleteRule={(ruleId) => handleDeleteRule(activeStudioApp.slug, ruleId)}
-                  onToggleRule={(ruleId) => handleToggleRule(activeStudioApp.slug, ruleId)}
-                />
-              )}
-
-              {/* TAB 4: LIVE PREVIEW */}
-              {studioTab === "preview" && (
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-                      Live Departmental Form Preview
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Test-run the application as end users will experience it when published.
-                    </p>
-                  </div>
-                  <ManifestRenderer
-                    manifest={activeStudioApp.manifest}
-                    onSubmitRecord={() => showToast("Test record submitted successfully in studio preview!")}
-                  />
-                </div>
-              )}
-
-              {/* TAB 4: PUBLISH TO VANITY DNS */}
-              {studioTab === "publish" && (
-                <div className="space-y-5">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-                      Publish Application &amp; Bind Vanity DNS Alias
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Deploy this application with sub-millisecond host-header routing on the institutional domain.
-                    </p>
-                  </div>
-
-                  <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 space-y-3 text-xs">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-500 uppercase mb-1">
-                        Assigned Institutional Domain
-                      </label>
-                      <input
-                        type="text"
-                        value={activeStudioApp.customDomain}
-                        onChange={(e) => {
-                          const updated = { ...activeStudioApp, customDomain: e.target.value };
-                          setActiveStudioApp(updated);
-                          setApps((prev) => prev.map((a) => (a.slug === updated.slug ? updated : a)));
-                        }}
-                        className="w-full px-3 py-2 text-xs font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400"
-                      />
-                    </div>
-
-                    <div className="flex justify-between items-center pt-2">
-                      <div>
-                        <div className="font-semibold text-slate-800 dark:text-slate-200">Zero-Open-Port Ingress</div>
-                        <div className="text-[11px] text-slate-400">Host router forwards requests directly without exposed hypervisor ports.</div>
-                      </div>
-                      <span className="font-mono text-emerald-600 font-bold">&lt; 1 ms Latency</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={handlePublishApp}
-                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs cursor-pointer"
-                    >
-                      ✓ Publish Application to DNS
-                    </button>
-                    <span className="text-xs text-slate-400">
-                      Status: <strong className="text-slate-700 dark:text-slate-300">{activeStudioApp.status}</strong>
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Studio Footer */}
-            <div className="px-6 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 flex items-center justify-between text-xs">
-              <button
-                type="button"
-                onClick={() => setStudioOpen(false)}
-                className="px-3 py-1.5 rounded text-slate-500 hover:text-slate-800 cursor-pointer"
-              >
-                Close Studio
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setStudioOpen(false);
-                  showToast(`Changes to "${activeStudioApp.title}" saved.`);
-                }}
-                className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold cursor-pointer"
-              >
-                Done Editing
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CoBuilderStudioModal
+        isOpen={studioOpen}
+        onClose={() => setStudioOpen(false)}
+        activeStudioApp={activeStudioApp!}
+        setActiveStudioApp={setActiveStudioApp}
+        studioTab={studioTab}
+        setStudioTab={setStudioTab}
+        automations={automations}
+        handleSaveRule={handleSaveRule}
+        handleDeleteRule={handleDeleteRule}
+        handleToggleRule={handleToggleRule}
+        handleAddLinkedDatasetField={handleAddLinkedDatasetField}
+        handleAddFieldToStudioApp={handleAddFieldToStudioApp}
+        handleToggleFieldFerpa={handleToggleFieldFerpa}
+        handleAddCollaborator={handleAddCollaborator}
+        handlePublishApp={handlePublishApp}
+        showToast={showToast}
+        personas={PERSONAS}
+        setApps={setApps}
+      />
 
       {/* AI Assistant Drawer (MCP Native) */}
       <AIAssistantDrawer
