@@ -719,7 +719,10 @@ impl PostgresRepository {
         params: AppendDecisionParams,
     ) -> Result<LedgerEntry, RepositoryError> {
         self.with_client(move |client| {
-            let row = client.query_opt(
+            let mut tx = client.transaction()?;
+            tx.execute("LOCK TABLE governance_ledger IN EXCLUSIVE MODE", &[])?;
+
+            let row = tx.query_opt(
                 "SELECT sequence, entry_hash FROM governance_ledger ORDER BY sequence DESC LIMIT 1",
                 &[],
             )?;
@@ -748,7 +751,7 @@ impl PostgresRepository {
 
             let seq = entry.sequence as i64;
             let dec_str = format!("{:?}", entry.decision_type);
-            client.execute(
+            tx.execute(
                 "INSERT INTO governance_ledger (sequence, entry_hash, previous_hash, timestamp_iso, \
                         principal, organization_code, app_slug, decision_type, oscal_control_id, \
                         rationale, payload_hash, payload) \
@@ -769,6 +772,7 @@ impl PostgresRepository {
                 ],
             )?;
 
+            tx.commit()?;
             Ok(entry)
         })
     }
