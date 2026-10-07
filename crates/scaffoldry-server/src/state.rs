@@ -128,6 +128,7 @@ pub struct ServerState {
     pub policy_engine: ScaffoldryPolicyEngine,
     pub sessions: RwLock<HashMap<String, AuthSession>>,
     pub directory: RwLock<Vec<AuthUser>>,
+    pub scim_token: Option<String>,
 }
 
 impl ServerState {
@@ -620,6 +621,10 @@ impl ServerState {
             ],
         );
 
+        let scim_token = std::env::var("SCAFFOLDRY_SCIM_TOKEN")
+            .ok()
+            .filter(|t| !t.trim().is_empty());
+
         Ok(Self {
             users: RwLock::new(HashMap::new()),
             groups: RwLock::new(HashMap::new()),
@@ -634,6 +639,7 @@ impl ServerState {
             policy_engine,
             sessions: RwLock::new(sessions),
             directory: RwLock::new(directory),
+            scim_token,
         })
     }
 }

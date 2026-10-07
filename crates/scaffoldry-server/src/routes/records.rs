@@ -1,8 +1,8 @@
 //! Tabular Record Data Ingestion, Retrieval, and Modification
 
-use crate::state::{DatasetRecord, SharedState};
+use crate::state::{AuthUser, DatasetRecord, SharedState};
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
@@ -10,7 +10,7 @@ use axum::{
 };
 use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
-use scaffoldry_engine::HostRouter;
+use scaffoldry_engine::{EngineError, HostRouter};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -197,6 +197,7 @@ async fn list_table_records(
 
 async fn create_table_record(
     State(state): State<SharedState>,
+    Extension(user): Extension<AuthUser>,
     Path((slug, table_id)): Path<(String, String)>,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<DatasetRecord>), (StatusCode, Json<Value>)> {
@@ -212,7 +213,7 @@ async fn create_table_record(
         }
     }
 
-    create_record(State(state), Path(slug), Json(modified_payload)).await
+    create_record(State(state), Extension(user), Path(slug), Json(modified_payload)).await
 }
 
 async fn get_table_record(
@@ -258,20 +259,12 @@ async fn list_records(
 
 async fn create_record(
     State(state): State<SharedState>,
+    Extension(user): Extension<AuthUser>,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<DatasetRecord>), (StatusCode, Json<Value>)> {
-    let caller_eppn = payload
-        .get("caller_eppn")
-        .and_then(|v| v.as_str())
-        .unwrap_or("user@university.edu");
-
-    let caller_affiliation_str = payload
-        .get("caller_affiliation")
-        .and_then(|v| v.as_str())
-        .unwrap_or("faculty");
-
-    let affiliation = match caller_affiliation_str {
+    // Identity is the authenticated session. Body fields such as caller_eppn are ignored.
+    let affiliation = match user.affiliation.as_str() {
         "faculty" => EduPersonAffiliation::Faculty,
         "student" => EduPersonAffiliation::Student,
         "staff" => EduPersonAffiliation::Staff,
@@ -279,14 +272,15 @@ async fn create_record(
         _ => EduPersonAffiliation::Member,
     };
 
-    let realm = caller_eppn
+    let realm = user
+        .eppn
         .split('@')
         .nth(1)
         .unwrap_or("university.edu")
         .to_string();
 
     let caller = EduPersonIdentity {
-        eppn: caller_eppn.to_string(),
+        eppn: user.eppn.clone(),
         realm,
         affiliations: vec![affiliation],
     };
@@ -295,9 +289,13 @@ async fn create_record(
 
     let submitted = {
         let engine = state.engine.read().unwrap();
-        engine
-            .submit_record(&caller, &slug, data_payload)
-            .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?
+        engine.submit_record(&caller, &slug, data_payload).map_err(|e| {
+            let status = match e {
+                EngineError::AccessDenied(_) => StatusCode::FORBIDDEN,
+                _ => StatusCode::BAD_REQUEST,
+            };
+            (status, Json(json!({"error": e.to_string()})))
+        })?
     };
 
     let record = DatasetRecord {

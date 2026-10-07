@@ -64,55 +64,19 @@ pub struct UpdateRolePayload {
     pub role: String,
 }
 
-fn extract_caller(headers: &HeaderMap, state: &SharedState) -> Option<AuthUser> {
-    if let Some(auth_val) = headers.get("authorization").and_then(|h| h.to_str().ok()) {
-        if let Some(token) = auth_val.strip_prefix("Bearer ") {
-            let sessions = state.sessions.read().unwrap();
-            if let Some(session) = sessions.get(token.trim()) {
-                return Some(session.user.clone());
-            }
-        }
-    }
-
-    if let Some(eppn) = headers.get("x-caller-eppn").and_then(|h| h.to_str().ok()) {
-        let directory = state.directory.read().unwrap();
-        if let Some(u) = directory.iter().find(|u| u.eppn == eppn) {
-            return Some(u.clone());
-        } else {
-            let affiliation = if eppn.contains("admin") {
-                "central_admin"
-            } else if eppn.contains("student") {
-                "student"
-            } else if eppn.contains("staff") || eppn.contains("officer") {
-                "staff"
-            } else {
-                "faculty"
-            };
-            let dept = if eppn.contains("physics") {
-                "physics"
-            } else if eppn.contains("compliance") {
-                "compliance"
-            } else {
-                "biology"
-            };
-            return Some(AuthUser {
-                eppn: eppn.to_string(),
-                name: eppn.to_string(),
-                role_title: "Institutional Member".to_string(),
-                affiliation: affiliation.to_string(),
-                department: dept.to_string(),
-            });
-        }
-    }
-
-    None
+/// Identity comes from the session only. Never from headers or bodies.
+fn require_caller(
+    headers: &HeaderMap,
+    state: &SharedState,
+) -> Result<AuthUser, (StatusCode, Json<Value>)> {
+    crate::guard::session_user(state, headers).ok_or_else(crate::guard::unauthorized)
 }
 
 async fn list_workspaces(
     State(state): State<SharedState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    let caller = extract_caller(&headers, &state);
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let caller = Some(require_caller(&headers, &state)?);
     let ws_guard = state.workspaces.read().unwrap();
     let collabs_guard = state.collaborators.read().unwrap();
 
@@ -153,16 +117,12 @@ async fn list_workspaces(
                 _ => {}
             }
         } else {
-            // Unauthenticated backwards-compatibility for existing headless tests
-            response_list.push(WorkspaceResponse {
-                workspace: ws.clone(),
-                collaborators: collabs,
-                user_role: member_role,
-            });
+            // Unreachable behind the session guard. Fail closed if it is ever reached.
+            continue;
         }
     }
 
-    Json(json!(response_list))
+    Ok(Json(json!(response_list)))
 }
 
 async fn create_workspace(
@@ -229,7 +189,7 @@ async fn create_workspace(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
-    let caller = extract_caller(&headers, &state);
+    let caller = Some(require_caller(&headers, &state)?);
     let lead = caller.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| "Principal Investigator".to_string());
 
     let record = WorkspaceRecord {
@@ -303,7 +263,7 @@ async fn get_workspace(
         collabs_guard.get(&id).cloned().unwrap_or_default()
     };
 
-    let caller = extract_caller(&headers, &state);
+    let caller = Some(require_caller(&headers, &state)?);
     let (is_member, member_role): (bool, Option<String>) = if let Some(ref c) = caller {
         match collabs.iter().find(|m| m.eppn == c.eppn) {
             Some(m) => (true, Some(m.role.clone())),
@@ -377,7 +337,7 @@ async fn update_workspace(
         collabs_guard.get(&id).cloned().unwrap_or_default()
     };
 
-    let caller = extract_caller(&headers, &state);
+    let caller = Some(require_caller(&headers, &state)?);
     let (is_member, member_role) = if let Some(ref c) = caller {
         match collabs.iter().find(|m| m.eppn == c.eppn) {
             Some(m) => (true, Some(m.role.as_str())),
@@ -457,11 +417,11 @@ async fn list_collaborators(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> impl IntoResponse {
+) -> Result<Json<Vec<CollaboratorRecord>>, (StatusCode, Json<Value>)> {
+    let _ = require_caller(&headers, &state)?;
     let collabs = state.collaborators.read().unwrap();
     let list = collabs.get(&id).cloned().unwrap_or_default();
-    let _ = extract_caller(&headers, &state);
-    Json(list)
+    Ok(Json(list))
 }
 
 async fn add_collaborator(
@@ -480,7 +440,7 @@ async fn add_collaborator(
         })?
     };
 
-    let caller = extract_caller(&headers, &state);
+    let caller = Some(require_caller(&headers, &state)?);
     let collabs = {
         let collabs_guard = state.collaborators.read().unwrap();
         collabs_guard.get(&id).cloned().unwrap_or_default()
@@ -577,7 +537,7 @@ async fn update_collaborator(
         })?
     };
 
-    let caller = extract_caller(&headers, &state);
+    let caller = Some(require_caller(&headers, &state)?);
     let collabs = {
         let collabs_guard = state.collaborators.read().unwrap();
         collabs_guard.get(&id).cloned().unwrap_or_default()
@@ -667,7 +627,7 @@ async fn remove_collaborator(
         })?
     };
 
-    let caller = extract_caller(&headers, &state);
+    let caller = Some(require_caller(&headers, &state)?);
     let collabs = {
         let collabs_guard = state.collaborators.read().unwrap();
         collabs_guard.get(&id).cloned().unwrap_or_default()

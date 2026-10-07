@@ -32,7 +32,12 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(mcp::router())
         .with_state(state.clone());
 
-    let scim_v2 = scim::router().with_state(state.clone());
+    let scim_v2 = scim::router()
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::guard::require_scim_credential,
+        ));
     let mcp_root = mcp::router().with_state(state);
 
     Router::new()

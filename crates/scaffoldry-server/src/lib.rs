@@ -1,5 +1,6 @@
 //! Scaffoldry Sovereign API Server (Layer 1 / Layer 2 / Layer 3 Bridge)
 
+pub mod guard;
 pub mod routes;
 pub mod state;
 
@@ -19,6 +20,8 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let router = routes::api_router(state).layer(cors);
+    let router = routes::api_router(state.clone())
+        .layer(axum::middleware::from_fn_with_state(state, guard::require_session))
+        .layer(cors);
     Ok(router)
 }

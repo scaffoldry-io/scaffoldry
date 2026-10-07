@@ -1,9 +1,39 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::Router;
 use http_body_util::BodyExt;
-use scaffoldry_server::build_app;
+use scaffoldry_server::{build_app, build_app_with_state};
+use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tower::ServiceExt;
+
+fn authed_req() -> axum::http::request::Builder {
+    Request::builder().header("authorization", "Bearer sct_admin_token")
+}
+
+fn user_req(token: &str) -> axum::http::request::Builder {
+    Request::builder().header("authorization", format!("Bearer {token}"))
+}
+
+async fn login_user(app: &Router, eppn: &str) -> String {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({ "eppn": eppn })).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "login failed for {eppn}");
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    body["token"].as_str().unwrap().to_string()
+}
 
 #[tokio::test]
 async fn test_health_check() {
@@ -27,13 +57,17 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn test_scim_2_provisioning_workflow() {
-    let app = build_app().expect("Failed to build router");
+    let mut state = ServerState::new().expect("Failed to initialize state");
+    state.scim_token = Some("test-scim-token".to_string());
+    let app = build_app_with_state(Arc::new(state)).expect("Failed to build router");
+
+    let scim_req = || Request::builder().header("authorization", "Bearer test-scim-token");
 
     // 1. ServiceProviderConfig
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            scim_req()
                 .uri("/scim/v2/ServiceProviderConfig")
                 .body(Body::empty())
                 .unwrap(),
@@ -49,7 +83,7 @@ async fn test_scim_2_provisioning_workflow() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            scim_req()
                 .uri("/scim/v2/ResourceTypes")
                 .body(Body::empty())
                 .unwrap(),
@@ -86,7 +120,7 @@ async fn test_scim_2_provisioning_workflow() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            scim_req()
                 .method("POST")
                 .uri("/scim/v2/Users")
                 .header("content-type", "application/json")
@@ -105,7 +139,7 @@ async fn test_scim_2_provisioning_workflow() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            scim_req()
                 .uri(format!("/scim/v2/Users/{}", user_id))
                 .body(Body::empty())
                 .unwrap(),
@@ -125,7 +159,7 @@ async fn test_scim_2_provisioning_workflow() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            scim_req()
                 .method("POST")
                 .uri("/scim/v2/Groups")
                 .header("content-type", "application/json")
@@ -150,7 +184,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/workspaces")
                 .header("content-type", "application/json")
@@ -173,7 +207,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri(format!("/api/v1/workspaces/{}/collaborators", ws_id))
                 .header("content-type", "application/json")
@@ -211,7 +245,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri(format!("/api/v1/workspaces/{}/apps", ws_id))
                 .header("content-type", "application/json")
@@ -229,7 +263,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/apps/physics-grants/publish")
                 .header("content-type", "application/json")
@@ -245,9 +279,8 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     assert_eq!(published_app["custom_domain_verified"], true);
 
     // 5. Insert Record with FERPA and CEDS evaluation
+    let einstein_token = login_user(&app, "einstein@physics.state.edu").await;
     let record_payload = json!({
-        "caller_eppn": "dr.smith@physics.university.edu",
-        "caller_affiliation": "faculty",
         "data": {
             "proposal_title": "Quantum Lattice Simulation",
             "student_pi": "Alice Walker",
@@ -257,7 +290,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            user_req(&einstein_token)
                 .method("POST")
                 .uri("/api/v1/apps/physics-grants/records")
                 .header("content-type", "application/json")
@@ -277,7 +310,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/physics-grants/records")
                 .body(Body::empty())
                 .unwrap(),
@@ -300,7 +333,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("PATCH")
                 .uri(format!("/api/v1/apps/physics-grants/records/{}", record_id))
                 .header("content-type", "application/json")
@@ -315,7 +348,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("DELETE")
                 .uri(format!("/api/v1/apps/physics-grants/records/{}", record_id))
                 .body(Body::empty())
@@ -334,7 +367,7 @@ async fn test_cedar_policy_and_governance_endpoints() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/policies")
                 .body(Body::empty())
                 .unwrap(),
@@ -355,7 +388,7 @@ async fn test_cedar_policy_and_governance_endpoints() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/policies/simulate")
                 .header("content-type", "application/json")
@@ -381,7 +414,7 @@ async fn test_cedar_policy_and_governance_endpoints() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/policies/simulate")
                 .header("content-type", "application/json")
@@ -399,7 +432,7 @@ async fn test_cedar_policy_and_governance_endpoints() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/governance/oscal")
                 .body(Body::empty())
                 .unwrap(),
@@ -420,7 +453,7 @@ async fn test_published_datasets_and_relationships_api() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/datasets")
                 .body(Body::empty())
                 .unwrap(),
@@ -436,7 +469,7 @@ async fn test_published_datasets_and_relationships_api() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/datasets/courses")
                 .body(Body::empty())
                 .unwrap(),
@@ -470,7 +503,7 @@ async fn test_published_datasets_and_relationships_api() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/datasets")
                 .header("content-type", "application/json")
@@ -493,7 +526,7 @@ async fn test_published_datasets_and_relationships_api() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/datasets/physics_laboratories/relationships")
                 .header("content-type", "application/json")
@@ -511,7 +544,7 @@ async fn test_published_datasets_and_relationships_api() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/datasets/physics_laboratories/relationships")
                 .body(Body::empty())
                 .unwrap(),
@@ -532,7 +565,7 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/mcp")
                 .body(Body::empty())
                 .unwrap(),
@@ -555,7 +588,7 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
@@ -578,7 +611,7 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
@@ -611,7 +644,7 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
@@ -636,7 +669,7 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
@@ -661,7 +694,7 @@ async fn test_app_workflow_automations_and_simulation() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/physics-admissions-review/automations")
                 .body(Body::empty())
                 .unwrap(),
@@ -692,7 +725,7 @@ async fn test_app_workflow_automations_and_simulation() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/apps/physics-admissions-review/automations/simulate")
                 .header("content-type", "application/json")
@@ -720,7 +753,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/governance/ledger")
                 .body(Body::empty())
                 .unwrap(),
@@ -753,7 +786,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/governance/ledger/append")
                 .header("content-type", "application/json")
@@ -773,7 +806,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/governance/ledger/verify")
                 .body(Body::empty())
@@ -791,7 +824,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/governance/oscal/export")
                 .body(Body::empty())
                 .unwrap(),
@@ -824,7 +857,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
@@ -848,7 +881,7 @@ async fn test_framework_specification_api_and_mcp_integration() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/framework/spec")
                 .body(Body::empty())
                 .unwrap(),
@@ -880,7 +913,7 @@ async fn test_framework_specification_api_and_mcp_integration() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
@@ -908,7 +941,7 @@ async fn test_framework_specification_api_and_mcp_integration() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
@@ -937,7 +970,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri("/api/v1/workspaces")
                 .header("content-type", "application/json")
@@ -1010,7 +1043,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("POST")
                 .uri(format!("/api/v1/workspaces/{}/apps", ws_id))
                 .header("content-type", "application/json")
@@ -1025,7 +1058,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/collab-allocations/schema")
                 .body(Body::empty())
                 .unwrap(),
@@ -1043,7 +1076,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/schema")
                 .body(Body::empty())
                 .unwrap(),
@@ -1058,9 +1091,8 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     assert_eq!(table_schema["views"].as_array().unwrap().len(), 1);
 
     // 5. POST records to proposals table
+    let einstein_token = login_user(&app, "einstein@physics.state.edu").await;
     let rec1 = json!({
-        "caller_eppn": "dr.smith@physics.university.edu",
-        "caller_affiliation": "faculty",
         "data": {
             "title": "Quantum Photonics",
             "amount": 250000,
@@ -1070,7 +1102,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            user_req(&einstein_token)
                 .method("POST")
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
                 .header("content-type", "application/json")
@@ -1087,8 +1119,6 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     assert_eq!(r1_res["data"]["_table_id"], "proposals");
 
     let rec2 = json!({
-        "caller_eppn": "dr.smith@physics.university.edu",
-        "caller_affiliation": "faculty",
         "data": {
             "title": "Autonomous Marine Robotics",
             "amount": 100000,
@@ -1098,7 +1128,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            user_req(&einstein_token)
                 .method("POST")
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
                 .header("content-type", "application/json")
@@ -1110,8 +1140,6 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let rec3 = json!({
-        "caller_eppn": "dr.smith@physics.university.edu",
-        "caller_affiliation": "faculty",
         "data": {
             "title": "Deep Biosphere Metagenomics",
             "amount": 400000,
@@ -1121,7 +1149,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            user_req(&einstein_token)
                 .method("POST")
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
                 .header("content-type", "application/json")
@@ -1136,7 +1164,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/records")
                 .body(Body::empty())
                 .unwrap(),
@@ -1153,7 +1181,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/records?filter_by_formula=%7Bamount%7D%20%3E%20200000")
                 .body(Body::empty())
                 .unwrap(),
@@ -1169,7 +1197,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/records?sort_field=amount&sort_direction=desc")
                 .body(Body::empty())
                 .unwrap(),
@@ -1188,7 +1216,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/apps/collab-allocations/tables/proposals/records?page_size=2&offset=0")
                 .body(Body::empty())
                 .unwrap(),
@@ -1206,7 +1234,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
                 .body(Body::empty())
                 .unwrap(),
@@ -1230,7 +1258,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("PATCH")
                 .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
                 .header("content-type", "application/json")
@@ -1249,7 +1277,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .method("DELETE")
                 .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
                 .body(Body::empty())
@@ -1263,7 +1291,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri(format!("/api/v1/apps/collab-allocations/tables/proposals/records/{}", r1_id))
                 .body(Body::empty())
                 .unwrap(),
@@ -1281,7 +1309,7 @@ async fn test_authentication_authorization_and_impersonation() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/auth/directory")
                 .body(Body::empty())
                 .unwrap(),
@@ -1443,7 +1471,7 @@ async fn test_authentication_authorization_and_impersonation() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/governance/ledger")
                 .body(Body::empty())
                 .unwrap(),
@@ -1526,13 +1554,13 @@ async fn test_workspace_sharing_security_and_configuration() {
         "role": "Viewer",
         "name": "Guest Researcher"
     });
+    let marcus_token = login_user(&app, "marcus.vance@state.edu").await;
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            user_req(&marcus_token)
                 .method("POST")
                 .uri("/api/v1/workspaces/ws-bio-lab/collaborators")
-                .header("x-caller-eppn", "marcus.vance@state.edu") // viewer
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&new_member_payload).unwrap()))
                 .unwrap(),
@@ -1542,13 +1570,13 @@ async fn test_workspace_sharing_security_and_configuration() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // 5. Owner adds collaborator -> 201 Created
+    let curie_token = login_user(&app, "prof.curie@science.state.edu").await;
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            user_req(&curie_token)
                 .method("POST")
                 .uri("/api/v1/workspaces/ws-bio-lab/collaborators")
-                .header("x-caller-eppn", "prof.curie@science.state.edu") // owner
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&new_member_payload).unwrap()))
                 .unwrap(),
@@ -1565,10 +1593,9 @@ async fn test_workspace_sharing_security_and_configuration() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            user_req(&curie_token)
                 .method("PUT")
                 .uri("/api/v1/workspaces/ws-bio-lab")
-                .header("x-caller-eppn", "prof.curie@science.state.edu") // owner
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&update_payload).unwrap()))
                 .unwrap(),
@@ -1584,7 +1611,7 @@ async fn test_workspace_sharing_security_and_configuration() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/governance/ledger")
                 .body(Body::empty())
                 .unwrap(),
