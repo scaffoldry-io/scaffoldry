@@ -18,6 +18,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+postgres = { workspace = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

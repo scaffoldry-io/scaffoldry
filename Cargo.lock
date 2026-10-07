@@ -1484,6 +1484,7 @@ dependencies = [
  "axum",
  "chrono",
  "http-body-util",
+ "postgres",
  "scaffoldry-core",
  "scaffoldry-engine",
  "scaffoldry-policy",
