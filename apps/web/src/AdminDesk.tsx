@@ -1114,7 +1114,7 @@ export const AdminDesk: React.FC = () => {
             </button>
             <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 hidden sm:inline">
-              The Sovereign Desk
+              Institutional Platform
             </span>
             {isAdminPath && (
               <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
