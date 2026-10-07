@@ -1,15 +1,15 @@
-//! Published Institutional Datasets and Relational Lattice Endpoints
-
+use crate::guard::session_user;
 use crate::state::SharedState;
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
 };
 use chrono::Utc;
 use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
+use scaffoldry_policy::PolicyDecision;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -88,8 +88,12 @@ async fn get_dataset(
 
 async fn publish_dataset(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<PublishedDataset>), (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
     let name = payload["name"]
         .as_str()
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "name is required"}))))?
@@ -112,6 +116,25 @@ async fn publish_dataset(
         .and_then(|v| v.as_str())
         .unwrap_or("Academic Department")
         .to_string();
+
+    let auth = state
+        .policy_engine
+        .authorize_departmental_action(
+            &user.eppn,
+            &user.affiliation,
+            &user.department,
+            "publish_dataset",
+            &id,
+            &department,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    if auth.decision == PolicyDecision::Deny {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Forbidden: Cedar policy denied dataset publishing"})),
+        ));
+    }
 
     let organization = payload
         .get("organization")

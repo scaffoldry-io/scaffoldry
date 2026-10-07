@@ -175,3 +175,187 @@ async fn scim_requires_the_provisioning_credential_and_fails_closed() {
     let (status, _) = send(&app, "GET", uri, Some("anything"), &[], None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn token_issuance_cannot_forge_central_admin_or_arbitrary_privileges() {
+    let app = build_app().expect("router");
+
+    // 1. Mallory with "admin" in eppn must NOT be given central_admin affiliation
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/v1/auth/token",
+        None,
+        &[],
+        Some(json!({ "eppn": "mallory@evil.example.admin" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(
+        body["user"]["affiliation"].as_str(),
+        Some("central_admin"),
+        "Arbitrary eppn containing 'admin' must not become central_admin"
+    );
+
+    // 2. Caller attempting to pass affiliation: central_admin explicitly must be refused or downgraded
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/v1/auth/token",
+        None,
+        &[],
+        Some(json!({
+            "eppn": "mallory@evil.example",
+            "affiliation": "central_admin"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(
+        body["user"]["affiliation"].as_str(),
+        Some("central_admin"),
+        "Unauthenticated caller cannot escalate affiliation to central_admin"
+    );
+
+    // 3. Known central admin jordan.lee@state.edu is valid
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/v1/auth/token",
+        None,
+        &[],
+        Some(json!({ "eppn": "jordan.lee@state.edu" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["user"]["affiliation"].as_str(), Some("central_admin"));
+}
+
+#[tokio::test]
+async fn app_and_dataset_routes_enforce_cedar_policy_authorization() {
+    let app = build_app().expect("router");
+    let student = login(&app, "student.smith@science.state.edu").await;
+    let faculty = login(&app, "prof.curie@science.state.edu").await;
+
+    // A student in biology attempting to update or publish an app must be forbidden
+    let app_manifest = json!({
+        "slug": "bio-lab-inventory",
+        "title": "Bio Lab Equipment",
+        "description": "Lab inventory",
+        "organization_code": "DEPT-BIO",
+        "department": "biology",
+        "herm_capability_id": "RES-01",
+        "views": [],
+        "ceds_mappings": {}
+    });
+
+    // 1. Faculty member in biology registers bio-lab-inventory
+    let (status, _) = send(
+        &app,
+        "PUT",
+        "/api/v1/apps/bio-lab-inventory",
+        Some(&faculty),
+        &[],
+        Some(app_manifest.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Department faculty can create app");
+
+    // 2. A student in biology attempting to update or publish the app must be forbidden
+    let (status, _) = send(
+        &app,
+        "PUT",
+        "/api/v1/apps/bio-lab-inventory",
+        Some(&student),
+        &[],
+        Some(app_manifest.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "Student must not update app manifest");
+
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/api/v1/apps/bio-lab-inventory/publish",
+        Some(&student),
+        &[],
+        Some(json!({ "custom_domain": "bio.science.state.edu" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "Student must not publish app");
+
+    // 3. Student publishing a dataset must be forbidden
+    let dataset_payload = json!({
+        "name": "Unauthorized Dataset",
+        "department": "biology",
+        "organization": "science.state.edu",
+        "fields": []
+    });
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/api/v1/datasets",
+        Some(&student),
+        &[],
+        Some(dataset_payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "Student must not publish dataset");
+
+    // 4. Faculty member in biology can publish app
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/api/v1/apps/bio-lab-inventory/publish",
+        Some(&faculty),
+        &[],
+        Some(json!({ "custom_domain": "bio.science.state.edu" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Department faculty can publish app");
+}
+
+#[tokio::test]
+async fn governance_ledger_principal_comes_strictly_from_session_never_request_body() {
+    let app = build_app().expect("router");
+    let student = login(&app, "student.smith@science.state.edu").await;
+    let admin = login(&app, "jordan.lee@state.edu").await;
+
+    let forged_payload = json!({
+        "principal": "provost@state.edu",
+        "organization_code": "UNIV",
+        "decision_type": "PolicyRevision",
+        "oscal_control_id": "CM-03",
+        "rationale": "Forged by student"
+    });
+
+    // 1. Non-admin student cannot append to governance ledger
+    let (status, _) = send(
+        &app,
+        "POST",
+        "/api/v1/governance/ledger/append",
+        Some(&student),
+        &[],
+        Some(forged_payload.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "Student must not append to governance ledger");
+
+    // 2. Admin appends, but server MUST override payload.principal with admin session identity
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/v1/governance/ledger/append",
+        Some(&admin),
+        &[],
+        Some(forged_payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "Admin can append to governance ledger");
+    assert_eq!(
+        body["entry"]["principal"].as_str(),
+        Some("jordan.lee@state.edu"),
+        "Ledger entry principal must come from session identity, not request body"
+    );
+}
+
