@@ -5,6 +5,7 @@ import "@testing-library/jest-dom";
 import { AppBuilder } from "../AppBuilder";
 import { PublishedAppView } from "../PublishedAppView";
 import { StandaloneIntakeForm } from "../StandaloneIntakeForm";
+import { AdminDesk } from "../AdminDesk";
 import { RegisteredApp, AppTable } from "../types";
 import {
   applyCompoundFilter,
@@ -798,6 +799,95 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       expect(publicIntakeBtn).toBeInTheDocument();
       fireEvent.click(publicIntakeBtn);
       expect(mockOpenIntake).toHaveBeenCalled();
+    });
+  });
+
+  describe("Authentication, Cedar Authorization & Admin Impersonation Usability", () => {
+    it("denies access to /admin when active user is not central_admin and displays Cedar 403 Forbidden", () => {
+      window.history.pushState(null, "", "/admin");
+      render(<AdminDesk />);
+
+      // Sarah Connor is faculty (default active persona 0), so /admin must show access denied
+      const accessDenied = screen.getByTestId("admin-access-denied");
+      expect(accessDenied).toBeInTheDocument();
+      expect(screen.getByText(/403 Forbidden: Cedar Policy Authorization Required/i)).toBeInTheDocument();
+      expect(screen.getByText(/strictly restricts the Administrative Console to/i)).toBeInTheDocument();
+    });
+
+    it("authenticates as central_admin via Login modal, granting access to /admin and Identity Hub", () => {
+      window.history.pushState(null, "", "/admin");
+      render(<AdminDesk />);
+
+      // Click "Sign In / Switch Identity" modal button
+      const userBadgeBtn = screen.getByTitle("User Account & Persona Menu");
+      fireEvent.click(userBadgeBtn);
+
+      const switchAccountBtn = screen.getByTestId("switch-account-modal-btn");
+      fireEvent.click(switchAccountBtn);
+
+      expect(screen.getByTestId("login-modal")).toBeInTheDocument();
+
+      // Sign in as Jordan Lee (central_admin)
+      const adminLoginBtn = screen.getByTestId("login-as-jordan.lee@state.edu-btn");
+      fireEvent.click(adminLoginBtn);
+
+      // Now /admin should render the Institutional Administrative Console
+      expect(screen.queryByTestId("admin-access-denied")).not.toBeInTheDocument();
+      expect(screen.getByText(/Institutional Administrative Console/i)).toBeInTheDocument();
+
+      // Switch to Identity & Impersonation Tab
+      const impTabBtn = screen.getByTestId("admin-impersonation-tab-btn");
+      fireEvent.click(impTabBtn);
+
+      expect(screen.getByTestId("impersonation-panel")).toBeInTheDocument();
+      expect(screen.getByText(/Institutional Identity & User Impersonation Hub/i)).toBeInTheDocument();
+    });
+
+    it("initiates impersonation of a directory user, displays persistent top banner, and exits back to admin", () => {
+      window.history.pushState(null, "", "/admin");
+      render(<AdminDesk />);
+
+      // Switch to Jordan Lee
+      const userBadgeBtn = screen.getByTitle("User Account & Persona Menu");
+      fireEvent.click(userBadgeBtn);
+      fireEvent.click(screen.getByTestId("switch-account-modal-btn"));
+      fireEvent.click(screen.getByTestId("login-as-jordan.lee@state.edu-btn"));
+
+      // Go to Impersonation tab
+      fireEvent.click(screen.getByTestId("admin-impersonation-tab-btn"));
+
+      // Click "Impersonate User" for Dr. Sarah Connor
+      const impSarahBtn = screen.getByTestId("impersonate-sarah.connor@state.edu-btn");
+      fireEvent.click(impSarahBtn);
+
+      // Verify persistent top banner appears
+      const banner = screen.getByTestId("impersonation-banner");
+      expect(banner).toBeInTheDocument();
+      expect(screen.getByText(/Impersonation Active \(AC-02\)/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Jordan Lee/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Dr\. Sarah Connor/i).length).toBeGreaterThan(0);
+
+      // Click Exit Impersonation button
+      const exitBtn = screen.getByTestId("exit-impersonation-btn");
+      fireEvent.click(exitBtn);
+
+      // Verify banner disappears and session is restored to admin
+      expect(screen.queryByTestId("impersonation-banner")).not.toBeInTheDocument();
+      expect(screen.getByText(/Institutional Administrative Console/i)).toBeInTheDocument();
+    });
+
+    it("verifies non-admin user menu does not allow unrestricted persona switching", () => {
+      window.history.pushState(null, "", "/");
+      render(<AdminDesk />);
+
+      // Default user is Dr. Sarah Connor (faculty)
+      const userBadgeBtn = screen.getByTitle("User Account & Persona Menu");
+      fireEvent.click(userBadgeBtn);
+
+      // Should not have "Switch InCommon Identity" quick switcher list
+      expect(screen.queryByText("Switch InCommon Identity")).not.toBeInTheDocument();
+      // Should not show admin impersonation hub
+      expect(screen.queryByTestId("menu-impersonation-hub-btn")).not.toBeInTheDocument();
     });
   });
 });

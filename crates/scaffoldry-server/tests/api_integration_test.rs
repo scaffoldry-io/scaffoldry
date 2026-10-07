@@ -1273,5 +1273,194 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn test_authentication_authorization_and_impersonation() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. Directory listing endpoint
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/directory")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let directory: Vec<Value> = serde_json::from_slice(&body).unwrap();
+    assert!(directory.len() >= 4);
+
+    // 2. Login as Faculty (Dr. Sarah Connor)
+    let faculty_login_payload = json!({
+        "eppn": "sarah.connor@state.edu",
+        "password": "demo-incommon-pass"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&faculty_login_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let faculty_auth: Value = serde_json::from_slice(&body).unwrap();
+    let faculty_token = faculty_auth["token"].as_str().unwrap().to_string();
+    assert_eq!(faculty_auth["user"]["eppn"], "sarah.connor@state.edu");
+    assert_eq!(faculty_auth["user"]["affiliation"], "faculty");
+    assert_eq!(faculty_auth["is_impersonating"], false);
+
+    // 3. GET /api/v1/auth/me with Bearer token
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/me")
+                .header("authorization", format!("Bearer {}", faculty_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let me_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(me_res["user"]["name"], "Dr. Sarah Connor");
+
+    // 4. Faculty attempts impersonation -> FORBIDDEN (403) via Cedar policy
+    let imp_payload = json!({
+        "target_eppn": "marcus.vance@state.edu"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/impersonate")
+                .header("authorization", format!("Bearer {}", faculty_token))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&imp_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 5. Login as Central Admin (Jordan Lee)
+    let admin_login_payload = json!({
+        "eppn": "jordan.lee@state.edu",
+        "password": "admin-incommon-pass"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&admin_login_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let admin_auth: Value = serde_json::from_slice(&body).unwrap();
+    let admin_token = admin_auth["token"].as_str().unwrap().to_string();
+    assert_eq!(admin_auth["user"]["affiliation"], "central_admin");
+
+    // 6. Central Admin initiates impersonation of Dr. Sarah Connor
+    let imp_payload = json!({
+        "target_eppn": "sarah.connor@state.edu"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/impersonate")
+                .header("authorization", format!("Bearer {}", admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&imp_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let imp_res: Value = serde_json::from_slice(&body).unwrap();
+    let imp_token = imp_res["token"].as_str().unwrap().to_string();
+    assert_eq!(imp_res["is_impersonating"], true);
+    assert_eq!(imp_res["user"]["eppn"], "sarah.connor@state.edu");
+    assert_eq!(imp_res["original_admin"]["eppn"], "jordan.lee@state.edu");
+
+    // 7. GET /api/v1/auth/me during active impersonation
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/me")
+                .header("authorization", format!("Bearer {}", imp_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let active_imp: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(active_imp["is_impersonating"], true);
+    assert_eq!(active_imp["user"]["eppn"], "sarah.connor@state.edu");
+
+    // 8. Stop impersonation and restore original admin session
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/stop-impersonate")
+                .header("authorization", format!("Bearer {}", imp_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let restore_res: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(restore_res["is_impersonating"], false);
+    assert_eq!(restore_res["user"]["eppn"], "jordan.lee@state.edu");
+
+    // 9. Verify cryptographic decision ledger audit entries
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/governance/ledger")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let ledger_res: Value = serde_json::from_slice(&body).unwrap();
+    let ledger_entries = ledger_res["entries"].as_array().unwrap();
+    assert!(ledger_entries.iter().any(|e| {
+        e["decision_type"] == "ImpersonationSessionStarted" && e["oscal_control_id"] == "AC-02"
+    }));
+    assert!(ledger_entries.iter().any(|e| {
+        e["decision_type"] == "ImpersonationSessionEnded" && e["oscal_control_id"] == "AC-02"
+    }));
+}
+
 
 

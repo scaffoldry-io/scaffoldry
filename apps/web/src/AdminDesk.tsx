@@ -12,6 +12,38 @@ import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, Regist
 
 const PERSONAS: Persona[] = [
   {
+    eppn: "sarah.connor@state.edu",
+    name: "Dr. Sarah Connor",
+    affiliation: "faculty",
+    department: "Computer Science",
+    roleTitle: "Department Chair & Professor",
+    isAdmin: false,
+  },
+  {
+    eppn: "marcus.vance@state.edu",
+    name: "Marcus Vance",
+    affiliation: "staff",
+    department: "Office of Sponsored Programs",
+    roleTitle: "Senior Research Administrator",
+    isAdmin: false,
+  },
+  {
+    eppn: "elena.rodriguez@state.edu",
+    name: "Elena Rodriguez",
+    affiliation: "compliance",
+    department: "Institutional Review Board",
+    roleTitle: "IRB & Research Compliance Analyst",
+    isAdmin: false,
+  },
+  {
+    eppn: "jordan.lee@state.edu",
+    name: "Jordan Lee",
+    affiliation: "central_admin",
+    department: "Central Enterprise IT",
+    roleTitle: "Enterprise Identity & Security Architect",
+    isAdmin: true,
+  },
+  {
     eppn: "prof.curie@science.state.edu",
     name: "Dr. Marie Curie",
     affiliation: "faculty",
@@ -424,8 +456,8 @@ export const AdminDesk: React.FC = () => {
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"org" | "policy" | "ledger" | "infra">("org");
-  const [ledger] = useState<LedgerEntryItem[]>(INITIAL_LEDGER);
+  const [adminTab, setAdminTab] = useState<"org" | "policy" | "ledger" | "infra" | "impersonation">("org");
+  const [ledger, setLedger] = useState<LedgerEntryItem[]>(INITIAL_LEDGER);
 
   const handleDownloadOscal = () => {
     const oscalDoc = {
@@ -484,14 +516,73 @@ export const AdminDesk: React.FC = () => {
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("scaffoldry-theme") === "dark" ||
-        (!localStorage.getItem("scaffoldry-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        (!localStorage.getItem("scaffoldry-theme") && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches);
     }
     return true;
   });
 
-  // User Persona State
+  // User Persona & Impersonation State
   const [activePersona, setActivePersona] = useState<Persona>(PERSONAS[0]);
+  const [isImpersonating, setIsImpersonating] = useState<boolean>(false);
+  const [realAdmin, setRealAdmin] = useState<Persona | null>(null);
+  const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
   const [notificationToast, setNotificationToast] = useState<string | null>(null);
+
+  const handleStartImpersonation = (targetPersona: Persona) => {
+    const currentAdmin = realAdmin || activePersona;
+    if (currentAdmin.affiliation !== "central_admin") {
+      showToast("Access Denied: Cedar policy requires central_admin to impersonate users.");
+      return;
+    }
+    setRealAdmin(currentAdmin);
+    setIsImpersonating(true);
+    setActivePersona(targetPersona);
+
+    const auditEntry: LedgerEntryItem = {
+      sequence: ledger.length,
+      timestamp_iso: new Date().toISOString(),
+      previous_hash: ledger[ledger.length - 1]?.entry_hash || "0".repeat(64),
+      principal: currentAdmin.eppn,
+      organization_code: "DIV-SECURITY-CENTRAL",
+      app_slug: undefined,
+      decision_type: "ImpersonationSessionStarted" as any,
+      oscal_control_id: "AC-02",
+      rationale: `Enterprise administrator ${currentAdmin.name} initiated verified user impersonation of ${targetPersona.name}`,
+      payload_hash: `sha256:imp_start:${targetPersona.eppn}:${Date.now()}`,
+      entry_hash: `sha256:block:${ledger.length}:${Date.now()}`,
+    };
+    setLedger((prev) => [...prev, auditEntry]);
+
+    showToast(`Impersonating ${targetPersona.name} (${targetPersona.roleTitle})`);
+    navigateTo("/");
+  };
+
+  const handleStopImpersonation = () => {
+    if (!realAdmin) return;
+    const admin = realAdmin;
+    const impersonated = activePersona;
+
+    const auditEntry: LedgerEntryItem = {
+      sequence: ledger.length,
+      timestamp_iso: new Date().toISOString(),
+      previous_hash: ledger[ledger.length - 1]?.entry_hash || "0".repeat(64),
+      principal: admin.eppn,
+      organization_code: "DIV-SECURITY-CENTRAL",
+      app_slug: undefined,
+      decision_type: "ImpersonationSessionEnded" as any,
+      oscal_control_id: "AC-02",
+      rationale: `Enterprise administrator ${admin.name} concluded impersonation of ${impersonated.name}`,
+      payload_hash: `sha256:imp_end:${impersonated.eppn}:${Date.now()}`,
+      entry_hash: `sha256:block:${ledger.length}:${Date.now()}`,
+    };
+    setLedger((prev) => [...prev, auditEntry]);
+
+    setActivePersona(admin);
+    setIsImpersonating(false);
+    setRealAdmin(null);
+    showToast(`Exited impersonation. Restored administrator session for ${admin.name}`);
+    navigateTo("/admin");
+  };
 
   // Applications & Policy Data
   const [apps, setApps] = useState<RegisteredApp[]>(INITIAL_APPS);
@@ -965,6 +1056,32 @@ export const AdminDesk: React.FC = () => {
         </div>
       )}
 
+      {/* SECURITY IMPERSONATION BANNER (OSCAL AC-02) */}
+      {isImpersonating && realAdmin && (
+        <div
+          data-testid="impersonation-banner"
+          className="bg-amber-500 dark:bg-amber-600 text-slate-950 dark:text-white px-4 py-2 border-b border-amber-600 dark:border-amber-700 flex flex-wrap items-center justify-between gap-3 text-xs font-medium shadow-sm z-50 sticky top-0"
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="bg-amber-900 text-amber-100 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded">
+              Impersonation Active (AC-02)
+            </span>
+            <span>
+              Administrator: <strong>{realAdmin.name}</strong> ({realAdmin.roleTitle}) · Acting as:{" "}
+              <strong>{activePersona.name}</strong> ({activePersona.roleTitle}, {activePersona.department})
+            </span>
+          </div>
+          <button
+            type="button"
+            data-testid="exit-impersonation-btn"
+            onClick={handleStopImpersonation}
+            className="px-3 py-1 bg-slate-950 text-white hover:bg-slate-800 text-xs font-semibold rounded shadow-sm transition-colors cursor-pointer"
+          >
+            ✕ Exit Impersonation
+          </button>
+        </div>
+      )}
+
       {/* TOP COMMAND BAR */}
       <header className="sticky top-0 z-40 h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between shadow-xs">
         {/* Left: Brand & Workspace Selector */}
@@ -1135,85 +1252,97 @@ export const AdminDesk: React.FC = () => {
                 <div className="p-2 border-b border-slate-100 dark:border-slate-800">
                   <div className="font-semibold text-slate-900 dark:text-white">{activePersona.name}</div>
                   <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 break-all">{activePersona.eppn}</div>
-                  <div className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
-                    {activePersona.roleTitle}
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                      {activePersona.roleTitle}
+                    </span>
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase">
+                      {activePersona.affiliation}
+                    </span>
                   </div>
                 </div>
 
-                {/* Switch Identity */}
-                <div className="py-2 border-b border-slate-100 dark:border-slate-800">
-                  <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 px-2 mb-1.5">
-                    Switch InCommon Identity
-                  </div>
-                  <div className="space-y-1">
-                    {PERSONAS.map((p) => (
-                      <button
-                        key={p.eppn}
-                        type="button"
-                        onClick={() => {
-                          setActivePersona(p);
-                          showToast(`Switched active identity to ${p.name}`);
-                          setUserMenuOpen(false);
-                        }}
-                        className={`w-full text-left px-2 py-1.5 rounded flex items-center justify-between transition-colors cursor-pointer ${
-                          p.eppn === activePersona.eppn
-                            ? "bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-semibold"
-                            : "hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300"
-                        }`}
-                      >
-                        <div className="truncate">
-                          <div>{p.name}</div>
-                          <div className="text-[10px] text-slate-400">{p.affiliation} · {p.department}</div>
-                        </div>
-                        {p.eppn === activePersona.eppn && <span className="text-blue-600 dark:text-blue-400">✓</span>}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* DISCREET ADMIN PATH ENTRY */}
-                <div className="pt-2">
-                  {!isAdminPath ? (
+                {/* Impersonation Status / Controls */}
+                {isImpersonating && realAdmin && (
+                  <div className="py-2 px-2 border-b border-slate-100 dark:border-slate-800 bg-amber-50/70 dark:bg-amber-950/30 rounded my-1">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-amber-700 dark:text-amber-300 mb-1">
+                      ⚠️ Impersonation Active
+                    </div>
+                    <div className="text-[11px] text-amber-800 dark:text-amber-200">
+                      Real Admin: <strong>{realAdmin.name}</strong>
+                    </div>
                     <button
                       type="button"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        handleStopImpersonation();
+                      }}
+                      className="mt-2 w-full py-1 text-center bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-semibold cursor-pointer shadow-2xs"
+                    >
+                      Exit Impersonation
+                    </button>
+                  </div>
+                )}
+
+                {/* Admin-Only Actions */}
+                {activePersona.affiliation === "central_admin" && (
+                  <div className="py-2 border-b border-slate-100 dark:border-slate-800 space-y-1">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 px-2 mb-1">
+                      Administrative Tools
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="menu-impersonation-hub-btn"
                       onClick={() => {
                         setUserMenuOpen(false);
                         navigateTo("/admin");
-                        showToast("Navigated to discreet path: /admin");
+                        setAdminTab("impersonation");
+                        showToast("Opened Identity & Impersonation Hub");
                       }}
-                      className="w-full text-left px-2 py-2 rounded-md hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-800 dark:text-amber-300 transition-colors flex items-center gap-2.5 cursor-pointer"
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-800 dark:text-amber-300 transition-colors flex items-center gap-2 cursor-pointer"
                     >
-                      <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                      </svg>
+                      <span className="text-amber-500 font-bold">👤</span>
                       <div>
-                        <div className="font-semibold text-xs">Institutional Admin Console</div>
-                        <div className="text-[10px] text-amber-600/80 dark:text-amber-400/80 font-mono">
-                          Discreet path: /admin
-                        </div>
+                        <div className="font-semibold text-xs">Directory User Impersonation</div>
+                        <div className="text-[10px] text-slate-400">Act as faculty/staff with AC-02 audit</div>
                       </div>
                     </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUserMenuOpen(false);
-                        navigateTo("/");
-                        showToast("Returned to General Workspace");
-                      }}
-                      className="w-full text-left px-2 py-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors flex items-center gap-2.5 cursor-pointer"
-                    >
-                      <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                      </svg>
-                      <div>
-                        <div className="font-semibold text-xs">Return to Workspace</div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          Path: /
+                    {!isAdminPath && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          navigateTo("/admin");
+                          showToast("Navigated to discreet path: /admin");
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors flex items-center gap-2 cursor-pointer"
+                      >
+                        <span className="text-slate-400">⚙️</span>
+                        <div>
+                          <div className="font-semibold text-xs">Admin Console (/admin)</div>
                         </div>
-                      </div>
-                    </button>
-                  )}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Sign In / Switch Account */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    data-testid="switch-account-modal-btn"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      setLoginModalOpen(true);
+                    }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="text-slate-400">🔑</span>
+                    <div>
+                      <div className="font-semibold text-xs">Sign In / Switch Identity</div>
+                      <div className="text-[10px] text-slate-400">Authenticate InCommon credentials</div>
+                    </div>
+                  </button>
                 </div>
               </div>
             )}
@@ -1298,6 +1427,22 @@ export const AdminDesk: React.FC = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 00-9.78 2.096A4.001 4.001 0 003 15z" />
                     </svg>
                     {navRailExpanded && <span>Cloud Run Infrastructure</span>}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="admin-impersonation-tab-btn"
+                    onClick={() => setAdminTab("impersonation")}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "impersonation"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    {navRailExpanded && <span>Identity &amp; Impersonation</span>}
                   </button>
 
                   <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
@@ -1440,6 +1585,44 @@ export const AdminDesk: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100/50 dark:bg-slate-950">
           {/* DISCREET ADMIN CONSOLE VIEW (/admin) */}
           {isAdminPath ? (
+            activePersona.affiliation !== "central_admin" ? (
+              <div data-testid="admin-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
+                <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
+                  🛡️
+                </div>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  403 Forbidden: Cedar Policy Authorization Required
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Active principal <strong>{activePersona.name}</strong> ({activePersona.eppn}) holds affiliation <strong>{activePersona.affiliation}</strong>. Institutional security policy strictly restricts the Administrative Console to <strong>central_admin</strong> principals.
+                </p>
+                {isImpersonating && realAdmin && (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-lg text-amber-800 dark:text-amber-300 text-xs text-left">
+                    You are currently impersonating this user. Return to your administrator session (<strong>{realAdmin.name}</strong>) to regain administrative access.
+                  </div>
+                )}
+                <div className="flex items-center justify-center gap-3 pt-2">
+                  {isImpersonating ? (
+                    <button
+                      type="button"
+                      data-testid="access-denied-exit-imp-btn"
+                      onClick={handleStopImpersonation}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+                    >
+                      Exit Impersonation &amp; Restore Admin
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => navigateTo("/")}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+                    >
+                      Return to Workspace
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
             <div className="space-y-6 max-w-6xl mx-auto animate-fade-in">
               <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
                 <div className="flex items-center gap-3">
@@ -1617,7 +1800,98 @@ export const AdminDesk: React.FC = () => {
                   onDownloadOscal={handleDownloadOscal}
                 />
               )}
+
+              {/* ADMIN TAB 5: INSTITUTIONAL IDENTITY & IMPERSONATION HUB */}
+              {adminTab === "impersonation" && (
+                <div data-testid="impersonation-panel" className="space-y-4 animate-fade-in">
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                          Institutional Identity &amp; User Impersonation Hub
+                        </h2>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          OSCAL Control AC-02 (Account Management &amp; Privileged Session Execution). Allows security administrators to temporarily assume user sessions for diagnostic verification.
+                        </p>
+                      </div>
+                      <span className="px-2.5 py-1 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-xs font-mono font-semibold">
+                        Cedar Guarded: Action::impersonate
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2.5">
+                      <span className="text-amber-500 font-bold shrink-0">ℹ️</span>
+                      <div>
+                        All impersonation sessions are permanently recorded in the cryptographic Git decision ledger with caller attribution (<code className="font-mono text-amber-600 dark:text-amber-400">{realAdmin?.eppn || activePersona.eppn}</code>). Impersonated activity cannot forge ledger signatures.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Directory Table */}
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xs overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                        InCommon Directory Users ({PERSONAS.length})
+                      </h3>
+                      <span className="text-xs text-slate-400">Select an institutional identity to begin session</span>
+                    </div>
+                    <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {PERSONAS.map((p) => {
+                        const isCurrent = p.eppn === activePersona.eppn;
+                        return (
+                          <div
+                            key={p.eppn}
+                            className={`p-4 flex flex-wrap items-center justify-between gap-4 transition-colors ${
+                              isCurrent ? "bg-blue-50/50 dark:bg-blue-950/20" : "hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shrink-0">
+                                {p.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
+                              </div>
+                              <div>
+                                <div className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                                  {p.name}
+                                  {isCurrent && (
+                                    <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 px-1.5 py-0.5 rounded font-mono font-medium">
+                                      Active Identity
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">
+                                  {p.roleTitle} · {p.department}
+                                </div>
+                                <div className="text-[11px] font-mono text-slate-400">{p.eppn}</div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 uppercase">
+                                {p.affiliation}
+                              </span>
+                              <button
+                                type="button"
+                                data-testid={`impersonate-${p.eppn}-btn`}
+                                disabled={isCurrent}
+                                onClick={() => handleStartImpersonation(p)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                                  isCurrent
+                                    ? "opacity-40 cursor-not-allowed bg-slate-200 dark:bg-slate-800 text-slate-500"
+                                    : "bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
+                                }`}
+                              >
+                                {isCurrent ? "Active" : "Impersonate User"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
+            )
           ) : mainView === "datasets" ? (
             /* DATASET EXPLORER & RELATIONAL LATTICE VIEW */
             <DatasetExplorer onUseInApp={handleUseDatasetInApp} />
@@ -2155,6 +2429,65 @@ export const AdminDesk: React.FC = () => {
         onClose={() => setIsAiAssistantOpen(false)}
         onApplyAppProposal={handleApplyAppProposal}
       />
+
+      {/* LOGIN / IDENTITY AUTHENTICATION MODAL */}
+      {loginModalOpen && (
+        <div
+          data-testid="login-modal"
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+        >
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                  Institutional Sign-In (InCommon Federation)
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Select an institutional identity or authenticate credentials
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLoginModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {PERSONAS.map((p) => (
+                <button
+                  key={p.eppn}
+                  type="button"
+                  data-testid={`login-as-${p.eppn}-btn`}
+                  onClick={() => {
+                    setActivePersona(p);
+                    setIsImpersonating(false);
+                    setRealAdmin(null);
+                    setLoginModalOpen(false);
+                    showToast(`Authenticated as ${p.name}`);
+                  }}
+                  className="w-full text-left p-3 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-blue-500 hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-all flex items-center justify-between cursor-pointer"
+                >
+                  <div>
+                    <div className="text-xs font-semibold text-slate-900 dark:text-white">
+                      {p.name}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {p.roleTitle} · {p.department}
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-400">{p.eppn}</div>
+                  </div>
+                  <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    Sign In →
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

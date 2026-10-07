@@ -203,7 +203,7 @@ export interface SourceRule {
 export interface Persona {
   eppn: string;
   name: string;
-  affiliation: "faculty" | "student" | "staff";
+  affiliation: "faculty" | "student" | "staff" | "compliance" | "central_admin";
   department: string;
   roleTitle: string;
   isAdmin: boolean;

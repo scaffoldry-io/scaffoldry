@@ -45,6 +45,8 @@ pub enum DecisionType {
     AccessRoleGranted,
     DatasetAccessShared,
     StatutoryAttestation,
+    ImpersonationSessionStarted,
+    ImpersonationSessionEnded,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +109,8 @@ impl LedgerEntry {
             DecisionType::AccessRoleGranted => "AccessRoleGranted",
             DecisionType::DatasetAccessShared => "DatasetAccessShared",
             DecisionType::StatutoryAttestation => "StatutoryAttestation",
+            DecisionType::ImpersonationSessionStarted => "ImpersonationSessionStarted",
+            DecisionType::ImpersonationSessionEnded => "ImpersonationSessionEnded",
         };
 
         let content = format!(
