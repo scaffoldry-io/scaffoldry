@@ -1,5 +1,5 @@
 use crate::guard::session_user;
-use crate::state::SharedState;
+use crate::state::{lock_err, SharedState};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -102,7 +102,7 @@ async fn update_app(
         ));
     }
 
-    let mut engine = state.engine.write().unwrap();
+    let mut engine = state.engine.write().map_err(|_| lock_err())?;
     engine
         .register_manifest(manifest.clone())
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
@@ -125,7 +125,7 @@ async fn publish_app(
         .to_string();
 
     use scaffoldry_engine::HostRouter;
-    let mut engine = state.engine.write().unwrap();
+    let mut engine = state.engine.write().map_err(|_| lock_err())?;
     let mut manifest = engine
         .resolve_by_slug(&slug)
         .cloned()
@@ -163,10 +163,10 @@ async fn publish_app(
 async fn list_app_automations(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
-) -> Json<Vec<AutomationRule>> {
-    let automations = state.automations.read().unwrap();
+) -> Result<Json<Vec<AutomationRule>>, (StatusCode, Json<Value>)> {
+    let automations = state.automations.read().map_err(|_| lock_err())?;
     let rules = automations.get(&slug).cloned().unwrap_or_default();
-    Json(rules)
+    Ok(Json(rules))
 }
 
 async fn create_app_automation(
@@ -178,7 +178,7 @@ async fn create_app_automation(
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
     rule.app_slug = slug.clone();
 
-    let mut automations = state.automations.write().unwrap();
+    let mut automations = state.automations.write().map_err(|_| lock_err())?;
     automations.entry(slug).or_default().push(rule.clone());
 
     Ok((StatusCode::CREATED, Json(rule)))
@@ -195,7 +195,7 @@ async fn simulate_app_automation(
     let principal = payload["principal"].as_str().unwrap_or("dr.smith@university.edu");
 
     let auto_engine = AutomationEngine::new(state.policy_engine.clone());
-    let automations = state.automations.read().unwrap();
+    let automations = state.automations.read().map_err(|_| lock_err())?;
     let rules = automations.get(&slug).cloned().unwrap_or_default();
 
     let results: Vec<WorkflowExecutionResult> = rules

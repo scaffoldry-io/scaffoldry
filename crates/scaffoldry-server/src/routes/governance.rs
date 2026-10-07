@@ -36,9 +36,9 @@ pub struct AppendDecisionRequest {
 
 async fn get_governance_ledger(State(state): State<SharedState>) -> impl IntoResponse {
     let entries = if let Some(ref repo) = state.repository {
-        repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap().clone())
+        repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone())
     } else {
-        state.ledger.read().unwrap().clone()
+        state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone()
     };
     let is_valid = state.verify_ledger().unwrap_or(false);
     let head_hash = entries

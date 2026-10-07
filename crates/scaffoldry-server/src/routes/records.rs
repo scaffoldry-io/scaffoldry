@@ -54,7 +54,7 @@ async fn get_app_schema(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let engine = state.engine.read().unwrap();
+    let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
     let manifest = engine.resolve_by_slug(&slug).ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(Json(json!({
@@ -74,7 +74,7 @@ async fn get_table_schema(
     State(state): State<SharedState>,
     Path((slug, table_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, StatusCode> {
-    let engine = state.engine.read().unwrap();
+    let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
     let manifest = engine.resolve_by_slug(&slug).ok_or(StatusCode::NOT_FOUND)?;
 
     let table = manifest
@@ -115,7 +115,7 @@ async fn list_table_records(
     Path((slug, table_id)): Path<(String, String)>,
     Query(query): Query<RecordListQuery>,
 ) -> Result<Json<Value>, StatusCode> {
-    let records = state.records.read().unwrap();
+    let records = state.records.read().unwrap_or_else(|p| p.into_inner());
     let app_records = records.get(&slug).cloned().unwrap_or_default();
 
     // Filter by table_id (match tagged _table_id or match all if untagged single-table)
@@ -244,7 +244,7 @@ async fn list_records(
     State(state): State<SharedState>,
     Path(slug): Path<String>,
 ) -> impl IntoResponse {
-    let records = state.records.read().unwrap();
+    let records = state.records.read().unwrap_or_else(|p| p.into_inner());
     let app_records = records.get(&slug).cloned().unwrap_or_default();
     let total = app_records.len();
 
@@ -273,7 +273,7 @@ async fn get_record(
     State(state): State<SharedState>,
     Path((slug, id)): Path<(String, String)>,
 ) -> Result<Json<DatasetRecord>, StatusCode> {
-    let records = state.records.read().unwrap();
+    let records = state.records.read().unwrap_or_else(|p| p.into_inner());
     let app_records = records.get(&slug).ok_or(StatusCode::NOT_FOUND)?;
     let record = app_records
         .iter()
@@ -287,7 +287,7 @@ async fn update_record(
     Path((slug, id)): Path<(String, String)>,
     Json(payload): Json<Value>,
 ) -> Result<Json<DatasetRecord>, StatusCode> {
-    let mut records = state.records.write().unwrap();
+    let mut records = state.records.write().unwrap_or_else(|p| p.into_inner());
     let app_records = records.get_mut(&slug).ok_or(StatusCode::NOT_FOUND)?;
     let record = app_records
         .iter_mut()
@@ -315,7 +315,7 @@ async fn delete_record(
     State(state): State<SharedState>,
     Path((slug, id)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
-    let mut records = state.records.write().unwrap();
+    let mut records = state.records.write().unwrap_or_else(|p| p.into_inner());
     let app_records = records.get_mut(&slug).ok_or(StatusCode::NOT_FOUND)?;
     let pos = app_records
         .iter()

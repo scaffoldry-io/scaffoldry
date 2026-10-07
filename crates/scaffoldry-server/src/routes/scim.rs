@@ -95,7 +95,7 @@ async fn schemas() -> impl IntoResponse {
 }
 
 async fn list_users(State(state): State<SharedState>) -> impl IntoResponse {
-    let users = state.users.read().unwrap();
+    let users = state.users.read().unwrap_or_else(|p| p.into_inner());
     let resources: Vec<Value> = users
         .values()
         .map(|u| {
@@ -151,7 +151,7 @@ async fn create_user(
         enterprise_extension: enterprise.clone(),
     };
 
-    state.users.write().unwrap().insert(id.clone(), scim_user);
+    state.users.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), scim_user);
 
     let resp = json!({
         "schemas": [
@@ -174,7 +174,7 @@ async fn get_user(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let users = state.users.read().unwrap();
+    let users = state.users.read().unwrap_or_else(|p| p.into_inner());
     let u = users.get(&id).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(json!({
         "schemas": [
@@ -196,7 +196,7 @@ async fn update_user(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut users = state.users.write().unwrap();
+    let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
     let u = users.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
 
     if let Some(un) = payload.get("userName").and_then(|v| v.as_str()) {
@@ -237,7 +237,7 @@ async fn delete_user(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let mut users = state.users.write().unwrap();
+    let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
     if users.remove(&id).is_some() {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -246,7 +246,7 @@ async fn delete_user(
 }
 
 async fn list_groups(State(state): State<SharedState>) -> impl IntoResponse {
-    let groups = state.groups.read().unwrap();
+    let groups = state.groups.read().unwrap_or_else(|p| p.into_inner());
     let resources: Vec<Value> = groups
         .values()
         .map(|g| {
@@ -287,7 +287,7 @@ async fn create_group(
         members: members.clone(),
     };
 
-    state.groups.write().unwrap().insert(id.clone(), group);
+    state.groups.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), group);
 
     let resp = json!({
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
@@ -303,7 +303,7 @@ async fn get_group(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let groups = state.groups.read().unwrap();
+    let groups = state.groups.read().unwrap_or_else(|p| p.into_inner());
     let g = groups.get(&id).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(json!({
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
@@ -318,7 +318,7 @@ async fn update_group(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut groups = state.groups.write().unwrap();
+    let mut groups = state.groups.write().unwrap_or_else(|p| p.into_inner());
     let g = groups.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
 
     if let Some(dn) = payload.get("displayName").and_then(|v| v.as_str()) {
@@ -340,7 +340,7 @@ async fn delete_group(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let mut groups = state.groups.write().unwrap();
+    let mut groups = state.groups.write().unwrap_or_else(|p| p.into_inner());
     if groups.remove(&id).is_some() {
         Ok(StatusCode::NO_CONTENT)
     } else {

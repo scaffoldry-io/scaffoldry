@@ -50,8 +50,8 @@ pub struct JsonRpcError {
 
 /// GET /api/v1/mcp - Server metadata and capabilities summary
 async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse {
-    let dataset_count = state.datasets.read().unwrap().len();
-    let relationship_count = state.relationships.read().unwrap().len();
+    let dataset_count = state.datasets.read().unwrap_or_else(|p| p.into_inner()).len();
+    let relationship_count = state.relationships.read().unwrap_or_else(|p| p.into_inner()).len();
 
     Json(json!({
         "protocol": "Model Context Protocol (MCP)",
@@ -537,7 +537,7 @@ async fn handle_mcp_request(
                 }
 
                 "list_datasets" => {
-                    let datasets = state.datasets.read().unwrap();
+                    let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
                     let dept_filter = args.get("department").and_then(|v| v.as_str());
                     let list: Vec<_> = datasets
                         .values()
@@ -560,7 +560,7 @@ async fn handle_mcp_request(
 
                 "query_dataset" => {
                     let dataset_id = args.get("dataset_id").and_then(|v| v.as_str()).unwrap_or("");
-                    let datasets = state.datasets.read().unwrap();
+                    let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
                     if let Some(ds) = datasets.get(dataset_id) {
                         let sample_records = match dataset_id {
                             "courses" => json!([
@@ -727,7 +727,7 @@ async fn handle_mcp_request(
                 }
 
                 "get_governance_posture" => {
-                    let ledger = state.ledger.read().unwrap();
+                    let ledger = state.ledger.read().unwrap_or_else(|p| p.into_inner());
                     json!({
                         "content": [
                             {
@@ -981,7 +981,7 @@ async fn handle_mcp_request(
             } else {
                 match uri {
                     "datasets://catalog" => {
-                        let datasets = state.datasets.read().unwrap();
+                        let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
                         let list: Vec<_> = datasets.values().cloned().collect();
                         json!({
                             "contents": [
@@ -1035,7 +1035,7 @@ forbid(
                         ]
                     }),
                     "scaffoldry://governance/decision-ledger" => {
-                        let ledger = state.ledger.read().unwrap();
+                        let ledger = state.ledger.read().unwrap_or_else(|p| p.into_inner());
                         let is_valid = state.verify_ledger().unwrap_or(false);
                         json!({
                             "contents": [
