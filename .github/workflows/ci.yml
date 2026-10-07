@@ -28,6 +28,12 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
       - name: Verify Compose configuration
         run: |
           docker compose -f deploy/docker-compose.yml config
@@ -53,3 +59,9 @@ jobs:
         run: |
           cargo test
           cargo clippy --all-targets -- -D warnings
+
+      - name: Hard Gate - Web Unit Tests & Build
+        run: |
+          npm ci
+          npm test
+          npm run build

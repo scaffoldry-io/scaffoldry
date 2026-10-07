@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "echo 'Running web tests...' && exit 0"
+    "test": "npm --workspace=@scaffoldry/web test",
+    "build": "npm --workspace=@scaffoldry/web run build"
   }
 }
