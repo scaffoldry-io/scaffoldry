@@ -157,6 +157,17 @@ All documentation, user interfaces, error messages, and commit histories must fo
   - Allow university compliance officers to generate automated System Security Plans (SSPs) directly from the running appliance.
   - Validated via automated CI scripts (`governance/scripts/validate-oscal.py`).
 
+### Standardized Interface: Model Context Protocol (MCP) as Authoritative API
+- **Standards Search & Alignment:**
+  - Core Protocol: Model Context Protocol (MCP) specification version `2024-11-05` over JSON-RPC 2.0.
+  - Interactive UI Extension: MCP Apps extension (`modelcontextprotocol/ext-apps`, SEP-1865).
+  - UI Resource Scheme: `ui://` URI scheme serving sandboxed HTML (`text/html;profile=mcp-app`) with bidirectional AppBridge messaging.
+- **Responsibilities:**
+  - Expose every platform capability (workspaces, apps, tabular records, datasets, audit ledger, and policy simulation) as an MCP tool or resource.
+  - The MCP server is the single authoritative API for the platform.
+  - REST endpoints exist as a thin compatibility adapter delegating to the same shared service layer.
+  - Every MCP tool execution and resource read requires an authenticated session and evaluates Cedar ABAC before execution.
+
 ---
 
 ## 5. Deployment and Operations

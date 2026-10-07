@@ -2,6 +2,7 @@
 
 pub mod guard;
 pub mod routes;
+pub mod service;
 pub mod state;
 
 use axum::Router;

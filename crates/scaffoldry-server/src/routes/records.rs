@@ -8,9 +8,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use chrono::Utc;
-use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
-use scaffoldry_engine::{EngineError, HostRouter};
+use scaffoldry_engine::HostRouter;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -263,54 +261,12 @@ async fn create_record(
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<DatasetRecord>), (StatusCode, Json<Value>)> {
-    // Identity is the authenticated session. Body fields such as caller_eppn are ignored.
-    let affiliation = match user.affiliation.as_str() {
-        "faculty" => EduPersonAffiliation::Faculty,
-        "student" => EduPersonAffiliation::Student,
-        "staff" => EduPersonAffiliation::Staff,
-        "employee" => EduPersonAffiliation::Employee,
-        _ => EduPersonAffiliation::Member,
-    };
-
-    let realm = user
-        .eppn
-        .split('@')
-        .nth(1)
-        .unwrap_or("university.edu")
-        .to_string();
-
-    let caller = EduPersonIdentity {
-        eppn: user.eppn.clone(),
-        realm,
-        affiliations: vec![affiliation],
-    };
-
-    let data_payload = payload.get("data").unwrap_or(&payload);
-
-    let submitted = {
-        let engine = state.engine.read().unwrap();
-        engine.submit_record(&caller, &slug, data_payload).map_err(|e| {
-            let status = match e {
-                EngineError::AccessDenied(_) => StatusCode::FORBIDDEN,
-                _ => StatusCode::BAD_REQUEST,
-            };
-            (status, Json(json!({"error": e.to_string()})))
-        })?
-    };
-
-    let record = DatasetRecord {
-        id: submitted.id.to_string(),
-        app_slug: slug.clone(),
-        data: submitted.data,
-        ceds_mapping: submitted.ceds_mapping,
-        is_ferpa_sensitive: submitted.is_ferpa_sensitive,
-        created_at: Utc::now().to_rfc3339(),
-    };
-
-    let mut records = state.records.write().unwrap();
-    records.entry(slug).or_default().push(record.clone());
-
-    Ok((StatusCode::CREATED, Json(record)))
+    crate::service::records::create_record(&user, &slug, &payload, &state)
+        .map(|rec| (StatusCode::CREATED, Json(rec)))
+        .map_err(|err| {
+            let status = err.status_code();
+            (status, Json(json!({ "error": err.message() })))
+        })
 }
 
 async fn get_record(
