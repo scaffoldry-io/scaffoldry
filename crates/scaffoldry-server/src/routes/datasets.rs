@@ -11,7 +11,6 @@ use chrono::Utc;
 use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
 use scaffoldry_policy::PolicyDecision;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
