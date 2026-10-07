@@ -129,6 +129,7 @@ pub struct ServerState {
     pub sessions: RwLock<HashMap<String, AuthSession>>,
     pub directory: RwLock<Vec<AuthUser>>,
     pub scim_token: Option<String>,
+    pub repository: Option<Arc<crate::repository::PostgresRepository>>,
 }
 
 impl ServerState {
@@ -372,7 +373,7 @@ impl ServerState {
             payload: &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
         });
 
-        let ledger = vec![entry_0, entry_1, entry_2, entry_3];
+        let mut ledger = vec![entry_0, entry_1, entry_2, entry_3];
 
         let directory = vec![
             AuthUser {
@@ -625,6 +626,60 @@ impl ServerState {
             .ok()
             .filter(|t| !t.trim().is_empty());
 
+        let repository = match crate::repository::PostgresRepository::connect(None) {
+            Ok(repo) => Some(Arc::new(repo)),
+            Err(e) => {
+                if let crate::repository::RepositoryError::TamperDetected(msg) = &e {
+                    return Err(format!("Cryptographic tamper detected in ledger: {msg}").into());
+                }
+                if std::env::var("CI").is_ok() {
+                    return Err(format!("Postgres repository required in CI: {e}").into());
+                }
+                eprintln!("Warning: PostgreSQL repository unavailable: {e:?}");
+                None
+            }
+        };
+
+        if let Some(ref repo) = repository {
+            if let Ok(persisted_ws) = repo.list_workspaces() {
+                if persisted_ws.is_empty() {
+                    for ws in workspaces.values() {
+                        let _ = repo.upsert_workspace(ws);
+                    }
+                    for list in collaborators.values() {
+                        for c in list {
+                            let _ = repo.upsert_collaborator(c);
+                        }
+                    }
+                } else {
+                    workspaces.clear();
+                    collaborators.clear();
+                    for ws in persisted_ws {
+                        if let Ok(collabs) = repo.get_collaborators(&ws.id) {
+                            collaborators.insert(ws.id.clone(), collabs);
+                        }
+                        workspaces.insert(ws.id.clone(), ws);
+                    }
+                }
+            }
+
+            if let Ok(persisted_sessions) = repo.list_sessions() {
+                if persisted_sessions.is_empty() {
+                    for s in sessions.values() {
+                        let _ = repo.upsert_session(s);
+                    }
+                } else {
+                    sessions = persisted_sessions;
+                }
+            }
+
+            if let Ok(persisted_ledger) = repo.get_ledger() {
+                if !persisted_ledger.is_empty() {
+                    ledger = persisted_ledger;
+                }
+            }
+        }
+
         Ok(Self {
             users: RwLock::new(HashMap::new()),
             groups: RwLock::new(HashMap::new()),
@@ -640,6 +695,7 @@ impl ServerState {
             sessions: RwLock::new(sessions),
             directory: RwLock::new(directory),
             scim_token,
+            repository,
         })
     }
 }
@@ -656,10 +712,63 @@ pub struct RecordDecisionInput<'a> {
 }
 
 impl ServerState {
+    pub fn persist_workspace(&self, ws: WorkspaceRecord) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.workspaces.write().unwrap().insert(ws.id.clone(), ws.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_workspace(&ws)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_workspace(&self, id: &str) -> Option<WorkspaceRecord> {
+        if let Some(ref repo) = self.repository {
+            if let Ok(Some(ws)) = repo.get_workspace(id) {
+                return Some(ws);
+            }
+        }
+        self.workspaces.read().unwrap().get(id).cloned()
+    }
+
+    pub fn persist_workspaces_batch(&self, batch: &[WorkspaceRecord]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut guard = self.workspaces.write().unwrap();
+        for ws in batch {
+            guard.insert(ws.id.clone(), ws.clone());
+        }
+        if let Some(ref repo) = self.repository {
+            repo.persist_workspaces_batch(batch)?;
+        }
+        Ok(())
+    }
+
+    pub fn count_workspaces(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref repo) = self.repository {
+            return Ok(repo.count_workspaces()?);
+        }
+        Ok(self.workspaces.read().unwrap().len())
+    }
+
     pub fn append_ledger_entry(
         &self,
         input: RecordDecisionInput<'_>,
     ) -> Result<LedgerEntry, LedgerError> {
+        if let Some(ref repo) = self.repository {
+            match repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                principal: input.principal.clone(),
+                organization_code: input.organization_code.clone(),
+                app_slug: input.app_slug.clone(),
+                decision_type: input.decision_type.clone(),
+                oscal_control_id: input.oscal_control_id.clone(),
+                rationale: input.rationale.clone(),
+                payload: input.payload.clone(),
+            }) {
+                Ok(entry) => {
+                    self.ledger.write().unwrap().push(entry.clone());
+                    return Ok(entry);
+                }
+                Err(e) => eprintln!("Postgres repository append error: {e}"),
+            }
+        }
+
         let mut ledger = self.ledger.write().unwrap();
         let sequence = ledger.len() as u64;
         let previous_hash = if sequence == 0 {
@@ -685,6 +794,11 @@ impl ServerState {
     }
 
     pub fn verify_ledger(&self) -> Result<bool, LedgerError> {
+        if let Some(ref repo) = self.repository {
+            if repo.verify_and_initialize_ledger().is_err() {
+                return Ok(false);
+            }
+        }
         let ledger = self.ledger.read().unwrap();
         verify_ledger_chain(&ledger)
     }
