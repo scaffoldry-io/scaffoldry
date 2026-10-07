@@ -1,12 +1,13 @@
 //! Native Model Context Protocol (MCP) Server Endpoint
 //!
 //! Exposes JSON-RPC 2.0 compliant Model Context Protocol tools, resources,
-//! and prompt templates for sovereign, AI-native application co-building
-//! and governance inspection.
+//! and prompt templates for sovereign, AI-native application co-building,
+//! workspace operations, and governance inspection.
 
-use crate::state::SharedState;
+use crate::state::{AuthUser, SharedState};
 use axum::{
-    extract::State,
+    extract::{Extension, State},
+    http::HeaderMap,
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -55,6 +56,14 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
     Json(json!({
         "protocol": "Model Context Protocol (MCP)",
         "protocol_version": "2024-11-05",
+        "extensions": [
+            {
+                "id": "modelcontextprotocol/ext-apps",
+                "version": "draft",
+                "profile": "text/html;profile=mcp-app",
+                "uri_scheme": "ui://"
+            }
+        ],
         "server_info": {
             "name": "scaffoldry-sovereign-mcp",
             "version": env!("CARGO_PKG_VERSION"),
@@ -62,8 +71,13 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
         },
         "capabilities": {
             "tools": {
-                "count": 10,
+                "count": 15,
                 "items": [
+                    "list_workspaces",
+                    "get_workspace",
+                    "update_workspace",
+                    "manage_workspace_member",
+                    "create_record",
                     "list_datasets",
                     "query_dataset",
                     "create_app_proposal",
@@ -77,13 +91,15 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
                 ]
             },
             "resources": {
-                "count": 5,
+                "count": 7,
                 "uris": [
                     "datasets://catalog",
                     "policies://cedar",
                     "compliance://oscal",
                     "scaffoldry://governance/decision-ledger",
-                    "scaffoldry://framework/component-spec"
+                    "scaffoldry://framework/component-spec",
+                    "ui://workspaces/{id}/settings",
+                    "ui://governance/decision-ledger"
                 ]
             },
             "prompts": {
@@ -105,6 +121,8 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
 /// POST /api/v1/mcp - JSON-RPC 2.0 MCP Request Handler
 async fn handle_mcp_request(
     State(state): State<SharedState>,
+    user: Option<Extension<AuthUser>>,
+    headers: HeaderMap,
     Json(req): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
     let req_id = req.id.clone();
@@ -121,6 +139,25 @@ async fn handle_mcp_request(
             }),
         });
     }
+
+    let caller = match user {
+        Some(Extension(u)) => u,
+        None => match crate::guard::session_user(&state, &headers) {
+            Some(u) => u,
+            None => {
+                return Json(JsonRpcResponse {
+                    jsonrpc: "2.0",
+                    id: req_id,
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32001,
+                        message: "Unauthorized: valid session required".to_string(),
+                        data: None,
+                    }),
+                });
+            }
+        },
+    };
 
     match req.method.as_str() {
         "initialize" => {
@@ -154,6 +191,71 @@ async fn handle_mcp_request(
         "tools/list" => {
             let tools = json!({
                 "tools": [
+                    {
+                        "name": "list_workspaces",
+                        "description": "List all sovereign workspaces accessible to the authenticated principal under Cedar ABAC policies.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "get_workspace",
+                        "description": "Retrieve workspace configuration and collaborator access list by ID (Cedar ABAC enforced).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "workspace_id": { "type": "string", "description": "Unique workspace identifier" }
+                            },
+                            "required": ["workspace_id"]
+                        }
+                    },
+                    {
+                        "name": "update_workspace",
+                        "description": "Update workspace metadata, visibility, classification, and policies (Owner/Admin Cedar ABAC enforced).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "workspace_id": { "type": "string", "description": "Unique workspace identifier" },
+                                "name": { "type": "string" },
+                                "description": { "type": "string" },
+                                "department": { "type": "string" },
+                                "visibility": { "type": "string", "description": "restricted, departmental, or institutional" },
+                                "allowed_affiliations": { "type": "array", "items": { "type": "string" } },
+                                "data_classification": { "type": "string" },
+                                "icon": { "type": "string" },
+                                "cedar_policy_guard": { "type": "string" }
+                            },
+                            "required": ["workspace_id"]
+                        }
+                    },
+                    {
+                        "name": "manage_workspace_member",
+                        "description": "Add, update role, or remove workspace collaborators with audit logging (Owner/Admin Cedar ABAC enforced).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "workspace_id": { "type": "string", "description": "Unique workspace identifier" },
+                                "action": { "type": "string", "description": "add, update, or remove" },
+                                "eppn": { "type": "string", "description": "eduPersonPrincipalName of collaborator" },
+                                "role": { "type": "string", "description": "owner, admin, editor, or viewer" },
+                                "name": { "type": "string", "description": "Full display name" }
+                            },
+                            "required": ["workspace_id", "action", "eppn"]
+                        }
+                    },
+                    {
+                        "name": "create_record",
+                        "description": "Submit a new tabular record into an application (departmental membership & Cedar ABAC enforced).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "app_slug": { "type": "string", "description": "Application slug identifier" },
+                                "data": { "type": "object", "description": "Record field key-value pairs" }
+                            },
+                            "required": ["app_slug", "data"]
+                        }
+                    },
                     {
                         "name": "list_datasets",
                         "description": "List all published institutional datasets with field schemas, department ownership, and FERPA classifications.",
@@ -303,6 +405,137 @@ async fn handle_mcp_request(
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
             let result = match tool_name {
+                "list_workspaces" => {
+                    match crate::service::workspaces::list_workspaces(&caller, &state) {
+                        Ok(list) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&list).unwrap_or_default()
+                                }
+                            ]
+                        }),
+                        Err(err) => json!({
+                            "isError": true,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": err.message().to_string()
+                                }
+                            ]
+                        }),
+                    }
+                }
+
+                "get_workspace" => {
+                    let ws_id = args.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("");
+                    match crate::service::workspaces::get_workspace(&caller, ws_id, &state) {
+                        Ok(ws) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&ws).unwrap_or_default()
+                                }
+                            ]
+                        }),
+                        Err(err) => json!({
+                            "isError": true,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": err.message().to_string()
+                                }
+                            ]
+                        }),
+                    }
+                }
+
+                "update_workspace" => {
+                    let ws_id = args.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let input = crate::service::workspaces::UpdateWorkspacePayload {
+                        name: args.get("name").and_then(|v| v.as_str()).map(str::to_string),
+                        description: args.get("description").and_then(|v| v.as_str()).map(str::to_string),
+                        department: args.get("department").and_then(|v| v.as_str()).map(str::to_string),
+                        visibility: args.get("visibility").and_then(|v| v.as_str()).map(str::to_string),
+                        allowed_affiliations: args.get("allowed_affiliations").and_then(|v| v.as_array()).map(|arr| {
+                            arr.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()
+                        }),
+                        data_classification: args.get("data_classification").and_then(|v| v.as_str()).map(str::to_string),
+                        icon: args.get("icon").and_then(|v| v.as_str()).map(str::to_string),
+                        cedar_policy_guard: args.get("cedar_policy_guard").and_then(|v| v.as_str()).map(str::to_string),
+                    };
+                    match crate::service::workspaces::update_workspace(&caller, ws_id, input, &state) {
+                        Ok(ws) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&ws).unwrap_or_default()
+                                }
+                            ]
+                        }),
+                        Err(err) => json!({
+                            "isError": true,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": err.message().to_string()
+                                }
+                            ]
+                        }),
+                    }
+                }
+
+                "manage_workspace_member" => {
+                    let ws_id = args.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("add");
+                    let eppn = args.get("eppn").and_then(|v| v.as_str()).unwrap_or("");
+                    let role = args.get("role").and_then(|v| v.as_str());
+                    let name = args.get("name").and_then(|v| v.as_str());
+                    match crate::service::workspaces::manage_workspace_member(&caller, ws_id, action, eppn, role, name, &state) {
+                        Ok(res) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&res).unwrap_or_default()
+                                }
+                            ]
+                        }),
+                        Err(err) => json!({
+                            "isError": true,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": err.message().to_string()
+                                }
+                            ]
+                        }),
+                    }
+                }
+
+                "create_record" => {
+                    let app_slug = args.get("app_slug").and_then(|v| v.as_str()).unwrap_or("");
+                    let data = args.get("data").cloned().unwrap_or(json!({}));
+                    match crate::service::records::create_record(&caller, app_slug, &data, &state) {
+                        Ok(record) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&record).unwrap_or_default()
+                                }
+                            ]
+                        }),
+                        Err(err) => json!({
+                            "isError": true,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": err.message().to_string()
+                                }
+                            ]
+                        }),
+                    }
+                }
+
                 "list_datasets" => {
                     let datasets = state.datasets.read().unwrap();
                     let dept_filter = args.get("department").and_then(|v| v.as_str());
@@ -403,6 +636,24 @@ async fn handle_mcp_request(
                         }
                     });
 
+                    let manifest = scaffoldry_engine::AppManifest {
+                        slug: slug.clone(),
+                        title: title.to_string(),
+                        description: desc.to_string(),
+                        organization_code: org.to_string(),
+                        department: department.to_string(),
+                        herm_capability_id: None,
+                        custom_domain: None,
+                        custom_domain_verified: false,
+                        tables: vec![],
+                        relationships: vec![],
+                        views: vec![],
+                        ceds_mappings: std::collections::HashMap::new(),
+                    };
+                    if let Ok(mut eng) = state.engine.write() {
+                        let _ = eng.register_manifest(manifest);
+                    }
+
                     json!({
                         "content": [
                             {
@@ -449,17 +700,15 @@ async fn handle_mcp_request(
                     let formula = args.get("formula").and_then(|v| v.as_str()).unwrap_or("COUNT");
                     let values: Vec<f64> = args.get("values")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|x| x.as_f64()).collect())
+                        .map(|arr| arr.iter().filter_map(|val| val.as_f64()).collect())
                         .unwrap_or_default();
 
-                    let computed: f64 = match formula.to_uppercase().as_str() {
-                        "SUM" => values.iter().sum(),
-                        "AVERAGE" | "AVG" => {
-                            if values.is_empty() { 0.0 } else { values.iter().sum::<f64>() / (values.len() as f64) }
-                        }
+                    let calc_result = match formula.to_uppercase().as_str() {
+                        "SUM" => values.iter().sum::<f64>(),
+                        "AVERAGE" => if values.is_empty() { 0.0 } else { values.iter().sum::<f64>() / values.len() as f64 },
+                        "COUNT" => values.len() as f64,
                         "MIN" => values.iter().copied().fold(f64::INFINITY, f64::min),
                         "MAX" => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-                        "COUNT" => values.len() as f64,
                         _ => 0.0,
                     };
 
@@ -470,7 +719,7 @@ async fn handle_mcp_request(
                                 "text": serde_json::to_string_pretty(&json!({
                                     "formula": formula,
                                     "input_count": values.len(),
-                                    "result": computed
+                                    "result": calc_result
                                 })).unwrap_or_default()
                             }
                         ]
@@ -478,6 +727,7 @@ async fn handle_mcp_request(
                 }
 
                 "get_governance_posture" => {
+                    let ledger = state.ledger.read().unwrap();
                     json!({
                         "content": [
                             {
@@ -490,7 +740,9 @@ async fn handle_mcp_request(
                                         { "id": "IA-02", "title": "Identification and Authentication", "status": "Automated" },
                                         { "id": "MP-04", "title": "Media Transport / Privacy Export", "status": "Automated" },
                                         { "id": "AU-02", "title": "Event Logging & Audit Ledger", "status": "Automated" }
-                                    ]
+                                    ],
+                                    "ledger_entries_count": ledger.len(),
+                                    "last_audit_hash": ledger.last().map(|e| e.entry_hash.as_str()).unwrap_or("none")
                                 })).unwrap_or_default()
                             }
                         ]
@@ -498,52 +750,56 @@ async fn handle_mcp_request(
                 }
 
                 "record_governance_decision" => {
-                    let principal = args.get("principal").and_then(|v| v.as_str()).unwrap_or("supervisor@state.edu");
-                    let org_code = args.get("organization_code").and_then(|v| v.as_str()).unwrap_or("DIV-GOVERNANCE");
-                    let app_slug = args.get("app_slug").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let dec_str = args.get("decision_type").and_then(|v| v.as_str()).unwrap_or("StatutoryAttestation");
-                    let oscal_control = args.get("oscal_control_id").and_then(|v| v.as_str()).unwrap_or("AU-02");
-                    let rationale = args.get("rationale").and_then(|v| v.as_str()).unwrap_or("AI-initiated governance record");
+                    let principal = args.get("principal").and_then(|v| v.as_str()).unwrap_or(&caller.eppn);
+                    let org_code = args.get("organization_code").and_then(|v| v.as_str()).unwrap_or("UNIV");
+                    let app_slug = args.get("app_slug").and_then(|v| v.as_str());
+                    let decision_type_str = args.get("decision_type").and_then(|v| v.as_str()).unwrap_or("PolicyRevision");
+                    let oscal_control = args.get("oscal_control_id").and_then(|v| v.as_str()).unwrap_or("CM-03");
+                    let rationale = args.get("rationale").and_then(|v| v.as_str()).unwrap_or("Approved via Sovereign MCP");
 
-                    let decision_type = match dec_str {
-                        "AppPublished" => scaffoldry_core::DecisionType::AppPublished,
-                        "VanityDnsBound" => scaffoldry_core::DecisionType::VanityDnsBound,
-                        "PolicyRevision" => scaffoldry_core::DecisionType::PolicyRevision,
-                        "WorkflowRuleApproved" => scaffoldry_core::DecisionType::WorkflowRuleApproved,
-                        "AccessRoleGranted" => scaffoldry_core::DecisionType::AccessRoleGranted,
-                        "DatasetAccessShared" => scaffoldry_core::DecisionType::DatasetAccessShared,
-                        _ => scaffoldry_core::DecisionType::StatutoryAttestation,
+                    use scaffoldry_core::DecisionType;
+                    let decision_type = match decision_type_str {
+                        "AppPublished" => DecisionType::AppPublished,
+                        "VanityDnsBound" => DecisionType::VanityDnsBound,
+                        "PolicyRevision" => DecisionType::PolicyRevision,
+                        "WorkflowRuleApproved" => DecisionType::WorkflowRuleApproved,
+                        "AccessRoleGranted" => DecisionType::AccessRoleGranted,
+                        "DatasetAccessShared" => DecisionType::DatasetAccessShared,
+                        "StatutoryAttestation" => DecisionType::StatutoryAttestation,
+                        _ => DecisionType::PolicyRevision,
                     };
 
-                    match state.append_ledger_entry(crate::state::RecordDecisionInput {
+                    let payload = json!({ "recorded_via": "mcp_jsonrpc", "tool": "record_governance_decision" });
+                    let entry = state.append_ledger_entry(crate::state::RecordDecisionInput {
                         principal: principal.to_string(),
                         organization_code: org_code.to_string(),
-                        app_slug,
+                        app_slug: app_slug.map(str::to_string),
                         decision_type,
                         oscal_control_id: oscal_control.to_string(),
                         rationale: rationale.to_string(),
-                        payload: &args,
-                    }) {
-                        Ok(entry) => json!({
+                        payload: &payload,
+                    });
+
+                    match entry {
+                        Ok(e) => json!({
                             "content": [
                                 {
                                     "type": "text",
                                     "text": serde_json::to_string_pretty(&json!({
-                                        "success": true,
-                                        "sequence": entry.sequence,
-                                        "entry_hash": entry.entry_hash,
-                                        "previous_hash": entry.previous_hash,
-                                        "oscal_control": entry.oscal_control_id,
-                                        "message": "Decision block cryptographically chained to ledger"
+                                        "status": "RECORDED",
+                                        "entry_hash": e.entry_hash,
+                                        "sequence": e.sequence,
+                                        "oscal_control": e.oscal_control_id
                                     })).unwrap_or_default()
                                 }
                             ]
                         }),
-                        Err(e) => json!({
+                        Err(err) => json!({
+                            "isError": true,
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": format!("Failed to record governance decision: {e}")
+                                    "text": format!("Failed to append ledger entry: {}", err)
                                 }
                             ]
                         }),
@@ -551,21 +807,25 @@ async fn handle_mcp_request(
                 }
 
                 "verify_decision_ledger" => {
-                    let is_valid = state.verify_ledger().unwrap_or(false);
-                    let ledger = state.ledger.read().unwrap();
-                    json!({
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": serde_json::to_string_pretty(&json!({
-                                    "verified": is_valid,
-                                    "total_blocks": ledger.len(),
-                                    "head_hash": ledger.last().map(|e| e.entry_hash.as_str()).unwrap_or(""),
-                                    "integrity_audit": if is_valid { "ALL_BLOCKS_VALID" } else { "TAMPER_DETECTED" }
-                                })).unwrap_or_default()
-                            }
-                        ]
-                    })
+                    match crate::service::governance::verify_decision_ledger(&state) {
+                        Ok(val) => json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&val).unwrap_or_default()
+                                }
+                            ]
+                        }),
+                        Err(err) => json!({
+                            "isError": true,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": err.message().to_string()
+                                }
+                            ]
+                        }),
+                    }
                 }
 
                 "export_oscal_compliance" => {
@@ -593,6 +853,7 @@ async fn handle_mcp_request(
                 }
 
                 _ => json!({
+                    "isError": true,
                     "content": [
                         {
                             "type": "text",
@@ -642,6 +903,18 @@ async fn handle_mcp_request(
                         "name": "Framework Component Specification",
                         "description": "Self-documenting JSON Schema of governed components, layout slots, and approved org tokens",
                         "mimeType": "application/json"
+                    },
+                    {
+                        "uri": "ui://workspaces/{id}/settings",
+                        "name": "Workspace Security & Access Controls",
+                        "description": "Interactive sovereign MCP App UI for workspace sharing and OSCAL AC-02/AC-03 settings",
+                        "mimeType": "text/html;profile=mcp-app"
+                    },
+                    {
+                        "uri": "ui://governance/decision-ledger",
+                        "name": "Cryptographic Decision Ledger Inspection",
+                        "description": "Interactive sovereign MCP App UI for SHA-256 block chain inspection and OSCAL audit proofs",
+                        "mimeType": "text/html;profile=mcp-app"
                     }
                 ]
             });
@@ -657,22 +930,71 @@ async fn handle_mcp_request(
             let params = req.params.unwrap_or(json!({}));
             let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
 
-            let result = match uri {
-                "datasets://catalog" => {
-                    let datasets = state.datasets.read().unwrap();
-                    let list: Vec<_> = datasets.values().cloned().collect();
-                    json!({
+            let result = if uri.starts_with("ui://workspaces/") && uri.ends_with("/settings") {
+                let ws_id = uri
+                    .strip_prefix("ui://workspaces/")
+                    .and_then(|s| s.strip_suffix("/settings"))
+                    .unwrap_or("");
+                match crate::service::governance::render_ui_workspace_settings(&caller, ws_id, &state) {
+                    Ok(html) => json!({
                         "contents": [
                             {
                                 "uri": uri,
-                                "mimeType": "application/json",
-                                "text": serde_json::to_string_pretty(&list).unwrap_or_default()
+                                "mimeType": "text/html;profile=mcp-app",
+                                "text": html
                             }
                         ]
-                    })
+                    }),
+                    Err(err) => json!({
+                        "isError": true,
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "text/plain",
+                                "text": err.message()
+                            }
+                        ]
+                    }),
                 }
-                "policies://cedar" => {
-                    let cedar_text = r#"
+            } else if uri == "ui://governance/decision-ledger" {
+                match crate::service::governance::render_ui_decision_ledger(&caller, &state) {
+                    Ok(html) => json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "text/html;profile=mcp-app",
+                                "text": html
+                            }
+                        ]
+                    }),
+                    Err(err) => json!({
+                        "isError": true,
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "text/plain",
+                                "text": err.message()
+                            }
+                        ]
+                    }),
+                }
+            } else {
+                match uri {
+                    "datasets://catalog" => {
+                        let datasets = state.datasets.read().unwrap();
+                        let list: Vec<_> = datasets.values().cloned().collect();
+                        json!({
+                            "contents": [
+                                {
+                                    "uri": uri,
+                                    "mimeType": "application/json",
+                                    "text": serde_json::to_string_pretty(&list).unwrap_or_default()
+                                }
+                            ]
+                        })
+                    }
+                    "policies://cedar" => {
+                        let cedar_text = r#"
 // Scaffoldry Institutional Cedar ABAC Policy Set
 permit(
     principal,
@@ -689,61 +1011,62 @@ forbid(
     !(principal.scoped_affiliation in ["compliance@university.edu", "registrar@university.edu"])
 };
 "#;
-                    json!({
-                        "contents": [
-                            {
-                                "uri": uri,
-                                "mimeType": "text/plain",
-                                "text": cedar_text.trim()
-                            }
-                        ]
-                    })
-                }
-                "compliance://oscal" => json!({
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": serde_json::to_string_pretty(&json!({
-                                "oscal_version": "1.1.2",
-                                "title": "Scaffoldry Institutional Security and Compliance Lattice",
-                                "baseline": "NIST SP 800-53 Rev 5 / FERPA 34 CFR Part 99"
-                            })).unwrap_or_default()
-                        }
-                    ]
-                }),
-                "scaffoldry://governance/decision-ledger" => {
-                    let ledger = state.ledger.read().unwrap();
-                    let is_valid = state.verify_ledger().unwrap_or(false);
-                    json!({
+                        json!({
+                            "contents": [
+                                {
+                                    "uri": uri,
+                                    "mimeType": "text/plain",
+                                    "text": cedar_text.trim()
+                                }
+                            ]
+                        })
+                    }
+                    "compliance://oscal" => json!({
                         "contents": [
                             {
                                 "uri": uri,
                                 "mimeType": "application/json",
                                 "text": serde_json::to_string_pretty(&json!({
-                                    "chain_valid": is_valid,
-                                    "total_blocks": ledger.len(),
-                                    "blocks": *ledger
+                                    "oscal_version": "1.1.2",
+                                    "title": "Scaffoldry Institutional Security and Compliance Lattice",
+                                    "baseline": "NIST SP 800-53 Rev 5 / FERPA 34 CFR Part 99"
                                 })).unwrap_or_default()
                             }
                         ]
-                    })
+                    }),
+                    "scaffoldry://governance/decision-ledger" => {
+                        let ledger = state.ledger.read().unwrap();
+                        let is_valid = state.verify_ledger().unwrap_or(false);
+                        json!({
+                            "contents": [
+                                {
+                                    "uri": uri,
+                                    "mimeType": "application/json",
+                                    "text": serde_json::to_string_pretty(&json!({
+                                        "chain_valid": is_valid,
+                                        "total_blocks": ledger.len(),
+                                        "blocks": *ledger
+                                    })).unwrap_or_default()
+                                }
+                            ]
+                        })
+                    }
+                    "scaffoldry://framework/component-spec" => {
+                        let spec = crate::routes::framework::build_framework_spec_json();
+                        json!({
+                            "contents": [
+                                {
+                                    "uri": uri,
+                                    "mimeType": "application/json",
+                                    "text": serde_json::to_string_pretty(&spec).unwrap_or_default()
+                                }
+                            ]
+                        })
+                    }
+                    _ => json!({
+                        "contents": []
+                    }),
                 }
-                "scaffoldry://framework/component-spec" => {
-                    let spec = crate::routes::framework::build_framework_spec_json();
-                    json!({
-                        "contents": [
-                            {
-                                "uri": uri,
-                                "mimeType": "application/json",
-                                "text": serde_json::to_string_pretty(&spec).unwrap_or_default()
-                            }
-                        ]
-                    })
-                }
-                _ => json!({
-                    "contents": []
-                }),
             };
 
             Json(JsonRpcResponse {
