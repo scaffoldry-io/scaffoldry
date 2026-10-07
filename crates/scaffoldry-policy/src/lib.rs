@@ -38,6 +38,19 @@ pub struct AuthorizationRequest {
     pub resource: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkspaceActionInput<'a> {
+    pub principal_eppn: &'a str,
+    pub principal_affiliation: &'a str,
+    pub principal_department: &'a str,
+    pub action_name: &'a str,
+    pub workspace_id: &'a str,
+    pub workspace_department: &'a str,
+    pub workspace_visibility: &'a str,
+    pub is_member: bool,
+    pub member_role: Option<&'a str>,
+}
+
 pub struct ScaffoldryPolicyEngine {
     authorizer: Authorizer,
     policies: PolicySet,
@@ -126,6 +139,82 @@ impl ScaffoldryPolicyEngine {
                 resource
             )
             when {
+                principal.scoped_affiliation != "central_admin"
+            };
+
+            // 7. Permit central_admin to access, manage, and delete any workspace
+            permit (
+                principal,
+                action in [Action::"access_workspace", Action::"manage_workspace", Action::"delete_workspace"],
+                resource is Workspace
+            )
+            when {
+                principal.scoped_affiliation == "central_admin"
+            };
+
+            // 8. Permit workspace access to verified members
+            permit (
+                principal,
+                action == Action::"access_workspace",
+                resource is Workspace
+            )
+            when {
+                resource.is_member == true
+            };
+
+            // 9. Permit workspace access if visibility is departmental and principal matches department
+            permit (
+                principal,
+                action == Action::"access_workspace",
+                resource is Workspace
+            )
+            when {
+                resource.visibility == "departmental" &&
+                principal.department == resource.department
+            };
+
+            // 10. Permit workspace access if visibility is institutional
+            permit (
+                principal,
+                action == Action::"access_workspace",
+                resource is Workspace
+            )
+            when {
+                resource.visibility == "institutional"
+            };
+
+            // 11. Forbid workspace access if visibility is restricted and principal is not a member and not central_admin
+            forbid (
+                principal,
+                action == Action::"access_workspace",
+                resource is Workspace
+            )
+            when {
+                resource.visibility == "restricted" &&
+                resource.is_member == false &&
+                principal.scoped_affiliation != "central_admin"
+            };
+
+            // 12. Permit workspace management to owners and admins
+            permit (
+                principal,
+                action in [Action::"manage_workspace", Action::"delete_workspace"],
+                resource is Workspace
+            )
+            when {
+                resource.member_role == "owner" ||
+                resource.member_role == "admin"
+            };
+
+            // 13. Forbid workspace management to non-owner/admin members unless central_admin
+            forbid (
+                principal,
+                action in [Action::"manage_workspace", Action::"delete_workspace"],
+                resource is Workspace
+            )
+            when {
+                resource.member_role != "owner" &&
+                resource.member_role != "admin" &&
                 principal.scoped_affiliation != "central_admin"
             };
         "#;
@@ -273,6 +362,84 @@ impl ScaffoldryPolicyEngine {
             .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
 
         let resource: EntityUid = format!(r#"System::"{resource_id}""#)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let request = Request::new(
+            principal,
+            action,
+            resource,
+            Context::empty(),
+            None,
+        )
+        .map_err(|e| PolicyError::RequestError(e.to_string()))?;
+
+        let response = self.authorizer.is_authorized(&request, &self.policies, &entities);
+
+        let decision = match response.decision() {
+            Decision::Allow => PolicyDecision::Allow,
+            Decision::Deny => PolicyDecision::Deny,
+        };
+
+        let reasons = response
+            .diagnostics()
+            .reason()
+            .map(|r| r.to_string())
+            .collect();
+
+        let diagnostics = response
+            .diagnostics()
+            .errors()
+            .map(|e| e.to_string())
+            .collect();
+
+        Ok(AuthorizationResult {
+            decision,
+            reasons,
+            diagnostics,
+        })
+    }
+
+    pub fn authorize_workspace_action(
+        &self,
+        input: &WorkspaceActionInput<'_>,
+    ) -> Result<AuthorizationResult, PolicyError> {
+        let role = input.member_role.unwrap_or("none");
+        let entities_json = json!([
+            {
+                "uid": { "type": "User", "id": input.principal_eppn },
+                "attrs": {
+                    "eppn": input.principal_eppn,
+                    "scoped_affiliation": input.principal_affiliation,
+                    "realm": "state.edu",
+                    "department": input.principal_department
+                },
+                "parents": []
+            },
+            {
+                "uid": { "type": "Workspace", "id": input.workspace_id },
+                "attrs": {
+                    "department": input.workspace_department,
+                    "visibility": input.workspace_visibility,
+                    "is_member": input.is_member,
+                    "member_role": role
+                },
+                "parents": []
+            }
+        ]);
+
+        let entities = Entities::from_json_value(entities_json, None)
+            .map_err(|e| PolicyError::EntityError(e.to_string()))?;
+
+        let principal: EntityUid = format!(r#"User::"{}""#, input.principal_eppn)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let action: EntityUid = format!(r#"Action::"{}""#, input.action_name)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let resource: EntityUid = format!(r#"Workspace::"{}""#, input.workspace_id)
             .parse()
             .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
 

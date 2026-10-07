@@ -33,12 +33,43 @@ pub struct ScimGroup {
     pub members: Vec<Value>,
 }
 
+fn default_department() -> String {
+    "general".to_string()
+}
+fn default_icon() -> String {
+    "📁".to_string()
+}
+fn default_visibility() -> String {
+    "restricted".to_string()
+}
+fn default_classification() -> String {
+    "Internal".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceRecord {
     pub id: String,
     pub name: String,
     pub code: String,
     pub organization: String,
+    #[serde(default = "default_department")]
+    pub department: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_icon")]
+    pub icon: String,
+    #[serde(default)]
+    pub lead: String,
+    #[serde(default = "default_visibility")]
+    pub visibility: String, // "restricted" | "departmental" | "institutional"
+    #[serde(default)]
+    pub allowed_affiliations: Vec<String>,
+    #[serde(default = "default_classification")]
+    pub data_classification: String,
+    #[serde(default)]
+    pub cedar_policy_guard: Option<String>,
+    #[serde(default)]
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,8 +77,14 @@ pub struct CollaboratorRecord {
     pub id: String,
     pub workspace_id: String,
     pub eppn: String,
-    pub role: String,
+    #[serde(default)]
+    pub name: String,
+    pub role: String, // "owner" | "admin" | "editor" | "viewer"
     pub scoped_affiliation: String,
+    #[serde(default)]
+    pub department: String,
+    #[serde(default)]
+    pub added_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,7 +360,7 @@ impl ServerState {
 
         let entry_3 = LedgerEntry::new(NewLedgerEntryParams {
             sequence: 3,
-            timestamp_iso: now,
+            timestamp_iso: now.clone(),
             previous_hash: entry_2.entry_hash.clone(),
             principal: "dr.watson@science.state.edu".to_string(),
             organization_code: "DIV-COMPLIANCE".to_string(),
@@ -365,6 +402,34 @@ impl ServerState {
                 affiliation: "central_admin".to_string(),
                 department: "Central Enterprise IT".to_string(),
             },
+            AuthUser {
+                eppn: "prof.curie@science.state.edu".to_string(),
+                name: "Dr. Marie Curie".to_string(),
+                role_title: "Professor & Lab Director".to_string(),
+                affiliation: "faculty".to_string(),
+                department: "biology".to_string(),
+            },
+            AuthUser {
+                eppn: "student.smith@science.state.edu".to_string(),
+                name: "Alex Smith".to_string(),
+                role_title: "Graduate Research Assistant".to_string(),
+                affiliation: "student".to_string(),
+                department: "biology".to_string(),
+            },
+            AuthUser {
+                eppn: "dr.watson@science.state.edu".to_string(),
+                name: "Dr. Arthur Watson".to_string(),
+                role_title: "Campus FERPA & Export Officer".to_string(),
+                affiliation: "staff".to_string(),
+                department: "compliance".to_string(),
+            },
+            AuthUser {
+                eppn: "einstein@physics.state.edu".to_string(),
+                name: "Albert Einstein".to_string(),
+                role_title: "Physics Research Fellow".to_string(),
+                affiliation: "student".to_string(),
+                department: "physics".to_string(),
+            },
         ];
 
         let mut sessions = HashMap::new();
@@ -390,11 +455,176 @@ impl ServerState {
             },
         );
 
+        let mut workspaces = HashMap::new();
+        let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
+
+        // 1. Biology Research Laboratory (Restricted)
+        let ws_bio = WorkspaceRecord {
+            id: "ws-bio-lab".to_string(),
+            name: "Biology Research Laboratory".to_string(),
+            code: "BIO".to_string(),
+            organization: "College of Sciences".to_string(),
+            department: "biology".to_string(),
+            description: "Collaborative research protocols, instrumentation registers, and specimen data manifests.".to_string(),
+            icon: "🔬".to_string(),
+            lead: "Dr. Marie Curie".to_string(),
+            visibility: "restricted".to_string(),
+            allowed_affiliations: vec!["faculty".to_string(), "staff".to_string(), "student".to_string()],
+            data_classification: "Restricted".to_string(),
+            cedar_policy_guard: Some(r#"forbid (principal, action == Action::"access_workspace", resource) when { resource.visibility == "restricted" && resource.is_member == false };"#.to_string()),
+            created_at: now.clone(),
+        };
+        workspaces.insert("ws-bio-lab".to_string(), ws_bio);
+        collaborators.insert(
+            "ws-bio-lab".to_string(),
+            vec![
+                CollaboratorRecord {
+                    id: "collab-bio-1".to_string(),
+                    workspace_id: "ws-bio-lab".to_string(),
+                    eppn: "prof.curie@science.state.edu".to_string(),
+                    name: "Dr. Marie Curie".to_string(),
+                    role: "owner".to_string(),
+                    scoped_affiliation: "faculty".to_string(),
+                    department: "biology".to_string(),
+                    added_at: now.clone(),
+                },
+                CollaboratorRecord {
+                    id: "collab-bio-2".to_string(),
+                    workspace_id: "ws-bio-lab".to_string(),
+                    eppn: "student.smith@science.state.edu".to_string(),
+                    name: "Alex Smith".to_string(),
+                    role: "editor".to_string(),
+                    scoped_affiliation: "student".to_string(),
+                    department: "biology".to_string(),
+                    added_at: now.clone(),
+                },
+                CollaboratorRecord {
+                    id: "collab-bio-3".to_string(),
+                    workspace_id: "ws-bio-lab".to_string(),
+                    eppn: "marcus.vance@state.edu".to_string(),
+                    name: "Marcus Vance".to_string(),
+                    role: "viewer".to_string(),
+                    scoped_affiliation: "staff".to_string(),
+                    department: "Office of Sponsored Programs".to_string(),
+                    added_at: now.clone(),
+                },
+            ],
+        );
+
+        // 2. Physics & Quantum Optics (Restricted)
+        let ws_phys = WorkspaceRecord {
+            id: "ws-physics-optics".to_string(),
+            name: "Physics & Quantum Optics".to_string(),
+            code: "PHYS".to_string(),
+            organization: "College of Sciences".to_string(),
+            department: "physics".to_string(),
+            description: "High-energy laser logs, quantum optics sensor arrays, and space utilization manifests.".to_string(),
+            icon: "⚡".to_string(),
+            lead: "Albert Einstein".to_string(),
+            visibility: "restricted".to_string(),
+            allowed_affiliations: vec!["faculty".to_string(), "student".to_string()],
+            data_classification: "Internal".to_string(),
+            cedar_policy_guard: None,
+            created_at: now.clone(),
+        };
+        workspaces.insert("ws-physics-optics".to_string(), ws_phys);
+        collaborators.insert(
+            "ws-physics-optics".to_string(),
+            vec![
+                CollaboratorRecord {
+                    id: "collab-phys-1".to_string(),
+                    workspace_id: "ws-physics-optics".to_string(),
+                    eppn: "einstein@physics.state.edu".to_string(),
+                    name: "Albert Einstein".to_string(),
+                    role: "owner".to_string(),
+                    scoped_affiliation: "student".to_string(),
+                    department: "physics".to_string(),
+                    added_at: now.clone(),
+                },
+            ],
+        );
+
+        // 3. Campus Compliance & Privacy (Departmental)
+        let ws_comp = WorkspaceRecord {
+            id: "ws-campus-compliance".to_string(),
+            name: "Campus Compliance & Privacy".to_string(),
+            code: "COMPLIANCE".to_string(),
+            organization: "Office of the General Counsel".to_string(),
+            department: "compliance".to_string(),
+            description: "Institutional FERPA disclosure registers, export control logs, and statutory audit records.".to_string(),
+            icon: "🛡️".to_string(),
+            lead: "Dr. Arthur Watson".to_string(),
+            visibility: "departmental".to_string(),
+            allowed_affiliations: vec!["staff".to_string(), "compliance".to_string()],
+            data_classification: "FERPA Sensitive".to_string(),
+            cedar_policy_guard: None,
+            created_at: now.clone(),
+        };
+        workspaces.insert("ws-campus-compliance".to_string(), ws_comp);
+        collaborators.insert(
+            "ws-campus-compliance".to_string(),
+            vec![
+                CollaboratorRecord {
+                    id: "collab-comp-1".to_string(),
+                    workspace_id: "ws-campus-compliance".to_string(),
+                    eppn: "dr.watson@science.state.edu".to_string(),
+                    name: "Dr. Arthur Watson".to_string(),
+                    role: "owner".to_string(),
+                    scoped_affiliation: "staff".to_string(),
+                    department: "compliance".to_string(),
+                    added_at: now.clone(),
+                },
+                CollaboratorRecord {
+                    id: "collab-comp-2".to_string(),
+                    workspace_id: "ws-campus-compliance".to_string(),
+                    eppn: "elena.rodriguez@state.edu".to_string(),
+                    name: "Elena Rodriguez".to_string(),
+                    role: "admin".to_string(),
+                    scoped_affiliation: "compliance".to_string(),
+                    department: "Institutional Review Board".to_string(),
+                    added_at: now.clone(),
+                },
+            ],
+        );
+
+        // 4. Computer Science & Systems Lab (Restricted)
+        let ws_cs = WorkspaceRecord {
+            id: "ws-cs-research".to_string(),
+            name: "Computer Science & Systems Lab".to_string(),
+            code: "CS".to_string(),
+            organization: "College of Engineering".to_string(),
+            department: "Computer Science".to_string(),
+            description: "Distributed systems, sovereign agent computing, and verifiable lattice architectures.".to_string(),
+            icon: "💻".to_string(),
+            lead: "Dr. Sarah Connor".to_string(),
+            visibility: "restricted".to_string(),
+            allowed_affiliations: vec!["faculty".to_string(), "staff".to_string()],
+            data_classification: "Internal".to_string(),
+            cedar_policy_guard: None,
+            created_at: now.clone(),
+        };
+        workspaces.insert("ws-cs-research".to_string(), ws_cs);
+        collaborators.insert(
+            "ws-cs-research".to_string(),
+            vec![
+                CollaboratorRecord {
+                    id: "collab-cs-1".to_string(),
+                    workspace_id: "ws-cs-research".to_string(),
+                    eppn: "sarah.connor@state.edu".to_string(),
+                    name: "Dr. Sarah Connor".to_string(),
+                    role: "owner".to_string(),
+                    scoped_affiliation: "faculty".to_string(),
+                    department: "Computer Science".to_string(),
+                    added_at: now.clone(),
+                },
+            ],
+        );
+
         Ok(Self {
             users: RwLock::new(HashMap::new()),
             groups: RwLock::new(HashMap::new()),
-            workspaces: RwLock::new(HashMap::new()),
-            collaborators: RwLock::new(HashMap::new()),
+            workspaces: RwLock::new(workspaces),
+            collaborators: RwLock::new(collaborators),
             records: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),

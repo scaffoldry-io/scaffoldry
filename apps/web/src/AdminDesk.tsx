@@ -8,6 +8,7 @@ import { DecisionLedgerView } from "./DecisionLedgerView";
 import { AppBuilder } from "./AppBuilder";
 import { PublishedAppView } from "./PublishedAppView";
 import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
+import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
 
 const PERSONAS: Persona[] = [
@@ -77,35 +78,112 @@ const PERSONAS: Persona[] = [
   },
 ];
 
-const WORKSPACES: Workspace[] = [
+export const canUserAccessWorkspace = (ws: Workspace, persona: Persona): boolean => {
+  if (persona.affiliation === "central_admin") return true;
+  if (ws.collaborators?.some((c) => c.eppn === persona.eppn)) return true;
+  if (ws.visibility === "institutional") return true;
+  if (ws.visibility === "departmental") {
+    return ws.department.toLowerCase() === persona.department.toLowerCase();
+  }
+  return false;
+};
+
+export const getUserWorkspaceRole = (
+  ws: Workspace,
+  persona: Persona
+): "owner" | "admin" | "editor" | "viewer" | null => {
+  const member = ws.collaborators?.find((c) => c.eppn === persona.eppn);
+  if (member) return member.role;
+  if (persona.affiliation === "central_admin") return "admin";
+  if (canUserAccessWorkspace(ws, persona)) return "viewer";
+  return null;
+};
+
+export const canUserManageWorkspace = (ws: Workspace, persona: Persona): boolean => {
+  if (persona.affiliation === "central_admin") return true;
+  const role = getUserWorkspaceRole(ws, persona);
+  return role === "owner" || role === "admin";
+};
+
+export const INITIAL_WORKSPACES: Workspace[] = [
   {
     id: "ws-bio-lab",
     name: "Biology Research Laboratory",
+    code: "BIO",
+    organization: "College of Sciences",
     department: "biology",
     description: "Collaborative research protocols, instrumentation registers, and specimen data manifests.",
     icon: "🔬",
     lead: "Dr. Marie Curie",
     appCount: 2,
+    visibility: "restricted",
+    allowed_affiliations: ["faculty", "staff", "student"],
+    data_classification: "Level 4 Restricted",
+    cedar_policy_guard: 'forbid (principal, action == Action::"access_workspace", resource) when { resource.visibility == "restricted" && resource.is_member == false };',
+    collaborators: [
+      { id: "collab-bio-1", eppn: "prof.curie@science.state.edu", name: "Dr. Marie Curie", role: "owner", department: "biology", scoped_affiliation: "faculty" },
+      { id: "collab-bio-2", eppn: "student.smith@science.state.edu", name: "Alex Smith", role: "editor", department: "biology", scoped_affiliation: "student" },
+      { id: "collab-bio-3", eppn: "marcus.vance@state.edu", name: "Marcus Vance", role: "viewer", department: "Office of Sponsored Programs", scoped_affiliation: "staff" },
+    ],
   },
   {
     id: "ws-physics-optics",
     name: "Physics & Quantum Optics",
+    code: "PHYS",
+    organization: "College of Sciences",
     department: "physics",
     description: "High-energy laser logs, quantum optics sensor arrays, and space utilization manifests.",
     icon: "⚡",
     lead: "Albert Einstein",
     appCount: 1,
+    visibility: "restricted",
+    allowed_affiliations: ["faculty", "student"],
+    data_classification: "Level 3 Internal",
+    cedar_policy_guard: 'permit (principal, action, resource) when { resource.is_member || principal.department == resource.department || principal.scoped_affiliation == "central_admin" };',
+    collaborators: [
+      { id: "collab-phys-1", eppn: "einstein@physics.state.edu", name: "Albert Einstein", role: "owner", department: "physics", scoped_affiliation: "student" },
+    ],
   },
   {
     id: "ws-campus-compliance",
     name: "Campus Compliance & Privacy",
+    code: "COMPLIANCE",
+    organization: "Office of the General Counsel",
     department: "compliance",
     description: "Institutional FERPA disclosure registers, export control logs, and statutory audit records.",
     icon: "🛡️",
     lead: "Dr. Arthur Watson",
     appCount: 1,
+    visibility: "departmental",
+    allowed_affiliations: ["staff", "compliance"],
+    data_classification: "Level 4 Restricted",
+    cedar_policy_guard: 'permit (principal, action, resource) when { resource.is_member || principal.department == resource.department || principal.scoped_affiliation == "central_admin" };',
+    collaborators: [
+      { id: "collab-comp-1", eppn: "dr.watson@science.state.edu", name: "Dr. Arthur Watson", role: "owner", department: "compliance", scoped_affiliation: "staff" },
+      { id: "collab-comp-2", eppn: "elena.rodriguez@state.edu", name: "Elena Rodriguez", role: "admin", department: "Institutional Review Board", scoped_affiliation: "compliance" },
+    ],
+  },
+  {
+    id: "ws-cs-research",
+    name: "Computer Science & Systems Lab",
+    code: "CS",
+    organization: "College of Engineering",
+    department: "Computer Science",
+    description: "Distributed systems, sovereign agent computing, and verifiable lattice architectures.",
+    icon: "💻",
+    lead: "Dr. Sarah Connor",
+    appCount: 1,
+    visibility: "restricted",
+    allowed_affiliations: ["faculty", "staff"],
+    data_classification: "Level 2 Campus-Wide",
+    cedar_policy_guard: 'permit (principal, action, resource) when { resource.is_member || principal.scoped_affiliation == "central_admin" };',
+    collaborators: [
+      { id: "collab-cs-1", eppn: "sarah.connor@state.edu", name: "Dr. Sarah Connor", role: "owner", department: "Computer Science", scoped_affiliation: "faculty" },
+    ],
   },
 ];
+
+export const WORKSPACES = INITIAL_WORKSPACES;
 
 const INITIAL_SOURCE_RULES: SourceRule[] = [
   {
@@ -313,6 +391,45 @@ const INITIAL_APPS: RegisteredApp[] = [
       },
     },
   },
+  {
+    slug: "cs-ai-benchmarks",
+    title: "Computer Science AI & Distributed Systems Testbed",
+    orgCode: "DEPT-CS",
+    department: "Computer Science",
+    customDomain: "benchmarks.cs.state.edu",
+    verified: true,
+    hermCapability: "2.1.0 (Academic Operations)",
+    cedsDomain: "Research Computing",
+    status: "Published",
+    updatedAt: "2026-10-05",
+    recordsCount: 64,
+    workspaceId: "ws-cs-research",
+    collaborators: [
+      { eppn: "sarah.connor@state.edu", name: "Dr. Sarah Connor", role: "owner", department: "Computer Science" },
+    ],
+    manifest: {
+      slug: "cs-ai-benchmarks",
+      title: "Computer Science AI & Distributed Systems Testbed",
+      description: "Distributed GPU benchmark datasets and cluster resource allocations.",
+      organization_code: "DEPT-CS",
+      department: "Computer Science",
+      herm_capability_id: "2.1.0",
+      custom_domain: "benchmarks.cs.state.edu",
+      custom_domain_verified: true,
+      views: [
+        {
+          id: "benchmark-grid",
+          title: "Cluster Benchmarks",
+          view_type: "Grid",
+          fields: [
+            { name: "model_id", label: "Model Architecture", field_type: "Text", required: true, ferpa_sensitive: false },
+            { name: "latency_ms", label: "Inference Latency (ms)", field_type: "Number", required: true, ferpa_sensitive: false },
+          ],
+        },
+      ],
+      ceds_mappings: {},
+    },
+  },
 ];
 
 const INITIAL_AUTOMATIONS: Record<string, WorkflowAutomationRule[]> = {
@@ -416,8 +533,13 @@ export const AdminDesk: React.FC = () => {
   const isAppPath = currentPath === "/app" || currentPath.startsWith("/app/");
   const isFormPath = currentPath === "/form" || currentPath.startsWith("/form/");
 
-  // Active Workspace & Filter State
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("ws-bio-lab");
+  // Active Workspace & Security State
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(INITIAL_WORKSPACES);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>(() => {
+    const accessible = INITIAL_WORKSPACES.find((w) => canUserAccessWorkspace(w, PERSONAS[0]));
+    return accessible ? accessible.id : INITIAL_WORKSPACES[0].id;
+  });
+  const [isWorkspaceSettingsOpen, setIsWorkspaceSettingsOpen] = useState<boolean>(false);
   const [navRailExpanded, setNavRailExpanded] = useState<boolean>(true);
   const [userMenuOpen, setUserMenuOpen] = useState<boolean>(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -690,8 +812,19 @@ export const AdminDesk: React.FC = () => {
 
   const simResult = evaluateCedarDecision("biology", simFerpa, simAction);
 
-  // Active Workspace
-  const currentWorkspace = WORKSPACES.find((w) => w.id === activeWorkspaceId) || WORKSPACES[0];
+  // Active Workspace & Security Access
+  const currentWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
+  const accessibleWorkspaces = workspaces.filter((w) => canUserAccessWorkspace(w, activePersona));
+  const inaccessibleWorkspaces = workspaces.filter((w) => !canUserAccessWorkspace(w, activePersona));
+  const userRoleInCurrentWs = getUserWorkspaceRole(currentWorkspace, activePersona);
+  const canManageCurrentWs = canUserManageWorkspace(currentWorkspace, activePersona);
+  const hasAccessToCurrentWs = activeWorkspaceId === "all" || canUserAccessWorkspace(currentWorkspace, activePersona);
+
+  const handleSaveWorkspaceSettings = (updatedWs: Workspace, auditEntry: LedgerEntryItem) => {
+    setWorkspaces((prev) => prev.map((w) => (w.id === updatedWs.id ? updatedWs : w)));
+    setLedger((prev) => [...prev, auditEntry]);
+    showToast(`Workspace "${updatedWs.name}" security & configuration updated.`);
+  };
 
   // Workspace filtered applications
   const workspaceApps = apps.filter((app) => {
@@ -1128,16 +1261,28 @@ export const AdminDesk: React.FC = () => {
             <div className="hidden lg:flex items-center gap-2 ml-4">
               <span className="text-xs text-slate-400">Workspace:</span>
               <select
+                data-testid="workspace-switcher-select"
                 value={activeWorkspaceId}
                 onChange={(e) => setActiveWorkspaceId(e.target.value)}
                 className="text-xs font-medium bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1 px-2.5 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
               >
-                {WORKSPACES.map((ws) => (
-                  <option key={ws.id} value={ws.id}>
-                    {ws.icon} {ws.name} ({ws.department})
-                  </option>
-                ))}
-                <option value="all">🌐 All Campus Workspaces</option>
+                <optgroup label="Accessible Workspaces">
+                  {accessibleWorkspaces.map((ws) => (
+                    <option key={ws.id} value={ws.id}>
+                      {ws.icon} {ws.name} ({ws.department})
+                    </option>
+                  ))}
+                  <option value="all">🌐 All Campus Workspaces</option>
+                </optgroup>
+                {inaccessibleWorkspaces.length > 0 && (
+                  <optgroup label="Restricted / Other Departments (Locked)">
+                    {inaccessibleWorkspaces.map((ws) => (
+                      <option key={ws.id} value={ws.id}>
+                        🔒 {ws.icon} {ws.name} ({ws.department})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
           )}
@@ -1469,10 +1614,11 @@ export const AdminDesk: React.FC = () => {
                     </div>
                   )}
                   <nav className="space-y-1">
-                    {WORKSPACES.map((ws) => (
+                    {accessibleWorkspaces.map((ws) => (
                       <button
                         key={ws.id}
                         type="button"
+                        data-testid={`workspace-rail-btn-${ws.id}`}
                         onClick={() => {
                           setActiveWorkspaceId(ws.id);
                           setMainView("workspaces");
@@ -1496,6 +1642,44 @@ export const AdminDesk: React.FC = () => {
                         )}
                       </button>
                     ))}
+                    {inaccessibleWorkspaces.length > 0 && (
+                      <div className="pt-2">
+                        {navRailExpanded && (
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-2 mb-1.5 flex items-center justify-between">
+                            <span>Locked Workspaces</span>
+                            <span className="text-[9px] text-amber-600 dark:text-amber-400 font-mono">Cedar Guard</span>
+                          </div>
+                        )}
+                        {inaccessibleWorkspaces.map((ws) => (
+                          <button
+                            key={ws.id}
+                            data-testid={`restricted-ws-btn-${ws.id}`}
+                            type="button"
+                            onClick={() => {
+                              setActiveWorkspaceId(ws.id);
+                              setMainView("workspaces");
+                              navigateTo("/");
+                            }}
+                            className={`w-full flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer opacity-70 hover:opacity-100 ${
+                              activeWorkspaceId === ws.id && mainView === "workspaces"
+                                ? "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300 font-semibold border border-rose-200 dark:border-rose-800"
+                                : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                            }`}
+                            title={`${ws.name} - Cedar Policy Restricted`}
+                          >
+                            <span className="text-xs shrink-0">🔒</span>
+                            {navRailExpanded && (
+                              <span className="flex-1 text-left flex items-center justify-between truncate">
+                                <span className="truncate">{ws.name}</span>
+                                <span className="text-[9px] uppercase px-1 py-0.2 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 font-mono ml-1">
+                                  403
+                                </span>
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
@@ -1906,6 +2090,42 @@ export const AdminDesk: React.FC = () => {
               }}
               onRecordCreated={() => showToast("Registered new record with Cedar policy validation.")}
             />
+          ) : !hasAccessToCurrentWs ? (
+            /* CEDAR ABAC 403 FORBIDDEN WORKSPACE SHARING BOUNDARY */
+            <div data-testid="workspace-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
+              <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
+                🔒
+              </div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                403 Forbidden: Cedar Policy Sharing Boundary
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Access to workspace <strong>{currentWorkspace.name}</strong> ({currentWorkspace.id}) is restricted to authorized members and departmental peers under institutional Cedar ABAC policy.
+              </p>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg text-left text-xs font-mono space-y-1">
+                <div className="text-slate-500">Principal: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.eppn}</span></div>
+                <div className="text-slate-500">Affiliation: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.affiliation}</span></div>
+                <div className="text-slate-500">Principal Department: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.department}</span></div>
+                <div className="text-slate-500">Workspace Realm: <span className="text-slate-700 dark:text-slate-300 font-semibold">{currentWorkspace.department}</span></div>
+                <div className="text-slate-500">Workspace Visibility: <span className="text-amber-600 dark:text-amber-400 font-bold uppercase">{currentWorkspace.visibility || "restricted"}</span></div>
+                <div className="text-slate-500">Governing Policy: <span className="text-purple-600 dark:text-purple-400 font-semibold">Action::&quot;access_workspace&quot; (OSCAL AC-03)</span></div>
+              </div>
+              <button
+                type="button"
+                data-testid="switch-to-accessible-workspace-btn"
+                onClick={() => {
+                  const accessible = workspaces.find((w) => canUserAccessWorkspace(w, activePersona));
+                  if (accessible) {
+                    setActiveWorkspaceId(accessible.id);
+                  } else {
+                    setActiveWorkspaceId("all");
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer transition-colors"
+              >
+                Switch to Accessible Workspace
+              </button>
+            </div>
           ) : (
             /* PRIMARY END-USER WORKSPACE CANVAS (/) */
             <div className="space-y-6 max-w-7xl mx-auto">
@@ -1916,10 +2136,31 @@ export const AdminDesk: React.FC = () => {
                     {currentWorkspace.icon}
                   </div>
                   <div>
-                    <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
-                      {currentWorkspace.name}
-                    </h1>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+                        {currentWorkspace.name}
+                      </h1>
+                      <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${
+                        currentWorkspace.visibility === "restricted"
+                          ? "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border-rose-200 dark:border-rose-800"
+                          : currentWorkspace.visibility === "departmental"
+                          ? "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+                          : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+                      }`}>
+                        {currentWorkspace.visibility === "restricted" ? "🔒 Members Only" : currentWorkspace.visibility === "departmental" ? "🏢 Departmental" : "🌐 Institutional"}
+                      </span>
+                      {currentWorkspace.data_classification && (
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                          {currentWorkspace.data_classification}
+                        </span>
+                      )}
+                      {userRoleInCurrentWs && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                          Role: {userRoleInCurrentWs}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                       {currentWorkspace.description}
                     </p>
                   </div>
@@ -1930,6 +2171,21 @@ export const AdminDesk: React.FC = () => {
                     <div className="text-slate-400">Workspace Lead:</div>
                     <div className="font-semibold text-slate-700 dark:text-slate-300">{currentWorkspace.lead}</div>
                   </div>
+                  {canManageCurrentWs && (
+                    <button
+                      type="button"
+                      data-testid="workspace-settings-btn"
+                      onClick={() => setIsWorkspaceSettingsOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 shadow-xs cursor-pointer transition-colors"
+                      title="Manage Workspace Security, Sharing Boundaries & Collaborators"
+                    >
+                      <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span>Security &amp; Settings</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleCreateNewApp}
@@ -2074,6 +2330,17 @@ export const AdminDesk: React.FC = () => {
                   </button>
                 </div>
               )}
+
+              {/* Workspace Security & Configuration Modal */}
+              <WorkspaceSettingsModal
+                workspace={currentWorkspace}
+                activePersona={activePersona}
+                allPersonas={PERSONAS}
+                isOpen={isWorkspaceSettingsOpen}
+                onClose={() => setIsWorkspaceSettingsOpen(false)}
+                onSave={handleSaveWorkspaceSettings}
+                ledgerEntries={ledger}
+              />
             </div>
           )}
         </main>

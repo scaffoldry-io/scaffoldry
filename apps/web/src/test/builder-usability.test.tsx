@@ -890,6 +890,104 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       expect(screen.queryByTestId("menu-impersonation-hub-btn")).not.toBeInTheDocument();
     });
   });
+
+  describe("Workspace Sharing Security, Cedar ABAC & Security Configuration Usability", () => {
+    it("enforces workspace boundary: non-member is denied access to restricted workspace and sees Cedar 403 screen", () => {
+      window.history.pushState(null, "", "/");
+      render(<AdminDesk />);
+
+      // Dr. Sarah Connor is default active user (Computer Science faculty)
+      // Attempt to access restricted Biology Lab workspace via rail button
+      const bioRailBtn = screen.getByTestId("restricted-ws-btn-ws-bio-lab");
+      expect(bioRailBtn).toBeInTheDocument();
+      fireEvent.click(bioRailBtn);
+
+      // Cedar 403 Forbidden screen must be shown
+      const deniedCard = screen.getByTestId("workspace-access-denied");
+      expect(deniedCard).toBeInTheDocument();
+      expect(screen.getByText(/403 Forbidden: Cedar Policy Sharing Boundary/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/sarah.connor@state.edu/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/Action::"access_workspace"/i)).toBeInTheDocument();
+
+      // Click "Switch to Accessible Workspace" button
+      const switchBtn = screen.getByTestId("switch-to-accessible-workspace-btn");
+      fireEvent.click(switchBtn);
+
+      // Successfully redirected back to accessible workspace
+      expect(screen.queryByTestId("workspace-access-denied")).not.toBeInTheDocument();
+      expect(screen.getAllByText(/Computer Science & Systems Lab/i).length).toBeGreaterThan(0);
+    });
+
+    it("allows workspace owner to open Workspace Settings & Security modal and configure details", () => {
+      window.history.pushState(null, "", "/");
+      render(<AdminDesk />);
+
+      // Dr. Sarah Connor is owner of Computer Science workspace
+      const settingsBtn = screen.getByTestId("workspace-settings-btn");
+      expect(settingsBtn).toBeInTheDocument();
+      fireEvent.click(settingsBtn);
+
+      // Modal opens
+      const modal = screen.getByTestId("workspace-settings-modal");
+      expect(modal).toBeInTheDocument();
+      expect(screen.getByText(/Workspace Security & Configuration/i)).toBeInTheDocument();
+
+      // Check General tab fields
+      const nameInput = screen.getByTestId("ws-settings-name-input") as HTMLInputElement;
+      expect(nameInput.value).toBe("Computer Science & Systems Lab");
+
+      // Check Sharing & Policy tab
+      const accessTabBtn = screen.getByTestId("ws-settings-tab-access");
+      fireEvent.click(accessTabBtn);
+      const policyPreview = screen.getByTestId("ws-cedar-policy-preview");
+      expect(policyPreview).toBeInTheDocument();
+      expect(policyPreview.textContent).toContain('Action::"access_workspace"');
+
+      // Check Collaborators tab
+      const membersTabBtn = screen.getByTestId("ws-settings-tab-members");
+      fireEvent.click(membersTabBtn);
+      expect(screen.getByText(/Active Members & Collaborator Roles/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Dr. Sarah Connor/i).length).toBeGreaterThan(0);
+
+      // Add a collaborator
+      const eppnSelect = screen.getByTestId("ws-add-member-eppn-input");
+      fireEvent.change(eppnSelect, { target: { value: "marcus.vance@state.edu" } });
+      const roleSelect = screen.getByTestId("ws-add-member-role-select");
+      fireEvent.change(roleSelect, { target: { value: "editor" } });
+      const addBtn = screen.getByTestId("ws-add-member-btn");
+      fireEvent.click(addBtn);
+
+      // Verify collaborator added
+      expect(screen.getAllByText(/Marcus Vance/i).length).toBeGreaterThan(0);
+
+      // Close modal
+      const closeBtn = screen.getByTestId("ws-settings-close-btn");
+      fireEvent.click(closeBtn);
+      expect(screen.queryByTestId("workspace-settings-modal")).not.toBeInTheDocument();
+    });
+
+    it("central_admin has supervisory access to all workspaces without 403 restriction", () => {
+      window.history.pushState(null, "", "/");
+      render(<AdminDesk />);
+
+      // Sign in as Jordan Lee (central_admin)
+      const userBadgeBtn = screen.getByTitle("User Account & Persona Menu");
+      fireEvent.click(userBadgeBtn);
+      fireEvent.click(screen.getByTestId("switch-account-modal-btn"));
+      fireEvent.click(screen.getByTestId("login-as-jordan.lee@state.edu-btn"));
+
+      // Switch to Biology Lab workspace
+      const switcher = screen.getByTestId("workspace-switcher-select");
+      fireEvent.change(switcher, { target: { value: "ws-bio-lab" } });
+
+      // No 403 screen for central_admin; supervisory access is permitted
+      expect(screen.queryByTestId("workspace-access-denied")).not.toBeInTheDocument();
+      expect(screen.getAllByText(/Biology Research Laboratory/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/Role: ADMIN/i)).toBeInTheDocument();
+      // central_admin can manage workspace settings
+      expect(screen.getByTestId("workspace-settings-btn")).toBeInTheDocument();
+    });
+  });
 });
 
 

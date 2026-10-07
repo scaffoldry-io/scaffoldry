@@ -96,10 +96,13 @@ export interface AppView {
 }
 
 export interface Collaborator {
+  id?: string;
   eppn: string;
   name: string;
-  role: "owner" | "editor" | "viewer";
+  role: "owner" | "admin" | "editor" | "viewer";
   department: string;
+  scoped_affiliation?: string;
+  added_at?: string;
 }
 
 export type GovernedComponentType =
@@ -181,11 +184,18 @@ export interface AppManifest {
 export interface Workspace {
   id: string;
   name: string;
+  code?: string;
+  organization?: string;
   department: string;
   description: string;
   icon: string;
   lead: string;
   appCount: number;
+  visibility: "restricted" | "departmental" | "institutional";
+  allowed_affiliations?: string[];
+  data_classification?: string;
+  cedar_policy_guard?: string;
+  collaborators: Collaborator[];
 }
 
 export interface SourceRule {
@@ -342,6 +352,7 @@ export interface LedgerEntryItem {
   decision_type: string;
   oscal_control_id: string;
   rationale: string;
+  payload?: Record<string, any>;
   payload_hash: string;
   entry_hash: string;
 }
