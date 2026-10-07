@@ -689,11 +689,10 @@ impl ServerState {
 
         let mut ledger = self.ledger.write().unwrap();
         let sequence = ledger.len() as u64;
-        let previous_hash = if sequence == 0 {
-            GENESIS_PREVIOUS_HASH.to_string()
-        } else {
-            ledger.last().unwrap().entry_hash.clone()
-        };
+        let previous_hash = ledger
+            .last()
+            .map(|l| l.entry_hash.clone())
+            .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
         let now = chrono::Utc::now().to_rfc3339();
         let entry = LedgerEntry::new(NewLedgerEntryParams {
             sequence,

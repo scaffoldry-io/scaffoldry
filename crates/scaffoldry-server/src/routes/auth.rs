@@ -78,14 +78,22 @@ async fn issue_test_token(Json(payload): Json<TokenRequest>) -> impl IntoRespons
         department: department.clone(),
     };
 
-    let token = mint_test_jwt(TestJwtParams {
+    let token = match mint_test_jwt(TestJwtParams {
         eppn: payload.eppn,
         name,
         role_title,
         affiliation,
         department,
         expires_in_secs: payload.expires_in_secs.unwrap_or(3600),
-    });
+    }) {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Token minting failed: {e}")})),
+            );
+        }
+    };
 
     (
         StatusCode::OK,
@@ -267,8 +275,16 @@ async fn impersonate_user(
         department: target_dept,
     };
 
-    // 4. Create signed impersonation JWT
-    let imp_token = mint_impersonation_jwt(&target_user, &real_admin, 3600);
+    let imp_token = match mint_impersonation_jwt(&target_user, &real_admin, 3600) {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Impersonation token minting failed: {e}")})),
+            )
+                .into_response();
+        }
+    };
 
     // Record session in state and repository for stateful tracking
     let imp_session = AuthSession {
@@ -368,14 +384,23 @@ async fn stop_impersonation(
     }
 
     // Mint restored admin JWT
-    let restore_token = mint_test_jwt(TestJwtParams {
+    let restore_token = match mint_test_jwt(TestJwtParams {
         eppn: original_admin.eppn.clone(),
         name: original_admin.name.clone(),
         role_title: original_admin.role_title.clone(),
         affiliation: original_admin.affiliation.clone(),
         department: original_admin.department.clone(),
         expires_in_secs: 3600,
-    });
+    }) {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Restore token minting failed: {e}")})),
+            )
+                .into_response();
+        }
+    };
 
     // Append termination audit entry to cryptographic decision ledger
     let audit_payload = json!({

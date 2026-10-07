@@ -6,6 +6,7 @@ Only approved permissive/foundation licenses are allowed. Copyleft and BSL/SSPL 
 
 import sys
 import json
+import subprocess
 from pathlib import Path
 
 APPROVED_LICENSES = {
@@ -64,6 +65,15 @@ def main():
         for kw in FORBIDDEN_KEYWORDS:
             if f'license = "{kw}"' in content or kw in content:
                 errors.append(f"{p}: forbidden license keyword '{kw}' detected")
+
+    oscal_file = root / "governance" / "license-assessment-results.json"
+    if not oscal_file.exists():
+        errors.append("governance/license-assessment-results.json is missing")
+    else:
+        val_script = root / "governance" / "scripts" / "validate-oscal.py"
+        res = subprocess.run([sys.executable, str(val_script), str(oscal_file)], capture_output=True, text=True)
+        if res.returncode != 0:
+            errors.append(f"OSCAL schema validation failed for {oscal_file}: {res.stderr or res.stdout}")
 
     if errors:
         print(f"FAILED: License audit failed with {len(errors)} violation(s):", file=sys.stderr)
