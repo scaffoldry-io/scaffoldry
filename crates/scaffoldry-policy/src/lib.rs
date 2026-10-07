@@ -98,6 +98,36 @@ impl ScaffoldryPolicyEngine {
             when {
                 principal.department == resource.department
             };
+
+            // 4. Permit central_admin to access institutional administration console
+            permit (
+                principal,
+                action == Action::"access_admin",
+                resource
+            )
+            when {
+                principal.scoped_affiliation == "central_admin"
+            };
+
+            // 5. Permit central_admin to impersonate directory users
+            permit (
+                principal,
+                action == Action::"impersonate",
+                resource
+            )
+            when {
+                principal.scoped_affiliation == "central_admin"
+            };
+
+            // 6. Explicitly forbid any non-admin principal from impersonating users
+            forbid (
+                principal,
+                action == Action::"impersonate",
+                resource
+            )
+            when {
+                principal.scoped_affiliation != "central_admin"
+            };
         "#;
         Self::new(default_policies)
     }
@@ -164,6 +194,85 @@ impl ScaffoldryPolicyEngine {
             .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
 
         let resource: EntityUid = format!(r#"Record::"{record_id}""#)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let request = Request::new(
+            principal,
+            action,
+            resource,
+            Context::empty(),
+            None,
+        )
+        .map_err(|e| PolicyError::RequestError(e.to_string()))?;
+
+        let response = self.authorizer.is_authorized(&request, &self.policies, &entities);
+
+        let decision = match response.decision() {
+            Decision::Allow => PolicyDecision::Allow,
+            Decision::Deny => PolicyDecision::Deny,
+        };
+
+        let reasons = response
+            .diagnostics()
+            .reason()
+            .map(|r| r.to_string())
+            .collect();
+
+        let diagnostics = response
+            .diagnostics()
+            .errors()
+            .map(|e| e.to_string())
+            .collect();
+
+        Ok(AuthorizationResult {
+            decision,
+            reasons,
+            diagnostics,
+        })
+    }
+
+    pub fn authorize_institutional_action(
+        &self,
+        principal_eppn: &str,
+        principal_affiliation: &str,
+        principal_department: &str,
+        action_name: &str,
+        resource_id: &str,
+    ) -> Result<AuthorizationResult, PolicyError> {
+        let entities_json = json!([
+            {
+                "uid": { "type": "User", "id": principal_eppn },
+                "attrs": {
+                    "eppn": principal_eppn,
+                    "scoped_affiliation": principal_affiliation,
+                    "realm": "state.edu",
+                    "department": principal_department
+                },
+                "parents": []
+            },
+            {
+                "uid": { "type": "System", "id": resource_id },
+                "attrs": {
+                    "department": "central_admin",
+                    "is_ferpa_sensitive": false
+                },
+                "parents": []
+            }
+        ]);
+
+        let entities = Entities::from_json_value(entities_json, None)
+            .map_err(|e| PolicyError::EntityError(e.to_string()))?;
+
+        let principal: EntityUid = format!(r#"User::"{principal_eppn}""#)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let action: EntityUid = format!(r#"Action::"{action_name}""#)
+            .parse()
+            .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
+
+        let resource: EntityUid = format!(r#"System::"{resource_id}""#)
             .parse()
             .map_err(|e: cedar_policy::ParseErrors| PolicyError::RequestError(e.to_string()))?;
 

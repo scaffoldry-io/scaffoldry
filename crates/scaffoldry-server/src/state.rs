@@ -60,6 +60,23 @@ pub struct DatasetRecord {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthUser {
+    pub eppn: String,
+    pub name: String,
+    pub role_title: String,
+    pub affiliation: String,
+    pub department: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthSession {
+    pub token: String,
+    pub user: AuthUser,
+    pub original_admin: Option<AuthUser>,
+    pub created_at: String,
+}
+
 pub struct ServerState {
     pub users: RwLock<HashMap<String, ScimUser>>,
     pub groups: RwLock<HashMap<String, ScimGroup>>,
@@ -72,6 +89,8 @@ pub struct ServerState {
     pub ledger: RwLock<Vec<LedgerEntry>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
+    pub sessions: RwLock<HashMap<String, AuthSession>>,
+    pub directory: RwLock<Vec<AuthUser>>,
 }
 
 impl ServerState {
@@ -317,6 +336,60 @@ impl ServerState {
 
         let ledger = vec![entry_0, entry_1, entry_2, entry_3];
 
+        let directory = vec![
+            AuthUser {
+                eppn: "sarah.connor@state.edu".to_string(),
+                name: "Dr. Sarah Connor".to_string(),
+                role_title: "Department Chair & Professor".to_string(),
+                affiliation: "faculty".to_string(),
+                department: "Computer Science".to_string(),
+            },
+            AuthUser {
+                eppn: "marcus.vance@state.edu".to_string(),
+                name: "Marcus Vance".to_string(),
+                role_title: "Senior Research Administrator".to_string(),
+                affiliation: "staff".to_string(),
+                department: "Office of Sponsored Programs".to_string(),
+            },
+            AuthUser {
+                eppn: "elena.rodriguez@state.edu".to_string(),
+                name: "Elena Rodriguez".to_string(),
+                role_title: "IRB & Research Compliance Analyst".to_string(),
+                affiliation: "compliance".to_string(),
+                department: "Institutional Review Board".to_string(),
+            },
+            AuthUser {
+                eppn: "jordan.lee@state.edu".to_string(),
+                name: "Jordan Lee".to_string(),
+                role_title: "Enterprise Identity & Security Architect".to_string(),
+                affiliation: "central_admin".to_string(),
+                department: "Central Enterprise IT".to_string(),
+            },
+        ];
+
+        let mut sessions = HashMap::new();
+        let admin_user = directory[3].clone();
+        sessions.insert(
+            "sct_admin_token".to_string(),
+            AuthSession {
+                token: "sct_admin_token".to_string(),
+                user: admin_user,
+                original_admin: None,
+                created_at: Utc::now().to_rfc3339(),
+            },
+        );
+
+        let faculty_user = directory[0].clone();
+        sessions.insert(
+            "sct_faculty_token".to_string(),
+            AuthSession {
+                token: "sct_faculty_token".to_string(),
+                user: faculty_user,
+                original_admin: None,
+                created_at: Utc::now().to_rfc3339(),
+            },
+        );
+
         Ok(Self {
             users: RwLock::new(HashMap::new()),
             groups: RwLock::new(HashMap::new()),
@@ -329,6 +402,8 @@ impl ServerState {
             ledger: RwLock::new(ledger),
             engine: RwLock::new(engine),
             policy_engine,
+            sessions: RwLock::new(sessions),
+            directory: RwLock::new(directory),
         })
     }
 }
