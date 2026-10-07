@@ -46,6 +46,34 @@ def check_package_json(path: Path) -> list[str]:
                     errors.append(f"{path}: forbidden license '{license_field}' detected")
     return errors
 
+def check_package_lock(path: Path) -> tuple[list[str], int]:
+    errors = []
+    count = 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [f"{path}: failed to parse JSON: {e}"], 0
+
+    packages = data.get("packages", {})
+    for pkg_name, pkg_info in packages.items():
+        if not pkg_name:
+            continue
+        count += 1
+        lic = pkg_info.get("license", "")
+        if isinstance(lic, str):
+            lic_clean = lic.strip().lower()
+            if lic_clean:
+                for kw in FORBIDDEN_KEYWORDS:
+                    if kw in lic_clean:
+                        errors.append(f"{path} ({pkg_name}): forbidden license '{lic}' detected")
+        elif isinstance(lic, list):
+            for item in lic:
+                lic_clean = str(item).strip().lower()
+                for kw in FORBIDDEN_KEYWORDS:
+                    if kw in lic_clean:
+                        errors.append(f"{path} ({pkg_name}): forbidden license '{item}' detected")
+    return errors, count
+
 def main():
     root = Path(__file__).resolve().parent.parent.parent
     errors = []
@@ -56,6 +84,12 @@ def main():
             continue
         checked_files += 1
         errors.extend(check_package_json(p))
+
+    lock_file = root / "package-lock.json"
+    if lock_file.exists():
+        lock_errors, lock_count = check_package_lock(lock_file)
+        errors.extend(lock_errors)
+        checked_files += lock_count
 
     for p in root.rglob("Cargo.toml"):
         if "target" in p.parts:

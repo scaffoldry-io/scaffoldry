@@ -39,12 +39,12 @@ Scaffoldry ships as a self-contained appliance that runs on **one standard Linux
 - Zero nested hypervisors, zero QEMU virtualization, and zero complex hyper-orchestration.
 - No dependency on proprietary cloud serverless runtimes. An institution must be able to run Scaffoldry entirely inside their own on-prem firewall or on a sovereign cloud VM.
 
-### 2.3 Separation of Concerns
+#### 2.3 Separation of Concerns
 The platform cleanly separates four critical duties:
-1. **Calculation:** Performed in-memory for microsecond spreadsheet interactivity.
-2. **Durability:** Handled by an ACID-compliant relational database.
-3. **Authorization:** Decided by an embedded policy engine at the API boundary.
-4. **Audit & Governance:** Permanently recorded in an immutable Git ledger.
+1. **Calculation:** Performed in-memory by `scaffoldry-engine` for microsecond spreadsheet interactivity.
+2. **Durability:** Handled by an ACID-compliant PostgreSQL 17 relational database.
+3. **Authorization:** Decided by an embedded Cedar policy engine at the API boundary.
+4. **Audit & Governance:** Permanently recorded in an immutable SHA-256 cryptographic decision ledger.
 
 ### 2.4 Write for People
 All documentation, user interfaces, error messages, and commit histories must follow the `write-for-people` standard:
@@ -60,13 +60,13 @@ All documentation, user interfaces, error messages, and commit histories must fo
 ```
 +-----------------------------------------------------------------------------------------+
 |                                    LAYER 1: USER INTERFACE                              |
-|                          TanStack (React + Table + Query + Form)                        |
+|                          React 19, Tailwind CSS & TanStack Query/Table                  |
 |                                                                                         |
 |       * Reactive Spreadsheet Grid           * Dynamic Application Forms                 |
 |       * Business Approval Desk              * Natural-Language AI Builder               |
 +-----------------------------------------------------------------------------------------+
                                              |
-                                  (JSON-RPC / WebSockets)
+                                   (HTTP REST / JSON-RPC)
                                              v
 +-----------------------------------------------------------------------------------------+
 |                                LAYER 2: ACCESS & POLICY                                 |
@@ -80,29 +80,29 @@ All documentation, user interfaces, error messages, and commit histories must fo
                                              v
 +-----------------------------------------------------------------------------------------+
 |                               LAYER 3: CALCULATION ENGINE                               |
-|                                Apache Arrow & DataFusion                                |
+|                         Sovereign Rust Engine (scaffoldry-engine)                       |
 |                                                                                         |
-|       * In-memory columnar representation of tables and sheets                          |
-|       * Real-time formula dependency graphs (DAG) and rollups                           |
-|       * High-speed analytical queries without database lockups                          |
+|       * In-memory typed representation of manifests, views, and datasets                |
+|       * Real-time formula dependency graphs, relational rollups, and lookups            |
+|       * High-speed analytical evaluation without database lockups                       |
 +-----------------------------------------------------------------------------------------+
           |                                                               |
           | (Sync Records)                                                | (Record Approved Decisions)
           v                                                               v
 +------------------------------------+           +----------------------------------------+
 |      LAYER 4: DURABLE STORE        |           |       LAYER 5: DECISION LEDGER         |
-|            PostgreSQL              |           |              Embedded Git              |
+|            PostgreSQL 17           |           |      Cryptographic SHA-256 Chain       |
 |                                    |           |                                        |
-|  * Persistent disk storage         |           |  * Immutable cryptographic history     |
-|  * Normalized core tables          |           |  * Proposals as branches               |
-|  * JSONB for dynamic user fields   |           |  * Approvals as signed merge commits   |
-|  * Standard daily pg_dump backups  |           |  * Full auditability without Git UI    |
+|  * Persistent disk storage         |           |  * Immutable cryptographic block chain  |
+|  * Normalized core tables          |           |  * Sequential SHA-256 hash validation  |
+|  * JSONB for dynamic user fields   |           |  * Tamper detection on server boot     |
+|  * Standard daily pg_dump backups  |           |  * OSCAL AU-02 audit record continuity |
 +------------------------------------+           +----------------------------------------+
                                              |
                                              v
 +-----------------------------------------------------------------------------------------+
 |                               LAYER 6: COMPLIANCE STANDARD                              |
-|                                        NIST OSCAL                                       |
+|                                     NIST OSCAL 1.1.2                                    |
 |                                                                                         |
 |       * Machine-readable catalogs, profiles, and System Security Plans (SSPs)           |
 |       * Direct export for university CISOs, auditors, and enterprise GRC tools          |
@@ -114,11 +114,10 @@ All documentation, user interfaces, error messages, and commit histories must fo
 
 ## 4. Layer Responsibilities & Implementation Details
 
-### Layer 1: User Interface (TanStack)
-- **Technology:** React 19, `@tanstack/react-table`, `@tanstack/react-query`, `@tanstack/react-form`, and Tailwind CSS.
+### Layer 1: User Interface
+- **Technology:** React 19, `@tanstack/react-table`, `@tanstack/react-query`, and Tailwind CSS.
 - **Responsibilities:**
   - Render high-density, virtualized spreadsheet grids that stay smooth at 10,000+ rows.
-  - Implement optimistic UI updates via TanStack Query: cell edits reflect immediately in the browser while syncing in the background.
   - Expose the **Business Approval Desk**: an intuitive, non-technical dashboard where Department Chairs and compliance officers approve or reject proposed changes.
 
 ### Layer 2: Access & Policy (Cedar)
@@ -126,29 +125,29 @@ All documentation, user interfaces, error messages, and commit histories must fo
 - **Responsibilities:**
   - Execute real-time Attribute-Based Access Control (ABAC).
   - Enforce data sensitivity gates (e.g., student financial data is hidden from external faculty reviewers).
-  - Evaluate decision approval authority (e.g., only designated Chairs can approve schema extensions).
+  - Evaluate decision approval authority across workspaces, records, apps, and datasets.
 
-### Layer 3: Calculation Engine (Apache Arrow & DataFusion)
-- **Technology:** Apache Arrow (memory format) and DataFusion (query engine).
+### Layer 3: Calculation Engine (Sovereign Rust Engine)
+- **Technology:** `scaffoldry-engine` (native Rust).
 - **Responsibilities:**
-  - Hold active sheet data in memory using columnar layouts.
-  - Recompute calculated formulas, rollups, and lookups across columns in RAM in under 50ms.
+  - Hold active sheet schemas, views, and field specifications in memory.
+  - Recompute calculated formulas, relational rollups, and lookups across columns in RAM in under 5ms.
   - Eliminate the need to issue complex, blocking SQL queries to PostgreSQL during interactive user editing.
 
 ### Layer 4: Durable Operational Store (PostgreSQL)
 - **Technology:** PostgreSQL 17 (official image on Alpine Linux).
 - **Responsibilities:**
   - Provide durable ACID transactions for live data.
-  - Store core institutional entities (Departments, Users, Roles) in normalized relational tables.
+  - Store core institutional entities (Workspaces, Collaborators, App Manifests, Published Datasets, Relationships, Automations, Sessions, SCIM) in normalized tables with advisory-lock migrations.
   - Store dynamic, user-defined fields in indexed `JSONB` columns with generated expression indexes.
 
-### Layer 5: Decision & Audit Ledger (Embedded Git)
-- **Technology:** Embedded Git library (`libgit2` or `gitoxide`).
+### Layer 5: Decision & Audit Ledger (Cryptographic SHA-256 Blockchain)
+- **Technology:** Sovereign Cryptographic Ledger (`governance_ledger` in PostgreSQL 17).
 - **Responsibilities:**
-  - Maintain a local `.git` repository on disk as the immutable decision log.
-  - When an end user or AI proposes a schema change, the system writes a proposal file to a Git branch.
-  - When a human clicks **Approve** on the Desk, the system merges the branch into `main` and signs the commit.
-  - Provides a permanent, cryptographic paper trail that survives server rebuilds.
+  - Maintain an immutable, tamper-evident SHA-256 hash chain from genesis block 0 through block N.
+  - Every publication, DNS binding, policy revision, and workflow approval appends a block linking `previous_hash` and computing `entry_hash`.
+  - On every server boot, verify the cryptographic integrity of the entire chain. Refuse to start if any block hash mismatch or discontinuity is detected.
+  - Provides a permanent cryptographic paper trail that aligns with NIST OSCAL AU-02.
 
 ### Layer 6: Compliance Standard (NIST OSCAL)
 - **Technology:** NIST OSCAL 1.1.2 JSON Schema.
