@@ -151,7 +151,10 @@ async fn create_user(
         enterprise_extension: enterprise.clone(),
     };
 
-    state.users.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), scim_user);
+    state.users.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), scim_user.clone());
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_scim_user(&scim_user);
+    }
 
     let resp = json!({
         "schemas": [
@@ -218,6 +221,10 @@ async fn update_user(
         u.enterprise_extension = Some(ent.clone());
     }
 
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_scim_user(u);
+    }
+
     Ok(Json(json!({
         "schemas": [
             "urn:ietf:params:scim:schemas:core:2.0:User",
@@ -239,6 +246,9 @@ async fn delete_user(
 ) -> Result<StatusCode, StatusCode> {
     let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
     if users.remove(&id).is_some() {
+        if let Some(ref repo) = state.repository {
+            let _ = repo.delete_scim_user(&id);
+        }
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -287,7 +297,10 @@ async fn create_group(
         members: members.clone(),
     };
 
-    state.groups.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), group);
+    state.groups.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), group.clone());
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_scim_group(&group);
+    }
 
     let resp = json!({
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
@@ -328,6 +341,10 @@ async fn update_group(
         g.members = m.clone();
     }
 
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_scim_group(g);
+    }
+
     Ok(Json(json!({
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
         "id": g.id,
@@ -342,6 +359,9 @@ async fn delete_group(
 ) -> Result<StatusCode, StatusCode> {
     let mut groups = state.groups.write().unwrap_or_else(|p| p.into_inner());
     if groups.remove(&id).is_some() {
+        if let Some(ref repo) = state.repository {
+            let _ = repo.delete_scim_group(&id);
+        }
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(StatusCode::NOT_FOUND)

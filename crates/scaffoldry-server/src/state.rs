@@ -7,7 +7,7 @@ use scaffoldry_core::{
     NewLedgerEntryParams, PublishedDataset, RelationshipType, TriggerEvent,
     GENESIS_PREVIOUS_HASH,
 };
-use scaffoldry_engine::ManifestEngine;
+use scaffoldry_engine::{AppManifest, ManifestEngine};
 use scaffoldry_policy::ScaffoldryPolicyEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -133,11 +133,13 @@ pub struct ServerState {
 
 impl ServerState {
     pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let engine = ManifestEngine::new()
+        let mut engine = ManifestEngine::new()
             .map_err(|e| format!("Failed to initialize ManifestEngine: {e}"))?;
         let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
             .map_err(|e| format!("Failed to initialize PolicyEngine: {e}"))?;
 
+        let mut users = HashMap::new();
+        let mut groups = HashMap::new();
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
 
@@ -570,6 +572,62 @@ impl ServerState {
                 }
             }
 
+            // Always ensure default datasets, relationships, and automations are seeded in Postgres
+            for ds in datasets.values() {
+                let _ = repo.upsert_published_dataset(ds);
+            }
+            for rel in relationships.values() {
+                let _ = repo.upsert_dataset_relationship(rel);
+            }
+            for rules in automations.values() {
+                for r in rules {
+                    let _ = repo.upsert_workflow_automation(r);
+                }
+            }
+
+            // Load persisted manifests into engine
+            if let Ok(persisted_manifests) = repo.list_app_manifests() {
+                for m in persisted_manifests {
+                    let _ = engine.register_manifest(m);
+                }
+            }
+
+            // Load persisted datasets
+            if let Ok(persisted_datasets) = repo.list_published_datasets() {
+                for ds in persisted_datasets {
+                    datasets.insert(ds.id.clone(), ds);
+                }
+            }
+
+            // Load persisted relationships
+            if let Ok(persisted_rels) = repo.list_dataset_relationships() {
+                for rel in persisted_rels {
+                    relationships.insert(rel.id.clone(), rel);
+                }
+            }
+
+            // Load persisted automations
+            if let Ok(persisted_automations) = repo.list_workflow_automations(None) {
+                for r in persisted_automations {
+                    let entry = automations.entry(r.app_slug.clone()).or_default();
+                    if !entry.iter().any(|existing| existing.id == r.id) {
+                        entry.push(r);
+                    }
+                }
+            }
+
+            // Load persisted SCIM users and groups
+            if let Ok(persisted_users) = repo.list_scim_users() {
+                for u in persisted_users {
+                    users.insert(u.id.clone(), u);
+                }
+            }
+            if let Ok(persisted_groups) = repo.list_scim_groups() {
+                for g in persisted_groups {
+                    groups.insert(g.id.clone(), g);
+                }
+            }
+
             if let Ok(persisted_ws) = repo.list_workspaces() {
                 for ws in persisted_ws {
                     if let Ok(collabs) = repo.get_collaborators(&ws.id) {
@@ -597,8 +655,8 @@ impl ServerState {
         }
 
         Ok(Self {
-            users: RwLock::new(HashMap::new()),
-            groups: RwLock::new(HashMap::new()),
+            users: RwLock::new(users),
+            groups: RwLock::new(groups),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
             records: RwLock::new(HashMap::new()),
@@ -660,6 +718,64 @@ impl ServerState {
             return Ok(repo.count_workspaces()?);
         }
         Ok(self.workspaces.read().unwrap().len())
+    }
+
+    pub fn persist_app_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.engine.write().map_err(|_| "engine lock poisoned")?.register_manifest(m.clone())?;
+        if let Some(ref repo) = self.repository {
+            repo.upsert_app_manifest(&m)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_app_manifest(&self, slug: &str) -> Option<AppManifest> {
+        if let Some(ref repo) = self.repository {
+            if let Ok(Some(m)) = repo.get_app_manifest(slug) {
+                return Some(m);
+            }
+        }
+        use scaffoldry_engine::HostRouter;
+        self.engine.read().ok()?.resolve_by_slug(slug).cloned()
+    }
+
+    pub fn persist_dataset(&self, ds: PublishedDataset) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.datasets.write().map_err(|_| "datasets lock poisoned")?.insert(ds.id.clone(), ds.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_published_dataset(&ds)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_dataset(&self, id: &str) -> Option<PublishedDataset> {
+        self.datasets.read().ok()?.get(id).cloned()
+    }
+
+    pub fn persist_relationship(&self, rel: DatasetRelationship) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.relationships.write().map_err(|_| "relationships lock poisoned")?.insert(rel.id.clone(), rel.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_dataset_relationship(&rel)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_automation(&self, rule: AutomationRule) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.automations.write().map_err(|_| "automations lock poisoned")?.entry(rule.app_slug.clone()).or_default().push(rule.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_workflow_automation(&rule)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_scim_user(&self, user: ScimUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.users.write().map_err(|_| "users lock poisoned")?.insert(user.id.clone(), user.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_scim_user(&user)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_scim_user(&self, id: &str) -> Option<ScimUser> {
+        self.users.read().ok()?.get(id).cloned()
     }
 
     pub fn append_ledger_entry(

@@ -51,10 +51,14 @@ async fn create_app_in_workspace(
         ));
     }
 
-    let mut engine = state.engine.write().unwrap();
+    let mut engine = state.engine.write().map_err(|_| lock_err())?;
     engine
         .register_manifest(manifest.clone())
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_app_manifest(&manifest);
+    }
 
     Ok((StatusCode::CREATED, Json(manifest)))
 }
@@ -107,6 +111,10 @@ async fn update_app(
         .register_manifest(manifest.clone())
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
 
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_app_manifest(&manifest);
+    }
+
     Ok(Json(manifest))
 }
 
@@ -157,6 +165,10 @@ async fn publish_app(
         .register_manifest(manifest.clone())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
 
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_app_manifest(&manifest);
+    }
+
     Ok(Json(manifest))
 }
 
@@ -180,6 +192,10 @@ async fn create_app_automation(
 
     let mut automations = state.automations.write().map_err(|_| lock_err())?;
     automations.entry(slug).or_default().push(rule.clone());
+
+    if let Some(ref repo) = state.repository {
+        let _ = repo.upsert_workflow_automation(&rule);
+    }
 
     Ok((StatusCode::CREATED, Json(rule)))
 }

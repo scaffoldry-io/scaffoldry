@@ -6,17 +6,22 @@
 //! - Dedicated background worker architecture to isolate synchronous postgres driver from Tokio runtimes.
 
 use crate::state::{
-    AuthSession, AuthUser, CollaboratorRecord, DatasetRecord, WorkspaceRecord,
+    AuthSession, AuthUser, CollaboratorRecord, DatasetRecord, ScimGroup, ScimUser, WorkspaceRecord,
 };
 use chrono::Utc;
 use postgres::{Client, NoTls};
-use scaffoldry_core::{DecisionType, LedgerEntry, LedgerError, GENESIS_PREVIOUS_HASH};
+use scaffoldry_core::{
+    AutomationRule, DatasetRelationship, DecisionType, LedgerEntry, LedgerError, PublishedDataset,
+    GENESIS_PREVIOUS_HASH,
+};
+use scaffoldry_engine::AppManifest;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, sync_channel, Sender};
 
 const SCHEMA_0001: &str = include_str!("../../scaffoldry-core/migrations/0001_initial_schema.sql");
 const SCHEMA_0002: &str = include_str!("../../scaffoldry-core/migrations/0002_workspaces_and_ledger.sql");
+const SCHEMA_0003: &str = include_str!("../../scaffoldry-core/migrations/0003_persist_apps_and_datasets.sql");
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
@@ -68,6 +73,7 @@ impl PostgresRepository {
                     let res = (|| {
                         client.batch_execute(SCHEMA_0001)?;
                         client.batch_execute(SCHEMA_0002)?;
+                        client.batch_execute(SCHEMA_0003)?;
                         let _ = client.execute("DELETE FROM auth_sessions WHERE token LIKE 'sct_%'", &[]);
                         Ok(())
                     })();
@@ -697,6 +703,332 @@ impl PostgresRepository {
                     &payload,
                 ],
             )?;
+            Ok(())
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // APP MANIFESTS
+    // -------------------------------------------------------------------------
+
+    pub fn list_app_manifests(&self) -> Result<Vec<AppManifest>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT manifest FROM app_manifests ORDER BY updated_at ASC",
+                &[],
+            )?;
+            let mut manifests = Vec::new();
+            for r in rows {
+                let val: Value = r.get(0);
+                let m: AppManifest = serde_json::from_value(val)?;
+                manifests.push(m);
+            }
+            Ok(manifests)
+        })
+    }
+
+    pub fn get_app_manifest(&self, slug: &str) -> Result<Option<AppManifest>, RepositoryError> {
+        let slug = slug.to_string();
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "SELECT manifest FROM app_manifests WHERE slug = $1",
+                &[&slug],
+            )?;
+            match row {
+                Some(r) => {
+                    let val: Value = r.get(0);
+                    let m: AppManifest = serde_json::from_value(val)?;
+                    Ok(Some(m))
+                }
+                None => Ok(None),
+            }
+        })
+    }
+
+    pub fn upsert_app_manifest(&self, m: &AppManifest) -> Result<(), RepositoryError> {
+        let m = m.clone();
+        self.with_client(move |client| {
+            let manifest_json = serde_json::to_value(&m)?;
+            client.execute(
+                "INSERT INTO app_manifests (slug, title, description, organization_code, department, \
+                        herm_capability_id, custom_domain, custom_domain_verified, manifest, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()) \
+                 ON CONFLICT (slug) DO UPDATE SET \
+                    title = EXCLUDED.title, \
+                    description = EXCLUDED.description, \
+                    organization_code = EXCLUDED.organization_code, \
+                    department = EXCLUDED.department, \
+                    herm_capability_id = EXCLUDED.herm_capability_id, \
+                    custom_domain = EXCLUDED.custom_domain, \
+                    custom_domain_verified = EXCLUDED.custom_domain_verified, \
+                    manifest = EXCLUDED.manifest, \
+                    updated_at = NOW()",
+                &[
+                    &m.slug,
+                    &m.title,
+                    &m.description,
+                    &m.organization_code,
+                    &m.department,
+                    &m.herm_capability_id,
+                    &m.custom_domain,
+                    &m.custom_domain_verified,
+                    &manifest_json,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // PUBLISHED DATASETS
+    // -------------------------------------------------------------------------
+
+    pub fn list_published_datasets(&self) -> Result<Vec<PublishedDataset>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT payload FROM published_datasets ORDER BY updated_at ASC",
+                &[],
+            )?;
+            let mut datasets = Vec::new();
+            for r in rows {
+                let val: Value = r.get(0);
+                let ds: PublishedDataset = serde_json::from_value(val)?;
+                datasets.push(ds);
+            }
+            Ok(datasets)
+        })
+    }
+
+    pub fn upsert_published_dataset(&self, ds: &PublishedDataset) -> Result<(), RepositoryError> {
+        let ds = ds.clone();
+        self.with_client(move |client| {
+            let payload_json = serde_json::to_value(&ds)?;
+            client.execute(
+                "INSERT INTO published_datasets (id, name, description, department, organization, \
+                        sensitivity_level, herm_capability_id, payload, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                    name = EXCLUDED.name, \
+                    description = EXCLUDED.description, \
+                    department = EXCLUDED.department, \
+                    organization = EXCLUDED.organization, \
+                    sensitivity_level = EXCLUDED.sensitivity_level, \
+                    herm_capability_id = EXCLUDED.herm_capability_id, \
+                    payload = EXCLUDED.payload, \
+                    updated_at = NOW()",
+                &[
+                    &ds.id,
+                    &ds.name,
+                    &ds.description,
+                    &ds.department,
+                    &ds.organization,
+                    &ds.sensitivity_level,
+                    &ds.herm_capability_id,
+                    &payload_json,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // DATASET RELATIONSHIPS
+    // -------------------------------------------------------------------------
+
+    pub fn list_dataset_relationships(&self) -> Result<Vec<DatasetRelationship>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT payload FROM dataset_relationships",
+                &[],
+            )?;
+            let mut rels = Vec::new();
+            for r in rows {
+                let val: Value = r.get(0);
+                let rel: DatasetRelationship = serde_json::from_value(val)?;
+                rels.push(rel);
+            }
+            Ok(rels)
+        })
+    }
+
+    pub fn upsert_dataset_relationship(&self, rel: &DatasetRelationship) -> Result<(), RepositoryError> {
+        let rel = rel.clone();
+        self.with_client(move |client| {
+            let payload_json = serde_json::to_value(&rel)?;
+            let rel_type = format!("{:?}", rel.relationship_type);
+            client.execute(
+                "INSERT INTO dataset_relationships (id, name, source_dataset_id, target_dataset_id, \
+                        source_field, target_field, relationship_type, display_field, payload) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                    name = EXCLUDED.name, \
+                    source_dataset_id = EXCLUDED.source_dataset_id, \
+                    target_dataset_id = EXCLUDED.target_dataset_id, \
+                    source_field = EXCLUDED.source_field, \
+                    target_field = EXCLUDED.target_field, \
+                    relationship_type = EXCLUDED.relationship_type, \
+                    display_field = EXCLUDED.display_field, \
+                    payload = EXCLUDED.payload",
+                &[
+                    &rel.id,
+                    &rel.name,
+                    &rel.source_dataset_id,
+                    &rel.target_dataset_id,
+                    &rel.source_field,
+                    &rel.target_field,
+                    &rel_type,
+                    &rel.display_field,
+                    &payload_json,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // WORKFLOW AUTOMATIONS
+    // -------------------------------------------------------------------------
+
+    pub fn list_workflow_automations(&self, app_slug: Option<&str>) -> Result<Vec<AutomationRule>, RepositoryError> {
+        let slug_opt = app_slug.map(str::to_string);
+        self.with_client(move |client| {
+            let rows = match slug_opt {
+                Some(slug) => client.query(
+                    "SELECT rule_json FROM workflow_automations WHERE app_slug = $1 ORDER BY updated_at ASC",
+                    &[&slug],
+                )?,
+                None => client.query(
+                    "SELECT rule_json FROM workflow_automations ORDER BY updated_at ASC",
+                    &[],
+                )?,
+            };
+            let mut rules = Vec::new();
+            for r in rows {
+                let val: Value = r.get(0);
+                let rule: AutomationRule = serde_json::from_value(val)?;
+                rules.push(rule);
+            }
+            Ok(rules)
+        })
+    }
+
+    pub fn upsert_workflow_automation(&self, rule: &AutomationRule) -> Result<(), RepositoryError> {
+        let rule = rule.clone();
+        self.with_client(move |client| {
+            let rule_json = serde_json::to_value(&rule)?;
+            client.execute(
+                "INSERT INTO workflow_automations (id, app_slug, name, rule_json, enabled, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, NOW()) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                    app_slug = EXCLUDED.app_slug, \
+                    name = EXCLUDED.name, \
+                    rule_json = EXCLUDED.rule_json, \
+                    enabled = EXCLUDED.enabled, \
+                    updated_at = NOW()",
+                &[
+                    &rule.id,
+                    &rule.app_slug,
+                    &rule.name,
+                    &rule_json,
+                    &rule.enabled,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // SCIM USERS AND GROUPS
+    // -------------------------------------------------------------------------
+
+    pub fn list_scim_users(&self) -> Result<Vec<ScimUser>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT payload FROM scim_users ORDER BY updated_at ASC",
+                &[],
+            )?;
+            let mut users = Vec::new();
+            for r in rows {
+                let val: Value = r.get(0);
+                let u: ScimUser = serde_json::from_value(val)?;
+                users.push(u);
+            }
+            Ok(users)
+        })
+    }
+
+    pub fn upsert_scim_user(&self, user: &ScimUser) -> Result<(), RepositoryError> {
+        let user = user.clone();
+        self.with_client(move |client| {
+            let payload_json = serde_json::to_value(&user)?;
+            client.execute(
+                "INSERT INTO scim_users (id, user_name, active, payload, updated_at) \
+                 VALUES ($1, $2, $3, $4, NOW()) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                    user_name = EXCLUDED.user_name, \
+                    active = EXCLUDED.active, \
+                    payload = EXCLUDED.payload, \
+                    updated_at = NOW()",
+                &[
+                    &user.id,
+                    &user.user_name,
+                    &user.active,
+                    &payload_json,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_scim_user(&self, id: &str) -> Result<(), RepositoryError> {
+        let id_str = id.to_string();
+        self.with_client(move |client| {
+            client.execute("DELETE FROM scim_users WHERE id = $1", &[&id_str])?;
+            Ok(())
+        })
+    }
+
+    pub fn list_scim_groups(&self) -> Result<Vec<ScimGroup>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT payload FROM scim_groups ORDER BY updated_at ASC",
+                &[],
+            )?;
+            let mut groups = Vec::new();
+            for r in rows {
+                let val: Value = r.get(0);
+                let g: ScimGroup = serde_json::from_value(val)?;
+                groups.push(g);
+            }
+            Ok(groups)
+        })
+    }
+
+    pub fn upsert_scim_group(&self, group: &ScimGroup) -> Result<(), RepositoryError> {
+        let group = group.clone();
+        self.with_client(move |client| {
+            let payload_json = serde_json::to_value(&group)?;
+            client.execute(
+                "INSERT INTO scim_groups (id, display_name, payload, updated_at) \
+                 VALUES ($1, $2, $3, NOW()) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                    display_name = EXCLUDED.display_name, \
+                    payload = EXCLUDED.payload, \
+                    updated_at = NOW()",
+                &[
+                    &group.id,
+                    &group.display_name,
+                    &payload_json,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_scim_group(&self, id: &str) -> Result<(), RepositoryError> {
+        let id_str = id.to_string();
+        self.with_client(move |client| {
+            client.execute("DELETE FROM scim_groups WHERE id = $1", &[&id_str])?;
             Ok(())
         })
     }

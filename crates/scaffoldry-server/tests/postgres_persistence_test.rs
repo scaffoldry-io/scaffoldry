@@ -154,3 +154,104 @@ fn test_institutional_scale_workspaces() {
     let count = state.count_workspaces().expect("Failed to count workspaces");
     assert!(count >= scale_count, "Database must hold institutional scale of workspaces (found {count})");
 }
+
+#[test]
+fn test_postgres_apps_and_datasets_persistence_lifecycle() {
+    let _lock = DB_LOCK.lock().unwrap();
+    let _client = match connect_db() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Skipping test: PostgreSQL not reachable ({e})");
+            return;
+        }
+    };
+
+    let state = ServerState::new().expect("State should initialize cleanly");
+
+    // 1. Persist App Manifest
+    let test_slug = format!("app-persist-{}", uuid::Uuid::new_v4().simple());
+    let manifest = scaffoldry_engine::AppManifest {
+        slug: test_slug.clone(),
+        title: "Persistent Research App".to_string(),
+        description: "App persisted in PostgreSQL 17".to_string(),
+        organization_code: "DIV-SCIENCES".to_string(),
+        department: "biology".to_string(),
+        herm_capability_id: Some("RES-01".to_string()),
+        custom_domain: Some(format!("{}.state.edu", test_slug)),
+        custom_domain_verified: true,
+        tables: vec![],
+        relationships: vec![],
+        views: vec![],
+        ceds_mappings: std::collections::HashMap::new(),
+    };
+    state.persist_app_manifest(manifest.clone()).expect("Persist manifest");
+
+    // 2. Persist Published Dataset
+    let test_ds_id = format!("ds-persist-{}", uuid::Uuid::new_v4().simple());
+    let ds = scaffoldry_core::PublishedDataset {
+        id: test_ds_id.clone(),
+        name: "Persisted Materials Registry".to_string(),
+        description: "Materials catalog".to_string(),
+        department: "chemistry".to_string(),
+        organization: "College of Sciences".to_string(),
+        sensitivity_level: "Internal".to_string(),
+        herm_capability_id: Some("RES-02".to_string()),
+        fields: vec![],
+        record_count: 42,
+        published_at: chrono::Utc::now().to_rfc3339(),
+        sample_data: vec![],
+    };
+    state.persist_dataset(ds.clone()).expect("Persist dataset");
+
+    // 3. Persist Automation Rule
+    let test_rule_id = format!("rule-persist-{}", uuid::Uuid::new_v4().simple());
+    let rule = scaffoldry_core::AutomationRule {
+        id: test_rule_id.clone(),
+        app_slug: test_slug.clone(),
+        name: "Auto Material Alert".to_string(),
+        description: "Trigger alert on material limit".to_string(),
+        enabled: true,
+        trigger: scaffoldry_core::TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![],
+    };
+    state.persist_automation(rule.clone()).expect("Persist automation");
+
+    // 4. Persist SCIM User
+    let test_user_id = format!("scim-u-{}", uuid::Uuid::new_v4().simple());
+    let scim_u = scaffoldry_server::state::ScimUser {
+        id: test_user_id.clone(),
+        user_name: "curie_persisted".to_string(),
+        name: serde_json::json!({"formatted": "Marie Curie"}),
+        active: true,
+        emails: vec![serde_json::json!({"value": "curie@persisted.edu", "primary": true})],
+        roles: vec![],
+        enterprise_extension: None,
+    };
+    state.persist_scim_user(scim_u.clone()).expect("Persist SCIM user");
+
+    // Restart server state from Postgres
+    let reloaded = ServerState::new().expect("Reloaded state should initialize cleanly");
+
+    // Verify manifest persisted
+    let fetched_app = reloaded.get_app_manifest(&test_slug);
+    assert!(fetched_app.is_some(), "App manifest must persist across restarts");
+    assert_eq!(fetched_app.unwrap().title, "Persistent Research App");
+
+    // Verify dataset persisted
+    let fetched_ds = reloaded.get_dataset(&test_ds_id);
+    assert!(fetched_ds.is_some(), "Published dataset must persist across restarts");
+    assert_eq!(fetched_ds.unwrap().name, "Persisted Materials Registry");
+
+    // Verify automations persisted
+    let auto_guard = reloaded.automations.read().unwrap();
+    let app_rules = auto_guard.get(&test_slug);
+    assert!(app_rules.is_some(), "Automations must persist across restarts");
+    assert!(app_rules.unwrap().iter().any(|r| r.id == test_rule_id));
+
+    // Verify SCIM user persisted
+    let fetched_user = reloaded.get_scim_user(&test_user_id);
+    assert!(fetched_user.is_some(), "SCIM user must persist across restarts");
+    assert_eq!(fetched_user.unwrap().user_name, "curie_persisted");
+}
