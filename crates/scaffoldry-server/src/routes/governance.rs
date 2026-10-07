@@ -34,18 +34,22 @@ pub struct AppendDecisionRequest {
 }
 
 async fn get_governance_ledger(State(state): State<SharedState>) -> impl IntoResponse {
-    let ledger = state.ledger.read().unwrap();
+    let entries = if let Some(ref repo) = state.repository {
+        repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap().clone())
+    } else {
+        state.ledger.read().unwrap().clone()
+    };
     let is_valid = state.verify_ledger().unwrap_or(false);
-    let head_hash = ledger
+    let head_hash = entries
         .last()
         .map(|e| e.entry_hash.clone())
         .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
 
     Json(json!({
         "chain_valid": is_valid,
-        "total_entries": ledger.len(),
+        "total_entries": entries.len(),
         "head_hash": head_hash,
-        "entries": *ledger
+        "entries": entries
     }))
 }
 
@@ -71,18 +75,22 @@ async fn append_ledger_decision(
 }
 
 async fn verify_governance_ledger(State(state): State<SharedState>) -> impl IntoResponse {
-    let ledger = state.ledger.read().unwrap();
+    let entries = if let Some(ref repo) = state.repository {
+        repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap().clone())
+    } else {
+        state.ledger.read().unwrap().clone()
+    };
     match state.verify_ledger() {
         Ok(valid) => Json(json!({
             "verified": valid,
-            "total_entries": ledger.len(),
+            "total_entries": entries.len(),
             "genesis_previous_hash": GENESIS_PREVIOUS_HASH,
-            "head_hash": ledger.last().map(|e| e.entry_hash.as_str()).unwrap_or(GENESIS_PREVIOUS_HASH),
+            "head_hash": entries.last().map(|e| e.entry_hash.as_str()).unwrap_or(GENESIS_PREVIOUS_HASH),
             "verification_status": "All cryptographic SHA-256 blocks verified intact without drift or tampering"
         })),
         Err(e) => Json(json!({
             "verified": false,
-            "total_entries": ledger.len(),
+            "total_entries": entries.len(),
             "error": format!("Ledger chain verification failed: {e}"),
             "verification_status": "Chain broken or signature mismatch detected"
         })),

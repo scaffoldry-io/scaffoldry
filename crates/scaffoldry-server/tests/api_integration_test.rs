@@ -9,7 +9,15 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 fn authed_req() -> axum::http::request::Builder {
-    Request::builder().header("authorization", "Bearer sct_admin_token")
+    let token = scaffoldry_server::jwt::mint_test_jwt(scaffoldry_server::jwt::TestJwtParams {
+        eppn: "jordan.lee@state.edu".to_string(),
+        name: "Jordan Lee".to_string(),
+        role_title: "Central Enterprise Administrator".to_string(),
+        affiliation: "central_admin".to_string(),
+        department: "Central IT & Institutional Governance".to_string(),
+        expires_in_secs: 3600,
+    });
+    Request::builder().header("authorization", format!("Bearer {token}"))
 }
 
 fn user_req(token: &str) -> axum::http::request::Builder {
@@ -22,7 +30,7 @@ async fn login_user(app: &Router, eppn: &str) -> String {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/auth/login")
+                .uri("/api/v1/auth/token")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&json!({ "eppn": eppn })).unwrap()))
                 .unwrap(),
@@ -1307,7 +1315,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
 async fn test_authentication_authorization_and_impersonation() {
     let app = build_app().expect("Failed to build router");
 
-    // 1. Directory listing endpoint
+    // 1. Directory listing endpoint is deleted (returns 404)
     let resp = app
         .clone()
         .oneshot(
@@ -1318,22 +1326,18 @@ async fn test_authentication_authorization_and_impersonation() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let directory: Vec<Value> = serde_json::from_slice(&body).unwrap();
-    assert!(directory.len() >= 4);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-    // 2. Login as Faculty (Dr. Sarah Connor)
+    // 2. Token issue as Faculty (Dr. Sarah Connor)
     let faculty_login_payload = json!({
-        "eppn": "sarah.connor@state.edu",
-        "password": "demo-incommon-pass"
+        "eppn": "sarah.connor@state.edu"
     });
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/auth/login")
+                .uri("/api/v1/auth/token")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&faculty_login_payload).unwrap()))
                 .unwrap(),
@@ -1384,17 +1388,16 @@ async fn test_authentication_authorization_and_impersonation() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
-    // 5. Login as Central Admin (Jordan Lee)
+    // 5. Token issue as Central Admin (Jordan Lee)
     let admin_login_payload = json!({
-        "eppn": "jordan.lee@state.edu",
-        "password": "admin-incommon-pass"
+        "eppn": "jordan.lee@state.edu"
     });
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/auth/login")
+                .uri("/api/v1/auth/token")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(&admin_login_payload).unwrap()))
                 .unwrap(),
@@ -1496,6 +1499,15 @@ async fn test_authentication_authorization_and_impersonation() {
 async fn test_workspace_sharing_security_and_configuration() {
     let app = build_app().expect("Failed to build router");
 
+    let faculty_token = scaffoldry_server::jwt::mint_test_jwt(scaffoldry_server::jwt::TestJwtParams {
+        eppn: "sarah.connor@state.edu".to_string(),
+        name: "Dr. Sarah Connor".to_string(),
+        role_title: "Department Chair & Professor".to_string(),
+        affiliation: "faculty".to_string(),
+        department: "Computer Science".to_string(),
+        expires_in_secs: 3600,
+    });
+
     // 1. Faculty caller (Dr. Sarah Connor) lists workspaces:
     // Only sees workspaces where they are member/owner (ws-cs-research)
     let resp = app
@@ -1503,7 +1515,7 @@ async fn test_workspace_sharing_security_and_configuration() {
         .oneshot(
             Request::builder()
                 .uri("/api/v1/workspaces")
-                .header("authorization", "Bearer sct_faculty_token")
+                .header("authorization", format!("Bearer {faculty_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1522,7 +1534,7 @@ async fn test_workspace_sharing_security_and_configuration() {
         .oneshot(
             Request::builder()
                 .uri("/api/v1/workspaces/ws-bio-lab")
-                .header("authorization", "Bearer sct_faculty_token")
+                .header("authorization", format!("Bearer {faculty_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1537,9 +1549,8 @@ async fn test_workspace_sharing_security_and_configuration() {
     let resp = app
         .clone()
         .oneshot(
-            Request::builder()
+            authed_req()
                 .uri("/api/v1/workspaces/ws-bio-lab")
-                .header("authorization", "Bearer sct_admin_token")
                 .body(Body::empty())
                 .unwrap(),
         )

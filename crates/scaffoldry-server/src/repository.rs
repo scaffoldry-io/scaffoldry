@@ -68,6 +68,7 @@ impl PostgresRepository {
                     let res = (|| {
                         client.batch_execute(SCHEMA_0001)?;
                         client.batch_execute(SCHEMA_0002)?;
+                        let _ = client.execute("DELETE FROM auth_sessions WHERE token LIKE 'sct_%'", &[]);
                         Ok(())
                     })();
                     let _ = client.execute("SELECT pg_advisory_unlock(742199)", &[]);

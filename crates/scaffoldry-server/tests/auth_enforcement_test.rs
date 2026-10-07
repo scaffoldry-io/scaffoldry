@@ -40,8 +40,8 @@ async fn send(
 }
 
 async fn login(app: &Router, eppn: &str) -> String {
-    let (status, body) = send(app, "POST", "/api/v1/auth/login", None, &[], Some(json!({ "eppn": eppn }))).await;
-    assert_eq!(status, StatusCode::OK, "login must succeed for directory user {eppn}");
+    let (status, body) = send(app, "POST", "/api/v1/auth/token", None, &[], Some(json!({ "eppn": eppn }))).await;
+    assert_eq!(status, StatusCode::OK, "token issue must succeed for {eppn}");
     body["token"].as_str().unwrap().to_string()
 }
 
@@ -81,7 +81,7 @@ async fn health_and_login_stay_public() {
     let app = build_app().expect("router");
     let (status, _) = send(&app, "GET", "/healthz", None, &[], None).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = send(&app, "POST", "/api/v1/auth/login", None, &[], Some(json!({ "eppn": "jordan.lee@state.edu" }))).await;
+    let (status, _) = send(&app, "POST", "/api/v1/auth/token", None, &[], Some(json!({ "eppn": "jordan.lee@state.edu" }))).await;
     assert_eq!(status, StatusCode::OK);
 }
 

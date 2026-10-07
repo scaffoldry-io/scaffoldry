@@ -1482,7 +1482,9 @@ name = "scaffoldry-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
+ "hmac",
  "http-body-util",
  "postgres",
  "scaffoldry-core",
@@ -1490,6 +1492,7 @@ dependencies = [
  "scaffoldry-policy",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
  "tower",
