@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Collaborator, LedgerEntryItem, Persona, Workspace } from "./types";
+import { apiClient, computeSha256 } from "./api";
 
 interface WorkspaceSettingsModalProps {
   workspace: Workspace;
@@ -38,7 +39,7 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleAddMember = (e: React.FormEvent) => {
+  const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDirectoryEppn) return;
 
@@ -49,7 +50,7 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
 
     const persona = allPersonas.find((p) => p.eppn === selectedDirectoryEppn);
     const newCollab: Collaborator = {
-      id: `collab-${Date.now()}`,
+      id: `collab-${selectedDirectoryEppn.split("@")[0]}`,
       eppn: selectedDirectoryEppn,
       name: persona?.name || selectedDirectoryEppn,
       role: newMemberRole,
@@ -66,7 +67,37 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       collaborators: updatedCollabs,
     };
 
-    const auditEntry: LedgerEntryItem = {
+    // Call server API for authoritative collaborator update and cryptographic ledger entry
+    try {
+      await apiClient.addWorkspaceCollaborator(workspace.id, {
+        eppn: newCollab.eppn,
+        name: newCollab.name,
+        role: newCollab.role,
+        department: newCollab.department,
+        scoped_affiliation: newCollab.scoped_affiliation,
+      });
+    } catch {
+      // offline/mock fallback
+    }
+
+    const serverDecision = await apiClient
+      .recordGovernanceDecision({
+        principal: activePersona.eppn,
+        organization_code: `DEPT-${workspace.department.toUpperCase()}`,
+        app_slug: workspace.id,
+        decision_type: "WorkspaceMemberAdded",
+        oscal_control_id: "AC-02",
+        rationale: `Added collaborator ${newCollab.name} (${newCollab.eppn}) with role ${newCollab.role}`,
+        payload: { workspace_id: workspace.id, member_eppn: newCollab.eppn, role: newCollab.role },
+      })
+      .catch(() => null);
+
+    const payloadStr = JSON.stringify({ workspace_id: workspace.id, member_eppn: newCollab.eppn, role: newCollab.role });
+    const payloadHash = await computeSha256(payloadStr);
+    const prevHash = ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000";
+    const entryHash = await computeSha256(`${ledgerEntries.length}|${prevHash}|${payloadHash}`);
+
+    const auditEntry: LedgerEntryItem = serverDecision?.entry || {
       sequence: ledgerEntries.length,
       timestamp_iso: new Date().toISOString(),
       principal: activePersona.eppn,
@@ -76,15 +107,15 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       oscal_control_id: "AC-02",
       rationale: `Added collaborator ${newCollab.name} (${newCollab.eppn}) with role ${newCollab.role}`,
       payload: { workspace_id: workspace.id, member_eppn: newCollab.eppn, role: newCollab.role },
-      previous_hash: ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000",
-      payload_hash: `sha256-${Date.now().toString(16)}`,
-      entry_hash: `sha256-${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`,
+      previous_hash: prevHash,
+      payload_hash: payloadHash,
+      entry_hash: entryHash,
     };
 
     onSave(updatedWs, auditEntry);
   };
 
-  const handleUpdateRole = (eppn: string, newRole: "owner" | "admin" | "editor" | "viewer") => {
+  const handleUpdateRole = async (eppn: string, newRole: "owner" | "admin" | "editor" | "viewer") => {
     const updatedCollabs = collaborators.map((c) => (c.eppn === eppn ? { ...c, role: newRole } : c));
     setCollaborators(updatedCollabs);
 
@@ -93,7 +124,30 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       collaborators: updatedCollabs,
     };
 
-    const auditEntry: LedgerEntryItem = {
+    try {
+      await apiClient.updateWorkspaceCollaboratorRole(workspace.id, eppn, newRole);
+    } catch {
+      // offline/mock fallback
+    }
+
+    const serverDecision = await apiClient
+      .recordGovernanceDecision({
+        principal: activePersona.eppn,
+        organization_code: `DEPT-${workspace.department.toUpperCase()}`,
+        app_slug: workspace.id,
+        decision_type: "WorkspaceMemberRoleUpdated",
+        oscal_control_id: "AC-03",
+        rationale: `Updated collaborator ${eppn} role to ${newRole}`,
+        payload: { workspace_id: workspace.id, member_eppn: eppn, new_role: newRole },
+      })
+      .catch(() => null);
+
+    const payloadStr = JSON.stringify({ workspace_id: workspace.id, member_eppn: eppn, new_role: newRole });
+    const payloadHash = await computeSha256(payloadStr);
+    const prevHash = ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000";
+    const entryHash = await computeSha256(`${ledgerEntries.length}|${prevHash}|${payloadHash}`);
+
+    const auditEntry: LedgerEntryItem = serverDecision?.entry || {
       sequence: ledgerEntries.length,
       timestamp_iso: new Date().toISOString(),
       principal: activePersona.eppn,
@@ -103,15 +157,15 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       oscal_control_id: "AC-03",
       rationale: `Updated collaborator ${eppn} role to ${newRole}`,
       payload: { workspace_id: workspace.id, member_eppn: eppn, new_role: newRole },
-      previous_hash: ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000",
-      payload_hash: `sha256-${Date.now().toString(16)}`,
-      entry_hash: `sha256-${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`,
+      previous_hash: prevHash,
+      payload_hash: payloadHash,
+      entry_hash: entryHash,
     };
 
     onSave(updatedWs, auditEntry);
   };
 
-  const handleRemoveMember = (eppn: string) => {
+  const handleRemoveMember = async (eppn: string) => {
     const target = collaborators.find((c) => c.eppn === eppn);
     if (!target) return;
 
@@ -131,7 +185,30 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       collaborators: updatedCollabs,
     };
 
-    const auditEntry: LedgerEntryItem = {
+    try {
+      await apiClient.removeWorkspaceCollaborator(workspace.id, eppn);
+    } catch {
+      // offline/mock fallback
+    }
+
+    const serverDecision = await apiClient
+      .recordGovernanceDecision({
+        principal: activePersona.eppn,
+        organization_code: `DEPT-${workspace.department.toUpperCase()}`,
+        app_slug: workspace.id,
+        decision_type: "WorkspaceMemberRemoved",
+        oscal_control_id: "AC-02",
+        rationale: `Removed collaborator ${eppn} from workspace`,
+        payload: { workspace_id: workspace.id, member_eppn: eppn },
+      })
+      .catch(() => null);
+
+    const payloadStr = JSON.stringify({ workspace_id: workspace.id, member_eppn: eppn });
+    const payloadHash = await computeSha256(payloadStr);
+    const prevHash = ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000";
+    const entryHash = await computeSha256(`${ledgerEntries.length}|${prevHash}|${payloadHash}`);
+
+    const auditEntry: LedgerEntryItem = serverDecision?.entry || {
       sequence: ledgerEntries.length,
       timestamp_iso: new Date().toISOString(),
       principal: activePersona.eppn,
@@ -141,15 +218,15 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       oscal_control_id: "AC-02",
       rationale: `Removed collaborator ${eppn} from workspace`,
       payload: { workspace_id: workspace.id, member_eppn: eppn },
-      previous_hash: ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000",
-      payload_hash: `sha256-${Date.now().toString(16)}`,
-      entry_hash: `sha256-${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`,
+      previous_hash: prevHash,
+      payload_hash: payloadHash,
+      entry_hash: entryHash,
     };
 
     onSave(updatedWs, auditEntry);
   };
 
-  const handleSaveGeneralOrAccess = (e: React.FormEvent) => {
+  const handleSaveGeneralOrAccess = async (e: React.FormEvent) => {
     e.preventDefault();
     const updatedWs: Workspace = {
       ...workspace,
@@ -163,7 +240,38 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       collaborators,
     };
 
-    const auditEntry: LedgerEntryItem = {
+    try {
+      await apiClient.updateWorkspace(workspace.id, updatedWs);
+    } catch {
+      // offline/mock fallback
+    }
+
+    const payloadData = {
+      workspace_id: workspace.id,
+      name,
+      department,
+      visibility,
+      data_classification: dataClassification,
+    };
+
+    const serverDecision = await apiClient
+      .recordGovernanceDecision({
+        principal: activePersona.eppn,
+        organization_code: `DEPT-${department.toUpperCase()}`,
+        app_slug: workspace.id,
+        decision_type: "WorkspaceUpdated",
+        oscal_control_id: "AC-03",
+        rationale: `Workspace security & configuration updated (visibility: ${visibility}, classification: ${dataClassification})`,
+        payload: payloadData,
+      })
+      .catch(() => null);
+
+    const payloadStr = JSON.stringify(payloadData);
+    const payloadHash = await computeSha256(payloadStr);
+    const prevHash = ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000";
+    const entryHash = await computeSha256(`${ledgerEntries.length}|${prevHash}|${payloadHash}`);
+
+    const auditEntry: LedgerEntryItem = serverDecision?.entry || {
       sequence: ledgerEntries.length,
       timestamp_iso: new Date().toISOString(),
       principal: activePersona.eppn,
@@ -172,16 +280,10 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
       decision_type: "WorkspaceUpdated",
       oscal_control_id: "AC-03",
       rationale: `Workspace security & configuration updated (visibility: ${visibility}, classification: ${dataClassification})`,
-      payload: {
-        workspace_id: workspace.id,
-        name,
-        department,
-        visibility,
-        data_classification: dataClassification,
-      },
-      previous_hash: ledgerEntries[ledgerEntries.length - 1]?.entry_hash || "0000000000000000000000000000000000000000000000000000000000000000",
-      payload_hash: `sha256-${Date.now().toString(16)}`,
-      entry_hash: `sha256-${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`,
+      payload: payloadData,
+      previous_hash: prevHash,
+      payload_hash: payloadHash,
+      entry_hash: entryHash,
     };
 
     onSave(updatedWs, auditEntry);

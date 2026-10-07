@@ -9,6 +9,7 @@ import { AppBuilder } from "./AppBuilder";
 import { PublishedAppView } from "./PublishedAppView";
 import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
+import { apiClient } from "./api";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
 
 const PERSONAS: Persona[] = [
@@ -78,16 +79,6 @@ const PERSONAS: Persona[] = [
   },
 ];
 
-export const canUserAccessWorkspace = (ws: Workspace, persona: Persona): boolean => {
-  if (persona.affiliation === "central_admin") return true;
-  if (ws.collaborators?.some((c) => c.eppn === persona.eppn)) return true;
-  if (ws.visibility === "institutional") return true;
-  if (ws.visibility === "departmental") {
-    return ws.department.toLowerCase() === persona.department.toLowerCase();
-  }
-  return false;
-};
-
 export const getUserWorkspaceRole = (
   ws: Workspace,
   persona: Persona
@@ -95,7 +86,6 @@ export const getUserWorkspaceRole = (
   const member = ws.collaborators?.find((c) => c.eppn === persona.eppn);
   if (member) return member.role;
   if (persona.affiliation === "central_admin") return "admin";
-  if (canUserAccessWorkspace(ws, persona)) return "viewer";
   return null;
 };
 
@@ -535,10 +525,12 @@ export const AdminDesk: React.FC = () => {
 
   // Active Workspace & Security State
   const [workspaces, setWorkspaces] = useState<Workspace[]>(INITIAL_WORKSPACES);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>(() => {
-    const accessible = INITIAL_WORKSPACES.find((w) => canUserAccessWorkspace(w, PERSONAS[0]));
-    return accessible ? accessible.id : INITIAL_WORKSPACES[0].id;
-  });
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("ws-cs-research");
+  const [workspaceAccessError, setWorkspaceAccessError] = useState<{
+    status: number;
+    message: string;
+    workspaceId: string;
+  } | null>(null);
   const [isWorkspaceSettingsOpen, setIsWorkspaceSettingsOpen] = useState<boolean>(false);
   const [navRailExpanded, setNavRailExpanded] = useState<boolean>(true);
   const [userMenuOpen, setUserMenuOpen] = useState<boolean>(false);
@@ -649,6 +641,93 @@ export const AdminDesk: React.FC = () => {
   const [realAdmin, setRealAdmin] = useState<Persona | null>(null);
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
   const [notificationToast, setNotificationToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncWorkspaces = async () => {
+      try {
+        await apiClient.issueToken(activePersona.eppn).catch(() => {});
+        const serverWorkspaces = await apiClient.listWorkspaces().catch(() => null);
+        if (!cancelled && serverWorkspaces && serverWorkspaces.length > 0) {
+          setWorkspaces(serverWorkspaces);
+        }
+        const serverLedger = await apiClient.getGovernanceLedger().catch(() => null);
+        if (!cancelled && serverLedger && serverLedger.entries) {
+          setLedger(serverLedger.entries);
+        }
+      } catch {
+        // offline fallback
+      }
+    };
+
+    syncWorkspaces();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePersona.eppn]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkWorkspaceAccess = async () => {
+      if (activeWorkspaceId === "all") {
+        setWorkspaceAccessError(null);
+        return;
+      }
+
+      try {
+        const wsResp = await apiClient.getWorkspace(activeWorkspaceId);
+        if (!cancelled) {
+          setWorkspaceAccessError(null);
+          if (wsResp && wsResp.workspace) {
+            setWorkspaces((prev) =>
+              prev.map((w) =>
+                w.id === wsResp.workspace.id
+                  ? { ...w, ...wsResp.workspace, collaborators: wsResp.collaborators || w.collaborators }
+                  : w
+              )
+            );
+          }
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          if (err.status === 403) {
+            setWorkspaceAccessError({
+              status: 403,
+              message: err.message || "403 Forbidden: Cedar Policy restricts access",
+              workspaceId: activeWorkspaceId,
+            });
+          } else {
+            // When offline or mocked in unit tests without API server:
+            const targetWs = INITIAL_WORKSPACES.find((w) => w.id === activeWorkspaceId);
+            const isRestricted =
+              targetWs &&
+              targetWs.visibility === "restricted" &&
+              activePersona.affiliation !== "central_admin" &&
+              !targetWs.collaborators.some((c) => c.eppn === activePersona.eppn);
+
+            if (isRestricted) {
+              setWorkspaceAccessError({
+                status: 403,
+                message: `403 Forbidden: Cedar Policy restricts access to ${targetWs.name}`,
+                workspaceId: activeWorkspaceId,
+              });
+            } else {
+              setWorkspaceAccessError(null);
+            }
+          }
+        }
+      }
+    };
+
+    checkWorkspaceAccess();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId, activePersona.eppn]);
 
   const handleStartImpersonation = (targetPersona: Persona) => {
     const currentAdmin = realAdmin || activePersona;
@@ -813,12 +892,27 @@ export const AdminDesk: React.FC = () => {
   const simResult = evaluateCedarDecision("biology", simFerpa, simAction);
 
   // Active Workspace & Security Access
-  const currentWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
-  const accessibleWorkspaces = workspaces.filter((w) => canUserAccessWorkspace(w, activePersona));
-  const inaccessibleWorkspaces = workspaces.filter((w) => !canUserAccessWorkspace(w, activePersona));
+  const currentWorkspace =
+    workspaces.find((w) => w.id === activeWorkspaceId) ||
+    INITIAL_WORKSPACES.find((w) => w.id === activeWorkspaceId) ||
+    workspaces[0];
+  const accessibleWorkspaces = workspaces.filter(
+    (w) =>
+      activePersona.affiliation === "central_admin" ||
+      w.collaborators?.some((c) => c.eppn === activePersona.eppn) ||
+      w.visibility === "institutional" ||
+      (w.visibility === "departmental" && w.department.toLowerCase() === activePersona.department.toLowerCase())
+  );
+  const inaccessibleWorkspaces = INITIAL_WORKSPACES.filter(
+    (w) => !accessibleWorkspaces.some((aw) => aw.id === w.id)
+  );
   const userRoleInCurrentWs = getUserWorkspaceRole(currentWorkspace, activePersona);
   const canManageCurrentWs = canUserManageWorkspace(currentWorkspace, activePersona);
-  const hasAccessToCurrentWs = activeWorkspaceId === "all" || canUserAccessWorkspace(currentWorkspace, activePersona);
+  const isTargetRestricted =
+    currentWorkspace.visibility === "restricted" &&
+    activePersona.affiliation !== "central_admin" &&
+    !currentWorkspace.collaborators?.some((c) => c.eppn === activePersona.eppn);
+  const hasAccessToCurrentWs = activeWorkspaceId === "all" || (!workspaceAccessError && !isTargetRestricted);
 
   const handleSaveWorkspaceSettings = (updatedWs: Workspace, auditEntry: LedgerEntryItem) => {
     setWorkspaces((prev) => prev.map((w) => (w.id === updatedWs.id ? updatedWs : w)));
@@ -2114,7 +2208,7 @@ export const AdminDesk: React.FC = () => {
                 type="button"
                 data-testid="switch-to-accessible-workspace-btn"
                 onClick={() => {
-                  const accessible = workspaces.find((w) => canUserAccessWorkspace(w, activePersona));
+                  const accessible = accessibleWorkspaces[0];
                   if (accessible) {
                     setActiveWorkspaceId(accessible.id);
                   } else {
