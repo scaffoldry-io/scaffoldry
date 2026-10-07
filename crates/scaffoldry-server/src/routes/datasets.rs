@@ -1,5 +1,5 @@
 use crate::guard::session_user;
-use crate::state::SharedState;
+use crate::state::{lock_err, SharedState};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -23,9 +23,9 @@ pub fn router() -> Router<SharedState> {
         )
 }
 
-async fn list_datasets(State(state): State<SharedState>) -> impl IntoResponse {
-    let datasets = state.datasets.read().unwrap();
-    let rels = state.relationships.read().unwrap();
+async fn list_datasets(State(state): State<SharedState>) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let datasets = state.datasets.read().map_err(|_| lock_err())?;
+    let rels = state.relationships.read().map_err(|_| lock_err())?;
 
     let mut list = Vec::new();
     for ds in datasets.values() {
@@ -50,19 +50,19 @@ async fn list_datasets(State(state): State<SharedState>) -> impl IntoResponse {
         }));
     }
 
-    Json(json!({
+    Ok(Json(json!({
         "total": list.len(),
         "datasets": list
-    }))
+    })))
 }
 
 async fn get_dataset(
     State(state): State<SharedState>,
     Path(id): Path<String>,
-) -> Result<Json<Value>, StatusCode> {
-    let datasets = state.datasets.read().unwrap();
-    let ds = datasets.get(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let rels = state.relationships.read().unwrap();
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let datasets = state.datasets.read().map_err(|_| lock_err())?;
+    let ds = datasets.get(&id).ok_or((StatusCode::NOT_FOUND, Json(json!({"error": "Dataset not found"}))))?;
+    let rels = state.relationships.read().map_err(|_| lock_err())?;
 
     let related_rels: Vec<DatasetRelationship> = rels
         .values()
@@ -184,26 +184,26 @@ async fn publish_dataset(
         sample_data,
     };
 
-    state.datasets.write().unwrap().insert(id, dataset.clone());
+    state.datasets.write().map_err(|_| lock_err())?.insert(id, dataset.clone());
     Ok((StatusCode::CREATED, Json(dataset)))
 }
 
 async fn list_relationships(
     State(state): State<SharedState>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    let rels = state.relationships.read().unwrap();
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let rels = state.relationships.read().map_err(|_| lock_err())?;
     let matching: Vec<DatasetRelationship> = rels
         .values()
         .filter(|r| r.source_dataset_id == id || r.target_dataset_id == id)
         .cloned()
         .collect();
 
-    Json(json!({
+    Ok(Json(json!({
         "dataset_id": id,
         "total": matching.len(),
         "relationships": matching
-    }))
+    })))
 }
 
 async fn create_relationship(
@@ -261,6 +261,6 @@ async fn create_relationship(
         display_field,
     };
 
-    state.relationships.write().unwrap().insert(id, rel.clone());
+    state.relationships.write().map_err(|_| lock_err())?.insert(id, rel.clone());
     Ok((StatusCode::CREATED, Json(rel)))
 }

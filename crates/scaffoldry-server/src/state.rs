@@ -790,3 +790,10 @@ impl ServerState {
 }
 
 pub type SharedState = Arc<ServerState>;
+
+pub fn lock_err() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        axum::Json(serde_json::json!({"error": "Failed to acquire lock: state lock poisoned or unavailable"})),
+    )
+}

@@ -12,7 +12,18 @@ use state::{ServerState, SharedState};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
+pub fn validate_production_configuration() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if std::env::var("SCAFFOLDRY_ENV").as_deref() == Ok("production") {
+        let secret = std::env::var("SCAFFOLDRY_JWT_SECRET").unwrap_or_default();
+        if secret.trim().is_empty() || secret == jwt::DEFAULT_SECRET {
+            return Err("Production configuration error: SCAFFOLDRY_JWT_SECRET must be configured with a non-default secret in production".into());
+        }
+    }
+    Ok(())
+}
+
 pub fn build_app() -> Result<Router, Box<dyn std::error::Error + Send + Sync>> {
+    validate_production_configuration()?;
     let state = Arc::new(ServerState::new()?);
     build_app_with_state(state)
 }
@@ -47,6 +58,8 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
 
     let router = routes::api_router(state.clone())
         .layer(axum::middleware::from_fn_with_state(state, guard::require_session))
-        .layer(cors);
+        .layer(cors)
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
+        .layer(tower_http::trace::TraceLayer::new_for_http());
     Ok(router)
 }
