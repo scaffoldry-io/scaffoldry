@@ -47,6 +47,11 @@ pub enum DecisionType {
     StatutoryAttestation,
     ImpersonationSessionStarted,
     ImpersonationSessionEnded,
+    WorkspaceCreated,
+    WorkspaceUpdated,
+    WorkspaceMemberAdded,
+    WorkspaceMemberRemoved,
+    WorkspaceMemberRoleUpdated,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +116,11 @@ impl LedgerEntry {
             DecisionType::StatutoryAttestation => "StatutoryAttestation",
             DecisionType::ImpersonationSessionStarted => "ImpersonationSessionStarted",
             DecisionType::ImpersonationSessionEnded => "ImpersonationSessionEnded",
+            DecisionType::WorkspaceCreated => "WorkspaceCreated",
+            DecisionType::WorkspaceUpdated => "WorkspaceUpdated",
+            DecisionType::WorkspaceMemberAdded => "WorkspaceMemberAdded",
+            DecisionType::WorkspaceMemberRemoved => "WorkspaceMemberRemoved",
+            DecisionType::WorkspaceMemberRoleUpdated => "WorkspaceMemberRoleUpdated",
         };
 
         let content = format!(

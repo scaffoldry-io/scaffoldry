@@ -1462,5 +1462,147 @@ async fn test_authentication_authorization_and_impersonation() {
     }));
 }
 
+#[tokio::test]
+async fn test_workspace_sharing_security_and_configuration() {
+    let app = build_app().expect("Failed to build router");
+
+    // 1. Faculty caller (Dr. Sarah Connor) lists workspaces:
+    // Only sees workspaces where they are member/owner (ws-cs-research)
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces")
+                .header("authorization", "Bearer sct_faculty_token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let faculty_ws: Vec<Value> = serde_json::from_slice(&body).unwrap();
+    assert!(faculty_ws.iter().any(|w| w["id"] == "ws-cs-research"));
+    assert!(!faculty_ws.iter().any(|w| w["id"] == "ws-bio-lab"));
+    assert!(!faculty_ws.iter().any(|w| w["id"] == "ws-physics-optics"));
+
+    // 2. Faculty caller tries to access restricted ws-bio-lab -> 403 Forbidden
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces/ws-bio-lab")
+                .header("authorization", "Bearer sct_faculty_token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let err_res: Value = serde_json::from_slice(&body).unwrap();
+    assert!(err_res["error"].as_str().unwrap().contains("Cedar Policy restricts access"));
+
+    // 3. Central admin accesses ws-bio-lab -> 200 OK
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/workspaces/ws-bio-lab")
+                .header("authorization", "Bearer sct_admin_token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let admin_ws: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(admin_ws["id"], "ws-bio-lab");
+
+    // 4. Non-owner viewer attempts to add collaborator -> 403 Forbidden
+    let new_member_payload = json!({
+        "eppn": "guest@state.edu",
+        "role": "Viewer",
+        "name": "Guest Researcher"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces/ws-bio-lab/collaborators")
+                .header("x-caller-eppn", "marcus.vance@state.edu") // viewer
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&new_member_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 5. Owner adds collaborator -> 201 Created
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/workspaces/ws-bio-lab/collaborators")
+                .header("x-caller-eppn", "prof.curie@science.state.edu") // owner
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&new_member_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 6. Owner updates workspace configuration -> 200 OK
+    let update_payload = json!({
+        "description": "Updated genomic protocols and bio-specimen tracking",
+        "data_classification": "FERPA Sensitive"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/workspaces/ws-bio-lab")
+                .header("x-caller-eppn", "prof.curie@science.state.edu") // owner
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&update_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let updated_ws: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(updated_ws["data_classification"], "FERPA Sensitive");
+
+    // 7. Verify audit ledger entries for workspace operations
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/governance/ledger")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let ledger_res: Value = serde_json::from_slice(&body).unwrap();
+    let entries = ledger_res["entries"].as_array().unwrap();
+    assert!(entries.iter().any(|e| {
+        e["decision_type"] == "WorkspaceMemberAdded" && e["oscal_control_id"] == "AC-02"
+    }));
+    assert!(entries.iter().any(|e| {
+        e["decision_type"] == "WorkspaceUpdated" && e["oscal_control_id"] == "AC-03"
+    }));
+}
+
+
 
 

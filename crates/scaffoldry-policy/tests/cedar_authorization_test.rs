@@ -2,7 +2,7 @@
 //! Validates institutional RBAC/ABAC, FERPA safeguards, and InCommon scoped affiliations.
 
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
-use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine};
+use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine, WorkspaceActionInput};
 
 #[test]
 fn test_ceds_eduperson_policy_authorization() {
@@ -109,4 +109,108 @@ fn test_admin_console_and_impersonation_authorization() {
         "marcus.vance@state.edu",
     ).expect("Evaluation must succeed");
     assert_eq!(faculty_impersonate.decision, PolicyDecision::Deny, "Faculty must be forbidden from impersonating other users");
+}
+
+#[test]
+fn test_workspace_sharing_and_security_authorization() {
+    let engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        .expect("Failed to initialize Cedar policy engine");
+
+    // 1. Direct member has access to restricted workspace
+    let member_access = engine.authorize_workspace_action(&WorkspaceActionInput {
+        principal_eppn: "prof.curie@science.state.edu",
+        principal_affiliation: "faculty",
+        principal_department: "biology",
+        action_name: "access_workspace",
+        workspace_id: "ws-bio-lab",
+        workspace_department: "biology",
+        workspace_visibility: "restricted",
+        is_member: true,
+        member_role: Some("owner"),
+    }).expect("Evaluation must succeed");
+    assert_eq!(member_access.decision, PolicyDecision::Allow, "Workspace owner/member must have access");
+
+    // 2. Non-member is DENIED access to restricted workspace
+    let non_member_access = engine.authorize_workspace_action(&WorkspaceActionInput {
+        principal_eppn: "einstein@physics.state.edu",
+        principal_affiliation: "student",
+        principal_department: "physics",
+        action_name: "access_workspace",
+        workspace_id: "ws-bio-lab",
+        workspace_department: "biology",
+        workspace_visibility: "restricted",
+        is_member: false,
+        member_role: None,
+    }).expect("Evaluation must succeed");
+    assert_eq!(non_member_access.decision, PolicyDecision::Deny, "Non-member must be denied access to restricted workspace");
+
+    // 3. Departmental workspace is ACCESSIBLE to department peer
+    let dept_peer_access = engine.authorize_workspace_action(&WorkspaceActionInput {
+        principal_eppn: "elena.rodriguez@state.edu",
+        principal_affiliation: "compliance",
+        principal_department: "compliance",
+        action_name: "access_workspace",
+        workspace_id: "ws-campus-compliance",
+        workspace_department: "compliance",
+        workspace_visibility: "departmental",
+        is_member: false,
+        member_role: None,
+    }).expect("Evaluation must succeed");
+    assert_eq!(dept_peer_access.decision, PolicyDecision::Allow, "Department peer must have access to departmental workspace");
+
+    // 4. Departmental workspace is DENIED to foreign department peer
+    let foreign_dept_access = engine.authorize_workspace_action(&WorkspaceActionInput {
+        principal_eppn: "prof.curie@science.state.edu",
+        principal_affiliation: "faculty",
+        principal_department: "biology",
+        action_name: "access_workspace",
+        workspace_id: "ws-campus-compliance",
+        workspace_department: "compliance",
+        workspace_visibility: "departmental",
+        is_member: false,
+        member_role: None,
+    }).expect("Evaluation must succeed");
+    assert_eq!(foreign_dept_access.decision, PolicyDecision::Deny, "Foreign department peer must be denied access to departmental workspace");
+
+    // 5. Central admin has supervisory access to any workspace
+    let admin_access = engine.authorize_workspace_action(&WorkspaceActionInput {
+        principal_eppn: "jordan.lee@state.edu",
+        principal_affiliation: "central_admin",
+        principal_department: "Central Enterprise IT",
+        action_name: "access_workspace",
+        workspace_id: "ws-bio-lab",
+        workspace_department: "biology",
+        workspace_visibility: "restricted",
+        is_member: false,
+        member_role: None,
+    }).expect("Evaluation must succeed");
+    assert_eq!(admin_access.decision, PolicyDecision::Allow, "Central admin must have supervisory access to all workspaces");
+
+    // 6. Owner CAN manage workspace
+    let owner_manage = engine.authorize_workspace_action(&WorkspaceActionInput {
+        principal_eppn: "prof.curie@science.state.edu",
+        principal_affiliation: "faculty",
+        principal_department: "biology",
+        action_name: "manage_workspace",
+        workspace_id: "ws-bio-lab",
+        workspace_department: "biology",
+        workspace_visibility: "restricted",
+        is_member: true,
+        member_role: Some("owner"),
+    }).expect("Evaluation must succeed");
+    assert_eq!(owner_manage.decision, PolicyDecision::Allow, "Workspace owner must be permitted to manage workspace");
+
+    // 7. Viewer CANNOT manage workspace
+    let viewer_manage = engine.authorize_workspace_action(&WorkspaceActionInput {
+        principal_eppn: "marcus.vance@state.edu",
+        principal_affiliation: "staff",
+        principal_department: "biology",
+        action_name: "manage_workspace",
+        workspace_id: "ws-bio-lab",
+        workspace_department: "biology",
+        workspace_visibility: "restricted",
+        is_member: true,
+        member_role: Some("viewer"),
+    }).expect("Evaluation must succeed");
+    assert_eq!(viewer_manage.decision, PolicyDecision::Deny, "Workspace viewer must be forbidden from managing workspace");
 }
