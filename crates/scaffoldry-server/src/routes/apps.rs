@@ -191,7 +191,12 @@ async fn create_app_automation(
     rule.app_slug = slug.clone();
 
     let mut automations = state.automations.write().map_err(|_| lock_err())?;
-    automations.entry(slug).or_default().push(rule.clone());
+    let rules = automations.entry(slug).or_default();
+    if let Some(pos) = rules.iter().position(|r| r.id == rule.id) {
+        rules[pos] = rule.clone();
+    } else {
+        rules.push(rule.clone());
+    }
 
     if let Some(ref repo) = state.repository {
         let _ = repo.upsert_workflow_automation(&rule);

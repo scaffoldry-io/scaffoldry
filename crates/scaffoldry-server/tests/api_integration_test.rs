@@ -751,6 +751,68 @@ async fn test_app_workflow_automations_and_simulation() {
     assert!(results[0]["conditions_met"].as_bool().unwrap());
     assert!(results[0]["cedar_authorized"].as_bool().unwrap());
     assert_eq!(results[0]["actions_executed"].as_array().unwrap().len(), 2);
+
+    // 3. POST the same automation id twice and GET the list. Length stays 1.
+    let rule_payload = json!({
+        "id": "rule-upsert-test",
+        "app_slug": "physics-admissions-review",
+        "name": "Upsert Rule",
+        "description": "Rule upsert testing",
+        "enabled": true,
+        "trigger": "RecordCreated",
+        "cedar_policy_guard": null,
+        "predicates": [],
+        "actions": []
+    });
+
+    let resp_post1 = app
+        .clone()
+        .oneshot(
+            authed_req()
+                .method("POST")
+                .uri("/api/v1/apps/physics-admissions-review/automations")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&rule_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_post1.status(), StatusCode::CREATED);
+
+    let resp_post2 = app
+        .clone()
+        .oneshot(
+            authed_req()
+                .method("POST")
+                .uri("/api/v1/apps/physics-admissions-review/automations")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&rule_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_post2.status(), StatusCode::CREATED);
+
+    let resp_list = app
+        .clone()
+        .oneshot(
+            authed_req()
+                .uri("/api/v1/apps/physics-admissions-review/automations")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_list.status(), StatusCode::OK);
+    let body = resp_list.into_body().collect().await.unwrap().to_bytes();
+    let rules_list: Value = serde_json::from_slice(&body).unwrap();
+    let matching_rules: Vec<_> = rules_list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["id"] == "rule-upsert-test")
+        .collect();
+    assert_eq!(matching_rules.len(), 1);
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use scaffoldry_core::{
-    ActionType, AutomationRule, ConditionOperator, FieldPredicate,
+    ActionEffect, ActionType, AutomationRule, ConditionOperator, FieldPredicate,
     TriggerEvent, WorkflowExecutionResult,
 };
 use scaffoldry_policy::ScaffoldryPolicyEngine;
@@ -45,6 +45,7 @@ impl AutomationEngine {
                 conditions_met: false,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
                 execution_timestamp: timestamp,
             };
         }
@@ -72,6 +73,7 @@ impl AutomationEngine {
                 conditions_met: false,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
                 execution_timestamp: timestamp,
             };
         }
@@ -89,6 +91,7 @@ impl AutomationEngine {
                 conditions_met: false,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
                 execution_timestamp: timestamp,
             };
         }
@@ -117,25 +120,41 @@ impl AutomationEngine {
                 conditions_met: true,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
                 execution_timestamp: timestamp,
             };
         }
 
         // 4. Dispatch Actions
         let mut executed = Vec::new();
+        let mut effects = Vec::new();
         for action in &rule.actions {
             match action {
                 ActionType::NotifyCollaborator { role, message_template } => {
                     executed.push(format!("Notified role '{role}': {message_template}"));
+                    effects.push(ActionEffect::Notify {
+                        role: role.clone(),
+                        message: message_template.clone(),
+                    });
                 }
                 ActionType::UpdateRecordStatus { new_status } => {
                     executed.push(format!("Updated record status to '{new_status}'"));
+                    effects.push(ActionEffect::SetFields {
+                        fields: vec![("status".into(), new_status.clone())],
+                    });
                 }
                 ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
                     executed.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
+                    effects.push(ActionEffect::LedgerNote {
+                        summary: summary.clone(),
+                        oscal_control: oscal_control.clone(),
+                    });
                 }
                 ActionType::WebhookDispatch { target_url } => {
-                    executed.push(format!("Dispatched secure webhook payload to {target_url}"));
+                    executed.push(format!("Webhook not sent: {target_url}"));
+                    effects.push(ActionEffect::Rejected {
+                        reason: format!("webhook disabled: {target_url}"),
+                    });
                 }
             }
         }
@@ -147,6 +166,7 @@ impl AutomationEngine {
             conditions_met: true,
             cedar_authorized: true,
             actions_executed: executed,
+            effects,
             execution_timestamp: timestamp,
         }
     }

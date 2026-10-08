@@ -78,3 +78,56 @@ fn test_workflow_automation_evaluation_and_actions() {
     assert!(!result2.conditions_met);
     assert!(result2.actions_executed.is_empty());
 }
+
+#[test]
+fn apply_field_effects_sets_status() {
+    let mut record = json!({ "status": "Draft" });
+    let effects = vec![scaffoldry_core::ActionEffect::SetFields {
+        fields: vec![("status".to_string(), "Approved".to_string())],
+    }];
+    scaffoldry_core::apply_field_effects(&mut record, &effects);
+    assert_eq!(record["status"], "Approved");
+}
+
+#[test]
+fn webhook_is_not_a_success() {
+    let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        .expect("Failed to initialize policy engine");
+    let automation_engine = AutomationEngine::new(policy_engine);
+
+    let rule = AutomationRule {
+        id: "rule-webhook-test".to_string(),
+        app_slug: "test-app".to_string(),
+        name: "Webhook Test Rule".to_string(),
+        description: "Test webhook action".to_string(),
+        enabled: true,
+        trigger: TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![
+            ActionType::WebhookDispatch {
+                target_url: "https://example.com/webhook".to_string(),
+            },
+        ],
+    };
+
+    let record = json!({ "id": "rec-1" });
+    let result = automation_engine.evaluate_rule(
+        &rule,
+        &TriggerEvent::RecordCreated,
+        &record,
+        "admin@university.edu",
+    );
+
+    assert!(result.trigger_matched);
+    assert!(result.conditions_met);
+    assert_eq!(result.actions_executed.len(), 1);
+    assert!(result.actions_executed[0].contains("Webhook not sent"));
+    assert!(!result.actions_executed[0].contains("Dispatched"));
+    assert_eq!(
+        result.effects,
+        vec![scaffoldry_core::ActionEffect::Rejected {
+            reason: "webhook disabled: https://example.com/webhook".to_string()
+        }]
+    );
+}
