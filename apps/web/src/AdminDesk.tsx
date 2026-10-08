@@ -11,6 +11,7 @@ const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.A
 const PublishedAppView = lazy(() => import("./PublishedAppView").then((m) => ({ default: m.PublishedAppView })));
 const StandaloneIntakeForm = lazy(() => import("./StandaloneIntakeForm").then((m) => ({ default: m.StandaloneIntakeForm })));
 import { AdminConsoleView } from "./AdminConsoleView";
+import { ProcessDesk } from "./ProcessDesk";
 
 const PERSONAS: Persona[] = [
   {
@@ -2348,6 +2349,13 @@ export const AdminDesk: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {/* Process Desk Decisions Queue Panel */}
+              <ProcessDesk
+                apps={workspaceApps}
+                callerPersona={activePersona}
+                callerWorkspaceRole={userRoleInCurrentWs}
+              />
 
               {/* Status Filter Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
