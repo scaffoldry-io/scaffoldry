@@ -86,6 +86,7 @@ async fn test_default_body_limit_enforced() {
 
 #[tokio::test]
 async fn test_lock_poison_does_not_panic_server() {
+    let _lock = TEST_LOCK.lock().await;
     let state = Arc::new(ServerState::new().expect("state"));
 
     // Intentionally poison the datasets lock
