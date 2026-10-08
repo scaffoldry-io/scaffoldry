@@ -349,3 +349,92 @@ fn test_depth_backstop_stops_at_depth_3() {
     assert!(res.effects.is_empty());
     assert_eq!(res.actions_executed, vec!["stopped: depth".to_string()]);
 }
+
+#[test]
+fn test_user_task_stops_run_and_subsequent_steps_ignored() {
+    let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        .expect("Failed to initialize policy engine");
+    let automation_engine = AutomationEngine::new(policy_engine);
+
+    let rule = AutomationRule {
+        id: "rule-approval-flow".to_string(),
+        app_slug: "physics-review".to_string(),
+        name: "Approval Flow".to_string(),
+        description: "User task stops subsequent steps".to_string(),
+        enabled: true,
+        trigger: TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![],
+        steps: vec![
+            scaffoldry_core::ProcessStep {
+                id: "step-1-service".to_string(),
+                when: vec![],
+                kind: scaffoldry_core::StepKind::Service {
+                    action: ActionType::UpdateRecordStatus {
+                        new_status: "Submitted".to_string(),
+                    },
+                },
+            },
+            scaffoldry_core::ProcessStep {
+                id: "step-2-user".to_string(),
+                when: vec![],
+                kind: scaffoldry_core::StepKind::UserTask {
+                    role: "department_chair".to_string(),
+                    prompt: "Please review and approve candidate admission".to_string(),
+                    approve: vec![ActionType::UpdateRecordStatus {
+                        new_status: "Approved".to_string(),
+                    }],
+                    reject: vec![ActionType::UpdateRecordStatus {
+                        new_status: "Rejected".to_string(),
+                    }],
+                },
+            },
+            scaffoldry_core::ProcessStep {
+                id: "step-3-after".to_string(),
+                when: vec![],
+                kind: scaffoldry_core::StepKind::Service {
+                    action: ActionType::UpdateRecordStatus {
+                        new_status: "ShouldNotHappen".to_string(),
+                    },
+                },
+            },
+        ],
+    };
+
+    let faculty_identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: "dr.curie@science.state.edu".to_string(),
+        realm: "science.state.edu".to_string(),
+        affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+    };
+
+    let record = json!({
+        "id": "rec-candidate-1",
+        "status": "Draft"
+    });
+
+    let res = automation_engine.evaluate_rule(
+        &rule,
+        &TriggerEvent::RecordCreated,
+        &record,
+        &faculty_identity,
+        0,
+    );
+
+    assert!(res.trigger_matched);
+    // Effects must only include step 1 (Submitted). Step 3 (ShouldNotHappen) must NOT be present!
+    assert_eq!(res.effects.len(), 1);
+    assert_eq!(
+        res.effects[0],
+        scaffoldry_core::ActionEffect::SetFields {
+            fields: vec![("status".to_string(), "Submitted".to_string())]
+        }
+    );
+    // Waiting instance is created with status Waiting
+    let waiting = res.waiting_instance.expect("Expected waiting instance");
+    assert_eq!(waiting.status, scaffoldry_core::ProcessStatus::Waiting);
+    assert_eq!(waiting.waiting_step_id.as_deref(), Some("step-2-user"));
+    assert_eq!(waiting.role.as_deref(), Some("department_chair"));
+    assert_eq!(waiting.prompt.as_deref(), Some("Please review and approve candidate admission"));
+    assert_eq!(waiting.record_id, "rec-candidate-1");
+}

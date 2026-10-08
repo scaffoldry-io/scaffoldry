@@ -253,10 +253,24 @@ pub fn run_automations(
         }
 
         let res = auto_engine.evaluate_rule(rule, &event, &modified, identity, depth);
-        if res.trigger_matched && res.conditions_met && res.cedar_authorized && !res.effects.is_empty() {
+        if res.trigger_matched && res.conditions_met && res.cedar_authorized {
             applied_rule_ids.push(rule.id.clone());
-            scaffoldry_core::workflow::apply_field_effects(&mut modified, &res.effects);
-            all_effects.extend(res.effects);
+            if !res.effects.is_empty() {
+                scaffoldry_core::workflow::apply_field_effects(&mut modified, &res.effects);
+                all_effects.extend(res.effects);
+            }
+            if let Some(inst) = res.waiting_instance {
+                let should_upsert = match state.process_instances.read() {
+                    Ok(map) => match map.get(&inst.id) {
+                        Some(existing) => existing.status != scaffoldry_core::ProcessStatus::Waiting,
+                        None => true,
+                    },
+                    Err(_) => false,
+                };
+                if should_upsert {
+                    let _ = state.persist_process_instance(inst);
+                }
+            }
         }
     }
 

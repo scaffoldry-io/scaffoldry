@@ -11,8 +11,8 @@ use crate::state::{
 use chrono::Utc;
 use postgres::{Client, NoTls};
 use scaffoldry_core::{
-    AutomationRule, DatasetRelationship, DecisionType, LedgerEntry, LedgerError, PublishedDataset,
-    GENESIS_PREVIOUS_HASH,
+    AutomationRule, DatasetRelationship, DecisionType, LedgerEntry, LedgerError, ProcessInstance,
+    ProcessStatus, PublishedDataset, GENESIS_PREVIOUS_HASH,
 };
 use scaffoldry_engine::AppManifest;
 use serde_json::Value;
@@ -22,6 +22,7 @@ use std::sync::mpsc::{channel, sync_channel, Sender};
 const SCHEMA_0001: &str = include_str!("../../scaffoldry-core/migrations/0001_initial_schema.sql");
 const SCHEMA_0002: &str = include_str!("../../scaffoldry-core/migrations/0002_workspaces_and_ledger.sql");
 const SCHEMA_0003: &str = include_str!("../../scaffoldry-core/migrations/0003_persist_apps_and_datasets.sql");
+const SCHEMA_0005: &str = include_str!("../../scaffoldry-core/migrations/0005_process_instances.sql");
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
@@ -74,6 +75,7 @@ impl PostgresRepository {
                         client.batch_execute(SCHEMA_0001)?;
                         client.batch_execute(SCHEMA_0002)?;
                         client.batch_execute(SCHEMA_0003)?;
+                        client.batch_execute(SCHEMA_0005)?;
                         let _ = client.execute("DELETE FROM auth_sessions WHERE token LIKE 'sct_%'", &[]);
                         Ok(())
                     })();
@@ -934,6 +936,88 @@ impl PostgresRepository {
                 ],
             )?;
             Ok(())
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // PROCESS INSTANCES
+    // -------------------------------------------------------------------------
+
+    pub fn list_process_instances(
+        &self,
+        app_slug: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Vec<ProcessInstance>, RepositoryError> {
+        let slug_opt = app_slug.map(str::to_string);
+        let status_opt = status.map(str::to_string);
+        self.with_client(move |client| {
+            let rows = match (&slug_opt, &status_opt) {
+                (Some(slug), Some(st)) => client.query(
+                    "SELECT instance_json FROM process_instances WHERE app_slug = $1 AND status = $2 ORDER BY updated_at ASC",
+                    &[&slug, &st],
+                )?,
+                (Some(slug), None) => client.query(
+                    "SELECT instance_json FROM process_instances WHERE app_slug = $1 ORDER BY updated_at ASC",
+                    &[&slug],
+                )?,
+                (None, Some(st)) => client.query(
+                    "SELECT instance_json FROM process_instances WHERE status = $1 ORDER BY updated_at ASC",
+                    &[&st],
+                )?,
+                (None, None) => client.query(
+                    "SELECT instance_json FROM process_instances ORDER BY updated_at ASC",
+                    &[],
+                )?,
+            };
+            let mut instances = Vec::new();
+            for r in rows {
+                let val: Value = r.get(0);
+                let inst: ProcessInstance = serde_json::from_value(val)?;
+                instances.push(inst);
+            }
+            Ok(instances)
+        })
+    }
+
+    pub fn upsert_process_instance(&self, inst: &ProcessInstance) -> Result<(), RepositoryError> {
+        let inst = inst.clone();
+        self.with_client(move |client| {
+            let inst_json = serde_json::to_value(&inst)?;
+            let status_str = match inst.status {
+                ProcessStatus::Waiting => "Waiting",
+                ProcessStatus::Completed => "Completed",
+                ProcessStatus::Rejected => "Rejected",
+                ProcessStatus::Failed => "Failed",
+            };
+            client.execute(
+                "INSERT INTO process_instances (id, app_slug, rule_id, status, instance_json, updated_at)                  VALUES ($1, $2, $3, $4, $5, NOW())                  ON CONFLICT (id) DO UPDATE SET                     app_slug = EXCLUDED.app_slug,                     rule_id = EXCLUDED.rule_id,                     status = EXCLUDED.status,                     instance_json = EXCLUDED.instance_json,                     updated_at = NOW()",
+                &[
+                    &inst.id,
+                    &inst.app_slug,
+                    &inst.rule_id,
+                    &status_str,
+                    &inst_json,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn get_process_instance(&self, id: &str) -> Result<Option<ProcessInstance>, RepositoryError> {
+        let id = id.to_string();
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "SELECT instance_json FROM process_instances WHERE id = $1",
+                &[&id],
+            )?;
+            match row {
+                Some(r) => {
+                    let val: Value = r.get(0);
+                    let inst: ProcessInstance = serde_json::from_value(val)?;
+                    Ok(Some(inst))
+                }
+                None => Ok(None),
+            }
         })
     }
 

@@ -48,6 +48,7 @@ impl AutomationEngine {
                 cedar_authorized: false,
                 actions_executed: vec![],
                 effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
@@ -76,6 +77,7 @@ impl AutomationEngine {
                 cedar_authorized: false,
                 actions_executed: vec![],
                 effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
@@ -94,6 +96,7 @@ impl AutomationEngine {
                 cedar_authorized: false,
                 actions_executed: vec![],
                 effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
@@ -124,6 +127,7 @@ impl AutomationEngine {
                 cedar_authorized: false,
                 actions_executed: vec![],
                 effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
@@ -138,6 +142,7 @@ impl AutomationEngine {
                 cedar_authorized: true,
                 actions_executed: vec!["stopped: depth".to_string()],
                 effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
@@ -145,6 +150,7 @@ impl AutomationEngine {
         // 4. Dispatch Actions / Steps
         let mut executed = Vec::new();
         let mut effects = Vec::new();
+        let mut waiting_instance = None;
 
         if !rule.steps.is_empty() {
             for step in &rule.steps {
@@ -156,6 +162,33 @@ impl AutomationEngine {
                 match &step.kind {
                     StepKind::Service { action } => {
                         Self::dispatch_action(action, &mut executed, &mut effects);
+                    }
+                    StepKind::UserTask { role, prompt, .. } => {
+                        let record_id_opt = match record.get("id") {
+                            Some(Value::String(s)) => Some(s.clone()),
+                            Some(Value::Number(n)) => Some(n.to_string()),
+                            _ => None,
+                        };
+                        match record_id_opt {
+                            None => {
+                                executed.push("stopped: record has no id".to_string());
+                                break;
+                            }
+                            Some(rec_id) => {
+                                waiting_instance = Some(scaffoldry_core::ProcessInstance {
+                                    id: format!("{}:{}", rule.id, rec_id),
+                                    rule_id: rule.id.clone(),
+                                    app_slug: rule.app_slug.clone(),
+                                    record_id: rec_id,
+                                    status: scaffoldry_core::ProcessStatus::Waiting,
+                                    waiting_step_id: Some(step.id.clone()),
+                                    role: Some(role.clone()),
+                                    prompt: Some(prompt.clone()),
+                                    log: vec![],
+                                });
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -173,6 +206,7 @@ impl AutomationEngine {
             cedar_authorized: true,
             actions_executed: executed,
             effects,
+            waiting_instance,
             execution_timestamp: timestamp,
         }
     }

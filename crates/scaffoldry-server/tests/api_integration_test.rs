@@ -1769,3 +1769,206 @@ async fn test_automation_retrigger_loop_guard() {
     let updated = &records["test-slug"][0];
     assert_eq!(updated.data["status"], "Processed");
 }
+
+
+#[tokio::test]
+async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
+    let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("Failed to create ServerState"));
+    let app = build_app_with_state(state.clone()).expect("Failed to build router");
+
+    let app_slug = "physics-admissions";
+    let rule_id = "rule-candidate-decision";
+    let rec_id = "rec-cand-42";
+
+    let rule = scaffoldry_core::AutomationRule {
+        id: rule_id.to_string(),
+        app_slug: app_slug.to_string(),
+        name: "Candidate Review Flow".to_string(),
+        description: "Review flow".to_string(),
+        enabled: true,
+        trigger: scaffoldry_core::TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![],
+        steps: vec![
+            scaffoldry_core::ProcessStep {
+                id: "step-approval".to_string(),
+                when: vec![],
+                kind: scaffoldry_core::StepKind::UserTask {
+                    role: "faculty".to_string(),
+                    prompt: "Review candidate admission".to_string(),
+                    approve: vec![scaffoldry_core::ActionType::UpdateRecordStatus {
+                        new_status: "Approved".to_string(),
+                    }],
+                    reject: vec![scaffoldry_core::ActionType::UpdateRecordStatus {
+                        new_status: "Rejected".to_string(),
+                    }],
+                },
+            },
+        ],
+    };
+    state.automations.write().unwrap().insert(app_slug.to_string(), vec![rule]);
+
+    let initial_rec = json!({
+        "id": rec_id,
+        "status": "UnderReview"
+    });
+    state.records.write().unwrap().insert(
+        app_slug.to_string(),
+        vec![scaffoldry_server::state::DatasetRecord {
+            id: rec_id.to_string(),
+            app_slug: app_slug.to_string(),
+            data: initial_rec.clone(),
+            ceds_mapping: Default::default(),
+            is_ferpa_sensitive: false,
+            created_at: "".to_string(),
+        }],
+    );
+
+    let instance_id = format!("{rule_id}:{rec_id}");
+    let initial_instance = scaffoldry_core::ProcessInstance {
+        id: instance_id.clone(),
+        rule_id: rule_id.to_string(),
+        app_slug: app_slug.to_string(),
+        record_id: rec_id.to_string(),
+        status: scaffoldry_core::ProcessStatus::Waiting,
+        waiting_step_id: Some("step-approval".to_string()),
+        role: Some("faculty".to_string()),
+        prompt: Some("Review candidate admission".to_string()),
+        log: vec![],
+    };
+    state.process_instances.write().unwrap().insert(instance_id.clone(), initial_instance);
+
+    // 1. Student attempts decide -> 403 Forbidden
+    let student_token = login_user(&app, "student.smith@science.state.edu").await;
+    let resp = app
+        .clone()
+        .oneshot(
+            user_req(&student_token)
+                .method("POST")
+                .uri(format!("/api/v1/apps/{app_slug}/processes/{instance_id}/decide"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({"decision": "approve"})).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Instance must remain Waiting and record must not have changed
+    {
+        let instances = state.process_instances.read().unwrap();
+        assert_eq!(instances[&instance_id].status, scaffoldry_core::ProcessStatus::Waiting);
+        let records = state.records.read().unwrap();
+        assert_eq!(records[app_slug][0].data["status"], "UnderReview");
+    }
+
+    // 2. Faculty decides approve -> 200 OK
+    let faculty_token = login_user(&app, "prof.curie@science.state.edu").await;
+    let resp = app
+        .clone()
+        .oneshot(
+            user_req(&faculty_token)
+                .method("POST")
+                .uri(format!("/api/v1/apps/{app_slug}/processes/{instance_id}/decide"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({"decision": "approve"})).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Instance status must become Completed and waiting_step_id cleared
+    {
+        let instances = state.process_instances.read().unwrap();
+        let inst = &instances[&instance_id];
+        assert_eq!(inst.status, scaffoldry_core::ProcessStatus::Completed);
+        assert!(inst.waiting_step_id.is_none());
+        let records = state.records.read().unwrap();
+        assert_eq!(records[app_slug][0].data["status"], "Approved");
+    }
+
+    // Ledger must contain WorkflowRuleApproved entry with AC-03
+    {
+        let ledger = state.ledger.read().unwrap();
+        assert!(ledger.iter().any(|entry| {
+            entry.decision_type == scaffoldry_core::DecisionType::WorkflowRuleApproved
+                && entry.oscal_control_id == "AC-03"
+                && entry.rationale.contains(&instance_id)
+        }));
+    }
+}
+
+#[tokio::test]
+async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
+    let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("Failed to create ServerState"));
+
+    let app_slug = "physics-dup-check";
+    let rule_id = "rule-dup-check";
+    let rec_id = "rec-dup-99";
+
+    let rule = scaffoldry_core::AutomationRule {
+        id: rule_id.to_string(),
+        app_slug: app_slug.to_string(),
+        name: "Dup Check Flow".to_string(),
+        description: "User task flow".to_string(),
+        enabled: true,
+        trigger: scaffoldry_core::TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![],
+        steps: vec![
+            scaffoldry_core::ProcessStep {
+                id: "step-user".to_string(),
+                when: vec![],
+                kind: scaffoldry_core::StepKind::UserTask {
+                    role: "chair".to_string(),
+                    prompt: "Sign off".to_string(),
+                    approve: vec![],
+                    reject: vec![],
+                },
+            },
+        ],
+    };
+    state.automations.write().unwrap().insert(app_slug.to_string(), vec![rule]);
+
+    let record_val = json!({
+        "id": rec_id,
+        "status": "New"
+    });
+    let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: "dr.smith@university.edu".to_string(),
+        realm: "university.edu".to_string(),
+        affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+    };
+
+    let mut applied_ids = Vec::new();
+    scaffoldry_server::service::records::run_automations(
+        &state,
+        app_slug,
+        scaffoldry_core::TriggerEvent::RecordCreated,
+        &record_val,
+        &identity,
+        0,
+        &mut applied_ids,
+    );
+
+    let instances_after_first = state.process_instances.read().unwrap().len();
+    assert_eq!(instances_after_first, 1);
+
+    // Trigger second time with fresh applied_ids
+    let mut applied_ids_2 = Vec::new();
+    scaffoldry_server::service::records::run_automations(
+        &state,
+        app_slug,
+        scaffoldry_core::TriggerEvent::RecordCreated,
+        &record_val,
+        &identity,
+        0,
+        &mut applied_ids_2,
+    );
+
+    let instances_after_second = state.process_instances.read().unwrap().len();
+    assert_eq!(instances_after_second, 1);
+}

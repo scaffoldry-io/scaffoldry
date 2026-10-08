@@ -215,6 +215,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![],
+        steps: vec![],
     };
     state.persist_automation(rule.clone()).expect("Persist automation");
 

@@ -1,14 +1,19 @@
 use crate::guard::session_user;
 use crate::state::{lock_err, SharedState};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
 };
 use std::str::FromStr;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
-use scaffoldry_core::{AutomationRule, TriggerEvent, WorkflowExecutionResult};
+use scaffoldry_core::{
+    ActionEffect, ActionType, AutomationRule, DecisionType, ProcessInstance, ProcessStatus,
+    StepKind, TriggerEvent, WorkflowExecutionResult,
+};
+use crate::state::RecordDecisionInput;
+use serde::Deserialize;
 use scaffoldry_engine::{AppManifest, AutomationEngine};
 use scaffoldry_policy::PolicyDecision;
 use serde_json::{json, Value};
@@ -20,6 +25,8 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/publish", post(publish_app))
         .route("/apps/{slug}/automations", get(list_app_automations).post(create_app_automation))
         .route("/apps/{slug}/automations/simulate", post(simulate_app_automation))
+        .route("/apps/{slug}/processes", get(list_app_processes))
+        .route("/apps/{slug}/processes/{id}/decide", post(decide_app_process))
 }
 
 async fn create_app_in_workspace(
@@ -237,3 +244,175 @@ async fn simulate_app_automation(
     Ok(Json(results))
 }
 
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ProcessListQuery {
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProcessDecisionPayload {
+    pub decision: String,
+}
+
+async fn list_app_processes(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Query(query): Query<ProcessListQuery>,
+) -> Result<Json<Vec<ProcessInstance>>, (StatusCode, Json<Value>)> {
+    let _user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+    let instances = state.process_instances.read().map_err(|_| lock_err())?;
+    let filtered: Vec<ProcessInstance> = instances
+        .values()
+        .filter(|inst| {
+            if inst.app_slug != slug {
+                return false;
+            }
+            if let Some(ref st) = query.status {
+                let status_str = match inst.status {
+                    ProcessStatus::Waiting => "Waiting",
+                    ProcessStatus::Completed => "Completed",
+                    ProcessStatus::Rejected => "Rejected",
+                    ProcessStatus::Failed => "Failed",
+                };
+                if !status_str.eq_ignore_ascii_case(st) {
+                    return false;
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect();
+    Ok(Json(filtered))
+}
+
+async fn decide_app_process(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((slug, id)): Path<(String, String)>,
+    Json(payload): Json<ProcessDecisionPayload>,
+) -> Result<Json<ProcessInstance>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    let decision = payload.decision.to_lowercase();
+    if decision != "approve" && decision != "reject" {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "Decision must be 'approve' or 'reject'"}))));
+    }
+
+    let mut instance = {
+        let instances = state.process_instances.read().map_err(|_| lock_err())?;
+        instances.get(&id).cloned().ok_or_else(|| {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "Process instance not found"})))
+        })?
+    };
+
+    if instance.app_slug != slug {
+        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Process instance not found in this app"}))));
+    }
+
+    if instance.status != ProcessStatus::Waiting {
+        return Err((StatusCode::CONFLICT, Json(json!({"error": "Process instance is not in Waiting status"}))));
+    }
+
+    // Authorize via Cedar
+    let affiliation = EduPersonAffiliation::from_str(&user.affiliation).unwrap_or(EduPersonAffiliation::Faculty);
+    let realm = user.eppn.split('@').nth(1).unwrap_or("university.edu");
+    let identity = EduPersonIdentity {
+        eppn: user.eppn.clone(),
+        realm: realm.to_string(),
+        affiliations: vec![affiliation],
+    };
+
+    let auth_res = state.policy_engine.authorize_record_action(
+        &identity,
+        "approve",
+        &instance.app_slug,
+        "institutional",
+        false,
+    );
+    let allowed = match auth_res {
+        Ok(res) => res.decision == PolicyDecision::Allow,
+        Err(_) => false,
+    };
+    if !allowed {
+        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden"}))));
+    }
+
+    // Load rule and waiting step
+    let waiting_step_id = instance.waiting_step_id.clone().unwrap_or_default();
+    let mut field_effects = Vec::new();
+
+    {
+        let automations = state.automations.read().map_err(|_| lock_err())?;
+        if let Some(rules) = automations.get(&slug) {
+            if let Some(rule) = rules.iter().find(|r| r.id == instance.rule_id) {
+                if let Some(step) = rule.steps.iter().find(|s| s.id == waiting_step_id) {
+                    if let StepKind::UserTask { approve, reject, .. } = &step.kind {
+                        let actions = if decision == "approve" { approve } else { reject };
+                        for act in actions {
+                            match act {
+                                ActionType::UpdateRecordStatus { new_status } => {
+                                    field_effects.push(ActionEffect::SetFields {
+                                        fields: vec![("status".into(), new_status.clone())],
+                                    });
+                                }
+                                ActionType::NotifyCollaborator { role, message_template } => {
+                                    instance.log.push(format!("Notified role '{role}': {message_template}"));
+                                }
+                                ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
+                                    instance.log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
+                                }
+                                ActionType::WebhookDispatch { target_url } => {
+                                    instance.log.push(format!("Webhook not sent: {target_url}"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply field effects and write record
+    if !field_effects.is_empty() {
+        if let Ok(mut records) = state.records.write() {
+            if let Some(app_records) = records.get_mut(&slug) {
+                if let Some(rec) = app_records.iter_mut().find(|r| r.id == instance.record_id) {
+                    scaffoldry_core::workflow::apply_field_effects(&mut rec.data, &field_effects);
+                }
+            }
+        }
+    }
+
+    // Append ledger entry
+    let decision_payload = json!({
+        "instance_id": instance.id,
+        "decision": decision,
+    });
+    let _ = state.append_ledger_entry(RecordDecisionInput {
+        principal: user.eppn.clone(),
+        organization_code: "institutional".to_string(),
+        app_slug: Some(instance.app_slug.clone()),
+        decision_type: DecisionType::WorkflowRuleApproved,
+        oscal_control_id: "AC-03".to_string(),
+        rationale: format!("{decision} by {} on {}", user.eppn, instance.id),
+        payload: &decision_payload,
+    });
+
+    // Update instance status and clear waiting_step_id
+    if decision == "approve" {
+        instance.status = ProcessStatus::Completed;
+    } else {
+        instance.status = ProcessStatus::Rejected;
+    }
+    instance.waiting_step_id = None;
+
+    state.persist_process_instance(instance.clone()).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
+    })?;
+
+    Ok(Json(instance))
+}

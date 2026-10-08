@@ -75,7 +75,34 @@ pub struct ProcessStep {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StepKind {
     Service { action: ActionType },
-    // UserTask arrives in phase 4. Do not add it in phase 3.
+    UserTask {
+        role: String,
+        prompt: String,
+        approve: Vec<ActionType>,
+        reject: Vec<ActionType>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ProcessStatus {
+    Waiting,
+    Completed,
+    Rejected,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProcessInstance {
+    pub id: String,            // "{rule_id}:{record_id}"
+    pub rule_id: String,
+    pub app_slug: String,
+    pub record_id: String,
+    pub status: ProcessStatus, // Waiting, Completed, Rejected, Failed
+    pub waiting_step_id: Option<String>,
+    pub role: Option<String>,
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub log: Vec<String>,
 }
 
 pub fn effects_retrigger(effects: &[ActionEffect]) -> Option<TriggerEvent> {
@@ -119,5 +146,7 @@ pub struct WorkflowExecutionResult {
     pub actions_executed: Vec<String>,
     #[serde(default)]
     pub effects: Vec<ActionEffect>,
+    #[serde(default)]
+    pub waiting_instance: Option<ProcessInstance>,
     pub execution_timestamp: String,
 }

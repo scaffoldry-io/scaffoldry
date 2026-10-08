@@ -4,7 +4,7 @@ use chrono::Utc;
 use scaffoldry_core::{
     verify_ledger_chain, ActionType, AutomationRule, ConditionOperator, DatasetField,
     DatasetRelationship, DecisionType, FieldPredicate, LedgerEntry, LedgerError,
-    NewLedgerEntryParams, PublishedDataset, RelationshipType, TriggerEvent,
+    NewLedgerEntryParams, ProcessInstance, PublishedDataset, RelationshipType, TriggerEvent,
     GENESIS_PREVIOUS_HASH,
 };
 use scaffoldry_engine::{AppManifest, ManifestEngine};
@@ -123,6 +123,7 @@ pub struct ServerState {
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
     pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
+    pub process_instances: RwLock<HashMap<String, ProcessInstance>>,
     pub ledger: RwLock<Vec<LedgerEntry>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
@@ -142,6 +143,7 @@ impl ServerState {
         let mut groups = HashMap::new();
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
+        let mut process_instances = HashMap::new();
 
         let now = Utc::now().to_rfc3339();
 
@@ -617,6 +619,13 @@ impl ServerState {
                 }
             }
 
+            // Load persisted process instances
+            if let Ok(persisted_instances) = repo.list_process_instances(None, None) {
+                for inst in persisted_instances {
+                    process_instances.insert(inst.id.clone(), inst);
+                }
+            }
+
             // Load persisted SCIM users and groups
             if let Ok(persisted_users) = repo.list_scim_users() {
                 for u in persisted_users {
@@ -664,6 +673,7 @@ impl ServerState {
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
             automations: RwLock::new(automations),
+            process_instances: RwLock::new(process_instances),
             ledger: RwLock::new(ledger),
             engine: RwLock::new(engine),
             policy_engine,
@@ -763,6 +773,14 @@ impl ServerState {
         self.automations.write().map_err(|_| "automations lock poisoned")?.entry(rule.app_slug.clone()).or_default().push(rule.clone());
         if let Some(ref repo) = self.repository {
             repo.upsert_workflow_automation(&rule)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_process_instance(&self, inst: ProcessInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.process_instances.write().map_err(|_| "process_instances lock poisoned")?.insert(inst.id.clone(), inst.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_process_instance(&inst)?;
         }
         Ok(())
     }

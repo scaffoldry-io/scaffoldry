@@ -289,6 +289,32 @@ impl ScaffoldryPolicyEngine {
                 principal.scoped_affiliation != "faculty" &&
                 principal.scoped_affiliation != "staff"
             };
+
+            // 20. Permit faculty, staff, and central_admin to approve workflow decisions
+            permit (
+                principal,
+                action == Action::"approve",
+                resource
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                principal.scoped_affiliation == "compliance" ||
+                principal.scoped_affiliation == "faculty" ||
+                principal.scoped_affiliation == "staff"
+            };
+
+            // 21. Forbid students and affiliates from approving workflow decisions
+            forbid (
+                principal,
+                action == Action::"approve",
+                resource
+            )
+            when {
+                principal.scoped_affiliation != "central_admin" &&
+                principal.scoped_affiliation != "compliance" &&
+                principal.scoped_affiliation != "faculty" &&
+                principal.scoped_affiliation != "staff"
+            };
         "#;
         Self::new(default_policies)
     }
