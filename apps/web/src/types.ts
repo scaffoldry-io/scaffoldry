@@ -347,6 +347,31 @@ export type WorkflowActionItem =
   | { type: "CreateLedgerAuditEntry"; summary: string; oscal_control: string }
   | { type: "WebhookDispatch"; target_url: string };
 
+export type ProcessStepKind =
+  | {
+      Service: {
+        action:
+          | { NotifyCollaborator: { role: string; message_template: string } }
+          | { UpdateRecordStatus: { new_status: string } }
+          | { CreateLedgerAuditEntry: { summary: string; oscal_control: string } }
+          | { WebhookDispatch: { target_url: string } };
+      };
+    }
+  | {
+      UserTask: {
+        role: string;
+        prompt: string;
+        approve: any[];
+        reject: any[];
+      };
+    };
+
+export interface ProcessStepItem {
+  id: string;
+  when: WorkflowPredicate[];
+  kind: ProcessStepKind;
+}
+
 export interface WorkflowAutomationRule {
   id: string;
   app_slug: string;
@@ -357,6 +382,7 @@ export interface WorkflowAutomationRule {
   cedar_policy_guard?: string;
   predicates: WorkflowPredicate[];
   actions: WorkflowActionItem[];
+  steps?: ProcessStepItem[];
 }
 
 export interface LedgerEntryItem {

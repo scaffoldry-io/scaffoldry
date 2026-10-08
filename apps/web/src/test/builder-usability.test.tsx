@@ -1,6 +1,7 @@
+import { WorkflowBuilder } from "../WorkflowBuilder";
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { AppBuilder } from "../AppBuilder";
 import { PublishedAppView } from "../PublishedAppView";
@@ -1292,6 +1293,54 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       // Close modal
       fireEvent.click(screen.getByTestId("close-link-modal-btn"));
       expect(screen.queryByTestId("link-characteristics-modal")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Phase 6 — the builder tells the truth", () => {
+    it("click simulate calls fetch with /api/v1/apps/{slug}/automations/simulate", async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ rule_id: "rule-1", trigger_matched: true }],
+        });
+      });
+      global.fetch = fetchMock;
+
+      render(
+        <WorkflowBuilder
+          appSlug="physics-grants"
+          appTitle="Physics Grants"
+          fields={[]}
+          rules={[
+            {
+              id: "rule-1",
+              app_slug: "physics-grants",
+              name: "Test Rule",
+              description: "A test rule",
+              enabled: true,
+              trigger: { type: "RecordCreated" },
+              predicates: [],
+              actions: [],
+            },
+          ]}
+          onSaveRule={vi.fn()}
+          onDeleteRule={vi.fn()}
+          onToggleRule={vi.fn()}
+        />
+      );
+
+      const simulateBtn = screen.getByText("▶ Test Simulation");
+      fireEvent.click(simulateBtn);
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/v1/apps/physics-grants/automations/simulate",
+          expect.objectContaining({
+            method: "POST",
+          })
+        );
+      });
     });
   });
 });
