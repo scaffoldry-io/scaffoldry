@@ -319,6 +319,7 @@ impl ServerState {
                         oscal_control: "AC-03".to_string(),
                     },
                 ],
+                steps: vec![],
             }],
         );
 

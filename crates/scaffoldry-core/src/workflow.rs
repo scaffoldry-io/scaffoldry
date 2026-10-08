@@ -65,6 +65,28 @@ pub fn apply_field_effects(record: &mut serde_json::Value, effects: &[ActionEffe
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProcessStep {
+    pub id: String,
+    #[serde(default)]
+    pub when: Vec<FieldPredicate>, // empty = always; otherwise AND
+    pub kind: StepKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum StepKind {
+    Service { action: ActionType },
+    // UserTask arrives in phase 4. Do not add it in phase 3.
+}
+
+pub fn effects_retrigger(effects: &[ActionEffect]) -> Option<TriggerEvent> {
+    if effects.iter().any(|e| matches!(e, ActionEffect::SetFields { .. })) {
+        Some(TriggerEvent::RecordUpdated)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ActionType {
     NotifyCollaborator { role: String, message_template: String },
     UpdateRecordStatus { new_status: String },
@@ -83,6 +105,8 @@ pub struct AutomationRule {
     pub cedar_policy_guard: Option<String>,
     pub predicates: Vec<FieldPredicate>,
     pub actions: Vec<ActionType>,
+    #[serde(default)]
+    pub steps: Vec<ProcessStep>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

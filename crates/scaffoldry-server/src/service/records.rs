@@ -4,7 +4,8 @@ use crate::service::ServiceError;
 use crate::state::{AuthUser, DatasetRecord, SharedState};
 use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
-use scaffoldry_engine::EngineError;
+use scaffoldry_core::TriggerEvent;
+use scaffoldry_engine::{AutomationEngine, EngineError};
 use serde_json::Value;
 
 pub fn create_record(
@@ -73,7 +74,25 @@ pub fn create_record(
             .push(record.clone());
     }
 
-    Ok(record)
+    let mut record_val = record.data.clone();
+    if let Some(map) = record_val.as_object_mut() {
+        map.insert("id".to_string(), Value::String(record.id.clone()));
+    }
+    let mut applied_rule_ids = Vec::new();
+    run_automations(
+        state,
+        app_slug,
+        TriggerEvent::RecordCreated,
+        &record_val,
+        &identity,
+        0,
+        &mut applied_rule_ids,
+    );
+
+    // Reload the record in case automations updated it
+    let final_record = get_record(caller, app_slug, &record.id, state).unwrap_or(record);
+
+    Ok(final_record)
 }
 
 pub fn list_records(
@@ -141,7 +160,45 @@ pub fn update_record(
         }
     }
 
-    Ok(record.clone())
+    let updated_rec = record.clone();
+    drop(records); // release lock before automations
+
+    let affiliation = match _caller.affiliation.to_lowercase().as_str() {
+        "faculty" => EduPersonAffiliation::Faculty,
+        "student" => EduPersonAffiliation::Student,
+        "staff" => EduPersonAffiliation::Staff,
+        "employee" => EduPersonAffiliation::Employee,
+        _ => EduPersonAffiliation::Member,
+    };
+    let realm = _caller
+        .eppn
+        .split('@')
+        .nth(1)
+        .unwrap_or("university.edu")
+        .to_string();
+    let identity = EduPersonIdentity {
+        eppn: _caller.eppn.clone(),
+        realm,
+        affiliations: vec![affiliation],
+    };
+
+    let mut record_val = updated_rec.data.clone();
+    if let Some(map) = record_val.as_object_mut() {
+        map.insert("id".to_string(), Value::String(updated_rec.id.clone()));
+    }
+    let mut applied_rule_ids = Vec::new();
+    run_automations(
+        state,
+        app_slug,
+        TriggerEvent::RecordUpdated,
+        &record_val,
+        &identity,
+        0,
+        &mut applied_rule_ids,
+    );
+
+    let final_rec = get_record(_caller, app_slug, id, state).unwrap_or(updated_rec);
+    Ok(final_rec)
 }
 
 pub fn delete_record(
@@ -163,4 +220,67 @@ pub fn delete_record(
         return Err(ServiceError::NotFound(format!("Record '{id}' not found")));
     }
     Ok(())
+}
+
+pub fn run_automations(
+    state: &SharedState,
+    app_slug: &str,
+    event: TriggerEvent,
+    record: &Value,
+    identity: &EduPersonIdentity,
+    depth: u8,
+    applied_rule_ids: &mut Vec<String>,
+) {
+    if depth >= 3 {
+        return;
+    }
+
+    let rules = {
+        let automations = match state.automations.read() {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        automations.get(app_slug).cloned().unwrap_or_default()
+    };
+
+    let auto_engine = AutomationEngine::new(state.policy_engine.clone());
+    let mut modified = record.clone();
+    let mut all_effects = Vec::new();
+
+    for rule in &rules {
+        if !rule.enabled || applied_rule_ids.contains(&rule.id) {
+            continue;
+        }
+
+        let res = auto_engine.evaluate_rule(rule, &event, &modified, identity, depth);
+        if res.trigger_matched && res.conditions_met && res.cedar_authorized && !res.effects.is_empty() {
+            applied_rule_ids.push(rule.id.clone());
+            scaffoldry_core::workflow::apply_field_effects(&mut modified, &res.effects);
+            all_effects.extend(res.effects);
+        }
+    }
+
+    if modified != *record {
+        if let Some(record_id) = record.get("id").and_then(|v| v.as_str()) {
+            if let Ok(mut records) = state.records.write() {
+                if let Some(app_records) = records.get_mut(app_slug) {
+                    if let Some(rec) = app_records.iter_mut().find(|r| r.id == record_id) {
+                        rec.data = modified.clone();
+                    }
+                }
+            }
+        }
+
+        if let Some(retrigger_event) = scaffoldry_core::workflow::effects_retrigger(&all_effects) {
+            run_automations(
+                state,
+                app_slug,
+                retrigger_event,
+                &modified,
+                identity,
+                depth + 1,
+                applied_rule_ids,
+            );
+        }
+    }
 }

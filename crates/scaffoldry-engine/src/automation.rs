@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_core::{
     ActionEffect, ActionType, AutomationRule, ConditionOperator, FieldPredicate,
-    TriggerEvent, WorkflowExecutionResult,
+    StepKind, TriggerEvent, WorkflowExecutionResult,
 };
 use scaffoldry_policy::ScaffoldryPolicyEngine;
 use serde_json::Value;
@@ -32,6 +32,7 @@ impl AutomationEngine {
         event: &TriggerEvent,
         record: &Value,
         identity: &EduPersonIdentity,
+        depth: u8,
     ) -> WorkflowExecutionResult {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -127,37 +128,40 @@ impl AutomationEngine {
             };
         }
 
-        // 4. Dispatch Actions
+        // Depth backstop check
+        if depth >= 3 {
+            return WorkflowExecutionResult {
+                rule_id: rule.id.clone(),
+                rule_name: rule.name.clone(),
+                trigger_matched: true,
+                conditions_met: true,
+                cedar_authorized: true,
+                actions_executed: vec!["stopped: depth".to_string()],
+                effects: vec![],
+                execution_timestamp: timestamp,
+            };
+        }
+
+        // 4. Dispatch Actions / Steps
         let mut executed = Vec::new();
         let mut effects = Vec::new();
-        for action in &rule.actions {
-            match action {
-                ActionType::NotifyCollaborator { role, message_template } => {
-                    executed.push(format!("Notified role '{role}': {message_template}"));
-                    effects.push(ActionEffect::Notify {
-                        role: role.clone(),
-                        message: message_template.clone(),
-                    });
+
+        if !rule.steps.is_empty() {
+            for step in &rule.steps {
+                let when_matches = step.when.is_empty()
+                    || step.when.iter().all(|pred| Self::evaluate_predicate(pred, record));
+                if !when_matches {
+                    continue;
                 }
-                ActionType::UpdateRecordStatus { new_status } => {
-                    executed.push(format!("Updated record status to '{new_status}'"));
-                    effects.push(ActionEffect::SetFields {
-                        fields: vec![("status".into(), new_status.clone())],
-                    });
+                match &step.kind {
+                    StepKind::Service { action } => {
+                        Self::dispatch_action(action, &mut executed, &mut effects);
+                    }
                 }
-                ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
-                    executed.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
-                    effects.push(ActionEffect::LedgerNote {
-                        summary: summary.clone(),
-                        oscal_control: oscal_control.clone(),
-                    });
-                }
-                ActionType::WebhookDispatch { target_url } => {
-                    executed.push(format!("Webhook not sent: {target_url}"));
-                    effects.push(ActionEffect::Rejected {
-                        reason: format!("webhook disabled: {target_url}"),
-                    });
-                }
+            }
+        } else {
+            for action in &rule.actions {
+                Self::dispatch_action(action, &mut executed, &mut effects);
             }
         }
 
@@ -170,6 +174,42 @@ impl AutomationEngine {
             actions_executed: executed,
             effects,
             execution_timestamp: timestamp,
+        }
+    }
+
+
+    fn dispatch_action(
+        action: &ActionType,
+        executed: &mut Vec<String>,
+        effects: &mut Vec<ActionEffect>,
+    ) {
+        match action {
+            ActionType::NotifyCollaborator { role, message_template } => {
+                executed.push(format!("Notified role '{role}': {message_template}"));
+                effects.push(ActionEffect::Notify {
+                    role: role.clone(),
+                    message: message_template.clone(),
+                });
+            }
+            ActionType::UpdateRecordStatus { new_status } => {
+                executed.push(format!("Updated record status to '{new_status}'"));
+                effects.push(ActionEffect::SetFields {
+                    fields: vec![("status".into(), new_status.clone())],
+                });
+            }
+            ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
+                executed.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
+                effects.push(ActionEffect::LedgerNote {
+                    summary: summary.clone(),
+                    oscal_control: oscal_control.clone(),
+                });
+            }
+            ActionType::WebhookDispatch { target_url } => {
+                executed.push(format!("Webhook not sent: {target_url}"));
+                effects.push(ActionEffect::Rejected {
+                    reason: format!("webhook disabled: {target_url}"),
+                });
+            }
         }
     }
 

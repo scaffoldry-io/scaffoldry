@@ -37,6 +37,7 @@ fn test_workflow_automation_evaluation_and_actions() {
                 oscal_control: "AC-03".to_string(),
             },
         ],
+        steps: vec![],
     };
 
     // 1. Record with GPA 3.92 (satisfies predicate > 3.85)
@@ -55,6 +56,7 @@ fn test_workflow_automation_evaluation_and_actions() {
             realm: "science.state.edu".to_string(),
             affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
         },
+        0,
     );
 
     assert!(result.trigger_matched);
@@ -80,6 +82,7 @@ fn test_workflow_automation_evaluation_and_actions() {
             realm: "science.state.edu".to_string(),
             affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
         },
+        0,
     );
 
     assert!(result2.trigger_matched);
@@ -117,6 +120,7 @@ fn webhook_is_not_a_success() {
                 target_url: "https://example.com/webhook".to_string(),
             },
         ],
+        steps: vec![],
     };
 
     let record = json!({ "id": "rec-1" });
@@ -129,6 +133,7 @@ fn webhook_is_not_a_success() {
             realm: "university.edu".to_string(),
             affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
         },
+        0,
     );
 
     assert!(result.trigger_matched);
@@ -163,6 +168,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         actions: vec![ActionType::UpdateRecordStatus {
             new_status: "Verified".to_string(),
         }],
+        steps: vec![],
     };
 
     let faculty_identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
@@ -186,6 +192,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         &TriggerEvent::RecordCreated,
         &record,
         &faculty_identity,
+        0,
     );
     assert!(faculty_res.cedar_authorized);
     assert!(!faculty_res.effects.is_empty());
@@ -196,6 +203,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         &TriggerEvent::RecordCreated,
         &record,
         &student_identity,
+        0,
     );
     assert!(!student_res.cedar_authorized);
     assert!(student_res.effects.is_empty());
@@ -213,13 +221,131 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         actions: vec![ActionType::UpdateRecordStatus {
             new_status: "Verified".to_string(),
         }],
+        steps: vec![],
     };
     let unguard_res = automation_engine.evaluate_rule(
         &rule_no_guard,
         &TriggerEvent::RecordCreated,
         &record,
         &faculty_identity,
+        0,
     );
     assert!(unguard_res.cedar_authorized);
     assert!(!unguard_res.effects.is_empty());
+}
+
+#[test]
+fn test_steps_evaluation_order_and_when_predicate() {
+    let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        .expect("Failed to initialize policy engine");
+    let automation_engine = AutomationEngine::new(policy_engine);
+
+    let rule = AutomationRule {
+        id: "rule-multi-step".to_string(),
+        app_slug: "physics-review".to_string(),
+        name: "Two Step Evaluation".to_string(),
+        description: "Evaluates steps with when predicates in order".to_string(),
+        enabled: true,
+        trigger: TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![],
+        steps: vec![
+            scaffoldry_core::ProcessStep {
+                id: "step-1".to_string(),
+                when: vec![scaffoldry_core::FieldPredicate {
+                    field_name: "gpa".to_string(),
+                    operator: scaffoldry_core::ConditionOperator::GreaterThan,
+                    expected_value: "3.85".to_string(),
+                }],
+                kind: scaffoldry_core::StepKind::Service {
+                    action: ActionType::UpdateRecordStatus {
+                        new_status: "Approved".to_string(),
+                    },
+                },
+            },
+            scaffoldry_core::ProcessStep {
+                id: "step-2".to_string(),
+                when: vec![scaffoldry_core::FieldPredicate {
+                    field_name: "gpa".to_string(),
+                    operator: scaffoldry_core::ConditionOperator::LessThan,
+                    expected_value: "1".to_string(),
+                }],
+                kind: scaffoldry_core::StepKind::Service {
+                    action: ActionType::UpdateRecordStatus {
+                        new_status: "Denied".to_string(),
+                    },
+                },
+            },
+        ],
+    };
+
+    let faculty_identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: "dr.curie@science.state.edu".to_string(),
+        realm: "science.state.edu".to_string(),
+        affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+    };
+
+    let mut record = json!({
+        "id": "rec-1",
+        "gpa": 3.92,
+        "status": "Draft"
+    });
+
+    let res = automation_engine.evaluate_rule(
+        &rule,
+        &TriggerEvent::RecordCreated,
+        &record,
+        &faculty_identity,
+        0,
+    );
+
+    assert!(res.trigger_matched);
+    assert_eq!(res.effects.len(), 1);
+    scaffoldry_core::apply_field_effects(&mut record, &res.effects);
+    assert_eq!(record["status"], "Approved");
+}
+
+#[test]
+fn test_depth_backstop_stops_at_depth_3() {
+    let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        .expect("Failed to initialize policy engine");
+    let automation_engine = AutomationEngine::new(policy_engine);
+
+    let rule = AutomationRule {
+        id: "rule-depth-test".to_string(),
+        app_slug: "physics-review".to_string(),
+        name: "Depth Test Rule".to_string(),
+        description: "Rule to test depth backstop".to_string(),
+        enabled: true,
+        trigger: TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![ActionType::UpdateRecordStatus {
+            new_status: "Approved".to_string(),
+        }],
+        steps: vec![],
+    };
+
+    let faculty_identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: "dr.curie@science.state.edu".to_string(),
+        realm: "science.state.edu".to_string(),
+        affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+    };
+
+    let record = json!({ "id": "rec-1", "status": "Draft" });
+
+    let res = automation_engine.evaluate_rule(
+        &rule,
+        &TriggerEvent::RecordCreated,
+        &record,
+        &faculty_identity,
+        3,
+    );
+
+    assert!(res.trigger_matched);
+    assert!(res.conditions_met);
+    assert!(res.cedar_authorized);
+    assert!(res.effects.is_empty());
+    assert_eq!(res.actions_executed, vec!["stopped: depth".to_string()]);
 }

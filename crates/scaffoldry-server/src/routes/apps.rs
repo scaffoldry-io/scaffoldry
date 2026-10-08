@@ -231,7 +231,7 @@ async fn simulate_app_automation(
 
     let results: Vec<WorkflowExecutionResult> = rules
         .iter()
-        .map(|r| auto_engine.evaluate_rule(r, &event, &record, &identity))
+        .map(|r| auto_engine.evaluate_rule(r, &event, &record, &identity, 0))
         .collect();
 
     Ok(Json(results))

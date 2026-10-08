@@ -1708,3 +1708,64 @@ async fn test_workspace_sharing_security_and_configuration() {
 
 
 
+
+#[tokio::test]
+async fn test_automation_retrigger_loop_guard() {
+    let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("Failed to create ServerState"));
+
+    let loop_rule = scaffoldry_core::AutomationRule {
+        id: "rule-loop-guard".to_string(),
+        app_slug: "test-slug".to_string(),
+        name: "Loop Guard Rule".to_string(),
+        description: "Rule watching update and updating status".to_string(),
+        enabled: true,
+        trigger: scaffoldry_core::TriggerEvent::RecordUpdated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![scaffoldry_core::ActionType::UpdateRecordStatus {
+            new_status: "Processed".to_string(),
+        }],
+        steps: vec![],
+    };
+
+    state.automations.write().unwrap().insert("test-slug".to_string(), vec![loop_rule]);
+
+    let initial_rec = json!({
+        "id": "rec-1",
+        "status": "Pending"
+    });
+    state.records.write().unwrap().insert(
+        "test-slug".to_string(),
+        vec![scaffoldry_server::state::DatasetRecord {
+            id: "rec-1".to_string(),
+            app_slug: "test-slug".to_string(),
+            data: initial_rec.clone(),
+            ceds_mapping: Default::default(),
+            is_ferpa_sensitive: false,
+            created_at: "".to_string(),
+        }],
+    );
+
+    let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: "dr.smith@university.edu".to_string(),
+        realm: "university.edu".to_string(),
+        affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+    };
+
+    let mut applied_ids = Vec::new();
+    scaffoldry_server::service::records::run_automations(
+        &state,
+        "test-slug",
+        scaffoldry_core::TriggerEvent::RecordUpdated,
+        &initial_rec,
+        &identity,
+        0,
+        &mut applied_ids,
+    );
+
+    // Rule was applied exactly once in the re-entry chain due to loop guard
+    assert_eq!(applied_ids, vec!["rule-loop-guard".to_string()]);
+    let records = state.records.read().unwrap();
+    let updated = &records["test-slug"][0];
+    assert_eq!(updated.data["status"], "Processed");
+}
