@@ -50,7 +50,11 @@ fn test_workflow_automation_evaluation_and_actions() {
         &rule,
         &TriggerEvent::StatusChanged { to_status: "Approved".to_string() },
         &candidate_record,
-        "dr.curie@science.state.edu",
+        &scaffoldry_core::standards::eduperson::EduPersonIdentity {
+            eppn: "dr.curie@science.state.edu".to_string(),
+            realm: "science.state.edu".to_string(),
+            affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+        },
     );
 
     assert!(result.trigger_matched);
@@ -71,7 +75,11 @@ fn test_workflow_automation_evaluation_and_actions() {
         &rule,
         &TriggerEvent::StatusChanged { to_status: "Approved".to_string() },
         &candidate_lower_gpa,
-        "dr.curie@science.state.edu",
+        &scaffoldry_core::standards::eduperson::EduPersonIdentity {
+            eppn: "dr.curie@science.state.edu".to_string(),
+            realm: "science.state.edu".to_string(),
+            affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+        },
     );
 
     assert!(result2.trigger_matched);
@@ -116,7 +124,11 @@ fn webhook_is_not_a_success() {
         &rule,
         &TriggerEvent::RecordCreated,
         &record,
-        "admin@university.edu",
+        &scaffoldry_core::standards::eduperson::EduPersonIdentity {
+            eppn: "admin@university.edu".to_string(),
+            realm: "university.edu".to_string(),
+            affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+        },
     );
 
     assert!(result.trigger_matched);
@@ -130,4 +142,84 @@ fn webhook_is_not_a_success() {
             reason: "webhook disabled: https://example.com/webhook".to_string()
         }]
     );
+}
+
+#[test]
+fn test_cedar_decides_faculty_allowed_and_student_denied() {
+    let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        .expect("Failed to initialize policy engine");
+    let automation_engine = AutomationEngine::new(policy_engine);
+
+    // Documented pair: Action::"record_decision" with is_ferpa_sensitive distinguishes faculty (permit) and student (forbid) under default Cedar policies
+    let rule_ferpa = AutomationRule {
+        id: "rule-ferpa".to_string(),
+        app_slug: "physics-review".to_string(),
+        name: "FERPA Protected Rule".to_string(),
+        description: "Rule requiring FERPA authorization".to_string(),
+        enabled: true,
+        trigger: TriggerEvent::RecordCreated,
+        cedar_policy_guard: Some("policy-ferpa-34cfr99".to_string()),
+        predicates: vec![],
+        actions: vec![ActionType::UpdateRecordStatus {
+            new_status: "Verified".to_string(),
+        }],
+    };
+
+    let faculty_identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: "dr.curie@science.state.edu".to_string(),
+        realm: "science.state.edu".to_string(),
+        affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
+    };
+
+    let student_identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: "student123@science.state.edu".to_string(),
+        realm: "science.state.edu".to_string(),
+        affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Student],
+    };
+
+    let record = json!({ "id": "rec-1", "status": "Pending" });
+
+    // 1. Faculty identity, rule with cedar_policy_guard: Some("policy-ferpa-34cfr99"),
+    // record not ferpa-blocked by default policies: cedar_authorized is true.
+    let faculty_res = automation_engine.evaluate_rule(
+        &rule_ferpa,
+        &TriggerEvent::RecordCreated,
+        &record,
+        &faculty_identity,
+    );
+    assert!(faculty_res.cedar_authorized);
+    assert!(!faculty_res.effects.is_empty());
+
+    // 2. Student identity on that same rule: cedar_authorized is false and effects is empty.
+    let student_res = automation_engine.evaluate_rule(
+        &rule_ferpa,
+        &TriggerEvent::RecordCreated,
+        &record,
+        &student_identity,
+    );
+    assert!(!student_res.cedar_authorized);
+    assert!(student_res.effects.is_empty());
+
+    // 3. Rule with cedar_policy_guard: None still runs for a faculty identity.
+    let rule_no_guard = AutomationRule {
+        id: "rule-no-guard".to_string(),
+        app_slug: "physics-review".to_string(),
+        name: "Unguarded Rule".to_string(),
+        description: "Rule with no guard".to_string(),
+        enabled: true,
+        trigger: TriggerEvent::RecordCreated,
+        cedar_policy_guard: None,
+        predicates: vec![],
+        actions: vec![ActionType::UpdateRecordStatus {
+            new_status: "Verified".to_string(),
+        }],
+    };
+    let unguard_res = automation_engine.evaluate_rule(
+        &rule_no_guard,
+        &TriggerEvent::RecordCreated,
+        &record,
+        &faculty_identity,
+    );
+    assert!(unguard_res.cedar_authorized);
+    assert!(!unguard_res.effects.is_empty());
 }

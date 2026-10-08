@@ -6,6 +6,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use std::str::FromStr;
+use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::{AutomationRule, TriggerEvent, WorkflowExecutionResult};
 use scaffoldry_engine::{AppManifest, AutomationEngine};
 use scaffoldry_policy::PolicyDecision;
@@ -213,7 +215,15 @@ async fn simulate_app_automation(
     let event: TriggerEvent = serde_json::from_value(payload["event"].clone())
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": format!("Invalid trigger event: {e}")}))))?;
     let record = payload.get("record").cloned().unwrap_or(json!({}));
-    let principal = payload["principal"].as_str().unwrap_or("dr.smith@university.edu");
+    let principal_eppn = payload["principal"].as_str().unwrap_or("dr.smith@university.edu");
+    let aff_str = payload["affiliation"].as_str().unwrap_or("faculty");
+    let affiliation = EduPersonAffiliation::from_str(aff_str).unwrap_or(EduPersonAffiliation::Faculty);
+    let realm = principal_eppn.split('@').nth(1).unwrap_or("university.edu");
+    let identity = EduPersonIdentity {
+        eppn: principal_eppn.to_string(),
+        realm: realm.to_string(),
+        affiliations: vec![affiliation],
+    };
 
     let auto_engine = AutomationEngine::new(state.policy_engine.clone());
     let automations = state.automations.read().map_err(|_| lock_err())?;
@@ -221,7 +231,7 @@ async fn simulate_app_automation(
 
     let results: Vec<WorkflowExecutionResult> = rules
         .iter()
-        .map(|r| auto_engine.evaluate_rule(r, &event, &record, principal))
+        .map(|r| auto_engine.evaluate_rule(r, &event, &record, &identity))
         .collect();
 
     Ok(Json(results))

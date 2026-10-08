@@ -4,6 +4,7 @@
 //! and dispatches workflow actions with audit tracking.
 
 use std::time::{SystemTime, UNIX_EPOCH};
+use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_core::{
     ActionEffect, ActionType, AutomationRule, ConditionOperator, FieldPredicate,
     TriggerEvent, WorkflowExecutionResult,
@@ -30,7 +31,7 @@ impl AutomationEngine {
         rule: &AutomationRule,
         event: &TriggerEvent,
         record: &Value,
-        principal_eppn: &str,
+        identity: &EduPersonIdentity,
     ) -> WorkflowExecutionResult {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -97,16 +98,17 @@ impl AutomationEngine {
         }
 
         // 3. Cedar Policy Authorization Check
-        let cedar_authorized = if let Some(ref policy_id) = rule.cedar_policy_guard {
-            // Check if principal is authorized for this workflow action
-            let is_ferpa = policy_id.to_lowercase().contains("ferpa");
-            let is_registrar = principal_eppn.contains("registrar") || principal_eppn.contains("compliance");
-            let is_faculty = principal_eppn.contains("faculty") || principal_eppn.contains("dr.");
-            
-            if is_ferpa {
-                is_registrar || is_faculty
-            } else {
-                true
+        let cedar_authorized = if rule.cedar_policy_guard.is_some() {
+            // Documented action name pair: "record_decision" with is_ferpa_sensitive distinguishes faculty (permit) and student (forbid) under default Cedar policies
+            match self.policy_engine.authorize_record_action(
+                identity,
+                "record_decision",
+                &rule.app_slug,
+                "institutional",
+                rule.cedar_policy_guard.as_deref().is_some_and(|p| p.to_lowercase().contains("ferpa")),
+            ) {
+                Ok(res) => res.decision == scaffoldry_policy::PolicyDecision::Allow,
+                Err(_) => false,
             }
         } else {
             true
