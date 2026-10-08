@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
-import { FieldSpec, RegisteredApp } from "./types";
+import { RegisteredApp } from "./types";
+import { DataGrid } from "./DataGrid";
 
 interface Props {
   app: RegisteredApp;
@@ -105,9 +106,6 @@ export const MultiViewWorkspace: React.FC<Props> = ({
 }) => {
   const [viewMode, setViewMode] = useState<TabularViewMode>("grid");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
-  const [editingCell, setEditingCell] = useState<{ recordId: string; fieldName: string } | null>(null);
-  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
   // Dynamic records stored in state
   const [records, setRecords] = useState<TabularRecord[]>(() => {
@@ -166,7 +164,6 @@ export const MultiViewWorkspace: React.FC<Props> = ({
     setRecords((prev) =>
       prev.map((r) => (r.id === recordId ? { ...r, [fieldName]: value } : r))
     );
-    setEditingCell(null);
   };
 
   // Add new blank record
@@ -184,7 +181,6 @@ export const MultiViewWorkspace: React.FC<Props> = ({
       submission_date: new Date().toISOString().split("T")[0],
     };
     setRecords((prev) => [newRow, ...prev]);
-    setSelectedRecordId(newId);
   };
 
   // Handle Form View submission
@@ -200,38 +196,6 @@ export const MultiViewWorkspace: React.FC<Props> = ({
     if (onRecordCreated) onRecordCreated(newRow);
   };
 
-  // Toggle row selection
-  const handleToggleRowSelect = (id: string) => {
-    setSelectedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const handleSelectAllRows = () => {
-    if (selectedRows.size === filteredRecords.length) {
-      setSelectedRows(new Set());
-    } else {
-      setSelectedRows(new Set(filteredRecords.map((r) => r.id)));
-    }
-  };
-
-  // Rollup calculations for numeric columns
-  const numericColumns = fields.filter((f) => f.field_type === "Number");
-  const columnRollups = useMemo(() => {
-    const rollups: Record<string, { sum: number; avg: number; count: number }> = {};
-    numericColumns.forEach((col) => {
-      const vals = records
-        .map((r) => Number(r[col.name]))
-        .filter((n) => !isNaN(n));
-      const sum = vals.reduce((a, b) => a + b, 0);
-      const avg = vals.length ? sum / vals.length : 0;
-      rollups[col.name] = { sum, avg, count: vals.length };
-    });
-    return rollups;
-  }, [records, numericColumns]);
 
   // Export records as CSV
   const handleExportCsv = () => {
@@ -414,11 +378,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
             )}
           </div>
 
-          {selectedRows.size > 0 && (
-            <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2.5 py-1 rounded border border-blue-200 dark:border-blue-800">
-              {selectedRows.size} selected
-            </span>
-          )}
+
         </div>
       </div>
 
@@ -427,195 +387,13 @@ export const MultiViewWorkspace: React.FC<Props> = ({
         {/* VIEW 1: REACTIVE SPREADSHEET GRID */}
         {viewMode === "grid" && (
           <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold select-none">
-                    <th className="py-2.5 px-3 w-10 text-center">
-                      <input
-                        type="checkbox"
-                        checked={
-                          filteredRecords.length > 0 &&
-                          selectedRows.size === filteredRecords.length
-                        }
-                        onChange={handleSelectAllRows}
-                        className="rounded text-blue-600 cursor-pointer"
-                      />
-                    </th>
-                    <th className="py-2.5 px-3 w-16 text-center text-slate-400 font-mono">#</th>
-                    <th className="py-2.5 px-3 w-28">Record ID</th>
-
-                    {fields.map((f) => (
-                      <th key={f.name} className="py-2.5 px-3 min-w-[140px]">
-                        <div className="flex items-center gap-1.5">
-                          <span>{f.label}</span>
-                          {f.ferpa_sensitive && (
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold">
-                              FERPA
-                            </span>
-                          )}
-                          {f.field_type === "Relation" && (
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
-                              🔗 {f.linked_dataset_id}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] font-mono text-slate-400 font-normal">
-                          {f.field_type}
-                        </div>
-                      </th>
-                    ))}
-
-                    <th className="py-2.5 px-3 w-28">Status</th>
-                    <th className="py-2.5 px-3 w-28">Date</th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                  {filteredRecords.map((r, rowIdx) => {
-                    const isSelected = selectedRows.has(r.id);
-                    const isCurrent = selectedRecordId === r.id;
-                    return (
-                      <tr
-                        key={r.id}
-                        onClick={() => setSelectedRecordId(r.id)}
-                        className={`transition-colors ${
-                          isSelected || isCurrent
-                            ? "bg-blue-50/60 dark:bg-blue-950/30"
-                            : "hover:bg-slate-50/80 dark:hover:bg-slate-800/40"
-                        }`}
-                      >
-                        <td className="py-2 px-3 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleToggleRowSelect(r.id)}
-                            className="rounded text-blue-600 cursor-pointer"
-                          />
-                        </td>
-                        <td className="py-2 px-3 text-center text-slate-400 font-mono text-[11px]">
-                          {rowIdx + 1}
-                        </td>
-                        <td className="py-2 px-3 font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                          {r.id}
-                        </td>
-
-                        {fields.map((f: FieldSpec) => {
-                          const isEditing =
-                            editingCell?.recordId === r.id && editingCell?.fieldName === f.name;
-                          const cellVal = r[f.name];
-
-                          return (
-                            <td
-                              key={f.name}
-                              onClick={() => setEditingCell({ recordId: r.id, fieldName: f.name })}
-                              className="py-2 px-3 cursor-text relative group"
-                            >
-                              {isEditing ? (
-                                <input
-                                  type={f.field_type === "Number" ? "number" : "text"}
-                                  autoFocus
-                                  defaultValue={String(cellVal ?? "")}
-                                  onBlur={(e) =>
-                                    handleUpdateCell(
-                                      r.id,
-                                      f.name,
-                                      f.field_type === "Number" ? Number(e.target.value) : e.target.value
-                                    )
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      handleUpdateCell(
-                                        r.id,
-                                        f.name,
-                                        f.field_type === "Number"
-                                          ? Number((e.target as HTMLInputElement).value)
-                                          : (e.target as HTMLInputElement).value
-                                      );
-                                    } else if (e.key === "Escape") {
-                                      setEditingCell(null);
-                                    }
-                                  }}
-                                  className="w-full px-1.5 py-0.5 text-xs rounded border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
-                                />
-                              ) : (
-                                <div className="flex items-center justify-between group-hover:bg-slate-100/60 dark:group-hover:bg-slate-800/40 p-1 -m-1 rounded">
-                                  <span
-                                    className={`${
-                                      f.field_type === "Number"
-                                        ? "font-mono font-medium text-emerald-600 dark:text-emerald-400"
-                                        : f.field_type === "Relation"
-                                        ? "font-mono text-purple-600 dark:text-purple-400"
-                                        : "text-slate-800 dark:text-slate-200"
-                                    }`}
-                                  >
-                                    {f.field_type === "Number" && typeof cellVal === "number"
-                                      ? cellVal.toLocaleString()
-                                      : String(cellVal ?? "—")}
-                                  </span>
-                                  <span className="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400">
-                                    ✎
-                                  </span>
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-
-                        {/* Status Column */}
-                        <td className="py-2 px-3">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              r.status === "Approved"
-                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
-                                : r.status === "Under Review"
-                                ? "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
-                                : "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
-                            }`}
-                          >
-                            {String(r.status || "Draft")}
-                          </span>
-                        </td>
-
-                        {/* Date Column */}
-                        <td className="py-2 px-3 text-[11px] font-mono text-slate-500">
-                          {String(r.submission_date || "2026-10-04")}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-
-                {/* Bottom Rollups Bar */}
-                <tfoot>
-                  <tr className="bg-slate-100/80 dark:bg-slate-800/80 font-mono text-[11px] text-slate-600 dark:text-slate-300 border-t border-slate-200 dark:border-slate-800">
-                    <td colSpan={3} className="py-2.5 px-3 font-semibold">
-                      Summary ({filteredRecords.length} records)
-                    </td>
-                    {fields.map((f) => {
-                      const rollup = columnRollups[f.name];
-                      return (
-                        <td key={f.name} className="py-2.5 px-3">
-                          {rollup ? (
-                            <div className="space-y-0.5">
-                              <div>SUM: {rollup.sum.toLocaleString()}</div>
-                              <div className="text-[10px] text-slate-400">
-                                AVG: {rollup.avg.toFixed(1)}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                    <td colSpan={2} className="py-2.5 px-3 text-right text-slate-400">
-                      Auto-computed DAG
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            <DataGrid
+              fields={fields}
+              records={filteredRecords}
+              tables={app.manifest.tables}
+              rowDensity={app.manifest.views[0]?.row_density}
+              onPatch={handleUpdateCell}
+            />
 
             {/* Quick Add Row */}
             <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">

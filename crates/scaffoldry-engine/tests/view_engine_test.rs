@@ -107,6 +107,11 @@ fn test_view_spec_serialization_with_all_view_types() {
         row_density: Some(RowDensity::Medium),
         kanban_column_field: Some("status".to_string()),
         calendar_date_field: None,
+        column_order: vec![],
+        column_widths: vec![],
+        hidden_columns: vec![],
+        frozen_through: None,
+        column_summary: vec![],
     };
 
     let serialized = serde_json::to_string(&view).expect("Serialize AppView");

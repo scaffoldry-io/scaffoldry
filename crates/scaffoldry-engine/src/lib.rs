@@ -134,6 +134,14 @@ pub struct FieldSpec {
     #[serde(default)]
     pub target_display_field: Option<String>,
     #[serde(default)]
+    pub display_label_override: Option<String>,
+    #[serde(default)]
+    pub cardinality: Option<String>,
+    #[serde(default)]
+    pub allow_multiple: Option<bool>,
+    #[serde(default)]
+    pub link_filter: Option<serde_json::Value>,
+    #[serde(default)]
     pub formula_expression: Option<String>,
     #[serde(default)]
     pub rollup_function: Option<String>,
@@ -172,99 +180,567 @@ impl FieldSpec {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+enum FormulaToken {
+    Number(f64),
+    String(String),
+    Field(String),
+    Ident(String),
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    LParen,
+    RParen,
+    Comma,
+}
+
+fn tokenize_formula(input: &str) -> Option<Vec<FormulaToken>> {
+    let mut tokens = Vec::new();
+    let chars: Vec<char> = input.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+
+    while i < n {
+        let ch = chars[i];
+        if ch.is_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        if ch == '{' {
+            let mut close = None;
+            for j in (i + 1)..n {
+                if chars[j] == '}' {
+                    close = Some(j);
+                    break;
+                }
+            }
+            let close_idx = close?;
+            let field_name: String = chars[(i + 1)..close_idx].iter().collect();
+            tokens.push(FormulaToken::Field(field_name));
+            i = close_idx + 1;
+            continue;
+        }
+
+        if ch == '"' || ch == '\'' {
+            let quote = ch;
+            i += 1;
+            let mut s = String::new();
+            let mut closed = false;
+            while i < n {
+                if chars[i] == quote {
+                    closed = true;
+                    i += 1;
+                    break;
+                }
+                if chars[i] == '\\' && i + 1 < n {
+                    i += 1;
+                    s.push(chars[i]);
+                    i += 1;
+                } else {
+                    s.push(chars[i]);
+                    i += 1;
+                }
+            }
+            if !closed {
+                return None;
+            }
+            tokens.push(FormulaToken::String(s));
+            continue;
+        }
+
+        if ch.is_ascii_digit() || (ch == '.' && i + 1 < n && chars[i + 1].is_ascii_digit()) {
+            let start = i;
+            while i < n && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            let s: String = chars[start..i].iter().collect();
+            let num: f64 = s.parse().ok()?;
+            tokens.push(FormulaToken::Number(num));
+            continue;
+        }
+
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            let start = i;
+            while i < n && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let s: String = chars[start..i].iter().collect();
+            tokens.push(FormulaToken::Ident(s));
+            continue;
+        }
+
+        if ch == '!' && i + 1 < n && chars[i + 1] == '=' {
+            tokens.push(FormulaToken::NotEq);
+            i += 2;
+            continue;
+        }
+        if ch == '<' && i + 1 < n && chars[i + 1] == '=' {
+            tokens.push(FormulaToken::LtEq);
+            i += 2;
+            continue;
+        }
+        if ch == '>' && i + 1 < n && chars[i + 1] == '=' {
+            tokens.push(FormulaToken::GtEq);
+            i += 2;
+            continue;
+        }
+        if ch == '<' && i + 1 < n && chars[i + 1] == '>' {
+            tokens.push(FormulaToken::NotEq);
+            i += 2;
+            continue;
+        }
+
+        match ch {
+            '+' => tokens.push(FormulaToken::Plus),
+            '-' => tokens.push(FormulaToken::Minus),
+            '*' => tokens.push(FormulaToken::Star),
+            '/' => tokens.push(FormulaToken::Slash),
+            '=' => tokens.push(FormulaToken::Eq),
+            '<' => tokens.push(FormulaToken::Lt),
+            '>' => tokens.push(FormulaToken::Gt),
+            '(' => tokens.push(FormulaToken::LParen),
+            ')' => tokens.push(FormulaToken::RParen),
+            ',' => tokens.push(FormulaToken::Comma),
+            _ => return None,
+        }
+        i += 1;
+    }
+
+    Some(tokens)
+}
+
+struct FormulaParser<'a> {
+    tokens: Vec<FormulaToken>,
+    pos: usize,
+    depth: usize,
+    record: &'a Value,
+}
+
+impl<'a> FormulaParser<'a> {
+    fn new(tokens: Vec<FormulaToken>, record: &'a Value) -> Self {
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+            record,
+        }
+    }
+
+    fn peek(&self) -> Option<&FormulaToken> {
+        self.tokens.get(self.pos)
+    }
+
+    fn advance(&mut self) -> Option<FormulaToken> {
+        if self.pos < self.tokens.len() {
+            let tok = self.tokens[self.pos].clone();
+            self.pos += 1;
+            Some(tok)
+        } else {
+            None
+        }
+    }
+
+    fn is_truthy(val: &Value) -> bool {
+        match val {
+            Value::Null => false,
+            Value::Bool(b) => *b,
+            Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+            Value::String(s) => !s.is_empty(),
+            Value::Array(a) => !a.is_empty(),
+            Value::Object(o) => !o.is_empty(),
+        }
+    }
+
+    fn to_number(val: &Value) -> Option<f64> {
+        match val {
+            Value::Number(n) => n.as_f64(),
+            Value::String(s) => s.trim().parse::<f64>().ok(),
+            _ => None,
+        }
+    }
+
+    fn parse(&mut self) -> Value {
+        match self.expr() {
+            Ok(v) => v,
+            Err(_) => Value::Null,
+        }
+    }
+
+    fn check_depth(&mut self) -> Result<(), ()> {
+        self.depth += 1;
+        if self.depth > 32 {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn dec_depth(&mut self) {
+        if self.depth > 0 {
+            self.depth -= 1;
+        }
+    }
+
+    fn expr(&mut self) -> Result<Value, ()> {
+        self.or_expr()
+    }
+
+    fn or_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let mut left = self.and_expr()?;
+        while let Some(FormulaToken::Ident(name)) = self.peek() {
+            if name.eq_ignore_ascii_case("OR") {
+                self.advance();
+                let right = self.and_expr()?;
+                let b = Self::is_truthy(&left) || Self::is_truthy(&right);
+                left = Value::Bool(b);
+            } else {
+                break;
+            }
+        }
+        self.dec_depth();
+        Ok(left)
+    }
+
+    fn and_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let mut left = self.not_expr()?;
+        while let Some(FormulaToken::Ident(name)) = self.peek() {
+            if name.eq_ignore_ascii_case("AND") {
+                self.advance();
+                let right = self.not_expr()?;
+                let b = Self::is_truthy(&left) && Self::is_truthy(&right);
+                left = Value::Bool(b);
+            } else {
+                break;
+            }
+        }
+        self.dec_depth();
+        Ok(left)
+    }
+
+    fn not_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let res = if let Some(FormulaToken::Ident(name)) = self.peek() {
+            if name.eq_ignore_ascii_case("NOT") {
+                self.advance();
+                let inner = self.not_expr()?;
+                Value::Bool(!Self::is_truthy(&inner))
+            } else {
+                self.cmp_expr()?
+            }
+        } else {
+            self.cmp_expr()?
+        };
+        self.dec_depth();
+        Ok(res)
+    }
+
+    fn cmp_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let left = self.add_expr()?;
+        let res = match self.peek() {
+            Some(FormulaToken::Eq)
+            | Some(FormulaToken::NotEq)
+            | Some(FormulaToken::Lt)
+            | Some(FormulaToken::LtEq)
+            | Some(FormulaToken::Gt)
+            | Some(FormulaToken::GtEq) => {
+                let op = self.advance().unwrap();
+                let right = self.add_expr()?;
+                self.compare(&left, &right, &op)
+            }
+            _ => left,
+        };
+        self.dec_depth();
+        Ok(res)
+    }
+
+    fn compare(&self, left: &Value, right: &Value, op: &FormulaToken) -> Value {
+        let (num_l, num_r) = (Self::to_number(left), Self::to_number(right));
+        if let (Some(nl), Some(nr)) = (num_l, num_r) {
+            let b = match op {
+                FormulaToken::Eq => nl == nr,
+                FormulaToken::NotEq => nl != nr,
+                FormulaToken::Lt => nl < nr,
+                FormulaToken::LtEq => nl <= nr,
+                FormulaToken::Gt => nl > nr,
+                FormulaToken::GtEq => nl >= nr,
+                _ => false,
+            };
+            return Value::Bool(b);
+        }
+
+        let sl = match left {
+            Value::String(s) => s.as_str(),
+            Value::Null => "",
+            _ => "",
+        };
+        let sr = match right {
+            Value::String(s) => s.as_str(),
+            Value::Null => "",
+            _ => "",
+        };
+
+        let b = match op {
+            FormulaToken::Eq => left == right || sl == sr,
+            FormulaToken::NotEq => left != right && sl != sr,
+            FormulaToken::Lt => sl < sr,
+            FormulaToken::LtEq => sl <= sr,
+            FormulaToken::Gt => sl > sr,
+            FormulaToken::GtEq => sl >= sr,
+            _ => false,
+        };
+        Value::Bool(b)
+    }
+
+    fn add_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let mut left = self.mul_expr()?;
+        while let Some(tok) = self.peek() {
+            match tok {
+                FormulaToken::Plus => {
+                    self.advance();
+                    let right = self.mul_expr()?;
+                    if left.is_string() || right.is_string() {
+                        let mut s = String::new();
+                        if let Some(str_l) = left.as_str() {
+                            s.push_str(str_l);
+                        } else if !left.is_null() {
+                            s.push_str(&left.to_string());
+                        }
+                        if let Some(str_r) = right.as_str() {
+                            s.push_str(str_r);
+                        } else if !right.is_null() {
+                            s.push_str(&right.to_string());
+                        }
+                        left = Value::from(s);
+                    } else if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
+                        left = Value::from(nl + nr);
+                    } else {
+                        left = Value::Null;
+                    }
+                }
+                FormulaToken::Minus => {
+                    self.advance();
+                    let right = self.mul_expr()?;
+                    if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
+                        left = Value::from(nl - nr);
+                    } else {
+                        left = Value::Null;
+                    }
+                }
+                _ => break,
+            }
+        }
+        self.dec_depth();
+        Ok(left)
+    }
+
+    fn mul_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let mut left = self.unary_expr()?;
+        while let Some(tok) = self.peek() {
+            match tok {
+                FormulaToken::Star => {
+                    self.advance();
+                    let right = self.unary_expr()?;
+                    if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
+                        left = Value::from(nl * nr);
+                    } else {
+                        left = Value::Null;
+                    }
+                }
+                FormulaToken::Slash => {
+                    self.advance();
+                    let right = self.unary_expr()?;
+                    if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
+                        if nr == 0.0 {
+                            left = Value::Null;
+                        } else {
+                            left = Value::from(nl / nr);
+                        }
+                    } else {
+                        left = Value::Null;
+                    }
+                }
+                _ => break,
+            }
+        }
+        self.dec_depth();
+        Ok(left)
+    }
+
+    fn unary_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let res = match self.peek() {
+            Some(FormulaToken::Minus) => {
+                self.advance();
+                let inner = self.unary_expr()?;
+                if let Some(n) = Self::to_number(&inner) {
+                    Value::from(-n)
+                } else {
+                    Value::Null
+                }
+            }
+            _ => self.primary_expr()?,
+        };
+        self.dec_depth();
+        Ok(res)
+    }
+
+    fn primary_expr(&mut self) -> Result<Value, ()> {
+        self.check_depth()?;
+        let res = match self.advance() {
+            Some(FormulaToken::Number(n)) => Value::from(n),
+            Some(FormulaToken::String(s)) => Value::from(s),
+            Some(FormulaToken::Field(field)) => {
+                self.record.get(&field).cloned().unwrap_or(Value::Null)
+            }
+            Some(FormulaToken::LParen) => {
+                let inner = self.expr()?;
+                if let Some(FormulaToken::RParen) = self.advance() {
+                    inner
+                } else {
+                    return Err(());
+                }
+            }
+            Some(FormulaToken::Ident(name)) => {
+                if let Some(FormulaToken::LParen) = self.peek() {
+                    self.advance();
+                    let mut args = Vec::new();
+                    if let Some(FormulaToken::RParen) = self.peek() {
+                        self.advance();
+                    } else {
+                        args.push(self.expr()?);
+                        while let Some(FormulaToken::Comma) = self.peek() {
+                            self.advance();
+                            args.push(self.expr()?);
+                        }
+                        if let Some(FormulaToken::RParen) = self.advance() {
+                        } else {
+                            return Err(());
+                        }
+                    }
+                    self.call_func(&name.to_ascii_uppercase(), &args)
+                } else {
+                    Value::Null
+                }
+            }
+            _ => Value::Null,
+        };
+        self.dec_depth();
+        Ok(res)
+    }
+
+    fn call_func(&self, name: &str, args: &[Value]) -> Value {
+        match name {
+            "IF" => {
+                let cond = args.get(0).unwrap_or(&Value::Null);
+                if Self::is_truthy(cond) {
+                    args.get(1).cloned().unwrap_or(Value::Null)
+                } else {
+                    args.get(2).cloned().unwrap_or(Value::Null)
+                }
+            }
+            "AND" => {
+                if args.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Bool(args.iter().all(Self::is_truthy))
+                }
+            }
+            "OR" => {
+                if args.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Bool(args.iter().any(Self::is_truthy))
+                }
+            }
+            "NOT" => {
+                if args.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Bool(!Self::is_truthy(&args[0]))
+                }
+            }
+            "ROUND" => {
+                if let Some(n) = args.get(0).and_then(Self::to_number) {
+                    let digits = args.get(1).and_then(Self::to_number).unwrap_or(0.0) as i32;
+                    let factor = 10f64.powi(digits);
+                    let rounded = (n * factor).round() / factor;
+                    Value::from(rounded)
+                } else {
+                    Value::Null
+                }
+            }
+            "ABS" => {
+                if let Some(n) = args.get(0).and_then(Self::to_number) {
+                    Value::from(n.abs())
+                } else {
+                    Value::Null
+                }
+            }
+            "CONCAT" => {
+                let mut s = String::new();
+                for a in args {
+                    if !a.is_null() {
+                        if let Some(str_val) = a.as_str() {
+                            s.push_str(str_val);
+                        } else if let Some(n) = a.as_f64() {
+                            s.push_str(&n.to_string());
+                        } else if let Some(b) = a.as_bool() {
+                            s.push_str(&b.to_string());
+                        }
+                    }
+                }
+                Value::from(s)
+            }
+            "LEN" => {
+                let val = args.get(0).unwrap_or(&Value::Null);
+                if val.is_null() {
+                    Value::from(0)
+                } else if let Some(s) = val.as_str() {
+                    Value::from(s.len())
+                } else {
+                    Value::from(val.to_string().len())
+                }
+            }
+            "BLANK" => Value::Null,
+            "ISBLANK" => {
+                let val = args.get(0).unwrap_or(&Value::Null);
+                let is_blank = val.is_null() || (val.as_str().map(|s| s.is_empty()).unwrap_or(false));
+                Value::Bool(is_blank)
+            }
+            _ => Value::Null,
+        }
+    }
+}
+
 pub fn evaluate_formula(expression: &str, record: &Value) -> Value {
     let expr = expression.trim();
-    if expr.is_empty() {
+    if expr.is_empty() || expr.len() > 500 {
         return Value::Null;
     }
 
-    // Direct single reference e.g. "{budget}"
-    if expr.starts_with('{') && expr.ends_with('}') && !expr[1..expr.len() - 1].contains('}') {
-        let field = &expr[1..expr.len() - 1];
-        return record.get(field).cloned().unwrap_or(Value::Null);
+    if let Some(tokens) = tokenize_formula(expr) {
+        let mut parser = FormulaParser::new(tokens, record);
+        parser.parse()
+    } else {
+        Value::Null
     }
-
-    // Multiplication: {budget} * 0.15 or {a} * {b}
-    if let Some((left, right)) = expr.split_once('*') {
-        let v1 = parse_operand(left.trim(), record);
-        let v2 = parse_operand(right.trim(), record);
-        let n1 = v1.as_f64().or_else(|| v1.as_i64().map(|i| i as f64));
-        let n2 = v2.as_f64().or_else(|| v2.as_i64().map(|i| i as f64));
-        if let (Some(n1), Some(n2)) = (n1, n2) {
-            return Value::from(n1 * n2);
-        }
-    }
-
-    // Division: {budget} / 12
-    if let Some((left, right)) = expr.split_once('/') {
-        let v1 = parse_operand(left.trim(), record);
-        let v2 = parse_operand(right.trim(), record);
-        let n1 = v1.as_f64().or_else(|| v1.as_i64().map(|i| i as f64));
-        let n2 = v2.as_f64().or_else(|| v2.as_i64().map(|i| i as f64));
-        if let (Some(n1), Some(n2)) = (n1, n2) {
-            if n2 != 0.0 {
-                return Value::from(n1 / n2);
-            }
-        }
-    }
-
-    // Addition or string concatenation: {first} + " " + {last} or {a} + {b}
-    if expr.contains('+') {
-        let parts: Vec<&str> = expr.split('+').map(|s| s.trim()).collect();
-        let mut all_numbers = true;
-        let mut sum = 0.0;
-        let mut concat_str = String::new();
-
-        for part in &parts {
-            let op_val = parse_operand(part, record);
-            if let Some(n) = op_val.as_f64().or_else(|| op_val.as_i64().map(|i| i as f64)) {
-                sum += n;
-            } else {
-                all_numbers = false;
-            }
-
-            if let Some(s) = op_val.as_str() {
-                concat_str.push_str(s);
-            } else if let Some(n) = op_val.as_f64() {
-                concat_str.push_str(&n.to_string());
-            } else if let Some(i) = op_val.as_i64() {
-                concat_str.push_str(&i.to_string());
-            }
-        }
-
-        if all_numbers && parts.len() > 1 {
-            return Value::from(sum);
-        } else {
-            return Value::from(concat_str);
-        }
-    }
-
-    // Subtraction: {budget} - {spent}
-    if let Some((left, right)) = expr.split_once('-') {
-        let v1 = parse_operand(left.trim(), record);
-        let v2 = parse_operand(right.trim(), record);
-        let n1 = v1.as_f64().or_else(|| v1.as_i64().map(|i| i as f64));
-        let n2 = v2.as_f64().or_else(|| v2.as_i64().map(|i| i as f64));
-        if let (Some(n1), Some(n2)) = (n1, n2) {
-            return Value::from(n1 - n2);
-        }
-    }
-
-    parse_operand(expr, record)
 }
 
-fn parse_operand(op: &str, record: &Value) -> Value {
-    let op = op.trim();
-    if op.starts_with('{') && op.ends_with('}') {
-        let field = &op[1..op.len() - 1];
-        record.get(field).cloned().unwrap_or(Value::Null)
-    } else if (op.starts_with('"') && op.ends_with('"')) || (op.starts_with('\'') && op.ends_with('\'')) {
-        Value::from(&op[1..op.len() - 1])
-    } else if let Ok(n) = op.parse::<f64>() {
-        Value::from(n)
-    } else {
-        record.get(op).cloned().unwrap_or(Value::Null)
-    }
+pub fn parse_operand(op: &str, record: &Value) -> Value {
+    evaluate_formula(op, record)
 }
 
 pub fn compute_field_value(
@@ -388,6 +864,16 @@ pub struct AppView {
     pub kanban_column_field: Option<String>,
     #[serde(default)]
     pub calendar_date_field: Option<String>,
+    #[serde(default)]
+    pub column_order: Vec<String>,
+    #[serde(default)]
+    pub column_widths: Vec<(String, u32)>,
+    #[serde(default)]
+    pub hidden_columns: Vec<String>,
+    #[serde(default)]
+    pub frozen_through: Option<String>,
+    #[serde(default)]
+    pub column_summary: Vec<(String, String)>,
 }
 
 impl AppView {
@@ -409,6 +895,11 @@ impl AppView {
             row_density: None,
             kanban_column_field: None,
             calendar_date_field: None,
+            column_order: Vec::new(),
+            column_widths: Vec::new(),
+            hidden_columns: Vec::new(),
+            frozen_through: None,
+            column_summary: Vec::new(),
         }
     }
 }

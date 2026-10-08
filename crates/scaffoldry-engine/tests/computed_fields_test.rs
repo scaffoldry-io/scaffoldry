@@ -5,7 +5,7 @@ use serde_json::json;
 
 #[test]
 fn test_formula_evaluation() {
-    let record = json!({
+    let original_record = json!({
         "first_name": "Marie",
         "last_name": "Curie",
         "budget": 500000.0,
@@ -13,21 +13,35 @@ fn test_formula_evaluation() {
         "spent": 120000.0
     });
 
-    // 1. Single field lookup
-    let res = evaluate_formula("{budget}", &record);
-    assert_eq!(res, json!(500000.0));
+    // Four original assertions
+    assert_eq!(evaluate_formula("{budget}", &original_record), json!(500000.0));
+    assert_eq!(evaluate_formula("{budget} * 0.15", &original_record), json!(75000.0));
+    assert_eq!(evaluate_formula("{first_name} + \" \" + {last_name}", &original_record), json!("Marie Curie"));
+    assert_eq!(evaluate_formula("{budget} - {spent}", &original_record), json!(380000.0));
 
-    // 2. Arithmetic multiplication
-    let res = evaluate_formula("{budget} * 0.15", &record);
-    assert_eq!(res, json!(75000.0));
+    // Shared formula vectors against Ada Lovelace record
+    let record = json!({
+        "budget": 500000.0,
+        "spent": 120000.0,
+        "rate": 0.2,
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "title": ""
+    });
 
-    // 3. String concatenation
-    let res = evaluate_formula("{first_name} + \" \" + {last_name}", &record);
-    assert_eq!(res, json!("Marie Curie"));
-
-    // 4. Arithmetic subtraction
-    let res = evaluate_formula("{budget} - {spent}", &record);
-    assert_eq!(res, json!(380000.0));
+    assert_eq!(evaluate_formula("{budget}", &record), json!(500000.0));
+    assert_eq!(evaluate_formula("{budget} * 0.20", &record), json!(100000.0));
+    assert_eq!(evaluate_formula("{budget} / 10", &record), json!(50000.0));
+    assert_eq!(evaluate_formula("{budget} - {spent}", &record), json!(380000.0));
+    assert_eq!(evaluate_formula("{first_name} + \" \" + {last_name}", &record), json!("Ada Lovelace"));
+    assert_eq!(evaluate_formula("{budget} - {spent} * {rate}", &record), json!(476000.0));
+    assert_eq!(evaluate_formula("({budget} - {spent}) * {rate}", &record), json!(76000.0));
+    assert_eq!(evaluate_formula("IF({spent} > 100000, {budget} - {spent}, 0)", &record), json!(380000.0));
+    assert_eq!(evaluate_formula("IF(ISBLANK({title}), \"untitled\", {title})", &record), json!("untitled"));
+    assert_eq!(evaluate_formula("ROUND({budget} * {rate}, 0)", &record), json!(100000.0));
+    assert_eq!(evaluate_formula("AND({spent} > 0, {budget} > {spent})", &record), json!(true));
+    assert_eq!(evaluate_formula("{missing}", &record), serde_json::Value::Null);
+    assert_eq!(evaluate_formula("{budget} / 0", &record), serde_json::Value::Null);
 }
 
 #[test]

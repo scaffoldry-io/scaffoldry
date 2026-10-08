@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
+import React, { useState, useEffect, useRef, Suspense, lazy, useMemo } from "react";
 import { DatasetExplorer } from "./DatasetExplorer";
 import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
@@ -93,6 +93,51 @@ export const canUserManageWorkspace = (ws: Workspace, persona: Persona): boolean
   if (persona.affiliation === "central_admin") return true;
   const role = getUserWorkspaceRole(ws, persona);
   return role === "owner" || role === "admin";
+};
+
+export const canUserAccessApp = (
+  app: RegisteredApp,
+  persona: Persona,
+  allWorkspaces: Workspace[]
+): boolean => {
+  // 1. Central Admin has universal supervisory access across all institutional resources
+  if (persona.affiliation === "central_admin") return true;
+
+  // 2. Direct collaborator on the app is granted access
+  if (app.collaborators?.some((c) => c.eppn === persona.eppn)) return true;
+
+  // 3. Parent workspace security rules & Cedar ABAC sharing boundary
+  const ws =
+    allWorkspaces.find((w) => w.id === app.workspaceId) ||
+    INITIAL_WORKSPACES.find((w) => w.id === app.workspaceId);
+
+  if (!ws) {
+    // If no parent workspace, fallback to departmental boundary check
+    return app.department.toLowerCase() === persona.department.toLowerCase();
+  }
+
+  // A. Restricted Workspace Boundary
+  if (ws.visibility === "restricted") {
+    const isMember = ws.collaborators?.some((c) => c.eppn === persona.eppn);
+    if (!isMember) return false;
+  }
+
+  // B. Departmental Realm Isolation
+  if (ws.visibility === "departmental") {
+    const isMember = ws.collaborators?.some((c) => c.eppn === persona.eppn);
+    const matchesDept = ws.department.toLowerCase() === persona.department.toLowerCase();
+    if (!isMember && !matchesDept) return false;
+  }
+
+  // C. Allowed Affiliations Gate
+  if (ws.allowed_affiliations && ws.allowed_affiliations.length > 0) {
+    if (!ws.allowed_affiliations.includes(persona.affiliation)) {
+      const isMember = ws.collaborators?.some((c) => c.eppn === persona.eppn);
+      if (!isMember) return false;
+    }
+  }
+
+  return true;
 };
 
 export const INITIAL_WORKSPACES: Workspace[] = [
@@ -525,7 +570,43 @@ export const AdminDesk: React.FC = () => {
 
   // Active Workspace & Security State
   const [workspaces, setWorkspaces] = useState<Workspace[]>(INITIAL_WORKSPACES);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>("ws-cs-research");
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const match = window.location.pathname.match(/^\/workspace\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+    return "ws-cs-research";
+  });
+  const [pinnedWorkspaceIds, setPinnedWorkspaceIds] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("scaffoldry_pinned_workspaces");
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return [];
+  });
+  const [workspaceGrouping, setWorkspaceGrouping] = useState<"organization" | "department">("organization");
+
+  const handleTogglePinWorkspace = (e: React.MouseEvent, wsId: string) => {
+    e.stopPropagation();
+    const isPinned = pinnedWorkspaceIds.includes(wsId);
+    const targetWs = workspaces.find((w) => w.id === wsId);
+    const updated = isPinned
+      ? pinnedWorkspaceIds.filter((id) => id !== wsId)
+      : [...pinnedWorkspaceIds, wsId];
+    setPinnedWorkspaceIds(updated);
+    try {
+      localStorage.setItem("scaffoldry_pinned_workspaces", JSON.stringify(updated));
+    } catch {}
+    showToast(
+      isPinned
+        ? `Unpinned workspace "${targetWs?.name || wsId}"`
+        : `Pinned workspace "${targetWs?.name || wsId}" to top`
+    );
+  };
   const [workspaceAccessError, setWorkspaceAccessError] = useState<{
     status: number;
     message: string;
@@ -816,6 +897,12 @@ export const AdminDesk: React.FC = () => {
       } else if (path === "/" || path.startsWith("/workspace")) {
         setMainView("workspaces");
       }
+      if (path.startsWith("/workspace/")) {
+        const wsId = path.replace("/workspace/", "").split("/")[0];
+        if (wsId) {
+          setActiveWorkspaceId(wsId);
+        }
+      }
     }
   };
 
@@ -828,6 +915,12 @@ export const AdminDesk: React.FC = () => {
         setMainView("datasets");
       } else if (p === "/" || p.startsWith("/workspace")) {
         setMainView("workspaces");
+      }
+      if (p.startsWith("/workspace/")) {
+        const wsId = p.replace("/workspace/", "").split("/")[0];
+        if (wsId) {
+          setActiveWorkspaceId(wsId);
+        }
       }
     };
     window.addEventListener("popstate", handlePopState);
@@ -900,12 +993,28 @@ export const AdminDesk: React.FC = () => {
     (w) =>
       activePersona.affiliation === "central_admin" ||
       w.collaborators?.some((c) => c.eppn === activePersona.eppn) ||
-      w.visibility === "institutional" ||
-      (w.visibility === "departmental" && w.department.toLowerCase() === activePersona.department.toLowerCase())
+      (w.visibility !== "restricted" && (
+        w.visibility === "institutional" ||
+        (w.visibility === "departmental" && w.department.toLowerCase() === activePersona.department.toLowerCase())
+      ))
   );
-  const inaccessibleWorkspaces = INITIAL_WORKSPACES.filter(
-    (w) => !accessibleWorkspaces.some((aw) => aw.id === w.id)
-  );
+
+  // Pinned & Grouped Workspaces (Restricted/inaccessible workspaces are completely excluded from lists)
+  const pinnedWorkspaces = accessibleWorkspaces.filter((w) => pinnedWorkspaceIds.includes(w.id));
+  const unpinnedWorkspaces = accessibleWorkspaces.filter((w) => !pinnedWorkspaceIds.includes(w.id));
+
+  const workspaceGroups = useMemo(() => {
+    const groups: { [key: string]: Workspace[] } = {};
+    unpinnedWorkspaces.forEach((ws) => {
+      const groupKey =
+        workspaceGrouping === "department"
+          ? (ws.department ? ws.department.charAt(0).toUpperCase() + ws.department.slice(1) : "Other")
+          : (ws.organization || "General Academic Workspaces");
+      if (!groups[groupKey]) groups[groupKey] = [];
+      groups[groupKey].push(ws);
+    });
+    return groups;
+  }, [unpinnedWorkspaces, workspaceGrouping]);
   const userRoleInCurrentWs = getUserWorkspaceRole(currentWorkspace, activePersona);
   const canManageCurrentWs = canUserManageWorkspace(currentWorkspace, activePersona);
   const isTargetRestricted =
@@ -920,19 +1029,33 @@ export const AdminDesk: React.FC = () => {
     showToast(`Workspace "${updatedWs.name}" security & configuration updated.`);
   };
 
-  // Workspace filtered applications
+  // Workspace and App-Level Security Filtered Applications
   const workspaceApps = apps.filter((app) => {
-    const matchesWorkspace = activeWorkspaceId === "all" || app.workspaceId === activeWorkspaceId;
+    // Workspace boundary filter
+    if (activeWorkspaceId !== "all" && app.workspaceId !== activeWorkspaceId) {
+      return false;
+    }
+
+    // App-level Cedar security rules enforcement:
+    // Only display applications that the current persona is authorized to access under institutional Cedar ABAC.
+    if (!canUserAccessApp(app, activePersona, workspaces)) {
+      return false;
+    }
+
     const matchesSearch =
       app.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       app.slug.toLowerCase().includes(searchQuery.toLowerCase()) ||
       app.customDomain.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === "all" || app.status === statusFilter;
-    return matchesWorkspace && matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatus;
   });
 
   // Open App in Co-Builder Studio (Full-Page Builder)
   const handleOpenStudio = (app: RegisteredApp) => {
+    if (!canUserAccessApp(app, activePersona, workspaces)) {
+      showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
+      return;
+    }
     setActiveStudioApp(app);
     setStudioTab("schema");
     navigateTo(`/builder/${app.slug}`);
@@ -940,8 +1063,20 @@ export const AdminDesk: React.FC = () => {
 
   // Open App in Standalone Published Runtime
   const handleOpenPublishedApp = (app: RegisteredApp) => {
+    if (!canUserAccessApp(app, activePersona, workspaces)) {
+      showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
+      return;
+    }
     setActiveStudioApp(app);
     navigateTo(`/app/${app.slug}`);
+  };
+
+  const handleOpenApp = (app: RegisteredApp) => {
+    if (!canUserAccessApp(app, activePersona, workspaces)) {
+      showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
+      return;
+    }
+    setActiveWorkspaceApp(app);
   };
 
   // Create New App in Active Workspace
@@ -1224,6 +1359,43 @@ export const AdminDesk: React.FC = () => {
   if (isBuilderPath) {
     const slug = currentPath.replace("/builder/", "").replace("/builder", "").split("/")[0] || apps[0]?.slug;
     const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
+    const targetWs =
+      workspaces.find((w) => w.id === targetApp?.workspaceId) ||
+      INITIAL_WORKSPACES.find((w) => w.id === targetApp?.workspaceId) ||
+      currentWorkspace;
+
+    if (targetApp && !canUserAccessApp(targetApp, activePersona, workspaces)) {
+      return (
+        <div data-testid="workspace-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
+          <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
+            🔒
+          </div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+            403 Forbidden: Cedar Policy Sharing Boundary
+          </h2>
+          <p className="text-xs text-slate-600 dark:text-slate-400">
+            Access to application <strong>{targetApp.title}</strong> ({targetApp.slug}) in workspace <strong>{targetWs.name}</strong> is restricted under institutional Cedar ABAC policy.
+          </p>
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg text-left text-xs font-mono space-y-1">
+            <div className="text-slate-500">Principal: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.eppn}</span></div>
+            <div className="text-slate-500">Affiliation: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.affiliation}</span></div>
+            <div className="text-slate-500">Principal Department: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.department}</span></div>
+            <div className="text-slate-500">Workspace Realm: <span className="text-slate-700 dark:text-slate-300 font-semibold">{targetWs.department}</span></div>
+            <div className="text-slate-500">Workspace Visibility: <span className="text-amber-600 dark:text-amber-400 font-bold uppercase">{targetWs.visibility || "restricted"}</span></div>
+            <div className="text-slate-500">Governing Policy: <span className="text-purple-600 dark:text-purple-400 font-semibold">Action::&quot;access_app&quot; (OSCAL AC-03)</span></div>
+          </div>
+          <button
+            type="button"
+            data-testid="switch-to-accessible-workspace-btn"
+            onClick={() => navigateTo("/")}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer transition-colors"
+          >
+            ← Return to Accessible Workspace
+          </button>
+        </div>
+      );
+    }
+
     return (
       <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading App Builder...</div>}>
         <AppBuilder
@@ -1245,6 +1417,43 @@ export const AdminDesk: React.FC = () => {
   if (isAppPath) {
     const slug = currentPath.replace("/app/", "").replace("/app", "").split("/")[0] || apps[0]?.slug;
     const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
+    const targetWs =
+      workspaces.find((w) => w.id === targetApp?.workspaceId) ||
+      INITIAL_WORKSPACES.find((w) => w.id === targetApp?.workspaceId) ||
+      currentWorkspace;
+
+    if (targetApp && !canUserAccessApp(targetApp, activePersona, workspaces)) {
+      return (
+        <div data-testid="workspace-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
+          <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
+            🔒
+          </div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+            403 Forbidden: Cedar Policy Sharing Boundary
+          </h2>
+          <p className="text-xs text-slate-600 dark:text-slate-400">
+            Access to application <strong>{targetApp.title}</strong> ({targetApp.slug}) in workspace <strong>{targetWs.name}</strong> is restricted under institutional Cedar ABAC policy.
+          </p>
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg text-left text-xs font-mono space-y-1">
+            <div className="text-slate-500">Principal: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.eppn}</span></div>
+            <div className="text-slate-500">Affiliation: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.affiliation}</span></div>
+            <div className="text-slate-500">Principal Department: <span className="text-slate-700 dark:text-slate-300 font-semibold">{activePersona.department}</span></div>
+            <div className="text-slate-500">Workspace Realm: <span className="text-slate-700 dark:text-slate-300 font-semibold">{targetWs.department}</span></div>
+            <div className="text-slate-500">Workspace Visibility: <span className="text-amber-600 dark:text-amber-400 font-bold uppercase">{targetWs.visibility || "restricted"}</span></div>
+            <div className="text-slate-500">Governing Policy: <span className="text-purple-600 dark:text-purple-400 font-semibold">Action::&quot;access_app&quot; (OSCAL AC-03)</span></div>
+          </div>
+          <button
+            type="button"
+            data-testid="switch-to-accessible-workspace-btn"
+            onClick={() => navigateTo("/")}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer transition-colors"
+          >
+            ← Return to Accessible Workspace
+          </button>
+        </div>
+      );
+    }
+
     return (
       <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading Published App...</div>}>
         <PublishedAppView
@@ -1363,26 +1572,38 @@ export const AdminDesk: React.FC = () => {
               <select
                 data-testid="workspace-switcher-select"
                 value={activeWorkspaceId}
-                onChange={(e) => setActiveWorkspaceId(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setActiveWorkspaceId(val);
+                  if (val === "all") {
+                    navigateTo("/");
+                  } else {
+                    navigateTo(`/workspace/${val}`);
+                  }
+                }}
                 className="text-xs font-medium bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1 px-2.5 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
               >
-                <optgroup label="Accessible Workspaces">
-                  {accessibleWorkspaces.map((ws) => (
-                    <option key={ws.id} value={ws.id}>
-                      {ws.icon} {ws.name} ({ws.department})
-                    </option>
-                  ))}
-                  <option value="all">🌐 All Campus Workspaces</option>
-                </optgroup>
-                {inaccessibleWorkspaces.length > 0 && (
-                  <optgroup label="Restricted / Other Departments (Locked)">
-                    {inaccessibleWorkspaces.map((ws) => (
-                      <option key={ws.id} value={ws.id}>
-                        🔒 {ws.icon} {ws.name} ({ws.department})
+                {pinnedWorkspaces.length > 0 && (
+                  <optgroup label="📌 Pinned Workspaces" data-testid="pinned-optgroup">
+                    {pinnedWorkspaces.map((ws) => (
+                      <option key={`pinned-${ws.id}`} value={ws.id}>
+                        📌 {ws.icon} {ws.name} ({ws.department})
                       </option>
                     ))}
                   </optgroup>
                 )}
+                {(Object.entries(workspaceGroups) as [string, Workspace[]][]).map(([groupTitle, wsList]) => (
+                  <optgroup key={groupTitle} label={`🏛️ ${groupTitle}`}>
+                    {wsList.map((ws) => (
+                      <option key={ws.id} value={ws.id}>
+                        {ws.icon} {ws.name} ({ws.department})
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                <optgroup label="Campus-Wide">
+                  <option value="all">🌐 All Campus Workspaces</option>
+                </optgroup>
               </select>
             </div>
           )}
@@ -1708,94 +1929,196 @@ export const AdminDesk: React.FC = () => {
               /* PRIMARY END-USER WORKSPACE RAIL */
               <>
                 <div>
-                  {navRailExpanded && (
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-2 mb-2">
-                      Department Workspaces
-                    </div>
-                  )}
-                  <nav className="space-y-1">
-                    {accessibleWorkspaces.map((ws) => (
+                  <div className="flex items-center justify-between px-2 mb-2">
+                    {navRailExpanded ? (
+                      <>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                          Workspaces
+                        </div>
+                        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded text-[10px]">
+                          <button
+                            type="button"
+                            data-testid="group-by-org-btn"
+                            onClick={() => setWorkspaceGrouping("organization")}
+                            className={`px-1.5 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                              workspaceGrouping === "organization"
+                                ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-2xs font-semibold"
+                                : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                            }`}
+                            title="Group by College / Organization"
+                          >
+                            College
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="group-by-dept-btn"
+                            onClick={() => setWorkspaceGrouping("department")}
+                            className={`px-1.5 py-0.5 rounded font-medium transition-colors cursor-pointer ${
+                              workspaceGrouping === "department"
+                                ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-2xs font-semibold"
+                                : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                            }`}
+                            title="Group by Department"
+                          >
+                            Dept
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-full text-center text-[10px] text-slate-400">WS</div>
+                    )}
+                  </div>
+                  <nav className="space-y-2">
+                    {/* Pinned Workspaces Section */}
+                    {pinnedWorkspaces.length > 0 && (
+                      <div className="mb-2" data-testid="pinned-workspaces-group">
+                        {navRailExpanded && (
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 px-2 mb-1 flex items-center justify-between">
+                            <span className="flex items-center gap-1">
+                              <span>📌</span>
+                              <span>Pinned</span>
+                            </span>
+                            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
+                              {pinnedWorkspaces.length}
+                            </span>
+                          </div>
+                        )}
+                        <div className="space-y-0.5">
+                          {pinnedWorkspaces.map((ws) => {
+                            const isActive = activeWorkspaceId === ws.id && mainView === "workspaces";
+                            return (
+                              <div
+                                key={`pinned-${ws.id}`}
+                                className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                  isActive
+                                    ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
+                                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  data-testid={`workspace-rail-btn-${ws.id}`}
+                                  onClick={() => {
+                                    setActiveWorkspaceId(ws.id);
+                                    setMainView("workspaces");
+                                    navigateTo(`/workspace/${ws.id}`);
+                                  }}
+                                  className="flex-1 flex items-center gap-2.5 text-left truncate cursor-pointer py-0.5"
+                                  title={ws.name}
+                                >
+                                  <span className="text-sm shrink-0">{ws.icon}</span>
+                                  {navRailExpanded && (
+                                    <span className="truncate">{ws.name}</span>
+                                  )}
+                                </button>
+                                {navRailExpanded && (
+                                  <div className="flex items-center gap-1 shrink-0 ml-1">
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                      {apps.filter((a) => a.workspaceId === ws.id).length}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      data-testid={`pin-workspace-${ws.id}`}
+                                      onClick={(e) => handleTogglePinWorkspace(e, ws.id)}
+                                      title="Unpin workspace"
+                                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-opacity cursor-pointer text-amber-500 dark:text-amber-400 opacity-100"
+                                    >
+                                      📌
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Grouped Accessible Workspaces */}
+                    {(Object.entries(workspaceGroups) as [string, Workspace[]][]).map(([groupTitle, wsList]) => (
+                      <div
+                        key={groupTitle}
+                        className="mb-2"
+                        data-testid={`workspace-group-${groupTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                      >
+                        {navRailExpanded && (
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-2 mb-1 flex items-center justify-between">
+                            <span className="truncate">{groupTitle}</span>
+                            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 ml-1">
+                              {wsList.length}
+                            </span>
+                          </div>
+                        )}
+                        <div className="space-y-0.5">
+                          {wsList.map((ws) => {
+                            const isActive = activeWorkspaceId === ws.id && mainView === "workspaces";
+                            return (
+                              <div
+                                key={ws.id}
+                                className={`group w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                  isActive
+                                    ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
+                                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  data-testid={`workspace-rail-btn-${ws.id}`}
+                                  onClick={() => {
+                                    setActiveWorkspaceId(ws.id);
+                                    setMainView("workspaces");
+                                    navigateTo(`/workspace/${ws.id}`);
+                                  }}
+                                  className="flex-1 flex items-center gap-2.5 text-left truncate cursor-pointer py-0.5"
+                                  title={ws.name}
+                                >
+                                  <span className="text-sm shrink-0">{ws.icon}</span>
+                                  {navRailExpanded && (
+                                    <span className="truncate">{ws.name}</span>
+                                  )}
+                                </button>
+                                {navRailExpanded && (
+                                  <div className="flex items-center gap-1 shrink-0 ml-1">
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                      {apps.filter((a) => a.workspaceId === ws.id).length}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      data-testid={`pin-workspace-${ws.id}`}
+                                      onClick={(e) => handleTogglePinWorkspace(e, ws.id)}
+                                      title="Pin workspace to top"
+                                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-opacity cursor-pointer text-slate-400 opacity-0 group-hover:opacity-100 hover:text-amber-500"
+                                    >
+                                      📍
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="pt-1 border-t border-slate-100 dark:border-slate-800">
                       <button
-                        key={ws.id}
                         type="button"
-                        data-testid={`workspace-rail-btn-${ws.id}`}
+                        data-testid="all-campus-apps-rail-btn"
                         onClick={() => {
-                          setActiveWorkspaceId(ws.id);
+                          setActiveWorkspaceId("all");
                           setMainView("workspaces");
                           navigateTo("/");
                         }}
                         className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                          activeWorkspaceId === ws.id && mainView === "workspaces"
+                          activeWorkspaceId === "all" && mainView === "workspaces"
                             ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
                             : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
                         }`}
-                        title={ws.name}
                       >
-                        <span className="text-sm shrink-0">{ws.icon}</span>
-                        {navRailExpanded && (
-                          <span className="flex-1 text-left flex items-center justify-between truncate">
-                            <span className="truncate">{ws.name}</span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 ml-1">
-                              {apps.filter((a) => a.workspaceId === ws.id).length}
-                            </span>
-                          </span>
-                        )}
+                        <span className="text-sm shrink-0">🌐</span>
+                        {navRailExpanded && <span>All Campus Apps</span>}
                       </button>
-                    ))}
-                    {inaccessibleWorkspaces.length > 0 && (
-                      <div className="pt-2">
-                        {navRailExpanded && (
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-2 mb-1.5 flex items-center justify-between">
-                            <span>Locked Workspaces</span>
-                            <span className="text-[9px] text-amber-600 dark:text-amber-400 font-mono">Cedar Guard</span>
-                          </div>
-                        )}
-                        {inaccessibleWorkspaces.map((ws) => (
-                          <button
-                            key={ws.id}
-                            data-testid={`restricted-ws-btn-${ws.id}`}
-                            type="button"
-                            onClick={() => {
-                              setActiveWorkspaceId(ws.id);
-                              setMainView("workspaces");
-                              navigateTo("/");
-                            }}
-                            className={`w-full flex items-center gap-3 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer opacity-70 hover:opacity-100 ${
-                              activeWorkspaceId === ws.id && mainView === "workspaces"
-                                ? "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300 font-semibold border border-rose-200 dark:border-rose-800"
-                                : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
-                            }`}
-                            title={`${ws.name} - Cedar Policy Restricted`}
-                          >
-                            <span className="text-xs shrink-0">🔒</span>
-                            {navRailExpanded && (
-                              <span className="flex-1 text-left flex items-center justify-between truncate">
-                                <span className="truncate">{ws.name}</span>
-                                <span className="text-[9px] uppercase px-1 py-0.2 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 font-mono ml-1">
-                                  403
-                                </span>
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveWorkspaceId("all");
-                        setMainView("workspaces");
-                        navigateTo("/");
-                      }}
-                      className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                        activeWorkspaceId === "all" && mainView === "workspaces"
-                          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
-                          : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
-                      }`}
-                    >
-                      <span className="text-sm shrink-0">🌐</span>
-                      {navRailExpanded && <span>All Campus Apps</span>}
-                    </button>
+                    </div>
                   </nav>
                 </div>
 
@@ -1972,6 +2295,20 @@ export const AdminDesk: React.FC = () => {
                           Role: {userRoleInCurrentWs}
                         </span>
                       )}
+                      <button
+                        type="button"
+                        data-testid={`workspace-header-pin-btn-${currentWorkspace.id}`}
+                        onClick={(e) => handleTogglePinWorkspace(e, currentWorkspace.id)}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border cursor-pointer transition-colors ${
+                          pinnedWorkspaceIds.includes(currentWorkspace.id)
+                            ? "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800 font-semibold"
+                            : "bg-white text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750"
+                        }`}
+                        title={pinnedWorkspaceIds.includes(currentWorkspace.id) ? "Unpin this workspace" : "Pin this workspace to top"}
+                      >
+                        <span>📌</span>
+                        <span>{pinnedWorkspaceIds.includes(currentWorkspace.id) ? "Pinned" : "Pin"}</span>
+                      </button>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                       {currentWorkspace.description}
@@ -2117,7 +2454,7 @@ export const AdminDesk: React.FC = () => {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setActiveWorkspaceApp(app)}
+                          onClick={() => handleOpenApp(app)}
                           className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                           title="Quick Tabular Grid & Views"
                         >

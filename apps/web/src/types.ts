@@ -64,6 +64,14 @@ export type FieldType =
   | "Rollup"
   | "Formula";
 
+export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
+
+export interface LinkFilter {
+  field: string;
+  operator: "equals" | "not_equals" | "contains" | "greater_than" | "less_than";
+  value: string;
+}
+
 export interface FieldSpec {
   name: string;
   label: string;
@@ -74,6 +82,10 @@ export interface FieldSpec {
   linked_field?: string;
   target_table_id?: string;
   target_display_field?: string;
+  display_label_override?: string;
+  cardinality?: LinkCardinality;
+  allow_multiple?: boolean;
+  link_filter?: LinkFilter;
   formula_expression?: string;
   rollup_function?: "sum" | "avg" | "min" | "max" | "count" | "concat";
   select_options?: string[];
@@ -93,6 +105,11 @@ export interface AppView {
   row_density?: RowDensity;
   kanban_column_field?: string;
   calendar_date_field?: string;
+  column_order?: string[];
+  column_widths?: [string, number][];
+  hidden_columns?: string[];
+  frozen_through?: string;
+  column_summary?: [string, string][];
 }
 
 export interface Collaborator {
