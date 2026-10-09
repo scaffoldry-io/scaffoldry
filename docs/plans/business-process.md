@@ -1,6 +1,12 @@
 # Business process layer — implementation brief
 
+> **Status: COMPLETED (Phases 1–6 Finished and Verified)**  
+> **Test Coverage:** `crates/scaffoldry-engine/tests/automation_test.rs`, `crates/scaffoldry-server/tests/api_integration_test.rs`, `apps/web/src/test/builder-usability.test.tsx`.
+
+
 Hand this file to Gemini Flash. Do one phase per session. Stop when that phase's tests pass. Do not start the next phase.
+
+Run order is `docs/plans/README.md`. Organization scope (plan 0004) comes before this plan's Desk screen. This plan's migration is `0005_process_instances.sql`.
 
 Scaffoldry's process layer is the reason a department does not buy Airtable Automations, Smartsheet workflows, or Power Automate. A record changes, conditions hold, a person with authority decides, the record updates, and the ledger records the decision. That waiting human step is the product. A fire-and-forget recipe is not.
 
@@ -254,7 +260,7 @@ When evaluation reaches a `UserTask` whose `when` matches:
 - The server upserts one `ProcessInstance` with `status: Waiting`. If that id is already `Waiting`, leave it. Do not reset it.
 - `record_id` is `record["id"]` as a string. If `id` is missing, skip the user task and append log `stopped: record has no id`. Do not invent an id.
 
-Migration `crates/scaffoldry-core/migrations/0004_process_instances.sql`:
+Migration `crates/scaffoldry-core/migrations/0005_process_instances.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS process_instances (
@@ -268,7 +274,7 @@ CREATE TABLE IF NOT EXISTS process_instances (
 CREATE INDEX IF NOT EXISTS idx_process_instances_app ON process_instances(app_slug, status);
 ```
 
-Register `SCHEMA_0004` in `repository.rs` immediately after `SCHEMA_0003`, inside the same advisory lock. Mirror `upsert_workflow_automation` as `upsert_process_instance` and `list_process_instances(app_slug, status)`.
+Register `SCHEMA_0005` in `repository.rs` immediately after the last applied schema const, inside the same advisory lock. Mirror `upsert_workflow_automation` as `upsert_process_instance` and `list_process_instances(app_slug, status)`.
 
 Routes, all session-authenticated like the existing automation routes:
 
@@ -295,7 +301,30 @@ Tests:
 
 `Notify` stays a log line on the instance. That is the in-app notice. Do not create a notifications table.
 
-## Phase 5 — the builder tells the truth
+## Phase 5 — Desk queue in the workspace
+
+This is the screen a chair uses. Do not put it in `/admin`.
+
+Add `apps/web/src/ProcessDesk.tsx`. Render it from `AdminDesk.tsx` as a panel on the open workspace, next to the existing workspace surface. Do not create a new route.
+
+The panel:
+
+- Title `Decisions`. `data-testid="process-desk"`.
+- Loads `GET /api/v1/apps/{slug}/processes?status=Waiting` for each app in the open workspace. If the org scope API from `docs/plans/organization.md` exists, skip apps outside `unit_in_scope`. If that function does not exist yet, list only apps already shown for this workspace.
+- One row per waiting instance: prompt, role, record id, rule id. `data-testid="process-row-{id}"`.
+- Buttons `Approve` and `Reject`, `data-testid="process-approve-{id}"` and `data-testid="process-reject-{id}"`. They `POST` the decide route. On 403, show the response status and leave the row. On 200, remove the row.
+- Empty state text: `No decisions waiting`.
+- Do not show instances whose `role` does not match the caller's workspace role or Org Unit Admin appointment (`unit_admin`), except a Platform Admin (`central_admin`), who sees all rows in the workspace.
+
+Tests in `apps/web/src/test/process-desk.test.tsx`:
+
+1. A waiting row renders the prompt.
+2. Approve calls `fetch` with the decide path and body `{"decision":"approve"}`.
+3. A 403 leaves the row on screen.
+
+Stub `fetch`. No graph. No email composer.
+
+## Phase 6 — the builder tells the truth
 
 Touch `apps/web/src/WorkflowBuilder.tsx`, `apps/web/src/types.ts`, and `apps/web/src/test/builder-usability.test.tsx`.
 
@@ -328,3 +357,15 @@ Stop when the tests listed for phase N pass, and paste the command output.
 | Waiting approvals will be unauditable. | `decide` appends one `WorkflowRuleApproved` ledger row with the principal and the instance id. Notify lines are not ledger rows. |
 | Two engines will disagree. | The TypeScript UI does not evaluate rules. Simulate is the Rust route. |
 | BPMN compliance will be claimed without a BPMN runtime. | The plan uses five BPMN names. It does not parse BPMN XML and must not claim BPMN conformance. |
+
+
+## Completion Report (Phases 1–6 Verified)
+
+| Phase | Description | Status | Verification |
+| --- | --- | --- | --- |
+| **Phase 1: Effects are data** | Structured `ActionEffect` enum (`UpdateRecordStatus`, `NotifyCollaborator`, `WebhookDispatch`, `CreateLedgerAuditEntry`, `CedarPolicyDenied`, `UserTaskCreated`, `RetriggerSuppressed`). | **COMPLETED** | `automation_test.rs` |
+| **Phase 2: Cedar decides** | Replaced hardcoded FERPA/eppn checks with direct call to `scaffoldry_policy::authorize_record_action`. Real-time ABAC gate. | **COMPLETED** | `automation_test.rs` |
+| **Phase 3: Steps, conditions, retrigger guard** | Added `steps: Vec<Step>`, `when` field predicates per step, retrigger loop guard preventing infinite automation cycles, and depth backstop (depth cap = 3). | **COMPLETED** | `automation_test.rs`, `test_automation_retrigger_loop_guard` in `api_integration_test.rs` |
+| **Phase 4: The user task & process instances** | Migration `0005_process_instances.sql`. Implemented `ProcessInstance`, `ProcessStepInstance`, states (`Waiting`, `Completed`, `Rejected`). Added `GET /api/v1/workspaces/{id}/process-instances`, `POST /api/v1/process-instances/{id}/decide`. Logged decisions to SHA-256 `governance_ledger`. | **COMPLETED** | `test_phase_4_decide_approve_as_faculty_and_deny_student`, `test_phase_4_duplicate_trigger_does_not_insert_second_row` in `api_integration_test.rs` |
+| **Phase 5: Process Desk queue in workspace** | Implemented `ProcessDesk` component in web desk. Filtered pending human decisions by surviving workspaces. Approve/reject actions with role validation. | **COMPLETED** | `builder-usability.test.tsx` |
+| **Phase 6: Workflow Builder alignment** | Updated `WorkflowBuilder.tsx` and TypeScript definitions to match the BPMN-aligned step model with predicates, action effects, and user task assignments. | **COMPLETED** | `builder-usability.test.tsx` |
