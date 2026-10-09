@@ -1,14 +1,14 @@
-//! Authentication, Session Management, and Administrative Impersonation Endpoints
-//! Enforces OAuth 2.1 / OIDC JWTs, Cedar Policy ABAC, and cryptographic audit logging.
+//! Authentication, Token Management, and Administrative Impersonation Endpoints
+//! Enforces stored api_tokens rows, Cedar Policy ABAC, and cryptographic audit logging.
 
 use crate::guard::{bearer_token, session_user, unauthorized};
-use crate::jwt::{mint_impersonation_jwt, mint_test_jwt, validate_jwt, get_jwt_secret, get_jwt_issuer, TestJwtParams};
-use crate::state::{AuthSession, AuthUser, RecordDecisionInput, SharedState};
+use crate::service::identity::{generate_raw_token, hash_token, resolve_user};
+use crate::state::{ApiToken, AuthUser, RecordDecisionInput, SharedState};
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use chrono::Utc;
@@ -16,10 +16,12 @@ use scaffoldry_core::DecisionType;
 use scaffoldry_policy::PolicyDecision;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use uuid::Uuid;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
-        .route("/auth/token", post(issue_test_token))
+        .route("/auth/tokens", get(list_tokens).post(create_token))
+        .route("/auth/tokens/{id}", delete(revoke_token))
         .route("/auth/me", get(get_current_user))
         .route("/auth/impersonate", post(impersonate_user))
         .route("/auth/stop-impersonate", post(stop_impersonation))
@@ -27,18 +29,33 @@ pub fn router() -> Router<SharedState> {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TokenRequest {
-    pub eppn: String,
+pub struct CreateTokenRequest {
     #[serde(default)]
-    pub name: Option<String>,
+    pub label: String,
     #[serde(default)]
-    pub role_title: Option<String>,
+    pub days: Option<i64>,
     #[serde(default)]
-    pub affiliation: Option<String>,
-    #[serde(default)]
-    pub department: Option<String>,
-    #[serde(default)]
-    pub expires_in_secs: Option<i64>,
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateTokenResponse {
+    pub id: Uuid,
+    pub token: String,
+    pub label: String,
+    pub kind: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TokenSummary {
+    pub id: Uuid,
+    pub label: String,
+    pub kind: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub last_used_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,126 +77,159 @@ pub struct AuthResponse {
     pub original_admin: Option<AuthUser>,
 }
 
-/// Issues a genuine signed OAuth 2.1 / OIDC JWT for dev, testing, and IdP callback workflows.
-async fn issue_test_token(Json(payload): Json<TokenRequest>) -> impl IntoResponse {
-    if std::env::var("SCAFFOLDRY_ENV").as_deref() == Ok("production") {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Test token issuance endpoint is disabled in production"})),
-        );
-    }
-
-    let (name, role_title, affiliation, department) = resolve_defaults(
-        &payload.eppn,
-        payload.name,
-        payload.role_title,
-        payload.affiliation,
-        payload.department,
-    );
-
-    let user = AuthUser {
-        eppn: payload.eppn.clone(),
-        name: name.clone(),
-        role_title: role_title.clone(),
-        affiliation: affiliation.clone(),
-        department: department.clone(),
+async fn list_tokens(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let user = match session_user(&state, &headers) {
+        Some(u) => u,
+        None => return unauthorized(),
     };
 
-    let token = match mint_test_jwt(TestJwtParams {
-        eppn: payload.eppn,
-        name,
-        role_title,
-        affiliation,
-        department,
-        expires_in_secs: payload.expires_in_secs.unwrap_or(3600),
-    }) {
-        Ok(t) => t,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Token minting failed: {e}")})),
-            );
-        }
-    };
+    let tokens = state.list_api_tokens(&user.eppn);
+    let summaries: Vec<TokenSummary> = tokens
+        .into_iter()
+        .map(|t| TokenSummary {
+            id: t.id,
+            label: t.label,
+            kind: t.kind,
+            created_at: t.created_at.to_rfc3339(),
+            expires_at: t.expires_at.to_rfc3339(),
+            last_used_at: t.last_used_at.map(|d| d.to_rfc3339()),
+        })
+        .collect();
 
-    (
-        StatusCode::OK,
-        Json(json!(AuthResponse {
-            token,
-            user,
-            is_impersonating: false,
-            original_admin: None,
-        })),
-    )
+    (StatusCode::OK, Json(summaries)).into_response()
 }
 
-fn resolve_defaults(
-    eppn: &str,
-    name: Option<String>,
-    role_title: Option<String>,
-    affiliation: Option<String>,
-    department: Option<String>,
-) -> (String, String, String, String) {
-    if eppn == "jordan.lee@state.edu" {
-        (
-            name.unwrap_or_else(|| "Jordan Lee".to_string()),
-            role_title.unwrap_or_else(|| "Central Enterprise Administrator".to_string()),
-            "central_admin".to_string(),
-            department.unwrap_or_else(|| "Central IT & Institutional Governance".to_string()),
+async fn create_token(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateTokenRequest>,
+) -> impl IntoResponse {
+    let raw_bearer = match bearer_token(&headers) {
+        Some(t) => t,
+        None => return unauthorized(),
+    };
+    let caller_hash = hash_token(raw_bearer);
+    let caller_row = match state.get_api_token(&caller_hash) {
+        Some(r) => r,
+        None => return unauthorized(),
+    };
+
+    if caller_row.revoked_at.is_some() || caller_row.expires_at < Utc::now() {
+        return unauthorized();
+    }
+
+    // Agent tokens cannot mint tokens
+    if caller_row.kind == "agent" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Agent tokens cannot mint tokens" })),
         )
-    } else if eppn.contains("curie") {
-        (
-            name.unwrap_or_else(|| "Dr. Marie Curie".to_string()),
-            role_title.unwrap_or_else(|| "Professor & Lab Director".to_string()),
-            "faculty".to_string(),
-            department.unwrap_or_else(|| "biology".to_string()),
+            .into_response();
+    }
+
+    let caller_user = match resolve_user(&caller_row.eppn, &state) {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+
+    let requested_kind = payload.kind.as_deref().unwrap_or("agent");
+    if requested_kind != "agent" && requested_kind != "scim" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid token kind: must be agent or scim" })),
         )
-    } else if eppn.contains("sarah") || eppn.contains("connor") {
-        (
-            name.unwrap_or_else(|| "Dr. Sarah Connor".to_string()),
-            role_title.unwrap_or_else(|| "Department Chair & Professor".to_string()),
-            "faculty".to_string(),
-            department.unwrap_or_else(|| "Computer Science".to_string()),
+            .into_response();
+    }
+
+    if requested_kind == "scim" && caller_user.affiliation != "central_admin" {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Only Platform Admins can mint SCIM tokens" })),
         )
-    } else if eppn.contains("vance") {
-        (
-            name.unwrap_or_else(|| "Marcus Vance".to_string()),
-            role_title.unwrap_or_else(|| "Senior Research Administrator".to_string()),
-            "staff".to_string(),
-            department.unwrap_or_else(|| "Office of Sponsored Programs".to_string()),
+            .into_response();
+    }
+
+    if requested_kind == "agent" {
+        if let Ok(settings) = state.settings.read() {
+            if let Some(enabled) = settings.get("tokens.agent_enabled").and_then(|v| v.as_bool()) {
+                if !enabled {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({ "error": "Agent token creation is disabled by platform policy" })),
+                    ).into_response();
+                }
+            }
+        }
+    }
+
+    let max_days = state.settings.read().ok()
+        .and_then(|s| s.get("tokens.max_days").and_then(|v| v.as_i64()))
+        .unwrap_or(90)
+        .clamp(1, 365);
+    let days = payload.days.unwrap_or(30).clamp(1, max_days);
+    let now = Utc::now();
+    let expires_at = now + chrono::Duration::days(days);
+    let raw_token = generate_raw_token();
+    let token_hash = hash_token(&raw_token);
+    let id = Uuid::new_v4();
+
+    let new_token = ApiToken {
+        token_hash,
+        id,
+        kind: requested_kind.to_string(),
+        eppn: caller_user.eppn.clone(),
+        label: payload.label.clone(),
+        original_admin: None,
+        created_at: now,
+        expires_at,
+        last_used_at: None,
+        revoked_at: None,
+    };
+
+    if let Err(e) = state.persist_api_token(&new_token) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to persist token: {e}") })),
         )
-    } else if eppn.contains("rodriguez") {
-        (
-            name.unwrap_or_else(|| "Elena Rodriguez".to_string()),
-            role_title.unwrap_or_else(|| "IRB & Research Compliance Analyst".to_string()),
-            "compliance".to_string(),
-            department.unwrap_or_else(|| "Institutional Review Board".to_string()),
+            .into_response();
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(json!(CreateTokenResponse {
+            id,
+            token: raw_token,
+            label: payload.label,
+            kind: requested_kind.to_string(),
+            created_at: now.to_rfc3339(),
+            expires_at: expires_at.to_rfc3339(),
+        })),
+    )
+        .into_response()
+}
+
+async fn revoke_token(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let caller = match session_user(&state, &headers) {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+    let is_platform_admin = caller.affiliation == "central_admin";
+
+    match state.revoke_api_token(id, &caller.eppn, is_platform_admin) {
+        Ok(true) => (StatusCode::OK, Json(json!({ "status": "revoked" }))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Token not found" }))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to revoke token: {e}") })),
         )
-    } else if eppn.contains("einstein") {
-        (
-            name.unwrap_or_else(|| "Albert Einstein".to_string()),
-            role_title.unwrap_or_else(|| "Physics Research Fellow".to_string()),
-            "faculty".to_string(),
-            department.unwrap_or_else(|| "physics".to_string()),
-        )
-    } else if eppn.contains("student") {
-        (
-            name.unwrap_or_else(|| "Alex Smith".to_string()),
-            role_title.unwrap_or_else(|| "Graduate Research Assistant".to_string()),
-            "student".to_string(),
-            department.unwrap_or_else(|| "biology".to_string()),
-        )
-    } else {
-        // Disallow arbitrary escalation to central_admin
-        let safe_affiliation = affiliation
-            .filter(|a| a != "central_admin")
-            .unwrap_or_else(|| "member".to_string());
-        (
-            name.unwrap_or_else(|| eppn.to_string()),
-            role_title.unwrap_or_else(|| "Member".to_string()),
-            safe_affiliation,
-            department.unwrap_or_else(|| "general".to_string()),
-        )
+            .into_response(),
     }
 }
 
@@ -191,40 +241,32 @@ async fn get_current_user(
         Some(t) => t,
         None => return unauthorized(),
     };
-
-    // Check if token is a JWT
-    let secret = get_jwt_secret();
-    let issuer = get_jwt_issuer();
-    if let Ok(claims) = validate_jwt(token, &secret, &issuer) {
-        return (
-            StatusCode::OK,
-            Json(json!(AuthResponse {
-                token: token.to_string(),
-                user: claims.to_auth_user(),
-                is_impersonating: claims.original_admin.is_some(),
-                original_admin: claims.original_admin,
-            })),
-        )
-            .into_response();
+    let hash = hash_token(token);
+    let row = match state.get_api_token(&hash) {
+        Some(r) => r,
+        None => return unauthorized(),
+    };
+    if row.revoked_at.is_some() || row.expires_at < Utc::now() {
+        return unauthorized();
     }
+    let user = match resolve_user(&row.eppn, &state) {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
 
-    // Check if token is in active sessions (e.g. database persisted session)
-    if let Ok(sessions) = state.sessions.read() {
-        if let Some(session) = sessions.get(token) {
-            return (
-                StatusCode::OK,
-                Json(json!(AuthResponse {
-                    token: session.token.clone(),
-                    user: session.user.clone(),
-                    is_impersonating: session.original_admin.is_some(),
-                    original_admin: session.original_admin.clone(),
-                })),
-            )
-                .into_response();
-        }
-    }
+    let is_impersonating = row.kind == "impersonation" && row.original_admin.is_some();
+    let original_admin = row.original_admin.as_ref().and_then(|admin_eppn| resolve_user(admin_eppn, &state));
 
-    unauthorized()
+    (
+        StatusCode::OK,
+        Json(json!(AuthResponse {
+            token: token.to_string(),
+            user,
+            is_impersonating,
+            original_admin,
+        })),
+    )
+        .into_response()
 }
 
 async fn impersonate_user(
@@ -232,32 +274,18 @@ async fn impersonate_user(
     headers: HeaderMap,
     Json(payload): Json<ImpersonatePayload>,
 ) -> impl IntoResponse {
-    let caller_user = match session_user(&state, &headers) {
+    let real_admin = match session_user(&state, &headers) {
         Some(u) => u,
         None => return unauthorized(),
     };
 
-    // Check if currently already in an impersonation session
-    let token = bearer_token(&headers).unwrap_or_default();
-    let secret = get_jwt_secret();
-    let issuer = get_jwt_issuer();
-    let active_original_admin = if let Ok(claims) = validate_jwt(token, &secret, &issuer) {
-        claims.original_admin
-    } else if let Ok(sessions) = state.sessions.read() {
-        sessions.get(token).and_then(|s| s.original_admin.clone())
-    } else {
-        None
-    };
-
-    let real_admin = active_original_admin.unwrap_or(caller_user);
-
-    // 2. Cedar Policy Authorization Check
+    // Check Cedar policy: principal must have central_admin affiliation
     let auth_check = state.policy_engine.authorize_institutional_action(
         &real_admin.eppn,
         &real_admin.affiliation,
         &real_admin.department,
         "impersonate",
-        &payload.target_eppn,
+        "system",
     );
 
     match auth_check {
@@ -283,50 +311,37 @@ async fn impersonate_user(
         }
     }
 
-    // 3. Resolve target user identity
-    let (target_name, target_role, target_aff, target_dept) = resolve_defaults(
-        &payload.target_eppn,
-        payload.name,
-        None,
-        payload.affiliation,
-        payload.department,
-    );
-
-    let target_user = AuthUser {
-        eppn: payload.target_eppn.clone(),
-        name: target_name,
-        role_title: target_role,
-        affiliation: target_aff,
-        department: target_dept,
-    };
-
-    let imp_token = match mint_impersonation_jwt(&target_user, &real_admin, 3600) {
-        Ok(t) => t,
-        Err(e) => {
+    let target_user = match resolve_user(&payload.target_eppn, &state) {
+        Some(u) => u,
+        None => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Impersonation token minting failed: {e}")})),
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("Target user not found: {}", payload.target_eppn) })),
             )
                 .into_response();
         }
     };
 
-    // Record session in state and repository for stateful tracking
-    let imp_session = AuthSession {
-        token: imp_token.clone(),
-        user: target_user.clone(),
-        original_admin: Some(real_admin.clone()),
-        created_at: Utc::now().to_rfc3339(),
+    let raw_token = generate_raw_token();
+    let token_hash = hash_token(&raw_token);
+    let id = Uuid::new_v4();
+    let now = Utc::now();
+    let expires_at = now + chrono::Duration::hours(1);
+
+    let imp_token = ApiToken {
+        token_hash,
+        id,
+        kind: "impersonation".to_string(),
+        eppn: target_user.eppn.clone(),
+        label: format!("Impersonation of {}", target_user.eppn),
+        original_admin: Some(real_admin.eppn.clone()),
+        created_at: now,
+        expires_at,
+        last_used_at: None,
+        revoked_at: None,
     };
 
-    if let Ok(mut sessions) = state.sessions.write() {
-        sessions.insert(imp_token.clone(), imp_session.clone());
-    }
-    if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_session(&imp_session);
-    }
-
-    // 5. Append immutable audit entry to cryptographic decision ledger
+    // Append immutable audit entry to cryptographic decision ledger
     let audit_payload = json!({
         "admin_eppn": real_admin.eppn,
         "admin_name": real_admin.name,
@@ -335,7 +350,7 @@ async fn impersonate_user(
         "action": "impersonate_start",
     });
 
-    let _ = state.append_ledger_entry(RecordDecisionInput {
+    if let Err(e) = state.append_ledger_entry(RecordDecisionInput {
         principal: real_admin.eppn.clone(),
         organization_code: "DIV-SECURITY-CENTRAL".to_string(),
         app_slug: None,
@@ -346,12 +361,26 @@ async fn impersonate_user(
             real_admin.name, real_admin.eppn, target_user.name
         ),
         payload: &audit_payload,
-    });
+    }) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to record audit ledger entry: {e}") })),
+        )
+            .into_response();
+    }
+
+    if let Err(e) = state.persist_api_token(&imp_token) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to persist impersonation token: {e}") })),
+        )
+            .into_response();
+    }
 
     (
         StatusCode::OK,
         Json(json!(AuthResponse {
-            token: imp_token,
+            token: raw_token,
             user: target_user,
             is_impersonating: true,
             original_admin: Some(real_admin),
@@ -368,64 +397,31 @@ async fn stop_impersonation(
         Some(t) => t,
         None => return unauthorized(),
     };
-
-    let secret = get_jwt_secret();
-    let issuer = get_jwt_issuer();
-    let (target_eppn, target_name, original_admin) = if let Ok(claims) = validate_jwt(token, &secret, &issuer) {
-        match claims.original_admin {
-            Some(admin) => (claims.sub, claims.name.unwrap_or_default(), admin),
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": "Current session is not an impersonation session" })),
-                )
-                    .into_response();
-            }
-        }
-    } else if let Ok(sessions) = state.sessions.read() {
-        match sessions.get(token) {
-            Some(s) => match &s.original_admin {
-                Some(admin) => (s.user.eppn.clone(), s.user.name.clone(), admin.clone()),
-                None => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({ "error": "Current session is not an impersonation session" })),
-                    )
-                        .into_response();
-                }
-            },
-            None => return unauthorized(),
-        }
-    } else {
-        return unauthorized();
+    let hash = hash_token(token);
+    let row = match state.get_api_token(&hash) {
+        Some(r) => r,
+        None => return unauthorized(),
     };
 
-    // Remove impersonation session
-    if let Ok(mut sessions) = state.sessions.write() {
-        sessions.remove(token);
-    }
-    if let Some(ref repo) = state.repository {
-        let _ = repo.delete_session(token);
+    if row.kind != "impersonation" || row.original_admin.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Current session is not an impersonation session" })),
+        )
+            .into_response();
     }
 
-    // Mint restored admin JWT
-    let restore_token = match mint_test_jwt(TestJwtParams {
-        eppn: original_admin.eppn.clone(),
-        name: original_admin.name.clone(),
-        role_title: original_admin.role_title.clone(),
-        affiliation: original_admin.affiliation.clone(),
-        department: original_admin.department.clone(),
-        expires_in_secs: 3600,
-    }) {
-        Ok(t) => t,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Restore token minting failed: {e}")})),
-            )
-                .into_response();
-        }
+    let admin_eppn = row.original_admin.clone().unwrap();
+    let original_admin = match resolve_user(&admin_eppn, &state) {
+        Some(a) => a,
+        None => return unauthorized(),
     };
+    let target_eppn = row.eppn.clone();
+    let target_user = resolve_user(&target_eppn, &state);
+    let target_name = target_user.map(|u| u.name).unwrap_or_else(|| target_eppn.clone());
+
+    // Revoke the impersonation token
+    let _ = state.revoke_api_token(row.id, &row.eppn, true);
 
     // Append termination audit entry to cryptographic decision ledger
     let audit_payload = json!({
@@ -434,7 +430,7 @@ async fn stop_impersonation(
         "action": "impersonate_end",
     });
 
-    let _ = state.append_ledger_entry(RecordDecisionInput {
+    if let Err(e) = state.append_ledger_entry(RecordDecisionInput {
         principal: original_admin.eppn.clone(),
         organization_code: "DIV-SECURITY-CENTRAL".to_string(),
         app_slug: None,
@@ -445,15 +441,20 @@ async fn stop_impersonation(
             original_admin.name, target_name
         ),
         payload: &audit_payload,
-    });
+    }) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to record audit ledger entry: {e}") })),
+        )
+            .into_response();
+    }
 
     (
         StatusCode::OK,
-        Json(json!(AuthResponse {
-            token: restore_token,
-            user: original_admin,
-            is_impersonating: false,
-            original_admin: None,
+        Json(json!({
+            "status": "stopped",
+            "user": original_admin,
+            "is_impersonating": false,
         })),
     )
         .into_response()
@@ -464,12 +465,8 @@ async fn logout(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Some(token) = bearer_token(&headers) {
-        if let Ok(mut sessions) = state.sessions.write() {
-            sessions.remove(token);
-        }
-        if let Some(ref repo) = state.repository {
-            let _ = repo.delete_session(token);
-        }
+        let hash = hash_token(token);
+        let _ = state.revoke_api_token_by_hash(&hash);
     }
     (StatusCode::OK, Json(json!({ "status": "logged_out" })))
 }

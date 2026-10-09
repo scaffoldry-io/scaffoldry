@@ -34,6 +34,8 @@ pub enum LedgerError {
     },
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+    #[error("Repository error: {0}")]
+    RepositoryError(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

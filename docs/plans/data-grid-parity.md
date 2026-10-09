@@ -10,6 +10,8 @@ Run order is `docs/plans/README.md`. The grid is a view of one app. The app sits
 
 `docs/plans/row-scale.md` binds this plan. The grid holds one page of rows, not the table. Sort and filter are sent to the server and the grid reloads from the first page. A footer summary calls the aggregate route from row-scale phase 4. Do not sort, filter, or total in the browser. Where a phase below says otherwise, this paragraph wins.
 
+`docs/plans/calc-graph.md` phase 1 replaces this plan's formula work: one evaluator in Rust and none in TypeScript, so rule 6 below, which keeps two implementations equal, no longer applies. `docs/plans/views.md` moves view settings (column order, width, hidden, frozen, sort, filter, footer) off the manifest into `app_views`, and its phase 3 covers windowed scrolling. Where this plan says a view setting is stored on `AppView` in the manifest, read it as `app_views`.
+
 The grid is the web desk's main view. The agent is the primary surface of Scaffoldry. A department chair who would otherwise open Airtable or Smartsheet must be able to change columns, edit many cells, and calculate across a row without leaving the grid.
 
 This is not a clone of those products. Scaffoldry keeps their grid behavior and drops their project-management and marketplace surface.

@@ -177,6 +177,8 @@ Tests:
 
 ## Phase 3 — the manifest has a format
 
+Views leave the manifest in `views.md` phase 1. After that, this validator does not check view contents, and a `View` page names an id in `app_views`. Access rules and column rules from `access-rules.md` join the manifest in that brief.
+
 An agent needs a contract to build against. Today the contract is whatever `serde` accepts.
 
 Add pages to the manifest in `scaffoldry-engine/src/lib.rs`. `AppManifest` gains `pages: Vec<AppPage>` with `#[serde(default)]`.
@@ -222,6 +224,7 @@ Add `validate_manifest(m: &AppManifest) -> Result<(), Vec<String>>` in `scaffold
 | A `View` page | Its `view_id` exists |
 | A `Custom` page | `source_sha256` is 64 hex characters. Every grant names a table that exists. Every field in `read` and `write` exists in that table. A computed field is not in `write`. `write` is a subset of `read` |
 | Serialized manifest | 256 KB. Page source is stored apart from the manifest and does not count |
+| `custom_domain_verified` | Must equal the live value. A proposal can never set it to true. Nothing in this plan verifies a domain, so nothing sets it |
 
 Every path that stores a manifest calls `validate_manifest`. That is `create_app_in_workspace`, `update_app`, and phase 4.
 
@@ -293,7 +296,7 @@ For each new or changed custom page, the change list states its grants in words 
 
 1. Refuse when `status` is not `Pending`. 409.
 2. Refuse when the live version is not `base_version`. Mark the row `Superseded`. 409.
-3. Refuse when `sensitivity`, `data_loss`, or `page_sensitivity` failed and `decided_by` equals `proposed_by`. A second person approves a flagged change.
+3. Refuse when `sensitivity`, `data_loss`, `page_sensitivity`, or `rule_effects` failed and `decided_by` equals `proposed_by`. A second person approves a flagged change.
 4. Append the ledger entry, `DecisionType::AppPublished`, with the proposal id and the SHA-256 of the manifest in the payload.
 5. Write the manifest with `version + 1`.
 6. Set `status`, `decided_by`, `decided_at`.
@@ -302,7 +305,7 @@ If any step fails, none is kept. After commit, reload the manifest into the engi
 
 A proposal with no failed check may be approved by the person who proposed it, when that person is an `owner` or `admin`. This keeps a lab director's own small change to one step.
 
-`PUT /apps/{slug}` stays for the web builder in this phase. It gains the `validate_manifest` call from phase 3 and nothing else. `docs/plans/README.md` lists its removal as a later decision.
+`PUT /apps/{slug}`, `POST /workspaces/{id}/apps`, and `POST /apps/{slug}/publish` are rewritten in phase 4a. Until then they gain only the `validate_manifest` call from phase 3.
 
 Tests:
 
@@ -316,14 +319,104 @@ Tests:
 8. A page granted `read` on a `ferpa_sensitive` field fails `page_sensitivity`. The change list holds a sentence naming that field. The proposer's own approval is refused.
 9. Changing one character of a page source changes its hash, and the change list reports the page as changed.
 
+## Phase 4a — process definitions and app changes are proposals
+
+Needs phase 4, `approvers.md` phase 3, and `ux-standards.md` phase 1.
+
+A rule that sets `status` to `Approved` changes real decisions. An agent can write one as easily as it writes a manifest. So a rule is governed the same way: it is proposed, checked, and approved, and the approval is a ledger entry. The same goes for every direct route that changes an app today. After this phase, nothing changes a live app or a live rule except an approved proposal, or an administrator's enable or disable from `admin-console.md` phase 6.
+
+Migration `crates/scaffoldry-core/migrations/0019_rule_versions.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS workflow_rule_versions (
+    rule_id VARCHAR(64) NOT NULL,
+    version INTEGER NOT NULL,
+    app_slug VARCHAR(64) NOT NULL,
+    rule_json JSONB NOT NULL,
+    summary TEXT NOT NULL,
+    proposal_id UUID,
+    changed_by VARCHAR(255) NOT NULL,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (rule_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_rule_versions_app ON workflow_rule_versions(app_slug);
+```
+
+Migration `0024_proposal_rules.sql`:
+
+```sql
+ALTER TABLE app_proposals ALTER COLUMN manifest DROP NOT NULL;
+ALTER TABLE app_proposals ADD COLUMN IF NOT EXISTS rules JSONB;
+```
+
+`rules` is a list of `{ "rule": <AutomationRule>, "base_version": <number> }`. `base_version` is the rule's live version when proposed, and 0 for a new rule. A proposal holds a manifest, rules, or both.
+
+Model, in `scaffoldry-core/src/workflow.rs`. New fields use `#[serde(default)]`.
+
+- `AutomationRule.version: u32`, assigned by the server.
+- `ProcessInstance.rule_version: u32`, set from the live rule when the instance is created.
+- `describe_rule(rule: &AutomationRule) -> Vec<String>`: plain sentences. Example: `When a record is created in this app.` `If gpa is greater than 3.85.` `Then set status to Approved.` `Then wait for a decision by the chair of the submitter's unit. If that position is vacant, ask the next unit up. If approved: set status to Admitted. If rejected: set status to Denied.` A webhook step is refused, so it has no sentence. A pure function with its own tests.
+
+`save_rule(caller, slug, rule, proposal_id, state)` in a new `service/processes.rs`. It validates, appends a ledger entry `ProcessDefinitionChanged` (`CM-03`) holding the rule id, the new version, the SHA-256 of `rule_json`, and the proposal id, then writes the version row and the live row in one repository transaction. Validation: step ids unique, every `UserTask` passes `validate_approver`, every field named in a `when` or `SetFields` exists in the app's manifest, no `SetFields` names a computed field, and no step is a webhook. It returns every problem, not the first. It is called from proposal approval and from `admin-console.md` phase 6. Nothing else calls it.
+
+`propose_app_change` takes `app_slug` (required when there is no manifest), an optional `manifest`, and optional `rules`. At least one of the two is required.
+
+Checks. Each check has an outcome: `pass`, `warn`, or `fail`. `warn` never blocks. `fail` on `schema` or `rule_schema` stores no proposal and returns the errors. The flagged checks, which need a second person to approve, are `sensitivity`, `data_loss`, `page_sensitivity`, and `rule_effects`.
+
+| Check | Outcome |
+| --- | --- |
+| `rule_schema` | `fail` when `save_rule`'s validation would fail, including a webhook step |
+| `rule_effects` | `fail`-flagged when a `SetFields` effect names a field that is effectively sensitive (`admin-console.md` phase 4, or the manifest flag before that phase) |
+| `rule_loop` | `warn` when the trigger is `RecordUpdated` and the rule sets a field its own `when` reads |
+| `rule_approver` | `warn` when a user task resolves to no approver today, or only to the proposer. Resolve with `resolve_approvers` for the workspace's unit |
+| `stale` | Each rule's `base_version` against its live version |
+
+The change list covers rules with `describe_rule`: rules added, rules changed (the sentences of the new version), and rules enabled or disabled.
+
+Approval. `decide_proposal` runs as in phase 4. For rules it also, in the same transaction, appends one `ProcessDefinitionChanged` entry per rule and calls `save_rule` for each. After commit, reload `ServerState.automations` from the new live rows. A process instance already waiting keeps the `rule_version` it started under. `decide` reads its step from `workflow_rule_versions` for that version. An instance with `rule_version` 0 reads the live rule.
+
+The direct routes become wrappers. Each creates a proposal with the same checks. It then approves it in the same request when all of these hold: the caller is an `owner` or `admin` of the workspace, no check is `fail`, and no flagged check is raised. In that case the route responds as before (`201` or `200`, with the rule or manifest), so existing screens keep working. When a flagged check is raised, it responds `202` with `{ "proposal_id", "status": "Pending", "checks" }` and changes nothing live. A `fail` is `400` with the errors.
+
+| Route | Now |
+| --- | --- |
+| `POST /api/v1/apps/{slug}/automations` | A rules proposal for one rule |
+| `PUT /api/v1/apps/{slug}` | A manifest proposal |
+| `POST /api/v1/workspaces/{id}/apps` | A manifest proposal with no base version |
+| `POST /api/v1/apps/{slug}/publish` | A manifest proposal that sets `custom_domain` and cannot set `custom_domain_verified` |
+
+Frontend, from the kit. Create `apps/web/src/Proposals.tsx`, a `Proposals` tab in the workspace for `owner` and `admin`.
+
+- A table, pending first: summary, who proposed it, when, and the checks as `StatusBadge`s.
+- A row opens a drawer: the summary, the change list in sentences (including each custom page's grants), and each check with its outcome and detail.
+- `Approve` and `Reject` are `ConfirmAction`s with a required reason. When a flagged check is raised and the viewer is the proposer, `Approve` is disabled and the drawer says `A second person must approve this change.`
+- `WorkflowBuilder.tsx` and the app builder treat a `202` as success of a different kind: a `Banner` that says `Submitted for approval.` with a `View proposal` link. They do not show the change as live.
+- The admin Overview gains a Pending proposals count.
+
+Tests.
+
+1. A rules-only proposal leaves the live rules unchanged. Approving it makes version 1 live, and the version row holds the proposal id.
+2. A rule that sets a sensitive field raises `rule_effects`. The proposer cannot approve it. Another admin can.
+3. `POST /apps/{slug}/automations` by an owner with a clean rule is 201, creates an approved proposal row, and writes the version. By an owner with a flagged rule it is 202 and the rule is not live.
+4. A rule with a webhook step is 400 with the step id and stores no proposal.
+5. A rule naming a field that does not exist is 400 and names the field.
+6. Two proposals for one rule on the same base version: the second approval is 409 and its row is `Superseded`.
+7. An instance waits on version 1. Approve a version 2 that changes the approve actions. Decide the instance. The version 1 actions are applied.
+8. `PUT /apps/{slug}` by an editor is 403. By an owner with a clean change it is 200 and writes one proposal row and one ledger entry.
+9. A proposal that sets `custom_domain_verified` to true is refused.
+10. `describe_rule` on a rule with a condition, a service step, and a user task returns the expected sentences. Unit test in `scaffoldry-core`.
+11. A user task that resolves to no approver saves with a `warn`, and the drawer shows it in words.
+12. Web: the drawer shows the change list and disables `Approve` for the proposer on a flagged proposal. A `202` from the builder shows the banner and not a live rule.
+
 ## Phase 5 — process tools
+
+Needs `approvers.md` phase 3.
 
 The business process desk becomes reachable from an agent.
 
 | Tool | Scope | Behavior |
 | --- | --- | --- |
-| `list_waiting_decisions` | `SignedIn` | Waiting process instances in apps the caller can read, where the step's `role` matches the caller. Up to 200 |
-| `decide_process` | `App(Read)` plus the role match | The body of `decide_app_process`, moved to `service/processes.rs`. The REST route calls it |
+| `list_waiting_decisions` | `SignedIn` | Waiting process instances in apps the caller can read, where `can_decide` is true for the caller. Up to 200 |
+| `decide_process` | `App(Read)` plus `can_decide` from `approvers.md` | The body of `decide_app_process`, moved to `service/processes.rs`. The REST route calls it |
 
 Tests: the foundation phase 6 process tests, run again through `tools/call`.
 
@@ -480,5 +573,7 @@ Stop when the tests listed for phase N pass, and paste the command output.
 | Inside a desktop agent, the host may let a page call any tool. | Then the page is bounded by the user's own rights, not by its grants, and still has no network. The grants are enforced when the call arrives as `page_call`, which is the only call the web desk forwards. |
 | A page will break when the platform changes. | The bridge is five methods. They are a published contract. A change to them is a new method, never a changed one. |
 | The approved code is not the code that runs. | The manifest names the SHA-256 of the source. Source rows are never updated. The ledger entry for the approval holds the manifest hash. |
+| An agent will write a rule that approves everything. | A rule is a proposal like a manifest. It is checked, a rule that sets a sensitive field needs a second person, and every approval is a ledger entry holding the rule's hash. |
+| Proposals will slow every small edit. | An owner or admin with a clean change is approved in the same request. The proposal is the audit trail, not a queue. |
 | Hand-written JSON-RPC will drift from the protocol. | The surface is six methods. The protocol version is negotiated in `initialize`. Adopt the official SDK when a seventh method needs streaming. |
 | The approval and the audit entry can disagree. | They are one transaction. Phase 4 test 5 fails the ledger insert and asserts that nothing changed. |

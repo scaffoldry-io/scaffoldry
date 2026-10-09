@@ -1,10 +1,11 @@
+import { UserSettingsModal } from "./UserSettingsModal";
 import React, { useState, useEffect, useRef, Suspense, lazy, useMemo } from "react";
 import { DatasetExplorer } from "./DatasetExplorer";
 import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
-import { apiClient } from "./api";
+import { apiClient, getAuthToken, setAuthToken } from "./api";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
@@ -555,9 +556,15 @@ const INITIAL_LEDGER: LedgerEntryItem[] = [
   },
 ];
 
-export const AdminDesk: React.FC = () => {
+export interface AdminDeskProps {
+  initialPath?: string;
+  initialEppn?: string;
+}
+
+export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }) => {
   // Discreet URL Path Routing State
   const [currentPath, setCurrentPath] = useState<string>(() => {
+    if (initialPath) return initialPath;
     if (typeof window !== "undefined") {
       return window.location.pathname;
     }
@@ -652,7 +659,7 @@ export const AdminDesk: React.FC = () => {
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"org" | "policy" | "ledger" | "infra" | "impersonation">("org");
+  const [adminTab, setAdminTab] = useState<"org" | "policy" | "ledger" | "infra" | "impersonation" | "settings">("org");
   const [ledger, setLedger] = useState<LedgerEntryItem[]>(INITIAL_LEDGER);
 
   const handleDownloadOscal = () => {
@@ -718,10 +725,59 @@ export const AdminDesk: React.FC = () => {
   });
 
   // User Persona & Impersonation State
-  const [activePersona, setActivePersona] = useState<Persona>(PERSONAS[0]);
+  const [activePersona, setActivePersona] = useState<Persona>(() => {
+    if (initialEppn) {
+      const found = PERSONAS.find((p) => p.eppn === initialEppn);
+      if (found) return found;
+      return {
+        eppn: initialEppn,
+        name: "Fixture User",
+        affiliation: initialEppn.includes("chair") || initialEppn.includes("dean") ? "faculty" : (initialEppn.includes("student") ? "student" : "staff"),
+        department: "Physics",
+        roleTitle: "User",
+        isAdmin: false,
+      };
+    }
+    return PERSONAS[0];
+  });
+  const [userUnits, setUserUnits] = useState<OrganizationNode[]>([]);
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [isImpersonating, setIsImpersonating] = useState<boolean>(false);
   const [realAdmin, setRealAdmin] = useState<Persona | null>(null);
   const [loginModalOpen, setLoginModalOpen] = useState<boolean>(false);
+  const [userSettingsOpen, setUserSettingsOpen] = useState<boolean>(false);
+  const [authToken, setAuthTokenState] = useState<string | null>(getAuthToken());
+  const [pasteToken, setPasteToken] = useState("");
+  const [signInError, setSignInError] = useState<string | null>(null);
+
+  const handleTokenSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pasteToken.trim()) return;
+    try {
+      setSignInError(null);
+      setAuthToken(pasteToken.trim());
+      const me = await apiClient.getCurrentUser();
+      setAuthTokenState(pasteToken.trim());
+      if (me?.user) {
+        const found = PERSONAS.find((p) => p.eppn === me.user.eppn);
+        if (found) {
+          setActivePersona(found);
+        } else {
+          setActivePersona({
+            eppn: me.user.eppn,
+            name: me.user.name || me.user.eppn,
+            affiliation: me.user.affiliation || "faculty",
+            department: me.user.department || "General",
+            roleTitle: me.user.affiliation || "Member",
+            isAdmin: me.user.affiliation === "central_admin",
+          });
+        }
+      }
+    } catch (err: any) {
+      setAuthToken(null);
+      setSignInError(err?.message || "Invalid token");
+    }
+  };
   const [notificationToast, setNotificationToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -729,14 +785,17 @@ export const AdminDesk: React.FC = () => {
 
     const syncWorkspaces = async () => {
       try {
-        await apiClient.issueToken(activePersona.eppn).catch(() => {});
         const serverWorkspaces = await apiClient.listWorkspaces().catch(() => null);
-        if (!cancelled && serverWorkspaces && serverWorkspaces.length > 0) {
+        if (!cancelled && Array.isArray(serverWorkspaces) && serverWorkspaces.length > 0) {
           setWorkspaces(serverWorkspaces);
         }
         const serverLedger = await apiClient.getGovernanceLedger().catch(() => null);
-        if (!cancelled && serverLedger && serverLedger.entries) {
+        if (!cancelled && serverLedger && Array.isArray(serverLedger.entries)) {
           setLedger(serverLedger.entries);
+        }
+        const serverOrgs = await apiClient.listOrganizations().catch(() => null);
+        if (!cancelled && Array.isArray(serverOrgs)) {
+          setUserUnits(serverOrgs);
         }
       } catch {
         // offline fallback
@@ -984,6 +1043,27 @@ export const AdminDesk: React.FC = () => {
   };
 
   const simResult = evaluateCedarDecision("biology", simFerpa, simAction);
+
+  const handleCreateUnitWorkspace = async () => {
+    if (!selectedUnitId) return;
+    const unit = userUnits.find((u) => u.id === selectedUnitId);
+    const unitName = unit ? unit.name : "Unit";
+    try {
+      const newWs = await apiClient.createWorkspace({
+        name: `${unitName} Workspace`,
+        code: `${unit ? unit.code : "WS"}-${Date.now().toString().slice(-4)}`,
+        organization: unitName,
+        department: unit ? unit.code.toLowerCase() : "general",
+        visibility: "departmental",
+        organization_id: selectedUnitId,
+      } as any);
+      setWorkspaces((prev) => [...prev, newWs]);
+      setActiveWorkspaceId(newWs.id);
+      showToast(`Created workspace for ${unitName}`);
+    } catch (err: any) {
+      showToast(err.message || "Failed to create workspace");
+    }
+  };
 
   // Active Workspace & Security Access
   const currentWorkspace =
@@ -1489,6 +1569,50 @@ export const AdminDesk: React.FC = () => {
     );
   }
 
+  if (!authToken) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-4 font-sans">
+        <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-lg">
+              S
+            </div>
+            <div>
+              <h1 className="text-base font-bold text-slate-900 dark:text-white">Sign in to Scaffoldry</h1>
+              <p className="text-xs text-slate-500">Paste your authoritative token</p>
+            </div>
+          </div>
+          <form onSubmit={handleTokenSignIn} className="space-y-4">
+            <div>
+              <label htmlFor="token-sign-in" className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                Paste your token
+              </label>
+              <input
+                id="token-sign-in"
+                data-testid="token-sign-in"
+                type="password"
+                placeholder="Paste your token"
+                value={pasteToken}
+                onChange={(e) => setPasteToken(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+              />
+            </div>
+            {signInError && (
+              <div className="text-xs text-red-600 dark:text-red-400 font-medium">{signInError}</div>
+            )}
+            <button
+              type="submit"
+              data-testid="token-sign-in-submit"
+              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
+            >
+              Sign In
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
       {/* Toast Notification */}
@@ -1793,6 +1917,25 @@ export const AdminDesk: React.FC = () => {
                   </div>
                 )}
 
+                {/* User Settings */}
+                <div className="pt-1 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    data-testid="user-settings-btn"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      setUserSettingsOpen(true);
+                    }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors flex items-center gap-2 cursor-pointer"
+                  >
+                    <span className="text-slate-400">⚙️</span>
+                    <div>
+                      <div className="font-semibold text-xs">User Settings</div>
+                      <div className="text-[10px] text-slate-400">Mint agent tokens & preferences</div>
+                    </div>
+                  </button>
+                </div>
+
                 {/* Sign In / Switch Account */}
                 <div className="pt-2">
                   <button
@@ -1839,6 +1982,7 @@ export const AdminDesk: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setAdminTab("org")}
+                    data-testid="admin-org-tab-btn"
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "org"
                         ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
@@ -1848,7 +1992,7 @@ export const AdminDesk: React.FC = () => {
                     <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                     </svg>
-                    {navRailExpanded && <span>Org &amp; DNS Manager</span>}
+                    {navRailExpanded && <span>Organization</span>}
                   </button>
 
                   <button
@@ -1896,6 +2040,25 @@ export const AdminDesk: React.FC = () => {
                     {navRailExpanded && <span>Cloud Run Infrastructure</span>}
                   </button>
 
+                  {activePersona.affiliation === "central_admin" && (
+                    <button
+                      type="button"
+                      data-testid="admin-settings-tab-btn"
+                      onClick={() => setAdminTab("settings")}
+                      className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        adminTab === "settings"
+                          ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                          : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                      }`}
+                    >
+                      <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      {navRailExpanded && <span>Platform Settings</span>}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     data-testid="admin-impersonation-tab-btn"
@@ -1929,6 +2092,48 @@ export const AdminDesk: React.FC = () => {
             ) : (
               /* PRIMARY END-USER WORKSPACE RAIL */
               <>
+                {/* ORG UNIT ADMIN BLOCK */}
+                {activePersona.affiliation !== "central_admin" && userUnits.length > 0 && (
+                  <div data-testid="unit-admin-rail" className="mb-4 p-2.5 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/60 rounded-lg space-y-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-400">
+                      Org Unit Admin
+                    </div>
+                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Your units
+                    </div>
+                    <div className="space-y-1">
+                      {userUnits.map((unit) => {
+                        const isSelected = selectedUnitId === unit.id;
+                        return (
+                          <button
+                            key={unit.id}
+                            type="button"
+                            data-testid={`unit-rail-${unit.code}`}
+                            onClick={() => setSelectedUnitId(isSelected ? null : unit.id)}
+                            className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs transition-colors cursor-pointer text-left ${
+                              isSelected
+                                ? "bg-amber-600 text-white font-semibold shadow-xs"
+                                : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-amber-100/50"
+                            }`}
+                          >
+                            <span className="truncate">{unit.name}</span>
+                            <span className="text-[10px] font-mono opacity-80">{unit.code}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {selectedUnitId && (
+                      <button
+                        type="button"
+                        data-testid="unit-new-workspace-btn"
+                        onClick={handleCreateUnitWorkspace}
+                        className="w-full mt-2 px-2.5 py-1.5 text-xs font-semibold rounded bg-amber-600 text-white hover:bg-amber-700 shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <span>+ New workspace</span>
+                      </button>
+                    )}
+                  </div>
+                )}
                 <div>
                   <div className="flex items-center justify-between px-2 mb-2">
                     {navRailExpanded ? (
@@ -2526,6 +2731,12 @@ export const AdminDesk: React.FC = () => {
         setApps={setApps}
       />
 
+      <UserSettingsModal
+        isOpen={userSettingsOpen}
+        onClose={() => setUserSettingsOpen(false)}
+        eppn={activePersona.eppn}
+      />
+
       {/* AI Assistant Drawer (MCP Native) */}
       <AIAssistantDrawer
         isOpen={isAiAssistantOpen}
@@ -2594,3 +2805,5 @@ export const AdminDesk: React.FC = () => {
     </div>
   );
 };
+
+export default AdminDesk;

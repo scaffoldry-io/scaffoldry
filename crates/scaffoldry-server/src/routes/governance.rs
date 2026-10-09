@@ -34,7 +34,17 @@ pub struct AppendDecisionRequest {
     pub payload: Value,
 }
 
-async fn get_governance_ledger(State(state): State<SharedState>) -> impl IntoResponse {
+async fn get_governance_ledger(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    if user.affiliation != "central_admin" && user.affiliation != "compliance" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden: Requires Platform Admin or compliance affiliation"}))));
+    }
+
     let entries = if let Some(ref repo) = state.repository {
         repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone())
     } else {
@@ -46,12 +56,12 @@ async fn get_governance_ledger(State(state): State<SharedState>) -> impl IntoRes
         .map(|e| e.entry_hash.clone())
         .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
 
-    Json(json!({
+    Ok(Json(json!({
         "chain_valid": is_valid,
         "total_entries": entries.len(),
         "head_hash": head_hash,
         "entries": entries
-    }))
+    })))
 }
 
 async fn append_ledger_decision(
@@ -120,9 +130,19 @@ async fn verify_governance_ledger(State(state): State<SharedState>) -> impl Into
     }
 }
 
-async fn export_oscal_component_definition(State(state): State<SharedState>) -> impl IntoResponse {
+async fn export_oscal_component_definition(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    if user.affiliation != "central_admin" && user.affiliation != "compliance" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden: Requires Platform Admin or compliance affiliation"}))));
+    }
+
     let doc = state.export_oscal_component_definition();
-    Json(doc)
+    Ok(Json(doc))
 }
 
 async fn get_oscal_catalog() -> impl IntoResponse {

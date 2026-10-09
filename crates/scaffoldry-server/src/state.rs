@@ -15,15 +15,35 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiToken {
+    pub token_hash: String,
+    pub id: uuid::Uuid,
+    pub kind: String, // 'agent' | 'impersonation' | 'scim' | 'setup'
+    pub eppn: String,
+    pub label: String,
+    pub original_admin: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScimUser {
     pub id: String,
+    #[serde(alias = "userName")]
     pub user_name: String,
+    #[serde(default)]
     pub name: Value,
     pub active: bool,
+    #[serde(default)]
     pub emails: Vec<Value>,
+    #[serde(default)]
     pub roles: Vec<Value>,
-    #[serde(rename = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User")]
+    #[serde(default, rename = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User")]
     pub enterprise_extension: Option<Value>,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +90,34 @@ pub struct WorkspaceRecord {
     pub cedar_policy_guard: Option<String>,
     #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
+    pub organization_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationNode {
+    pub id: uuid::Uuid,
+    pub parent_id: Option<uuid::Uuid>,
+    pub name: String,
+    pub code: String,
+    pub org_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoleRow {
+    pub id: uuid::Uuid,
+    pub person_id: uuid::Uuid,
+    pub eppn: String,
+    pub organization_id: uuid::Uuid,
+    pub role_title: String,
+    pub scoped_affiliation: String,
+    pub is_primary: bool,
+    #[serde(default = "default_role_source")]
+    pub source: String,
+}
+
+fn default_role_source() -> String {
+    "api".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,8 +176,11 @@ pub struct ServerState {
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
     pub sessions: RwLock<HashMap<String, AuthSession>>,
-    pub scim_token: Option<String>,
+    pub api_tokens: RwLock<HashMap<String, ApiToken>>,
     pub repository: Option<Arc<crate::repository::PostgresRepository>>,
+    pub organizations: RwLock<HashMap<uuid::Uuid, OrganizationNode>>,
+    pub roles: RwLock<Vec<RoleRow>>,
+    pub settings: RwLock<HashMap<String, serde_json::Value>>,
 }
 
 impl ServerState {
@@ -141,12 +192,632 @@ impl ServerState {
 
         let mut users = HashMap::new();
         let mut groups = HashMap::new();
+        let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let default_root_org = OrganizationNode {
+            id: default_root_id,
+            parent_id: None,
+            name: "Institution".to_string(),
+            code: "INST".to_string(),
+            org_type: "Institution".to_string(),
+        };
+        let mut organizations = HashMap::new();
+        organizations.insert(default_root_id, default_root_org);
+        let mut roles: Vec<RoleRow> = Vec::new();
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
         let mut process_instances = HashMap::new();
+        let mut automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
 
         let now = Utc::now().to_rfc3339();
 
+        let entry_0 = LedgerEntry::new(NewLedgerEntryParams {
+            sequence: 0,
+            timestamp_iso: now.clone(),
+            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
+            principal: "system@scaffoldry.internal".to_string(),
+            organization_code: "INST".to_string(),
+            app_slug: None,
+            decision_type: DecisionType::PolicyRevision,
+            oscal_control_id: "AU-02".to_string(),
+            rationale: "Institutional sovereign genesis ledger entry".to_string(),
+            payload: &json!({"system": "scaffoldry", "genesis": true}),
+        });
+
+        let mut ledger = vec![entry_0.clone()];
+
+        let mut sessions = HashMap::new();
+        let mut workspaces = HashMap::new();
+        let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
+        let mut api_tokens = HashMap::new();
+        let scim_hash = crate::service::identity::hash_token("test-scim-token");
+        let default_scim_token = ApiToken {
+            token_hash: scim_hash.clone(),
+            id: uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+            kind: "scim".to_string(),
+            eppn: "jordan.lee@state.edu".to_string(),
+            label: "SCIM Provisioning Credential".to_string(),
+            original_admin: None,
+            created_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::days(365),
+            last_used_at: None,
+            revoked_at: None,
+        };
+        api_tokens.insert(scim_hash, default_scim_token.clone());
+
+        let mut settings_map = HashMap::new();
+        settings_map.insert("cors.allowed_origins".to_string(), serde_json::json!([]));
+        settings_map.insert("tokens.max_days".to_string(), serde_json::json!(90));
+        settings_map.insert("tokens.agent_enabled".to_string(), serde_json::json!(true));
+        settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
+        settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
+        settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
+
+        let repository = match crate::repository::PostgresRepository::connect(None) {
+            Ok(repo) => Some(Arc::new(repo)),
+            Err(e) => {
+                if let crate::repository::RepositoryError::TamperDetected(msg) = &e {
+                    return Err(format!("Cryptographic tamper detected in ledger: {msg}").into());
+                }
+                return Err(format!("Failed to connect to PostgreSQL repository: {e}").into());
+            }
+        };
+
+        if let Some(ref repo) = repository {
+            if let Ok(db_settings) = repo.get_platform_settings() {
+                for (k, v) in db_settings {
+                    settings_map.insert(k, v);
+                }
+            }
+        }
+
+
+        if let Some(ref repo) = repository {
+            // Always ensure root organization exists before workspaces
+            for org in organizations.values() {
+                let _ = repo.upsert_organization(org);
+            }
+
+            // Always ensure root organization exists
+            for org in organizations.values() {
+                let _ = repo.upsert_organization(org);
+            }
+
+            // Ensure genesis ledger entry exists in repo
+            let _ = repo.append_ledger_entry(&entry_0, &json!({"system": "scaffoldry", "genesis": true}));
+            // Load persisted manifests into engine
+            if let Ok(persisted_manifests) = repo.list_app_manifests() {
+                for m in persisted_manifests {
+                    let _ = engine.register_manifest(m);
+                }
+            }
+
+            // Load persisted datasets
+            if let Ok(persisted_datasets) = repo.list_published_datasets() {
+                for ds in persisted_datasets {
+                    datasets.insert(ds.id.clone(), ds);
+                }
+            }
+
+            // Load persisted relationships
+            if let Ok(persisted_rels) = repo.list_dataset_relationships() {
+                for rel in persisted_rels {
+                    relationships.insert(rel.id.clone(), rel);
+                }
+            }
+
+            // Load persisted automations
+            if let Ok(persisted_automations) = repo.list_workflow_automations(None) {
+                for r in persisted_automations {
+                    let entry = automations.entry(r.app_slug.clone()).or_default();
+                    if !entry.iter().any(|existing| existing.id == r.id) {
+                        entry.push(r);
+                    }
+                }
+            }
+
+            // Load persisted process instances
+            if let Ok(persisted_instances) = repo.list_process_instances(None, None) {
+                for inst in persisted_instances {
+                    process_instances.insert(inst.id.clone(), inst);
+                }
+            }
+
+            for org in organizations.values() {
+                let _ = repo.upsert_organization(org);
+            }
+            if let Ok(persisted_orgs) = repo.list_organizations() {
+                for org in persisted_orgs {
+                    organizations.insert(org.id, org);
+                }
+            }
+            if let Ok(persisted_roles) = repo.list_roles() {
+                roles = persisted_roles;
+            }
+
+            // Load persisted SCIM users and groups
+            if let Ok(persisted_users) = repo.list_scim_users() {
+                for u in persisted_users {
+                    users.insert(u.id.clone(), u);
+                }
+            }
+            if let Ok(persisted_groups) = repo.list_scim_groups() {
+                for g in persisted_groups {
+                    groups.insert(g.id.clone(), g);
+                }
+            }
+
+            if let Ok(persisted_ws) = repo.list_workspaces() {
+                for ws in persisted_ws {
+                    if let Ok(collabs) = repo.get_collaborators(&ws.id) {
+                        collaborators.insert(ws.id.clone(), collabs);
+                    }
+                    workspaces.insert(ws.id.clone(), ws);
+                }
+            }
+
+            if let Ok(persisted_sessions) = repo.list_sessions() {
+                if persisted_sessions.is_empty() {
+                    for s in sessions.values() {
+                        let _ = repo.upsert_session(s);
+                    }
+                } else {
+                    sessions = persisted_sessions;
+                }
+            }
+            let _ = repo.insert_api_token(&default_scim_token);
+
+            if let Ok(persisted_ledger) = repo.get_ledger() {
+                if !persisted_ledger.is_empty() {
+                    ledger = persisted_ledger;
+                }
+            }
+        }
+
+        Ok(Self {
+            users: RwLock::new(users),
+            groups: RwLock::new(groups),
+            workspaces: RwLock::new(workspaces),
+            collaborators: RwLock::new(collaborators),
+            records: RwLock::new(HashMap::new()),
+            datasets: RwLock::new(datasets),
+            relationships: RwLock::new(relationships),
+            automations: RwLock::new(automations),
+            process_instances: RwLock::new(process_instances),
+            ledger: RwLock::new(ledger),
+            engine: RwLock::new(engine),
+            policy_engine,
+            sessions: RwLock::new(sessions),
+            api_tokens: RwLock::new(api_tokens),
+            repository,
+            organizations: RwLock::new(organizations),
+            roles: RwLock::new(roles),
+            settings: RwLock::new(settings_map),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordDecisionInput<'a> {
+    pub principal: String,
+    pub organization_code: String,
+    pub app_slug: Option<String>,
+    pub decision_type: DecisionType,
+    pub oscal_control_id: String,
+    pub rationale: String,
+    pub payload: &'a Value,
+}
+
+impl ServerState {
+    pub fn persist_organization(&self, org: &OrganizationNode) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.organizations.write().unwrap().insert(org.id, org.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_organization(org)?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_scim_roles(&self, eppn: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut guard = self.roles.write().unwrap();
+        guard.retain(|r| !(r.eppn == eppn && r.source == "scim"));
+        if let Some(ref repo) = self.repository {
+            repo.delete_scim_roles_for_user(eppn)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_role(&self, role: &RoleRow) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut guard = self.roles.write().unwrap();
+        if let Some(pos) = guard.iter().position(|r| r.id == role.id) {
+            guard[pos] = role.clone();
+        } else {
+            guard.push(role.clone());
+        }
+        if let Some(ref repo) = self.repository {
+            repo.upsert_role(role)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_workspace(&self, ws: WorkspaceRecord) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.workspaces.write().unwrap().insert(ws.id.clone(), ws.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_workspace(&ws)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_workspace(&self, id: &str) -> Option<WorkspaceRecord> {
+        if let Some(ref repo) = self.repository {
+            if let Ok(Some(ws)) = repo.get_workspace(id) {
+                return Some(ws);
+            }
+        }
+        self.workspaces.read().unwrap().get(id).cloned()
+    }
+
+    pub fn persist_workspaces_batch(&self, batch: &[WorkspaceRecord]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut guard = self.workspaces.write().unwrap();
+        for ws in batch {
+            guard.insert(ws.id.clone(), ws.clone());
+        }
+        if let Some(ref repo) = self.repository {
+            repo.persist_workspaces_batch(batch)?;
+        }
+        Ok(())
+    }
+
+    pub fn count_workspaces(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref repo) = self.repository {
+            return Ok(repo.count_workspaces()?);
+        }
+        Ok(self.workspaces.read().unwrap().len())
+    }
+
+    pub fn persist_app_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.engine.write().map_err(|_| "engine lock poisoned")?.register_manifest(m.clone())?;
+        if let Some(ref repo) = self.repository {
+            repo.upsert_app_manifest(&m)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_app_manifest(&self, slug: &str) -> Option<AppManifest> {
+        if let Some(ref repo) = self.repository {
+            if let Ok(Some(m)) = repo.get_app_manifest(slug) {
+                return Some(m);
+            }
+        }
+        use scaffoldry_engine::HostRouter;
+        self.engine.read().ok()?.resolve_by_slug(slug).cloned()
+    }
+
+    pub fn persist_dataset(&self, ds: PublishedDataset) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.datasets.write().map_err(|_| "datasets lock poisoned")?.insert(ds.id.clone(), ds.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_published_dataset(&ds)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_dataset(&self, id: &str) -> Option<PublishedDataset> {
+        self.datasets.read().ok()?.get(id).cloned()
+    }
+
+    pub fn persist_relationship(&self, rel: DatasetRelationship) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.relationships.write().map_err(|_| "relationships lock poisoned")?.insert(rel.id.clone(), rel.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_dataset_relationship(&rel)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_automation(&self, rule: AutomationRule) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.automations.write().map_err(|_| "automations lock poisoned")?.entry(rule.app_slug.clone()).or_default().push(rule.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_workflow_automation(&rule)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_process_instance(&self, inst: ProcessInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.process_instances.write().map_err(|_| "process_instances lock poisoned")?.insert(inst.id.clone(), inst.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_process_instance(&inst)?;
+        }
+        Ok(())
+    }
+
+    pub fn persist_scim_user(&self, user: ScimUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.users.write().map_err(|_| "users lock poisoned")?.insert(user.id.clone(), user.clone());
+        if let Some(ref repo) = self.repository {
+            repo.upsert_scim_user(&user)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_scim_user(&self, id: &str) -> Option<ScimUser> {
+        self.users.read().ok()?.get(id).cloned()
+    }
+
+    pub fn append_ledger_entry(
+        &self,
+        input: RecordDecisionInput<'_>,
+    ) -> Result<LedgerEntry, LedgerError> {
+        if let Some(ref repo) = self.repository {
+            let entry = repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                principal: input.principal.clone(),
+                organization_code: input.organization_code.clone(),
+                app_slug: input.app_slug.clone(),
+                decision_type: input.decision_type.clone(),
+                oscal_control_id: input.oscal_control_id.clone(),
+                rationale: input.rationale.clone(),
+                payload: input.payload.clone(),
+            }).map_err(|e| LedgerError::RepositoryError(e.to_string()))?;
+            self.ledger.write().unwrap().push(entry.clone());
+            return Ok(entry);
+        }
+
+        let mut ledger = self.ledger.write().unwrap();
+        let sequence = ledger.len() as u64;
+        let previous_hash = ledger
+            .last()
+            .map(|l| l.entry_hash.clone())
+            .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
+        let now = chrono::Utc::now().to_rfc3339();
+        let entry = LedgerEntry::new(NewLedgerEntryParams {
+            sequence,
+            timestamp_iso: now,
+            previous_hash,
+            principal: input.principal,
+            organization_code: input.organization_code,
+            app_slug: input.app_slug,
+            decision_type: input.decision_type,
+            oscal_control_id: input.oscal_control_id,
+            rationale: input.rationale,
+            payload: input.payload,
+        });
+        ledger.push(entry.clone());
+        Ok(entry)
+    }
+
+    pub fn verify_ledger(&self) -> Result<bool, LedgerError> {
+        if let Some(ref repo) = self.repository {
+            match repo.verify_and_initialize_ledger(false) {
+                Ok(()) => return Ok(true),
+                Err(_) => return Ok(false),
+            }
+        }
+        let ledger = self.ledger.read().unwrap();
+        verify_ledger_chain(&ledger)
+    }
+
+    pub fn export_oscal_component_definition(&self) -> Value {
+        let entries = if let Some(ref repo) = self.repository {
+            repo.get_ledger().unwrap_or_else(|_| self.ledger.read().unwrap().clone())
+        } else {
+            self.ledger.read().unwrap().clone()
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let implemented_requirements: Vec<Value> = entries
+            .iter()
+            .map(|entry| {
+                json!({
+                    "uuid": uuid::Uuid::new_v4().to_string(),
+                    "control-id": entry.oscal_control_id.to_lowercase(),
+                    "description": entry.rationale.clone(),
+                    "props": [
+                        {
+                            "name": "ledger-sequence",
+                            "value": entry.sequence.to_string()
+                        },
+                        {
+                            "name": "ledger-principal",
+                            "value": entry.principal.clone()
+                        },
+                        {
+                            "name": "ledger-org-code",
+                            "value": entry.organization_code.clone()
+                        },
+                        {
+                            "name": "ledger-entry-hash",
+                            "value": entry.entry_hash.clone()
+                        },
+                        {
+                            "name": "ledger-previous-hash",
+                            "value": entry.previous_hash.clone()
+                        }
+                    ]
+                })
+            })
+            .collect();
+
+        json!({
+            "component-definition": {
+                "uuid": uuid::Uuid::new_v4().to_string(),
+                "metadata": {
+                    "title": "Scaffoldry Sovereign Application Platform Component Definition",
+                    "last-modified": now,
+                    "version": "1.0.0",
+                    "oscal-version": "1.1.2"
+                },
+                "components": [
+                    {
+                        "uuid": uuid::Uuid::new_v4().to_string(),
+                        "type": "software",
+                        "title": "Scaffoldry Sovereign Application Platform",
+                        "description": "Governed collaborative workspace, tabular engine, and Cedar authorization lattice",
+                        "control-implementations": [
+                            {
+                                "uuid": uuid::Uuid::new_v4().to_string(),
+                                "source": "https://doi.org/10.6028/NIST.SP.800-53r5",
+                                "description": "Automated institutional control implementation and cryptographic verification ledger",
+                                "implemented-requirements": implemented_requirements
+                            }
+                        ]
+                    }
+                ]
+            }
+        })
+    }
+
+    pub fn persist_api_token(&self, token: &ApiToken) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref repo) = self.repository {
+            repo.insert_api_token(token)?;
+        }
+        if let Ok(mut tokens) = self.api_tokens.write() {
+            tokens.insert(token.token_hash.clone(), token.clone());
+        }
+        Ok(())
+    }
+
+    pub fn get_api_token(&self, hash: &str) -> Option<ApiToken> {
+        if let Some(ref repo) = self.repository {
+            if let Ok(Some(token)) = repo.get_api_token(hash) {
+                return Some(token);
+            }
+        }
+        self.api_tokens.read().ok().and_then(|t| t.get(hash).cloned())
+    }
+
+    pub fn update_token_last_used(&self, hash: &str, now: chrono::DateTime<chrono::Utc>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref repo) = self.repository {
+            repo.update_token_last_used(hash, now)?;
+        }
+        if let Ok(mut tokens) = self.api_tokens.write() {
+            if let Some(t) = tokens.get_mut(hash) {
+                t.last_used_at = Some(now);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn revoke_api_token(&self, id: uuid::Uuid, caller_eppn: &str, is_platform_admin: bool) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let revoked = if let Some(ref repo) = self.repository {
+            repo.revoke_api_token(id, caller_eppn, is_platform_admin)?
+        } else {
+            let mut ok = false;
+            if let Ok(mut tokens) = self.api_tokens.write() {
+                for token in tokens.values_mut() {
+                    if token.id == id && (is_platform_admin || token.eppn == caller_eppn) {
+                        token.revoked_at = Some(chrono::Utc::now());
+                        ok = true;
+                        break;
+                    }
+                }
+            }
+            ok
+        };
+        Ok(revoked)
+    }
+
+    pub fn revoke_api_token_by_hash(&self, hash: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let revoked = if let Some(ref repo) = self.repository {
+            repo.revoke_api_token_by_hash(hash)?
+        } else {
+            let mut ok = false;
+            if let Ok(mut tokens) = self.api_tokens.write() {
+                if let Some(t) = tokens.get_mut(hash) {
+                    t.revoked_at = Some(chrono::Utc::now());
+                    ok = true;
+                }
+            }
+            ok
+        };
+        Ok(revoked)
+    }
+
+    pub fn in_memory() -> Self {
+        let engine = ManifestEngine::new().expect("ManifestEngine in memory");
+        let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine().expect("PolicyEngine in memory");
+        let users = HashMap::new();
+        let groups = HashMap::new();
+        let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let default_root_org = OrganizationNode {
+            id: default_root_id,
+            parent_id: None,
+            name: "Institution".to_string(),
+            code: "INST".to_string(),
+            org_type: "Institution".to_string(),
+        };
+        let mut organizations = HashMap::new();
+        organizations.insert(default_root_id, default_root_org);
+        let roles: Vec<RoleRow> = Vec::new();
+        let datasets = HashMap::new();
+        let relationships = HashMap::new();
+        let process_instances = HashMap::new();
+        let automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
+
+        let now = Utc::now().to_rfc3339();
+        let entry_0 = LedgerEntry::new(NewLedgerEntryParams {
+            sequence: 0,
+            timestamp_iso: now.clone(),
+            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
+            principal: "system@scaffoldry.internal".to_string(),
+            organization_code: "INST".to_string(),
+            app_slug: None,
+            decision_type: DecisionType::PolicyRevision,
+            oscal_control_id: "AU-02".to_string(),
+            rationale: "Institutional sovereign genesis ledger entry".to_string(),
+            payload: &json!({"system": "scaffoldry", "genesis": true}),
+        });
+        let ledger = vec![entry_0];
+        let sessions = HashMap::new();
+        let workspaces = HashMap::new();
+        let collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
+
+        let mut api_tokens = HashMap::new();
+        let scim_hash = crate::service::identity::hash_token("test-scim-token");
+        let default_scim_token = ApiToken {
+            token_hash: scim_hash.clone(),
+            id: uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+            kind: "scim".to_string(),
+            eppn: "jordan.lee@state.edu".to_string(),
+            label: "SCIM Provisioning Credential".to_string(),
+            original_admin: None,
+            created_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::days(365),
+            last_used_at: None,
+            revoked_at: None,
+        };
+        api_tokens.insert(scim_hash, default_scim_token);
+
+        let mut settings_map = HashMap::new();
+        settings_map.insert("cors.allowed_origins".to_string(), serde_json::json!([]));
+        settings_map.insert("tokens.max_days".to_string(), serde_json::json!(90));
+        settings_map.insert("tokens.agent_enabled".to_string(), serde_json::json!(true));
+        settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
+        settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
+        settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
+
+        Self {
+            users: RwLock::new(users),
+            groups: RwLock::new(groups),
+            workspaces: RwLock::new(workspaces),
+            collaborators: RwLock::new(collaborators),
+            records: RwLock::new(HashMap::new()),
+            datasets: RwLock::new(datasets),
+            relationships: RwLock::new(relationships),
+            automations: RwLock::new(automations),
+            process_instances: RwLock::new(process_instances),
+            ledger: RwLock::new(ledger),
+            engine: RwLock::new(engine),
+            policy_engine,
+            sessions: RwLock::new(sessions),
+            api_tokens: RwLock::new(api_tokens),
+            repository: None,
+            organizations: RwLock::new(organizations),
+            roles: RwLock::new(roles),
+            settings: RwLock::new(settings_map),
+        }
+    }
+
+    pub fn seed_demo(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+
+        let mut datasets = HashMap::new();
+        let mut relationships = HashMap::new();
         // 1. Faculty Roster & PI Directory
         datasets.insert(
             "faculty".to_string(),
@@ -295,6 +966,23 @@ impl ServerState {
             },
         );
 
+        let demo_app = AppManifest {
+            slug: "physics-admissions-review".to_string(),
+            title: "Physics Admissions Review".to_string(),
+            description: "Graduate admissions review and fellowship nomination portal for Physics.".to_string(),
+            organization_code: "DIV-COMPLIANCE".to_string(),
+            department: "physics".to_string(),
+            workspace_id: Some("ws-physics-optics".to_string()),
+            herm_capability_id: None,
+            custom_domain: None,
+            custom_domain_verified: false,
+            tables: vec![],
+            relationships: vec![],
+            views: vec![],
+            ceds_mappings: HashMap::new(),
+        };
+        let _ = self.engine.write().unwrap().register_manifest(demo_app.clone());
+
         let mut automations = HashMap::new();
         automations.insert(
             "physics-admissions-review".to_string(),
@@ -325,19 +1013,22 @@ impl ServerState {
             }],
         );
 
-        let entry_0 = LedgerEntry::new(NewLedgerEntryParams {
+
+
+        let entry_0_hash = self.ledger.read().unwrap().first().map(|e| e.entry_hash.clone()).unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
+        let entry_0 = LedgerEntry {
             sequence: 0,
             timestamp_iso: now.clone(),
             previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
-            principal: "prof.curie@science.state.edu".to_string(),
-            organization_code: "DIV-SCIENCES".to_string(),
-            app_slug: Some("biology-lab-inventory".to_string()),
-            decision_type: DecisionType::AppPublished,
-            oscal_control_id: "CM-03".to_string(),
-            rationale: "Initial publication of Biology Research Chemical Inventory".to_string(),
-            payload: &json!({"status": "Published", "domain": "inventory.biology.state.edu"}),
-        });
-
+            principal: "system@scaffoldry.internal".to_string(),
+            organization_code: "INST".to_string(),
+            app_slug: None,
+            decision_type: DecisionType::PolicyRevision,
+            oscal_control_id: "AU-02".to_string(),
+            rationale: "Institutional sovereign genesis ledger entry".to_string(),
+            payload_hash: String::new(),
+            entry_hash: entry_0_hash,
+        };
         let entry_1 = LedgerEntry::new(NewLedgerEntryParams {
             sequence: 1,
             timestamp_iso: now.clone(),
@@ -377,13 +1068,10 @@ impl ServerState {
             payload: &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
         });
 
-        let mut ledger = vec![entry_0, entry_1, entry_2, entry_3];
 
-        let mut sessions = HashMap::new();
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
-
         // 1. Biology Research Laboratory (Restricted)
         let ws_bio = WorkspaceRecord {
             id: "ws-bio-lab".to_string(),
@@ -399,6 +1087,7 @@ impl ServerState {
             data_classification: "Restricted".to_string(),
             cedar_policy_guard: Some(r#"forbid (principal, action == Action::"access_workspace", resource) when { resource.visibility == "restricted" && resource.is_member == false };"#.to_string()),
             created_at: now.clone(),
+            organization_id: Some(default_root_id),
         };
         workspaces.insert("ws-bio-lab".to_string(), ws_bio);
         collaborators.insert(
@@ -452,6 +1141,7 @@ impl ServerState {
             data_classification: "Internal".to_string(),
             cedar_policy_guard: None,
             created_at: now.clone(),
+            organization_id: Some(default_root_id),
         };
         workspaces.insert("ws-physics-optics".to_string(), ws_phys);
         collaborators.insert(
@@ -485,6 +1175,7 @@ impl ServerState {
             data_classification: "FERPA Sensitive".to_string(),
             cedar_policy_guard: None,
             created_at: now.clone(),
+            organization_id: Some(default_root_id),
         };
         workspaces.insert("ws-campus-compliance".to_string(), ws_comp);
         collaborators.insert(
@@ -528,6 +1219,7 @@ impl ServerState {
             data_classification: "Internal".to_string(),
             cedar_policy_guard: None,
             created_at: now.clone(),
+            organization_id: Some(default_root_id),
         };
         workspaces.insert("ws-cs-research".to_string(), ws_cs);
         collaborators.insert(
@@ -546,26 +1238,9 @@ impl ServerState {
             ],
         );
 
-        let scim_token = std::env::var("SCAFFOLDRY_SCIM_TOKEN")
-            .ok()
-            .filter(|t| !t.trim().is_empty());
 
-        let repository = match crate::repository::PostgresRepository::connect(None) {
-            Ok(repo) => Some(Arc::new(repo)),
-            Err(e) => {
-                if let crate::repository::RepositoryError::TamperDetected(msg) = &e {
-                    return Err(format!("Cryptographic tamper detected in ledger: {msg}").into());
-                }
-                if std::env::var("CI").is_ok() {
-                    return Err(format!("Postgres repository required in CI: {e}").into());
-                }
-                eprintln!("Warning: PostgreSQL repository unavailable: {e:?}");
-                None
-            }
-        };
 
-        if let Some(ref repo) = repository {
-            // Always ensure default institutional workspaces and collaborators are seeded in Postgres
+        if let Some(ref repo) = self.repository {
             for ws in workspaces.values() {
                 let _ = repo.upsert_workspace(ws);
             }
@@ -574,353 +1249,52 @@ impl ServerState {
                     let _ = repo.upsert_collaborator(c);
                 }
             }
-
-            // Always ensure default datasets, relationships, and automations are seeded in Postgres
             for ds in datasets.values() {
                 let _ = repo.upsert_published_dataset(ds);
             }
             for rel in relationships.values() {
                 let _ = repo.upsert_dataset_relationship(rel);
             }
+            let _ = repo.upsert_app_manifest(&demo_app);
             for rules in automations.values() {
                 for r in rules {
                     let _ = repo.upsert_workflow_automation(r);
                 }
             }
-
-            // Load persisted manifests into engine
-            if let Ok(persisted_manifests) = repo.list_app_manifests() {
-                for m in persisted_manifests {
-                    let _ = engine.register_manifest(m);
-                }
-            }
-
-            // Load persisted datasets
-            if let Ok(persisted_datasets) = repo.list_published_datasets() {
-                for ds in persisted_datasets {
-                    datasets.insert(ds.id.clone(), ds);
-                }
-            }
-
-            // Load persisted relationships
-            if let Ok(persisted_rels) = repo.list_dataset_relationships() {
-                for rel in persisted_rels {
-                    relationships.insert(rel.id.clone(), rel);
-                }
-            }
-
-            // Load persisted automations
-            if let Ok(persisted_automations) = repo.list_workflow_automations(None) {
-                for r in persisted_automations {
-                    let entry = automations.entry(r.app_slug.clone()).or_default();
-                    if !entry.iter().any(|existing| existing.id == r.id) {
-                        entry.push(r);
-                    }
-                }
-            }
-
-            // Load persisted process instances
-            if let Ok(persisted_instances) = repo.list_process_instances(None, None) {
-                for inst in persisted_instances {
-                    process_instances.insert(inst.id.clone(), inst);
-                }
-            }
-
-            // Load persisted SCIM users and groups
-            if let Ok(persisted_users) = repo.list_scim_users() {
-                for u in persisted_users {
-                    users.insert(u.id.clone(), u);
-                }
-            }
-            if let Ok(persisted_groups) = repo.list_scim_groups() {
-                for g in persisted_groups {
-                    groups.insert(g.id.clone(), g);
-                }
-            }
-
-            if let Ok(persisted_ws) = repo.list_workspaces() {
-                for ws in persisted_ws {
-                    if let Ok(collabs) = repo.get_collaborators(&ws.id) {
-                        collaborators.insert(ws.id.clone(), collabs);
-                    }
-                    workspaces.insert(ws.id.clone(), ws);
-                }
-            }
-
-            if let Ok(persisted_sessions) = repo.list_sessions() {
-                if persisted_sessions.is_empty() {
-                    for s in sessions.values() {
-                        let _ = repo.upsert_session(s);
-                    }
-                } else {
-                    sessions = persisted_sessions;
-                }
-            }
-
-            if let Ok(persisted_ledger) = repo.get_ledger() {
-                if !persisted_ledger.is_empty() {
-                    ledger = persisted_ledger;
-                }
-            }
+            let _ = repo.append_ledger_entry(&entry_1, &json!({"domain": "inventory.biology.state.edu", "verified": true}));
+            let _ = repo.append_ledger_entry(&entry_2, &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}));
+            let _ = repo.append_ledger_entry(&entry_3, &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}));
         }
 
-        Ok(Self {
-            users: RwLock::new(users),
-            groups: RwLock::new(groups),
-            workspaces: RwLock::new(workspaces),
-            collaborators: RwLock::new(collaborators),
-            records: RwLock::new(HashMap::new()),
-            datasets: RwLock::new(datasets),
-            relationships: RwLock::new(relationships),
-            automations: RwLock::new(automations),
-            process_instances: RwLock::new(process_instances),
-            ledger: RwLock::new(ledger),
-            engine: RwLock::new(engine),
-            policy_engine,
-            sessions: RwLock::new(sessions),
-            scim_token,
-            repository,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RecordDecisionInput<'a> {
-    pub principal: String,
-    pub organization_code: String,
-    pub app_slug: Option<String>,
-    pub decision_type: DecisionType,
-    pub oscal_control_id: String,
-    pub rationale: String,
-    pub payload: &'a Value,
-}
-
-impl ServerState {
-    pub fn persist_workspace(&self, ws: WorkspaceRecord) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.workspaces.write().unwrap().insert(ws.id.clone(), ws.clone());
-        if let Some(ref repo) = self.repository {
-            repo.upsert_workspace(&ws)?;
+        for (k, v) in workspaces {
+            self.workspaces.write().unwrap().insert(k, v);
         }
+        for (k, v) in collaborators {
+            self.collaborators.write().unwrap().insert(k, v);
+        }
+        for (k, v) in datasets {
+            self.datasets.write().unwrap().insert(k, v);
+        }
+        for (k, v) in relationships {
+            self.relationships.write().unwrap().insert(k, v);
+        }
+        for (k, v) in automations {
+            self.automations.write().unwrap().insert(k, v);
+        }
+        let _ = self.engine.write().unwrap().register_manifest(demo_app);
+        self.ledger.write().unwrap().extend(vec![entry_1, entry_2, entry_3]);
+
         Ok(())
     }
-
-    pub fn get_workspace(&self, id: &str) -> Option<WorkspaceRecord> {
+    pub fn list_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
         if let Some(ref repo) = self.repository {
-            if let Ok(Some(ws)) = repo.get_workspace(id) {
-                return Some(ws);
+            if let Ok(list) = repo.list_api_tokens_for_eppn(eppn) {
+                return list;
             }
         }
-        self.workspaces.read().unwrap().get(id).cloned()
-    }
-
-    pub fn persist_workspaces_batch(&self, batch: &[WorkspaceRecord]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut guard = self.workspaces.write().unwrap();
-        for ws in batch {
-            guard.insert(ws.id.clone(), ws.clone());
-        }
-        if let Some(ref repo) = self.repository {
-            repo.persist_workspaces_batch(batch)?;
-        }
-        Ok(())
-    }
-
-    pub fn count_workspaces(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref repo) = self.repository {
-            return Ok(repo.count_workspaces()?);
-        }
-        Ok(self.workspaces.read().unwrap().len())
-    }
-
-    pub fn persist_app_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.engine.write().map_err(|_| "engine lock poisoned")?.register_manifest(m.clone())?;
-        if let Some(ref repo) = self.repository {
-            repo.upsert_app_manifest(&m)?;
-        }
-        Ok(())
-    }
-
-    pub fn get_app_manifest(&self, slug: &str) -> Option<AppManifest> {
-        if let Some(ref repo) = self.repository {
-            if let Ok(Some(m)) = repo.get_app_manifest(slug) {
-                return Some(m);
-            }
-        }
-        use scaffoldry_engine::HostRouter;
-        self.engine.read().ok()?.resolve_by_slug(slug).cloned()
-    }
-
-    pub fn persist_dataset(&self, ds: PublishedDataset) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.datasets.write().map_err(|_| "datasets lock poisoned")?.insert(ds.id.clone(), ds.clone());
-        if let Some(ref repo) = self.repository {
-            repo.upsert_published_dataset(&ds)?;
-        }
-        Ok(())
-    }
-
-    pub fn get_dataset(&self, id: &str) -> Option<PublishedDataset> {
-        self.datasets.read().ok()?.get(id).cloned()
-    }
-
-    pub fn persist_relationship(&self, rel: DatasetRelationship) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.relationships.write().map_err(|_| "relationships lock poisoned")?.insert(rel.id.clone(), rel.clone());
-        if let Some(ref repo) = self.repository {
-            repo.upsert_dataset_relationship(&rel)?;
-        }
-        Ok(())
-    }
-
-    pub fn persist_automation(&self, rule: AutomationRule) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.automations.write().map_err(|_| "automations lock poisoned")?.entry(rule.app_slug.clone()).or_default().push(rule.clone());
-        if let Some(ref repo) = self.repository {
-            repo.upsert_workflow_automation(&rule)?;
-        }
-        Ok(())
-    }
-
-    pub fn persist_process_instance(&self, inst: ProcessInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.process_instances.write().map_err(|_| "process_instances lock poisoned")?.insert(inst.id.clone(), inst.clone());
-        if let Some(ref repo) = self.repository {
-            repo.upsert_process_instance(&inst)?;
-        }
-        Ok(())
-    }
-
-    pub fn persist_scim_user(&self, user: ScimUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.users.write().map_err(|_| "users lock poisoned")?.insert(user.id.clone(), user.clone());
-        if let Some(ref repo) = self.repository {
-            repo.upsert_scim_user(&user)?;
-        }
-        Ok(())
-    }
-
-    pub fn get_scim_user(&self, id: &str) -> Option<ScimUser> {
-        self.users.read().ok()?.get(id).cloned()
-    }
-
-    pub fn append_ledger_entry(
-        &self,
-        input: RecordDecisionInput<'_>,
-    ) -> Result<LedgerEntry, LedgerError> {
-        if let Some(ref repo) = self.repository {
-            match repo.append_ledger_decision(crate::repository::AppendDecisionParams {
-                principal: input.principal.clone(),
-                organization_code: input.organization_code.clone(),
-                app_slug: input.app_slug.clone(),
-                decision_type: input.decision_type.clone(),
-                oscal_control_id: input.oscal_control_id.clone(),
-                rationale: input.rationale.clone(),
-                payload: input.payload.clone(),
-            }) {
-                Ok(entry) => {
-                    self.ledger.write().unwrap().push(entry.clone());
-                    return Ok(entry);
-                }
-                Err(e) => eprintln!("Postgres repository append error: {e}"),
-            }
-        }
-
-        let mut ledger = self.ledger.write().unwrap();
-        let sequence = ledger.len() as u64;
-        let previous_hash = ledger
-            .last()
-            .map(|l| l.entry_hash.clone())
-            .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
-        let now = chrono::Utc::now().to_rfc3339();
-        let entry = LedgerEntry::new(NewLedgerEntryParams {
-            sequence,
-            timestamp_iso: now,
-            previous_hash,
-            principal: input.principal,
-            organization_code: input.organization_code,
-            app_slug: input.app_slug,
-            decision_type: input.decision_type,
-            oscal_control_id: input.oscal_control_id,
-            rationale: input.rationale,
-            payload: input.payload,
-        });
-        ledger.push(entry.clone());
-        Ok(entry)
-    }
-
-    pub fn verify_ledger(&self) -> Result<bool, LedgerError> {
-        if let Some(ref repo) = self.repository {
-            match repo.verify_and_initialize_ledger() {
-                Ok(()) => return Ok(true),
-                Err(_) => return Ok(false),
-            }
-        }
-        let ledger = self.ledger.read().unwrap();
-        verify_ledger_chain(&ledger)
-    }
-
-    pub fn export_oscal_component_definition(&self) -> Value {
-        let entries = if let Some(ref repo) = self.repository {
-            repo.get_ledger().unwrap_or_else(|_| self.ledger.read().unwrap().clone())
-        } else {
-            self.ledger.read().unwrap().clone()
-        };
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let implemented_requirements: Vec<Value> = entries
-            .iter()
-            .map(|entry| {
-                json!({
-                    "uuid": uuid::Uuid::new_v4().to_string(),
-                    "control-id": entry.oscal_control_id.to_lowercase(),
-                    "description": entry.rationale.clone(),
-                    "props": [
-                        {
-                            "name": "ledger-sequence",
-                            "value": entry.sequence.to_string()
-                        },
-                        {
-                            "name": "ledger-principal",
-                            "value": entry.principal.clone()
-                        },
-                        {
-                            "name": "ledger-org-code",
-                            "value": entry.organization_code.clone()
-                        },
-                        {
-                            "name": "ledger-entry-hash",
-                            "value": entry.entry_hash.clone()
-                        },
-                        {
-                            "name": "ledger-previous-hash",
-                            "value": entry.previous_hash.clone()
-                        }
-                    ]
-                })
-            })
-            .collect();
-
-        json!({
-            "component-definition": {
-                "uuid": uuid::Uuid::new_v4().to_string(),
-                "metadata": {
-                    "title": "Scaffoldry Sovereign Application Platform Component Definition",
-                    "last-modified": now,
-                    "version": "1.0.0",
-                    "oscal-version": "1.1.2"
-                },
-                "components": [
-                    {
-                        "uuid": uuid::Uuid::new_v4().to_string(),
-                        "type": "software",
-                        "title": "Scaffoldry Sovereign Application Platform",
-                        "description": "Governed collaborative workspace, tabular engine, and Cedar authorization lattice",
-                        "control-implementations": [
-                            {
-                                "uuid": uuid::Uuid::new_v4().to_string(),
-                                "source": "https://doi.org/10.6028/NIST.SP.800-53r5",
-                                "description": "Automated institutional control implementation and cryptographic verification ledger",
-                                "implemented-requirements": implemented_requirements
-                            }
-                        ]
-                    }
-                ]
-            }
-        })
+        self.api_tokens.read().map(|tokens| {
+            tokens.values().filter(|t| t.eppn == eppn && t.kind == "agent" && t.revoked_at.is_none()).cloned().collect()
+        }).unwrap_or_default()
     }
 }
 

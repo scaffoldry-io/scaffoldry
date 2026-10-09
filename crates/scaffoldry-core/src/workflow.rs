@@ -124,13 +124,18 @@ pub enum ActionType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AutomationRule {
     pub id: String,
+    #[serde(default)]
     pub app_slug: String,
     pub name: String,
+    #[serde(default)]
     pub description: String,
     pub enabled: bool,
     pub trigger: TriggerEvent,
+    #[serde(default)]
     pub cedar_policy_guard: Option<String>,
+    #[serde(default)]
     pub predicates: Vec<FieldPredicate>,
+    #[serde(default)]
     pub actions: Vec<ActionType>,
     #[serde(default)]
     pub steps: Vec<ProcessStep>,

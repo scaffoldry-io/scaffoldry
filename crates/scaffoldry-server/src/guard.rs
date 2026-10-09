@@ -1,7 +1,7 @@
-//! Session guard. Identity comes only from a valid bearer JWT or genuine active session.
-//! Headers such as `x-caller-eppn` and request body fields are never trusted.
+//! Session guard. Identity comes only from stored api_tokens rows.
+//! Headers such as  and request body fields are never trusted.
 
-use crate::jwt::{get_jwt_issuer, get_jwt_secret, validate_jwt};
+use crate::service::identity::{hash_token, resolve_user};
 use crate::state::{AuthUser, SharedState};
 use axum::{
     extract::{Request, State},
@@ -13,7 +13,6 @@ use axum::{
 use serde_json::json;
 
 /// Paths that stay reachable without an authenticated session.
-/// SCIM carries its own provisioning credential and is checked separately.
 const PUBLIC_PATHS: [&str; 5] = [
     "/healthz",
     "/.well-known/oauth-protected-resource",
@@ -32,28 +31,43 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser> {
     let token = bearer_token(headers)?;
+    let hash = hash_token(token);
 
-    // 1. Refuse legacy seeded tokens immediately
-    if token.starts_with("sct_") {
+    let row = match state.get_api_token(&hash) {
+        Some(r) => r,
+        None => {
+            return None;
+        }
+    };
+
+    // Refuse when revoked or expired
+    if row.revoked_at.is_some() {
+        return None;
+    }
+    let now = chrono::Utc::now();
+    if row.expires_at < now {
         return None;
     }
 
-    // 2. Validate as signed OAuth 2.1 / OIDC JWT
-    let secret = get_jwt_secret();
-    let issuer = get_jwt_issuer();
-    if let Ok(claims) = validate_jwt(token, &secret, &issuer) {
-        return Some(claims.to_auth_user());
+    // Update last_used_at at most once a minute for a given row
+    let should_update = match row.last_used_at {
+        None => true,
+        Some(last) => now.signed_duration_since(last).num_seconds() >= 60,
+    };
+    if should_update {
+        let _ = state.update_token_last_used(&hash, now);
     }
 
-    // 3. Fall back to active database/state sessions (e.g. for impersonation sessions)
-    let sessions = state.sessions.read().ok()?;
-    sessions.get(token).map(|s| s.user.clone())
+    let user = resolve_user(&row.eppn, state);
+    if user.is_none() {
+    }
+    user
 }
 
 pub fn unauthorized() -> Response {
     let mut resp = (
         StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": "401 Unauthorized: a valid bearer JWT or session is required" })),
+        Json(json!({ "error": "401 Unauthorized: a valid bearer token or session is required" })),
     )
         .into_response();
     resp.headers_mut().insert(
@@ -83,31 +97,25 @@ pub async fn require_session(
     }
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 pub async fn require_scim_credential(
     State(state): State<SharedState>,
     req: Request,
     next: Next,
 ) -> Response {
-    let configured = match &state.scim_token {
-        Some(t) => t.as_bytes(),
-        None => return unauthorized(),
-    };
     let token = match bearer_token(req.headers()) {
-        Some(t) => t.as_bytes(),
+        Some(t) => t,
         None => return unauthorized(),
     };
-    if constant_time_eq(configured, token) {
+    let hash = hash_token(token);
+    let valid = if let Some(row) = state.get_api_token(&hash) {
+        row.kind == "scim"
+            && row.revoked_at.is_none()
+            && row.expires_at > chrono::Utc::now()
+    } else {
+        false
+    };
+
+    if valid {
         next.run(req).await
     } else {
         unauthorized()

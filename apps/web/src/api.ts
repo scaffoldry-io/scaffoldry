@@ -1,4 +1,4 @@
-import { Collaborator, LedgerEntryItem, Workspace } from "./types";
+import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, Workspace } from "./types";
 
 export class ApiError extends Error {
   public status: number;
@@ -81,18 +81,32 @@ const request = async <T>(path: string, options: RequestInit = {}): Promise<T> =
 
 export const apiClient = {
   // Authentication & Sessions
-  issueToken: async (eppn: string, details?: Record<string, any>) => {
-    const data = await request<{
-      token: string;
-      user: any;
-      is_impersonating: boolean;
-      original_admin: any;
-    }>("/auth/token", {
+  listTokens: async () => {
+    return request<{ tokens: any[] }>("/auth/tokens");
+  },
+
+  createToken: async (input: { label: string; days?: number; kind?: string }) => {
+    return request<{ token: string; id: string; expires_at: string; label: string; kind: string }>("/auth/tokens", {
       method: "POST",
-      body: JSON.stringify({ eppn, ...details }),
+      body: JSON.stringify(input),
     });
-    setAuthToken(data.token);
-    return data;
+  },
+
+  revokeToken: async (id: string) => {
+    return request<{ message: string; revoked_id: string }>(`/auth/tokens/${id}`, {
+      method: "DELETE",
+    });
+  },
+
+  getSettings: async () => {
+    return request<{ settings: Record<string, any> }>("/settings");
+  },
+
+  updateSetting: async (key: string, value: any) => {
+    return request<{ key: string; value: any }>(`/settings/${key}`, {
+      method: "PUT",
+      body: JSON.stringify(value),
+    });
   },
 
   getCurrentUser: async () => {
@@ -135,6 +149,47 @@ export const apiClient = {
     } finally {
       setAuthToken(null);
     }
+  },
+
+  // Organizations
+  listOrganizations: async (): Promise<OrganizationNode[]> => {
+    return request<OrganizationNode[]>("/orgs");
+  },
+
+  createOrganization: async (payload: {
+    name: string;
+    code: string;
+    org_type: string;
+    parent_id?: string | null;
+  }): Promise<OrganizationNode> => {
+    return request<OrganizationNode>("/orgs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  patchOrganization: async (
+    id: string,
+    payload: { name?: string; parent_id?: string | null }
+  ): Promise<OrganizationNode> => {
+    return request<OrganizationNode>(`/orgs/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  appointOrgAdmin: async (
+    id: string,
+    payload: { eppn: string; scoped_affiliation: string }
+  ): Promise<OrgRole> => {
+    return request<OrgRole>(`/orgs/${encodeURIComponent(id)}/appointments`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listOrgMembers: async (id: string): Promise<any[]> => {
+    return request<any[]>(`/orgs/${encodeURIComponent(id)}/members`);
   },
 
   // Workspaces

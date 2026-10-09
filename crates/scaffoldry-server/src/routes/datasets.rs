@@ -22,7 +22,13 @@ pub fn router() -> Router<SharedState> {
         )
 }
 
-async fn list_datasets(State(state): State<SharedState>) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+async fn list_datasets(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers);
+    let is_admin = user.as_ref().map(|u| u.affiliation == "central_admin").unwrap_or(false);
+
     let datasets = state.datasets.read().map_err(|_| lock_err())?;
     let rels = state.relationships.read().map_err(|_| lock_err())?;
 
@@ -33,7 +39,9 @@ async fn list_datasets(State(state): State<SharedState>) -> Result<impl IntoResp
             .filter(|r| r.source_dataset_id == ds.id || r.target_dataset_id == ds.id)
             .count();
 
-        list.push(json!({
+        let show_sample = is_admin || matches!(ds.sensitivity_level.to_lowercase().as_str(), "public" | "directory");
+
+        let mut item = json!({
             "id": ds.id,
             "name": ds.name,
             "description": ds.description,
@@ -45,8 +53,15 @@ async fn list_datasets(State(state): State<SharedState>) -> Result<impl IntoResp
             "record_count": ds.record_count,
             "published_at": ds.published_at,
             "relationship_count": rel_count,
-            "sample_data": ds.sample_data,
-        }));
+        });
+
+        if show_sample {
+            if let Some(map) = item.as_object_mut() {
+                map.insert("sample_data".to_string(), json!(ds.sample_data));
+            }
+        }
+
+        list.push(item);
     }
 
     Ok(Json(json!({
@@ -57,8 +72,12 @@ async fn list_datasets(State(state): State<SharedState>) -> Result<impl IntoResp
 
 async fn get_dataset(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers);
+    let is_admin = user.as_ref().map(|u| u.affiliation == "central_admin").unwrap_or(false);
+
     let datasets = state.datasets.read().map_err(|_| lock_err())?;
     let ds = datasets.get(&id).ok_or((StatusCode::NOT_FOUND, Json(json!({"error": "Dataset not found"}))))?;
     let rels = state.relationships.read().map_err(|_| lock_err())?;
@@ -69,7 +88,9 @@ async fn get_dataset(
         .cloned()
         .collect();
 
-    Ok(Json(json!({
+    let show_sample = is_admin || matches!(ds.sensitivity_level.to_lowercase().as_str(), "public" | "directory");
+
+    let mut doc = json!({
         "id": ds.id,
         "name": ds.name,
         "description": ds.description,
@@ -81,8 +102,15 @@ async fn get_dataset(
         "record_count": ds.record_count,
         "published_at": ds.published_at,
         "relationships": related_rels,
-        "sample_data": ds.sample_data,
-    })))
+    });
+
+    if show_sample {
+        if let Some(map) = doc.as_object_mut() {
+            map.insert("sample_data".to_string(), json!(ds.sample_data));
+        }
+    }
+
+    Ok(Json(doc))
 }
 
 async fn publish_dataset(
@@ -185,7 +213,8 @@ async fn publish_dataset(
 
     state.datasets.write().map_err(|_| lock_err())?.insert(id, dataset.clone());
     if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_published_dataset(&dataset);
+        repo.upsert_published_dataset(&dataset)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
     }
     Ok((StatusCode::CREATED, Json(dataset)))
 }
@@ -269,7 +298,8 @@ async fn create_relationship(
 
     state.relationships.write().map_err(|_| lock_err())?.insert(id, rel.clone());
     if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_dataset_relationship(&rel);
+        repo.upsert_dataset_relationship(&rel)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
     }
     Ok((StatusCode::CREATED, Json(rel)))
 }

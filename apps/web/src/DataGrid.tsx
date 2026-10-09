@@ -154,6 +154,7 @@ export function DataGrid({
   const [activeHeaderMenu, setActiveHeaderMenu] = useState<string | null>(null);
   const [draggedColName, setDraggedColName] = useState<string | null>(null);
   const isCancellingRef = useRef<boolean>(false);
+  const editTriggerRef = useRef<"key" | "click" | "action">("click");
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
   const activeCellRef = useRef<HTMLTableCellElement | null>(null);
 
@@ -682,6 +683,25 @@ export function DataGrid({
       return;
     }
 
+    const isSameCell =
+      selection?.focus.recordId === recordId &&
+      selection?.focus.fieldName === field.name;
+
+    // If clicking cell that is already being edited, do not reset editValue
+    if (isSameCell && isEditing) {
+      return;
+    }
+
+    // If another cell was being edited, commit its edit before switching cells
+    if (isEditing && selection && !isCancellingRef.current) {
+      const prevField = visibleFields.find(
+        (f) => f.name === selection.focus.fieldName
+      );
+      if (prevField) {
+        commitEdit(selection.focus.recordId, prevField, editValue);
+      }
+    }
+
     setSelection({
       anchor: clickedCell,
       focus: clickedCell,
@@ -714,6 +734,7 @@ export function DataGrid({
       return;
     }
 
+    editTriggerRef.current = "click";
     setIsEditing(true);
     setEditValue(
       currentValue !== undefined && currentValue !== null
@@ -727,6 +748,7 @@ export function DataGrid({
     recordId: string,
     field: FieldSpec
   ) => {
+    e.stopPropagation();
     if (e.key === "Enter") {
       e.preventDefault();
       commitEdit(recordId, field, editValue);
@@ -758,6 +780,10 @@ export function DataGrid({
     field: FieldSpec,
     currentValue: unknown
   ) => {
+    const targetTag = (e.target as HTMLElement).tagName.toLowerCase();
+    if (targetTag === "input" || targetTag === "select" || targetTag === "textarea") {
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
       e.preventDefault();
       handleUndo();
@@ -861,6 +887,7 @@ export function DataGrid({
         selection?.anchor.fieldName === selection?.focus.fieldName;
       if (isSingleCell) {
         isCancellingRef.current = false;
+        editTriggerRef.current = "key";
         setIsEditing(true);
         setEditValue(e.key);
       }
@@ -870,11 +897,15 @@ export function DataGrid({
   useEffect(() => {
     if (isEditing && inputRef.current) {
       inputRef.current.focus();
-      if ("select" in inputRef.current && typeof inputRef.current.select === "function") {
+      if (
+        editTriggerRef.current !== "key" &&
+        "select" in inputRef.current &&
+        typeof inputRef.current.select === "function"
+      ) {
         inputRef.current.select();
       }
     }
-  }, [isEditing, selection]);
+  }, [isEditing]);
 
   useEffect(() => {
     if (!isEditing && selection && activeCellRef.current) {
@@ -1076,7 +1107,7 @@ export function DataGrid({
                       }}
                       onClick={(e) => {
                         const targetTag = (e.target as HTMLElement).tagName.toLowerCase();
-                        if (targetTag === "button" || targetTag === "select") return;
+                        if (targetTag === "input" || targetTag === "button" || targetTag === "select" || targetTag === "a") return;
                         handleCellClick(e, recordId, field, cellVal);
                       }}
                       onKeyDown={(e) =>
@@ -1162,6 +1193,11 @@ export function DataGrid({
                           onKeyDown={(e) =>
                             handleInputKeyDown(e, recordId, field)
                           }
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onBlur={() => {
+                            setIsEditing(false);
+                          }}
                           className="w-full px-1.5 py-0.5 text-xs rounded border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
                         >
                           <option value="">Select...</option>
@@ -1239,6 +1275,14 @@ export function DataGrid({
                           onKeyDown={(e) =>
                             handleInputKeyDown(e, recordId, field)
                           }
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onBlur={() => {
+                            if (!isCancellingRef.current) {
+                              commitEdit(recordId, field, editValue);
+                            }
+                            setIsEditing(false);
+                          }}
                           className="w-full px-1.5 py-0.5 text-xs rounded border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
                         />
                       ) : field.field_type === "Relation" ? (

@@ -6,9 +6,9 @@ Scaffoldry bridges the gap between end-user empowerment and institutional data i
 
 ## Core Capabilities
 
-- **AI-Native App Creation:** Natural-language to relational tables, forms, and workflows—empowering non-technical domain experts to build departmental solutions.
+- **Agent-Driven App Creation:** An institution's own agent builds apps through the MCP server. Scaffoldry runs no model.
 - **Federated Decision Authority:** Built-in business approval workflows ("The Desk") that gate changes, track schema drift, and enforce data boundaries without bureaucratic delay.
-- **Tamper-Proof Audit Ledger:** Every schema change and business decision is cryptographically recorded in an immutable Git history.
+- **Tamper-Proof Audit Ledger:** Every schema change, DNS binding, and business decision is cryptographically recorded in a hash-chained ledger in PostgreSQL.
 - **Enterprise Compliance by Default:** Machine-readable NIST OSCAL compliance artifacts for seamless integration with institutional GRC and audit tools.
 - **Sovereign, Non-Rugpullable Architecture:** Built entirely on foundation-governed open source (Apache 2.0 / BSD / MIT) with zero cloud vendor lock-in.
 
@@ -16,12 +16,13 @@ Scaffoldry bridges the gap between end-user empowerment and institutional data i
 
 | Layer | Technology | Purpose |
 | :--- | :--- | :--- |
-| **User Interface** | TanStack (React + Table + Query + Form) | High-performance, reactive data grid and decision desk |
-| **Access & Policy** | Cedar | Real-time fine-grained authorization (ABAC/RBAC) |
-| **Calculation Engine** | Apache Arrow & DataFusion | In-memory spreadsheet formulas and fast analytical queries |
-| **Durable Store** | PostgreSQL | Enterprise ACID storage for operational records |
-| **Audit Ledger** | Embedded Git | Cryptographic audit trail of all approved decisions |
-| **Compliance Standard** | NIST OSCAL | Machine-readable security and compliance documentation |
+| **Agent Interface** | Model Context Protocol | Primary interface for institutional agents building apps and reading records |
+| **User Interface** | TanStack (React 19 + Table + Query) | Virtualized spreadsheet data grid, ProcessDesk queue, and admin console |
+| **Access & Policy** | Cedar Policy Engine | Real-time Attribute-Based Access Control (ABAC/RBAC) |
+| **Calculation Engine** | `scaffoldry-engine` (Rust) | In-memory spreadsheet formula evaluation, relational rollups, and lookups |
+| **Durable Store** | PostgreSQL 17 | Enterprise ACID storage for operational records, manifests, and migrations |
+| **Audit Ledger** | SHA-256 hash chain in PostgreSQL | Cryptographic audit trail of all approved decisions |
+| **Compliance Standard** | NIST OSCAL 1.1.2 | Machine-readable security, governance, and compliance reporting |
 
 ## Development & Cloud Operations
 
@@ -32,7 +33,7 @@ The application operates locally inside a rootless Podman development container 
   ```bash
   cd apps/web && npm install && npm run dev
   ```
-- **Backend Engine & API Server:** Runs on `http://127.0.0.1:3000` via Rust Axum.
+- **Backend Engine & API Server:** Runs on `http://127.0.0.1:8080` (or `PORT` if set) via Rust Axum.
   ```bash
   cargo run -p scaffoldry-server
   ```

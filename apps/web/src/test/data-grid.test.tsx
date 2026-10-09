@@ -515,3 +515,60 @@ describe("DataGrid Bulk Cell Selection, Copy & Linked Field Characteristics", ()
     expect(screen.queryByText("PI: Dr. Alan Turing")).not.toBeInTheDocument();
   });
 });
+
+
+describe("DataGrid Field Entry & Cell Text Stability", () => {
+  it("retains continuous text input without resetting cell text when typing or clicking inside input", () => {
+    const handlePatch = vi.fn();
+    render(
+      <DataGrid
+        fields={mockFields}
+        records={mockRecords}
+        onPatch={handlePatch}
+      />
+    );
+
+    const nameCell = screen.getByTestId("cell-rec-1-name");
+    fireEvent.click(nameCell);
+
+    const input = screen.getByDisplayValue("Item Alpha") as HTMLInputElement;
+    expect(input).toBeInTheDocument();
+
+    // Type continuous updates into the text input
+    fireEvent.change(input, { target: { value: "Item Alpha Updated" } });
+    expect(input.value).toBe("Item Alpha Updated");
+
+    // Click inside the input (e.g. to position the cursor)
+    fireEvent.click(input);
+    expect(input.value).toBe("Item Alpha Updated");
+
+    // Type more characters
+    fireEvent.change(input, { target: { value: "Item Alpha Updated Extra" } });
+    expect(input.value).toBe("Item Alpha Updated Extra");
+
+    // Press Enter to commit
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "Item Alpha Updated Extra");
+  });
+
+  it("blurring an active input commits the edited value", () => {
+    const handlePatch = vi.fn();
+    render(
+      <DataGrid
+        fields={mockFields}
+        records={mockRecords}
+        onPatch={handlePatch}
+      />
+    );
+
+    const amountCell = screen.getByTestId("cell-rec-1-amount");
+    fireEvent.click(amountCell);
+
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "850" } });
+
+    // Blur the input
+    fireEvent.blur(input);
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 850);
+  });
+});

@@ -1,10 +1,11 @@
 //! Tabular Record Data Ingestion, Retrieval, and Modification
 
-use crate::state::{AuthUser, DatasetRecord, SharedState};
+use crate::guard::session_user;
+use crate::service::access::{authorize_app, AppAction};
+use crate::state::{DatasetRecord, SharedState};
 use axum::{
-    extract::{Extension, Path, Query, State},
-    http::StatusCode,
-    response::IntoResponse,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
     routing::get,
     Json, Router,
 };
@@ -52,10 +53,19 @@ pub fn router() -> Router<SharedState> {
 
 async fn get_app_schema(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    authorize_app(&user, &slug, AppAction::Read, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+
     let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
-    let manifest = engine.resolve_by_slug(&slug).ok_or(StatusCode::NOT_FOUND)?;
+    let manifest = engine
+        .resolve_by_slug(&slug)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "App not found"}))))?;
 
     Ok(Json(json!({
         "app_slug": manifest.slug,
@@ -72,16 +82,25 @@ async fn get_app_schema(
 
 async fn get_table_schema(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, table_id)): Path<(String, String)>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    authorize_app(&user, &slug, AppAction::Read, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+
     let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
-    let manifest = engine.resolve_by_slug(&slug).ok_or(StatusCode::NOT_FOUND)?;
+    let manifest = engine
+        .resolve_by_slug(&slug)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "App not found"}))))?;
 
     let table = manifest
         .tables
         .iter()
         .find(|t| t.id == table_id || t.slug == table_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Table not found"}))))?;
 
     let relationships: Vec<_> = manifest
         .relationships
@@ -112,9 +131,16 @@ async fn get_table_schema(
 
 async fn list_table_records(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, table_id)): Path<(String, String)>,
     Query(query): Query<RecordListQuery>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    authorize_app(&user, &slug, AppAction::Read, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+
     let records = state.records.read().unwrap_or_else(|p| p.into_inner());
     let app_records = records.get(&slug).cloned().unwrap_or_default();
 
@@ -139,7 +165,7 @@ async fn list_table_records(
     if let Some(ref sort_field) = query.sort_field {
         let is_desc = query
             .sort_direction
-            .as_deref()
+            .as_ref()
             .map(|d| d.eq_ignore_ascii_case("desc"))
             .unwrap_or(false);
 
@@ -195,7 +221,7 @@ async fn list_table_records(
 
 async fn create_table_record(
     State(state): State<SharedState>,
-    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
     Path((slug, table_id)): Path<(String, String)>,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<DatasetRecord>), (StatusCode, Json<Value>)> {
@@ -211,29 +237,32 @@ async fn create_table_record(
         }
     }
 
-    create_record(State(state), Extension(user), Path(slug), Json(modified_payload)).await
+    create_record(State(state), headers, Path(slug), Json(modified_payload)).await
 }
 
 async fn get_table_record(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, _table_id, id)): Path<(String, String, String)>,
-) -> Result<Json<DatasetRecord>, StatusCode> {
-    get_record(State(state), Path((slug, id))).await
+) -> Result<Json<DatasetRecord>, (StatusCode, Json<Value>)> {
+    get_record(State(state), headers, Path((slug, id))).await
 }
 
 async fn update_table_record(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, _table_id, id)): Path<(String, String, String)>,
     Json(payload): Json<Value>,
-) -> Result<Json<DatasetRecord>, StatusCode> {
-    update_record(State(state), Path((slug, id)), Json(payload)).await
+) -> Result<Json<DatasetRecord>, (StatusCode, Json<Value>)> {
+    update_record(State(state), headers, Path((slug, id)), Json(payload)).await
 }
 
 async fn delete_table_record(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, _table_id, id)): Path<(String, String, String)>,
-) -> Result<StatusCode, StatusCode> {
-    delete_record(State(state), Path((slug, id))).await
+) -> Result<StatusCode, (StatusCode, Json<Value>)> {
+    delete_record(State(state), headers, Path((slug, id))).await
 }
 
 // ---------------------------------------------------------------------------
@@ -242,25 +271,38 @@ async fn delete_table_record(
 
 async fn list_records(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
-) -> impl IntoResponse {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    authorize_app(&user, &slug, AppAction::Read, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+
     let records = state.records.read().unwrap_or_else(|p| p.into_inner());
     let app_records = records.get(&slug).cloned().unwrap_or_default();
     let total = app_records.len();
 
-    Json(json!({
+    Ok(Json(json!({
         "app_slug": slug,
         "total": total,
         "records": app_records
-    }))
+    })))
 }
 
 async fn create_record(
     State(state): State<SharedState>,
-    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<DatasetRecord>), (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    authorize_app(&user, &slug, AppAction::WriteRecords, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+
     crate::service::records::create_record(&user, &slug, &payload, &state)
         .map(|rec| (StatusCode::CREATED, Json(rec)))
         .map_err(|err| {
@@ -271,58 +313,57 @@ async fn create_record(
 
 async fn get_record(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, id)): Path<(String, String)>,
-) -> Result<Json<DatasetRecord>, StatusCode> {
+) -> Result<Json<DatasetRecord>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    authorize_app(&user, &slug, AppAction::Read, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+
     let records = state.records.read().unwrap_or_else(|p| p.into_inner());
-    let app_records = records.get(&slug).ok_or(StatusCode::NOT_FOUND)?;
+    let app_records = records
+        .get(&slug)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "App records not found"}))))?;
     let record = app_records
         .iter()
         .find(|r| r.id == id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Record not found"}))))?;
     Ok(Json(record.clone()))
 }
 
 async fn update_record(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, id)): Path<(String, String)>,
     Json(payload): Json<Value>,
-) -> Result<Json<DatasetRecord>, StatusCode> {
-    let mut records = state.records.write().unwrap_or_else(|p| p.into_inner());
-    let app_records = records.get_mut(&slug).ok_or(StatusCode::NOT_FOUND)?;
-    let record = app_records
-        .iter_mut()
-        .find(|r| r.id == id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+) -> Result<Json<DatasetRecord>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
 
-    let current_table_id = record.data.get("_table_id").cloned();
+    authorize_app(&user, &slug, AppAction::WriteRecords, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
 
-    if let Some(new_data) = payload.get("data") {
-        record.data = new_data.clone();
-    } else {
-        record.data = payload;
-    }
-
-    if let (Some(tid), Some(map)) = (current_table_id, record.data.as_object_mut()) {
-        if !map.contains_key("_table_id") {
-            map.insert("_table_id".to_string(), tid);
-        }
-    }
-
-    Ok(Json(record.clone()))
+    crate::service::records::update_record(&user, &slug, &id, &payload, &state)
+        .map(Json)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))
 }
 
 async fn delete_record(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Path((slug, id)): Path<(String, String)>,
-) -> Result<StatusCode, StatusCode> {
-    let mut records = state.records.write().unwrap_or_else(|p| p.into_inner());
-    let app_records = records.get_mut(&slug).ok_or(StatusCode::NOT_FOUND)?;
-    let pos = app_records
-        .iter()
-        .position(|r| r.id == id)
-        .ok_or(StatusCode::NOT_FOUND)?;
-    app_records.remove(pos);
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<StatusCode, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    authorize_app(&user, &slug, AppAction::WriteRecords, &state)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+
+    crate::service::records::delete_record(&user, &slug, &id, &state)
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))
 }
 
 fn evaluate_formula_filter(record_data: &Value, formula: &str) -> bool {
@@ -378,4 +419,3 @@ fn evaluate_formula_filter(record_data: &Value, formula: &str) -> bool {
 
     true
 }
-

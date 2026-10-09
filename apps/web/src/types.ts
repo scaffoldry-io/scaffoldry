@@ -401,3 +401,22 @@ export interface LedgerEntryItem {
 }
 
 
+
+export interface OrganizationNode {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  code: string;
+  org_type: string;
+}
+
+export interface OrgRole {
+  id: string;
+  person_id: string;
+  eppn: string;
+  organization_id: string;
+  role_title: string;
+  scoped_affiliation: string;
+  is_primary: boolean;
+  source: string;
+}

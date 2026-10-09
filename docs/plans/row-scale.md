@@ -43,8 +43,8 @@ PostgreSQL features used: B-tree row comparison for keyset paging, `jsonb_to_tsv
 - DataFusion, DuckDB, Arrow, or any second query engine.
 - A table, a partition, or an index per user table or per user field.
 - A cache, a queue, or a background worker. Derived rows are written in the request that changes the record.
-- Grid virtualization in the web desk. The desk pages with the cursor.
-- Sorting or indexing a `Lookup` field or a `MultiSelect` field.
+- Grid virtualization and windowed scrolling. They are `views.md` phase 3. Until then the desk pages with the cursor.
+- Sorting or indexing a `Lookup` field. A multi-valued field indexes one row per value and cannot be used as a sort key.
 - Relationships to published datasets (`linked_dataset_id`). Only relationships between tables of one app.
 
 ## Rules for every phase
@@ -90,7 +90,7 @@ ORDER BY created_at, id
 LIMIT $5
 ```
 
-Without a cursor, omit the row comparison. Do not use `OFFSET`. Delete the Rust filter, sort, and `skip`/`take` in `list_table_records`. The REST `offset` parameter becomes `cursor`. The response's `total` field is removed. Counting a million rows on every page is the cost this plan exists to remove. Phase 4 gives a count on request.
+Without a cursor, omit the row comparison. Do not use `OFFSET` here. `views.md` phase 3 measures it for scrollbar jumps. `lifecycle.md` phase 1 replaces this paging index with a partial one that skips trashed rows. Delete the Rust filter, sort, and `skip`/`take` in `list_table_records`. The REST `offset` parameter becomes `cursor`. The response's `total` field is removed. Counting a million rows on every page is the cost this plan exists to remove. Phase 4 gives a count on request.
 
 Tests in a new `crates/scaffoldry-server/tests/row_scale_test.rs`:
 
@@ -112,14 +112,15 @@ CREATE TABLE IF NOT EXISTS record_index (
     num DOUBLE PRECISION,
     txt VARCHAR(128),
     ts TIMESTAMPTZ,
-    PRIMARY KEY (record_id, field)
+    ord SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (record_id, field, ord)
 );
 CREATE INDEX IF NOT EXISTS idx_record_index_num ON record_index (app_slug, table_id, field, num, record_id);
 CREATE INDEX IF NOT EXISTS idx_record_index_txt ON record_index (app_slug, table_id, field, txt, record_id);
 CREATE INDEX IF NOT EXISTS idx_record_index_ts  ON record_index (app_slug, table_id, field, ts, record_id);
 ```
 
-One row per record per indexed field. Exactly one of `num`, `txt`, `ts` is set. All three are null when the record's value is blank. A blank value still gets a row, so a sorted list does not lose the record.
+One row per record per indexed field value. A multi-valued field (`MultiSelect`, a multi-person field) writes one row per value, numbered by `ord`. Exactly one of `num`, `txt`, `ts` is set. All three are null when the record's value is blank. A blank value still gets a row, so a sorted list does not lose the record.
 
 Which fields are indexed. Add `indexed: bool` to `FieldSpec` with `#[serde(default)]`. Add `indexed_fields(manifest: &AppManifest, table_id: &str) -> BTreeSet<String>` in `scaffoldry-engine`. A field is in the set when any of these holds:
 
@@ -127,7 +128,7 @@ Which fields are indexed. Add `indexed: bool` to `FieldSpec` with `#[serde(defau
 2. A view of that table sorts or filters on it.
 3. It is the `source_field` or `target_field` of a `TableRelationship`.
 
-`validate_manifest` refuses a table with more than 20 fields in the set, and refuses `indexed: true` on `Lookup` and `MultiSelect`.
+`validate_manifest` refuses a table with more than 20 fields in the set, and refuses `indexed: true` on `Lookup`.
 
 Which column holds the value. Add `index_value(field: &FieldSpec, value: &Value) -> (Option<f64>, Option<String>, Option<String>)`:
 
@@ -138,7 +139,6 @@ Which column holds the value. Add `index_value(field: &FieldSpec, value: &Value)
 | `Date`, `CreatedTime`, `LastModifiedTime` | `ts` | The instant |
 | `Text`, `Select`, `Email`, `Phone`, `Url`, `Relation` | `txt` | Lowercase, first 128 characters |
 | `Formula` | `num` when the result is a number, else `txt` | As above |
-| A relationship's `source_field` or `target_field`, whatever its type | `txt` | The value as a string, lowercase, first 128 characters |
 
 `write_record` deletes the record's `record_index` rows and inserts the current set, in the transaction that writes the record.
 
@@ -180,13 +180,13 @@ Tests:
 7. Approve a manifest that adds a view sorting on a new field. `record_index` gains 200,000 rows for that field in the same transaction.
 8. A table with 21 indexed fields fails `validate_manifest`.
 
-ponytail: adding a field to the index copies one value per record inside the approval transaction. That is seconds at a million rows. Move it to a background job when an approval is measured above ten seconds.
+After `jobs.md` phase 3, the copy runs as the job `build_index` and the approval only records `building`. Until then it runs inside the approval.
 
 ## Phase 3 — computed values are written, not recomputed
 
-Read first: `compute_field_value` and every caller, the engine tests in `computed_fields_test.rs`, and `apps/web/src/computedFields.ts`. Write down, in the session output, the rule by which a `Lookup`, `Count`, or `Rollup` field finds its linked records. If the manifest does not say which `TableRelationship` a field uses, stop and report. Do not invent a rule.
+Read first: `compute_field_value` and every caller, the engine tests in `computed_fields_test.rs`, and `apps/web/src/computedFields.ts`. A `Lookup`, `Count`, or `Rollup` names its link field with `computed_via` (`links.md` phase 3).
 
-Linked records are found through `record_index`, by value. A relationship says `source_table.source_field` equals `target_table.target_field`. Phase 2 put both fields in the index as `txt`.
+Linked records are found through `record_links`, not by value. This phase runs after `links.md` phases 1 to 3, which build the link table and the lookup, rollup, and count fields. The tests below still apply and use links.
 
 | Field type | When it is computed | Where the value lives |
 | --- | --- | --- |
@@ -194,9 +194,9 @@ Linked records are found through `record_index`, by value. A relationship says `
 | `Count`, `Rollup` | In `write_record` of a linked record | In `data` of the record that owns the field |
 | `Lookup`, and a `Formula` that names one | When a page is read | Nowhere. It is added to the rows of that page |
 
-`Count` and `Rollup`. When a record in the linked table is created, updated, or deleted, find the owning records whose key matches the old link value and the new link value. For each, run one SQL aggregate over the linked rows and write the result into the owner's `data` and its `record_index` row. Do not raise the owner's `version`. A computed change is not a user edit and must not make someone's save conflict.
+`Count` and `Rollup`. When a record in the linked table is created, updated, or deleted, find the owning records through `record_links`, for the old and the new link. For each, run one SQL aggregate over the linked rows and write the result into the owner's `data` and its `record_index` row. Do not raise the owner's `version`. A computed change is not a user edit and must not make someone's save conflict.
 
-`Lookup`. After a page of at most 200 rows is loaded, collect the link values on that page and fetch the linked records with one statement: `WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND txt = ANY($4)`. Fill the lookup values from the result. One statement per lookup field per page.
+`Lookup`. After a page of at most 200 rows is loaded, collect the link ids on that page and fetch the linked records with one statement that joins `record_links` to the target records for those ids. Fill the lookup values from the result. One statement per lookup field per page.
 
 A value in `data` under a computed field's name is never accepted from a caller. `write_record` overwrites it.
 

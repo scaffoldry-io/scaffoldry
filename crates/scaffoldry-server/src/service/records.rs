@@ -1,6 +1,7 @@
 //! Sovereign Tabular Record Service Layer with Cedar Policy Enforcement
 
 use crate::service::ServiceError;
+use crate::service::access::{authorize_app, AppAction};
 use crate::state::{AuthUser, DatasetRecord, SharedState};
 use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
@@ -14,6 +15,7 @@ pub fn create_record(
     data: &Value,
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,
         "student" => EduPersonAffiliation::Student,
@@ -96,10 +98,11 @@ pub fn create_record(
 }
 
 pub fn list_records(
-    _caller: &AuthUser,
+    caller: &AuthUser,
     app_slug: &str,
     state: &SharedState,
 ) -> Result<Vec<DatasetRecord>, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::Read, state)?;
     let records = state
         .records
         .read()
@@ -108,11 +111,12 @@ pub fn list_records(
 }
 
 pub fn get_record(
-    _caller: &AuthUser,
+    caller: &AuthUser,
     app_slug: &str,
     id: &str,
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::Read, state)?;
     let records = state
         .records
         .read()
@@ -128,12 +132,13 @@ pub fn get_record(
 }
 
 pub fn update_record(
-    _caller: &AuthUser,
+    caller: &AuthUser,
     app_slug: &str,
     id: &str,
     payload: &Value,
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
     let mut records = state
         .records
         .write()
@@ -163,21 +168,21 @@ pub fn update_record(
     let updated_rec = record.clone();
     drop(records); // release lock before automations
 
-    let affiliation = match _caller.affiliation.to_lowercase().as_str() {
+    let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,
         "student" => EduPersonAffiliation::Student,
         "staff" => EduPersonAffiliation::Staff,
         "employee" => EduPersonAffiliation::Employee,
         _ => EduPersonAffiliation::Member,
     };
-    let realm = _caller
+    let realm = caller
         .eppn
         .split('@')
         .nth(1)
         .unwrap_or("university.edu")
         .to_string();
     let identity = EduPersonIdentity {
-        eppn: _caller.eppn.clone(),
+        eppn: caller.eppn.clone(),
         realm,
         affiliations: vec![affiliation],
     };
@@ -197,16 +202,17 @@ pub fn update_record(
         &mut applied_rule_ids,
     );
 
-    let final_rec = get_record(_caller, app_slug, id, state).unwrap_or(updated_rec);
+    let final_rec = get_record(caller, app_slug, id, state).unwrap_or(updated_rec);
     Ok(final_rec)
 }
 
 pub fn delete_record(
-    _caller: &AuthUser,
+    caller: &AuthUser,
     app_slug: &str,
     id: &str,
     state: &SharedState,
 ) -> Result<(), ServiceError> {
+    authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
     let mut records = state
         .records
         .write()
