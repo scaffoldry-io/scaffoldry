@@ -6,7 +6,7 @@ Run order is `docs/plans/README.md`. `docs/plans/foundation.md` phases 2 to 9 co
 
 An agent connects with a token its user minted in the settings pane (foundation phases 7 and 9). The user pastes the server's MCP URL and that token into the desktop tool. Do not add another way for an agent to sign in.
 
-Scaffoldry is MCP-first. A faculty member opens a desktop agent, connects it to the institution's Scaffoldry server, and asks for an app. The agent builds it through MCP tools. The web desk is a second client of the same service layer. It is not the primary one.
+Scaffoldry is MCP-first. A faculty member opens the AI tool they already use, such as a desktop AI app, Claude Code, or Codex, connects it to the institution's Scaffoldry server with a token they minted themselves, and asks for an app. The tool builds it through MCP tools. There is no separate agent to deploy. The web desk is a second client of the same service layer. It is not the primary one.
 
 An app has two layers. They are governed in different ways.
 
@@ -415,7 +415,7 @@ The business process desk becomes reachable from an agent.
 
 | Tool | Scope | Behavior |
 | --- | --- | --- |
-| `list_waiting_decisions` | `SignedIn` | Waiting process instances in apps the caller can read, where `can_decide` is true for the caller. Up to 200 |
+| `list_waiting_decisions` | `SignedIn` | Waiting process instances in apps the caller can read, where `can_decide` is true for the caller. Up to 200. `workflows.md` phase 5 replaces it with `list_my_work` |
 | `decide_process` | `App(Read)` plus `can_decide` from `approvers.md` | The body of `decide_app_process`, moved to `service/processes.rs`. The REST route calls it |
 
 Tests: the foundation phase 6 process tests, run again through `tools/call`.
@@ -570,7 +570,7 @@ Stop when the tests listed for phase N pass, and paste the command output.
 | Nobody will review the code. | Nobody is asked to. The reviewer approves the grants, written as a sentence. The code cannot exceed them, because `page_call` enforces them on the server. |
 | A page will send student records to another site. | It has no network. It cannot navigate the top window, open a window, or submit a form. A page that reads a FERPA field needs a second approver before it runs at all. |
 | A page will show an Approve button that does something else. | A page cannot approve anything. Proposal and process decisions are tools a page may not call, and the desk draws those buttons outside the frame. A page can still mislabel its own record edits. Those edits are within its grants and are attributed to the user. |
-| Inside a desktop agent, the host may let a page call any tool. | Then the page is bounded by the user's own rights, not by its grants, and still has no network. The grants are enforced when the call arrives as `page_call`, which is the only call the web desk forwards. |
+| Inside a desktop AI app, the host may let a page call any tool. | Then the page is bounded by the user's own rights, not by its grants, and still has no network. The grants are enforced when the call arrives as `page_call`, which is the only call the web desk forwards. |
 | A page will break when the platform changes. | The bridge is five methods. They are a published contract. A change to them is a new method, never a changed one. |
 | The approved code is not the code that runs. | The manifest names the SHA-256 of the source. Source rows are never updated. The ledger entry for the approval holds the manifest hash. |
 | An agent will write a rule that approves everything. | A rule is a proposal like a manifest. It is checked, a rule that sets a sensitive field needs a second person, and every approval is a ledger entry holding the rule's hash. |

@@ -1,10 +1,10 @@
 # Gemini workplan
 
-Twenty-nine briefs and one master. One phase per session. Do not start the next phase until the current phase's tests pass. Paste the prompt at the bottom of the brief you are in.
+Thirty briefs and one master. One phase per session. Do not start the next phase until the current phase's tests pass. Paste the prompt at the bottom of the brief you are in.
 
 [capability-roadmap.md](capability-roadmap.md) explains why the newer briefs exist and what they change in the older ones. Read it first.
 
-Scaffoldry is MCP-first. The institution's own agent builds apps through the MCP server. The web desk is a second client of the same service layer. Read "Decisions already made" in [foundation.md](foundation.md) before any session.
+Scaffoldry is MCP-first. People build apps directly from the AI tools they already use (a desktop AI app, Claude Code, Codex) through the MCP server, signed in as themselves. The web desk is a second client of the same service layer. Read "Decisions already made" in [foundation.md](foundation.md) before any session.
 
 The foundation comes first. It adds almost no feature. Several routes do not check the caller today, and several writes never reach PostgreSQL. Feature work on top of that is wasted.
 
@@ -12,33 +12,33 @@ The foundation comes first. It adds almost no feature. Several routes do not che
 
 Nothing here adds a feature. It makes the server refuse what it cannot prove, store what it accepts, and say what it does.
 
-| Order | Brief | Phase | What is true after it |
-| --- | --- | --- | --- |
-| 1 | [admin-console.md](admin-console.md) | 0 | The console opens. A missing API shows a banner, not silent sample data. Run after Gemini's current organization work is committed |
-| 2 | [foundation.md](foundation.md) | 1 | README and ARCHITECTURE describe the code that exists |
-| 3 | [foundation.md](foundation.md) | 2 | A failed ledger write fails the request. Sessions expire |
-| 4 | [foundation.md](foundation.md) | 3 | Migrations run once. The ledger rejects update and delete. Workspace changes are stored |
-| 5 | [foundation.md](foundation.md) | 4 | Eight database connections |
-| 6 | [foundation.md](foundation.md) | 5 | An app belongs to a workspace. App and record access comes from stored roles |
-| 7 | [foundation.md](foundation.md) | 6 | No route is left without an access check |
-| 8 | [guards.md](guards.md) | 1 | One Cedar schema and one typed entity builder. Every policy has a plain description. A denial names the policy |
-| 9 | [business-process.md](business-process.md) | open phases | Verify each phase's tests. The completion report in that brief does not match the code. Fix the report |
-| 10 | [foundation.md](foundation.md) | 7 | Tokens are hashed rows a user can mint and revoke. First boot prints a setup token |
-| 11 | [foundation.md](foundation.md) | 8 | Institution settings live in PostgreSQL and every change is in the ledger. `SCAFFOLDRY_ENV` is gone |
-| 12 | [foundation.md](foundation.md) | 9 | A user mints an agent token in the settings pane. A Platform Admin edits settings in `/admin` |
-| 13 | [ux-standards.md](ux-standards.md) | 1 | One component kit and a review checklist |
-| 14 | [jobs.md](jobs.md) | 1 | A durable job queue on PostgreSQL |
-| 15 | [jobs.md](jobs.md) | 2 | A scheduler, a Jobs panel, and job tools for agents |
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 1 | [admin-console.md](admin-console.md) | 0 | The console opens. A missing API shows a banner, not silent sample data. Run after Gemini's current organization work is committed | **COMPLETED** |
+| 2 | [foundation.md](foundation.md) | 1 | README and ARCHITECTURE describe the code that exists | **COMPLETED** |
+| 3 | [foundation.md](foundation.md) | 2 | A failed ledger write fails the request. Sessions expire | **COMPLETED** |
+| 4 | [foundation.md](foundation.md) | 3 | Migrations run once. The ledger rejects update and delete. Workspace changes are stored | **COMPLETED** |
+| 5 | [foundation.md](foundation.md) | 4 | Eight database connections | **COMPLETED** |
+| 6 | [foundation.md](foundation.md) | 5 | An app belongs to a workspace. App and record access comes from stored roles | **COMPLETED** |
+| 7 | [foundation.md](foundation.md) | 6 | No route is left without an access check | **COMPLETED** |
+| 8 | [guards.md](guards.md) | 1 | One Cedar schema and one typed entity builder. Every policy has a plain description. A denial names the policy | Open |
+| 9 | [business-process.md](business-process.md) | open phases | Verify each phase's tests. The completion report in that brief does not match the code. Fix the report | **COMPLETED** |
+| 10 | [foundation.md](foundation.md) | 7 | Tokens are hashed rows a user can mint and revoke. First boot prints a setup token | **COMPLETED** |
+| 11 | [foundation.md](foundation.md) | 8 | Institution settings live in PostgreSQL and every change is in the ledger. `SCAFFOLDRY_ENV` is gone | **COMPLETED** |
+| 12 | [foundation.md](foundation.md) | 9 | A user mints an agent token in the settings pane. A Platform Admin edits settings in `/admin` | **COMPLETED** |
+| 13 | [ux-standards.md](ux-standards.md) | 1 | One component kit and a review checklist | Open |
+| 14 | [jobs.md](jobs.md) | 1 | A durable job queue on PostgreSQL | Open |
+| 15 | [jobs.md](jobs.md) | 2 | A scheduler, a Jobs panel, and job tools for agents | Open |
 
 ### Wave 1 — the governed core
 
 People, units, positions, rules, proposals, and a data model with real links, history, and access rules. A department can run a governed process on it.
 
-| Order | Brief | Phase | What is true after it |
-| --- | --- | --- | --- |
-| 16 | [organization.md](organization.md) | 1, 2, 5 | Code is in the working tree, not committed. Run its tests, fix what earlier phases changed, commit |
-| 17 | [organization.md](organization.md) | 3 | A Platform Admin opens `/admin` → Organization and manages the tree |
-| 18 | [organization.md](organization.md) | 4 | An Org Unit Admin sees only their units on the workspace rail |
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 16 | [organization.md](organization.md) | 1, 2, 5 | Code is in the working tree, not committed. Run its tests, fix what earlier phases changed, commit | **COMPLETED** |
+| 17 | [organization.md](organization.md) | 3 | A Platform Admin opens `/admin` → Organization and manages the tree | **COMPLETED** |
+| 18 | [organization.md](organization.md) | 4 | An Org Unit Admin sees only their units on the workspace rail | **COMPLETED** |
 | 19 | [admin-console.md](admin-console.md) | 1 | A real console shell, one guard, an overview, and one ledger definition per decision type |
 | 20 | [admin-console.md](admin-console.md) | 2 | People: search, hold, revoke tokens, appointments, manual users |
 | 21 | [approvers.md](approvers.md) | 1 | Positions in the org tree, record authors, and a pure approver resolver with separation of duties |
@@ -132,11 +132,21 @@ People are told, see each other work, and run real committee processes.
 | 95 | [notifications.md](notifications.md) | 3 | Preferences and digests |
 | 96 | [notifications.md](notifications.md) | 4 | Every producer is wired. No notice carries a record value |
 | 97 | [process-v2.md](process-v2.md) | 1 | Process events and analytics: where time goes |
-| 98 | [process-v2.md](process-v2.md) | 2 | Branches, cross-table effects, manual and date triggers |
-| 99 | [field-types.md](field-types.md) | 5 | A button field that starts a process |
-| 100 | [process-v2.md](process-v2.md) | 3 | Timers and escalation. No timer ever decides |
-| 101 | [process-v2.md](process-v2.md) | 4 | Committee votes |
-| 102 | [process-v2.md](process-v2.md) | 5 | Builder and desk screens for all of it |
+| 98 | [workflows.md](workflows.md) | 1 | Flows run with approved grants and reach records by address. They can span apps |
+| 99 | [workflows.md](workflows.md) | 2 | A flow touching several workspaces needs approval from each. Moving sensitive data is flagged |
+| 100 | [process-v2.md](process-v2.md) | 2 | Branches, cross-table effects, manual and date triggers |
+| 101 | [workflows.md](workflows.md) | 3 | Schedules, called flows, chaining, and a circuit breaker |
+| 102 | [field-types.md](field-types.md) | 5 | A button field that starts a process |
+| 103 | [process-v2.md](process-v2.md) | 3 | Timers and escalation. No timer ever decides |
+| 104 | [process-v2.md](process-v2.md) | 4 | Committee votes |
+| 105 | [workflows.md](workflows.md) | 4 | Fill-in tasks, with a task grant on one record while the step is open |
+| 106 | [process-v2.md](process-v2.md) | 5 | Builder and desk screens for all of it |
+| 107 | [workflows.md](workflows.md) | 5 | My Work: one list of decisions, tasks, and reviews across the institution, kept in step by jobs |
+| 108 | [workflows.md](workflows.md) | 6 | The My Work page and a review queue |
+| 109 | [workflows.md](workflows.md) | 7 | Flow editor: one command model, the outline, and server validation |
+| 110 | [workflows.md](workflows.md) | 8 | Flow editor: the block-structured canvas |
+| 111 | [workflows.md](workflows.md) | 9 | Test run with a trace on the canvas |
+| 112 | [workflows.md](workflows.md) | 10 | Run history, safe retry, and version comparison |
 
 ### Wave 4 — ecosystem and reach
 
@@ -144,38 +154,39 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 103 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
-| 104 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests |
-| 105 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
-| 106 | [integrations.md](integrations.md) | 4 | Webhooks behind an allowlist and a proposal, with signing, retries, and a call log |
-| 107 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels |
-| 108 | [connections.md](connections.md) | 1 | Datasets are real and read-only. A file-drop sync |
-| 109 | [connections.md](connections.md) | 2 | A changed source stops the sync and makes a proposal |
-| 110 | [connections.md](connections.md) | 3 | PostgreSQL connector. Needs a TLS connector |
-| 111 | [connections.md](connections.md) | 4 | HTTP connector |
-| 112 | [connections.md](connections.md) | 5 | Apps link to datasets |
-| 113 | [connections.md](connections.md) | 6 | The connections panel |
-| 114 | [mcp-apps.md](mcp-apps.md) | 6 | A custom page is rendered into a sandbox document and bounded by its grants |
-| 115 | [mcp-apps.md](mcp-apps.md) | 7 | The web desk shows a custom page in a sandboxed frame |
-| 116 | [views.md](views.md) | 5 | Dashboards and linked widgets |
-| 117 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields |
-| 118 | [views.md](views.md) | 7 | Forms with conditions, boards, calendars, and galleries |
-| 119 | [guests.md](guests.md) | 1 | A guest proves an email address with a one-time link |
-| 120 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule |
-| 121 | [guests.md](guests.md) | 3 | A plain status page for the guest |
-| 122 | [guests.md](guests.md) | 4 | Operating guests: closing forms, erasing, abuse signals |
-| 123 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens |
-| 124 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Needs files from Johann |
-| 125 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |
-| 126 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
-| 127 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
-| 128 | [live-data.md](live-data.md) | 3 | The desk reads records and the directory from the API |
-| 129 | [foundation.md](foundation.md) | 10 | Tokens from the institution's identity provider are verified. Adds `jsonwebtoken` |
-| 130 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
-| 131 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |
-| 132 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both |
-| 133 | [mcp-apps.md](mcp-apps.md) | 8 | Custom pages and review screens render inside the agent. Needs the MCP Apps spec pasted in |
-| 134 | [data-grid-parity.md](data-grid-parity.md) | open phases | Grid work on the web desk. Last, because the agent is the primary surface |
+| 113 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
+| 114 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests |
+| 115 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
+| 116 | [integrations.md](integrations.md) | 4 | Webhooks behind an allowlist and a proposal, with signing, retries, and a call log |
+| 117 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels |
+| 118 | [connections.md](connections.md) | 1 | Datasets are real and read-only. A file-drop sync |
+| 119 | [connections.md](connections.md) | 2 | A changed source stops the sync and makes a proposal |
+| 120 | [connections.md](connections.md) | 3 | PostgreSQL connector. Needs a TLS connector |
+| 121 | [connections.md](connections.md) | 4 | HTTP connector |
+| 122 | [connections.md](connections.md) | 5 | Apps link to datasets |
+| 123 | [connections.md](connections.md) | 6 | The connections panel |
+| 124 | [mcp-apps.md](mcp-apps.md) | 6 | A custom page is rendered into a sandbox document and bounded by its grants |
+| 125 | [mcp-apps.md](mcp-apps.md) | 7 | The web desk shows a custom page in a sandboxed frame |
+| 126 | [views.md](views.md) | 5 | Dashboards and linked widgets |
+| 127 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields |
+| 128 | [views.md](views.md) | 7 | Forms with conditions, boards, calendars, and galleries |
+| 129 | [guests.md](guests.md) | 1 | A guest proves an email address with a one-time link |
+| 130 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule |
+| 131 | [guests.md](guests.md) | 3 | A plain status page for the guest |
+| 132 | [guests.md](guests.md) | 4 | Operating guests: closing forms, erasing, abuse signals |
+| 133 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens |
+| 134 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Needs files from Johann |
+| 135 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |
+| 136 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
+| 137 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
+| 138 | [workflows.md](workflows.md) | 11 | Console panel for flows |
+| 139 | [live-data.md](live-data.md) | 3 | The desk reads records and the directory from the API |
+| 140 | [foundation.md](foundation.md) | 10 | Tokens from the institution's identity provider are verified. Adds `jsonwebtoken` |
+| 141 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
+| 142 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |
+| 143 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both |
+| 144 | [mcp-apps.md](mcp-apps.md) | 8 | Custom pages and review screens render inside the agent. Needs the MCP Apps spec pasted in |
+| 145 | [data-grid-parity.md](data-grid-parity.md) | open phases | Grid work on the web desk. Last, because the agent is the primary surface |
 
 Foundation phases 10 and 11 depend on nothing after phase 9. Run them earlier if a pilot date appears.
 
@@ -234,6 +245,10 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0052_snapshots.sql` | import export phase 5 |
 | `0053_process_timers.sql` | process v2 phase 3 |
 | `0054_process_votes.sql` | process v2 phase 4 |
+| `0055_flows.sql` | workflows phase 1. Also adds `proposal_approvals` and `flow_effects` |
+| `0056_work_items.sql` | workflows phase 5 |
+| `0057_task_grants.sql` | workflows phase 4 |
+| `0058_flow_state.sql` | workflows phase 3 |
 
 Register each file in `crates/scaffoldry-server/src/repository.rs` after the last schema already applied, inside the existing advisory lock. A file that exists is never edited. A fix is a new file. The run order above is not filename order. That is safe: each file is recorded by name in `schema_migrations`, and no file depends on a later-numbered one.
 
@@ -280,6 +295,9 @@ Settled. These were open and are now decided. Each is written into the brief nam
 | Jobs, notifications, timers, and webhooks are built, on a PostgreSQL queue, with an allowlist for anything that leaves | `jobs.md`, `notifications.md`, `process-v2.md`, `integrations.md` |
 | Real-time updates are server-sent events with ids only | `realtime.md` |
 | Delete is trash. Destruction is retention, with proof. Legal holds override all of it | `lifecycle.md` |
+| Flows run as a service identity with approved grants, reach records by address, never delete, and may span workspaces when each touched workspace's owner approves | `workflows.md` |
+| A person has one list of decisions, tasks, and reviews across the institution, and an assignee can act only on one record and the listed fields while a step is open | `workflows.md` |
+| People build from the AI tools they already use. There is no separate agent to deploy | `README.md`, `foundation.md` |
 | Row and column rules narrow access and are evaluated by one scope, tested equal in Rust and SQL | `access-rules.md` |
 | Shared links are off until enabled, have no passwords, and never carry sensitive fields | `views.md` phase 6 |
 | People outside the institution use a guest form with a built-in own-records rule, opened only by a two-person proposal | `guests.md` |

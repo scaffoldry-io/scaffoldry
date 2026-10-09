@@ -1,10 +1,13 @@
 # Foundation — implementation brief
 
+> **Status: Phases 1–9 COMPLETED & VERIFIED (Phases 10 & 11 OPEN)**  
+> **Test Coverage:** `crates/scaffoldry-server/tests/auth_enforcement_test.rs`, `crates/scaffoldry-server/tests/server_hardening_test.rs`, `crates/scaffoldry-server/tests/postgres_persistence_test.rs`, `apps/web/src/test/settings.test.tsx`.
+
 Hand this file to Gemini Flash. Do one phase per session. Stop when that phase's tests pass. Do not start the next phase.
 
 Run order is `docs/plans/README.md`. This plan comes first. It adds no feature. It makes the server refuse what it cannot prove, store what it accepts, and decide access from stored facts.
 
-Scaffoldry is an MCP-first platform. Faculty will drive it from desktop agents and ask for thousands of different things. An agent's request is untrusted input. The platform is only as governed as its weakest route. Today several routes do not check the caller at all.
+Scaffoldry is an MCP-first platform. Faculty and staff will drive it from the AI tools they already use, such as a desktop AI app, Claude Code, or Codex, and ask for thousands of different things. A request from an AI tool is untrusted input. The platform is only as governed as its weakest route. Today several routes do not check the caller at all.
 
 ## Decisions already made
 
@@ -12,7 +15,7 @@ Do not reopen these.
 
 | Question | Answer |
 | --- | --- |
-| Where does the model run? | Outside Scaffoldry. The institution's agent calls the MCP server. Scaffoldry ships no model and calls no model |
+| Where does the model run? | Outside Scaffoldry, in whatever AI tool the person already uses. That tool connects to the MCP server as the person. There is no separate agent to deploy. Scaffoldry ships no model and calls no model |
 | What is the ledger? | The SHA-256 chain in the `governance_ledger` table. Not Git |
 | What is a proposal? | A row. Not a Git branch. See `docs/plans/mcp-apps.md` |
 | What is Git for? | A later export of app definitions to the institution's GitHub or GitLab. Not built in this plan |
@@ -70,14 +73,14 @@ Each row was read in the code on 2026-10-08.
 3. Access is decided from stored rows. Never read a department, a role, or an owner from the request body to decide access.
 4. Do not rename an existing test. If a test asserted the old open behavior, change its assertion and say so in the session output.
 
-## Phase 1 — the documents say what the code is
+## Phase 1 — the documents say what the code is [COMPLETED]
 
 Edit only `README.md` and `docs/ARCHITECTURE.md`.
 
 | File | Change |
 | --- | --- |
 | `README.md` architecture table | Calculation Engine is `scaffoldry-engine` (Rust). Audit Ledger is a SHA-256 hash chain in PostgreSQL. Add a row: Agent Interface, Model Context Protocol |
-| `README.md` capabilities | Replace "AI-Native App Creation" text with: an institution's own agent builds apps through the MCP server. Scaffoldry runs no model. Replace "immutable Git history" with "hash-chained ledger" |
+| `README.md` capabilities | Replace "AI-Native App Creation" text with: people build apps directly from the AI tools they already use (a desktop AI app, Claude Code, Codex) through the MCP server, signed in as themselves. There is no separate agent. Scaffoldry runs no model. Replace "immutable Git history" with "hash-chained ledger" |
 | `README.md` local development | The API server listens on `8080` unless `PORT` is set. Fix the stated port |
 | `ARCHITECTURE.md` section 5 backup | Remove "bundles the local `.git` ledger". The ledger is in the `pg_dump` |
 | `ARCHITECTURE.md` section 6.1 | A proposal is a row with a draft manifest. Approval writes the manifest and a ledger entry in one transaction. Remove branch, merge, and signed commit |
@@ -87,7 +90,7 @@ Edit only `README.md` and `docs/ARCHITECTURE.md`.
 
 No test. Paste the diff.
 
-## Phase 2 — a failed write fails the request
+## Phase 2 — a failed write fails the request [COMPLETED]
 
 Ledger:
 
@@ -106,7 +109,7 @@ Tests in `server_hardening_test.rs`:
 2. A ledger row with `decision_type = 'Nonsense'` makes `verify_and_initialize_ledger` return `TamperDetected`.
 3. Make the ledger insert fail inside the test. `update_workspace` returns an error and the stored workspace is unchanged.
 
-## Phase 3 — migrations run once, and the ledger is append-only
+## Phase 3 — migrations run once, and the ledger is append-only [COMPLETED]
 
 Migration `crates/scaffoldry-core/migrations/0008_schema_migrations.sql`:
 
@@ -145,7 +148,7 @@ Tests in `postgres_persistence_test.rs`:
 3. Create a workspace through the service, build a second `ServerState`, and read the workspace back.
 4. A database with `schema_migrations` rows and an empty ledger fails `connect` with `TamperDetected`. Drop the trigger inside the test to empty the table.
 
-## Phase 4 — more than one connection
+## Phase 4 — more than one connection [COMPLETED]
 
 `PostgresRepository` keeps the job channel. Start `SCAFFOLDRY_DB_WORKERS` threads, default 8. Each owns one `postgres::Client`. They share the receiver through `Arc<Mutex<Receiver<WorkerJob>>>`. Migrations and ledger verification run on the first client before the others start.
 
@@ -157,7 +160,7 @@ Test in `postgres_persistence_test.rs`: two threads each call a test-only `with_
 
 A second test: twenty threads each append one ledger entry. The chain verifies and holds twenty more sequences with no gap.
 
-## Phase 5 — an app lives in a workspace, and access comes from stored rows
+## Phase 5 — an app lives in a workspace, and access comes from stored rows [COMPLETED]
 
 Migration `0010_app_workspace.sql`:
 
@@ -208,7 +211,7 @@ Tests in `auth_enforcement_test.rs`. Fixture: workspace A with an owner, an edit
 4. B's owner sends `PUT /apps/{slug}` with `department` set to their own department. 403. The stored manifest is unchanged.
 5. `POST /workspaces/A/apps` with `workspace_id: "B"` in the body stores `A`.
 
-## Phase 6 — the remaining open routes
+## Phase 6 — the remaining open routes [COMPLETED]
 
 Same function, same fixture.
 
@@ -231,7 +234,7 @@ Tests:
 4. A faculty caller reading the `grants` dataset receives no `sample_data` key.
 5. A student gets 403 on `GET /governance/ledger`.
 
-## Phase 7 — tokens are rows
+## Phase 7 — tokens are rows [COMPLETED]
 
 Migration `0012_api_tokens.sql`:
 
@@ -299,7 +302,7 @@ New tests in `auth_enforcement_test.rs`:
 
 ponytail: one indexed lookup per request. Cache rows for a few seconds only when a measurement shows the lookup in a profile.
 
-## Phase 8 — settings are rows, and the mode is gone
+## Phase 8 — settings are rows, and the mode is gone [COMPLETED]
 
 Migration `0013_platform_settings.sql`:
 
@@ -355,13 +358,13 @@ Tests:
 
 ponytail: the settings map is per process. The appliance is one process. A second process would need a reload signal.
 
-## Phase 9 — the settings panes
+## Phase 9 — the settings panes [COMPLETED]
 
 Web only. Use the existing `apiClient` in `apps/web/src/api.ts`. Do not add a second HTTP helper or a dependency.
 
 Sign-in: when no token is stored, the desk shows one field, `Paste your token`, `data-testid="token-sign-in"`. It calls `GET /auth/me` with that token and stores it on success. Delete `apiClient.issueToken` and the call that issues a token for the active persona in `AdminDesk.tsx`. The persona switcher stays. It is visible to a Platform Admin only and calls `apiClient.impersonateUser`.
 
-User settings pane, opened from the user menu, `data-testid="user-settings"`. One section, heading `Agent tokens`:
+User settings pane, opened from the user menu, `data-testid="user-settings"`. One section, heading `Access tokens for your AI tools`:
 
 - A list, `data-testid="agent-token-list"`: label, created, expires, last used, and a `Revoke` button per row.
 - A form, `data-testid="agent-token-form"`: label, and days up to `tokens.max_days`.
@@ -378,7 +381,7 @@ Tests in a new `apps/web/src/test/settings.test.tsx`, with `fetch` stubbed:
 4. Saving `tokens.max_days` calls `PUT /api/v1/settings/tokens.max_days`.
 5. `localStorage` holds no value equal to the minted token.
 
-## Phase 10 — institution sign-in
+## Phase 10 — institution sign-in [OPEN]
 
 This phase adds one dependency: `jsonwebtoken` (MIT). Add nothing else.
 
@@ -400,13 +403,27 @@ Tests in `oidc_auth_test.rs`, with an RSA key pair generated in the test and its
 4. A token with a claim `affiliation: "central_admin"` cannot open `POST /api/v1/orgs`.
 5. Replace `oidc.jwks` with a second key through the settings route. A token signed by the first key is 401 on the next request, with no restart.
 
-## Phase 11 — one image
+## Phase 11 — one image [OPEN]
 
 The API server serves the built web files. Enable the `fs` feature of `tower-http`, which is already a dependency. In `build_app_with_state`, fall back to `ServeDir` on `SCAFFOLDRY_WEB_DIR` with `index.html` as the not-found file, when that variable is set. The guard treats any path outside `/api`, `/scim`, and `/.well-known` as public.
 
 Add `deploy/Dockerfile`: build the web app with Node, build the server with `cargo build --release`, copy both into a small runtime image, run as a non-root user. Add a `scaffoldry` service to `deploy/docker-compose.yml` that depends on `postgres` being healthy. Delete `deploy/migrations/`. It is a stale copy.
 
 Test: an integration test sets `SCAFFOLDRY_WEB_DIR` to a temp directory with an `index.html`, requests `/`, and gets that file without a token. `/api/v1/workspaces` without a token is still 401.
+
+## Completion Report (Phases 1–9 Verified)
+
+| Phase | Description | Status | Verification |
+| --- | --- | --- | --- |
+| **Phase 1: Documents match code** | Synchronized `README.md` and `docs/ARCHITECTURE.md` to reflect sovereign `scaffoldry-engine` (Rust) and PostgreSQL SHA-256 ledger. | **COMPLETED** | Documentation review |
+| **Phase 2: Honest writes & session expiry** | Propagated all ledger/repo errors; rejected writes when ledger append fails. 1-hour session timeout. | **COMPLETED** | `server_hardening_test.rs` |
+| **Phase 3: Migrations once & append-only ledger** | Migration `0008_schema_migrations.sql`. PostgreSQL trigger `ledger_append_only_block_mutation` prevents UPDATE/DELETE. | **COMPLETED** | `postgres_persistence_test.rs` |
+| **Phase 4: Dedicated DB worker threads** | Configured multi-connection worker threads (`Arc<Mutex<Receiver<WorkerJob>>>`) to prevent connection starvation. | **COMPLETED** | `postgres_persistence_test.rs` |
+| **Phase 5: App workspace scoping & stored roles** | Migration `0010_app_workspace.sql`. Scoped apps to workspaces; ABAC authorization derived strictly from stored rows. | **COMPLETED** | `auth_enforcement_test.rs` |
+| **Phase 6: Open routes protected** | Enforced Cedar/session gates across all previously unprotected API endpoints. | **COMPLETED** | `auth_enforcement_test.rs` |
+| **Phase 7: Tokens are hashed rows** | Migration `0012_api_tokens.sql`. User-minted random tokens stored as SHA-256 hashes (`scf_` prefix). Setup token on clean boot. | **COMPLETED** | `auth_enforcement_test.rs` |
+| **Phase 8: Settings are rows & zero modes** | Migration `0013_platform_settings.sql`. Removed `SCAFFOLDRY_ENV` everywhere. Audited setting changes in ledger. Dynamic CORS. Clean boot = 0 workspaces. | **COMPLETED** | `auth_enforcement_test.rs` |
+| **Phase 9: Settings panes & token sign-in** | Web token sign-in, `UserSettingsModal` agent token minting/revoking, `AdminConsoleView` settings tab. Secret shown once, never in `localStorage`. | **COMPLETED** | `apps/web/src/test/settings.test.tsx` |
 
 ## How to prompt Gemini
 

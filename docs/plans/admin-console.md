@@ -518,6 +518,7 @@ Each of these adds its routes to `ADMIN_ROUTES`, is built from the kit, writes a
 | Retention, Purges, Legal holds | `lifecycle.md` phases 3 and 4 |
 | Guests | `guests.md` phase 4 |
 | Positions | `approvers.md` phase 2 |
+| Flows | `workflows.md` phase 11 |
 
 ## How to prompt Gemini
 

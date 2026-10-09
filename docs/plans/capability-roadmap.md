@@ -42,7 +42,7 @@ Third-party libraries are different. They are dependencies, they follow the lice
 | --- | --- |
 | A user's table stays one JSONB record plus a derived index. It is not a real database table per user table | An approved proposal must change an app without running DDL against a production database. The manifest stays the contract. `row-scale.md` phase 6 measures it. If it fails its limits, typed per-table storage is the fallback. That would change architecture rule 4 and needs Johann's decision |
 | Formulas are a small expression language evaluated only in Rust | A reviewer can read it. It has no I/O and cannot loop. One evaluator cannot disagree with itself |
-| No model runs inside the product | The institution's agent drives MCP. `agent-coverage.md` makes that agent effective |
+| No model runs inside the product | People's own AI tools drive MCP. `agent-coverage.md` makes those tools effective |
 | Sync from other systems is scheduled, read-only, and governed. It is not a live proxy | A sync has a history, a drift check, and a sensitivity label. A live proxy passes every schema change and slow query through |
 | Shared view links are off until a Platform Admin turns on a scope, carry no passwords, and never include a sensitive field | A password is an authentication surface to defend. The sensitive-field rule is a FERPA safeguard |
 | Webhooks leave only through an allowlist, and creating one is a proposal. A payload carries ids unless values are approved | Data leaving the appliance is a disclosure |

@@ -6,7 +6,7 @@ Scaffoldry bridges the gap between end-user empowerment and institutional data i
 
 ## Core Capabilities
 
-- **Agent-Driven App Creation:** An institution's own agent builds apps through the MCP server. Scaffoldry runs no model.
+- **Build With the AI Tools You Already Use:** People create and change apps directly from a desktop AI app, Claude Code, Codex, or any other tool that speaks the Model Context Protocol, signed in as themselves. There is no separate agent to deploy. Scaffoldry runs no model.
 - **Federated Decision Authority:** Built-in business approval workflows ("The Desk") that gate changes, track schema drift, and enforce data boundaries without bureaucratic delay.
 - **Tamper-Proof Audit Ledger:** Every schema change, DNS binding, and business decision is cryptographically recorded in a hash-chained ledger in PostgreSQL.
 - **Enterprise Compliance by Default:** Machine-readable NIST OSCAL compliance artifacts for seamless integration with institutional GRC and audit tools.
@@ -16,7 +16,7 @@ Scaffoldry bridges the gap between end-user empowerment and institutional data i
 
 | Layer | Technology | Purpose |
 | :--- | :--- | :--- |
-| **Agent Interface** | Model Context Protocol | Primary interface for institutional agents building apps and reading records |
+| **AI Tool Interface** | Model Context Protocol | Primary interface for people building apps and working with records from their own AI tools |
 | **User Interface** | TanStack (React 19 + Table + Query) | Virtualized spreadsheet data grid, ProcessDesk queue, and admin console |
 | **Access & Policy** | Cedar Policy Engine | Real-time Attribute-Based Access Control (ABAC/RBAC) |
 | **Calculation Engine** | `scaffoldry-engine` (Rust) | In-memory spreadsheet formula evaluation, relational rollups, and lookups |

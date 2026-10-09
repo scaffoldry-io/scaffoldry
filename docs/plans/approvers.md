@@ -253,7 +253,7 @@ In the user-task editor, replace the free-text `role` box with a `Who decides` c
 - `A workspace role`: the old behavior, labelled as such.
 - A live preview from the route: `Today this would go to: Dr. Rivera, Chair of Physics.` or the problem in words, `This position is vacant at Physics and above.` as a `Banner` of tone `warning`.
 
-Keep the single-action form working. Do not add a graph.
+Keep the single-action form working. Do not add a graph here. The canvas is `workflows.md` phase 8.
 
 Tests (vitest, `fetch` stubbed).
 

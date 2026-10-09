@@ -6,7 +6,7 @@
 
 Hand this file to Gemini Flash. Do one phase per session. Stop when that phase's tests pass. Do not start the next phase.
 
-Run order is `docs/plans/README.md`. Organization scope (plan 0004) comes before this plan's Desk screen. This plan's migration is `0005_process_instances.sql`.
+Run order is `docs/plans/README.md`. Organization scope (plan 0004) comes before this plan's Desk screen. `workflows.md` later adds a visual editor and a system-wide task list. The bans on a graph in this brief apply to its own phases only. This plan's migration is `0005_process_instances.sql`.
 
 Scaffoldry's process layer is the reason a department does not buy Airtable Automations, Smartsheet workflows, or Power Automate. A record changes, conditions hold, a person with authority decides, the record updates, and the ledger records the decision. That waiting human step is the product. A fire-and-forget recipe is not.
 

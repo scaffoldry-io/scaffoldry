@@ -19,7 +19,7 @@ BPMN 2.0 names remain the vocabulary: a timer event, an exclusive gateway, and a
 | Can a timer approve something? | Never. A timer can remind, escalate, or fail a step. It cannot decide |
 | How is a committee decided? | By a rule on the step: all must approve, any one, or at least N. Reject policy is stated too. Voters are distinct and exclude the submitter and starter |
 | Where do timers run? | In the scheduler from `jobs.md`, accurate to about a minute |
-| Can a rule write to another table? | Yes, inside the same app, as the `run_automation` action, with every write in history as an automation batch |
+| Can a rule write to another table or app? | Yes, as a flow with approved grants, defined in `workflows.md` phase 1. It does not run as the triggering person |
 | What does branching look like? | An exclusive choice: the first branch whose conditions hold runs, otherwise the default. Nesting is limited to two levels |
 
 ## What exists today
@@ -38,7 +38,7 @@ BPMN 2.0 names remain the vocabulary: a timer event, an exclusive gateway, and a
 - Loops and sub-processes.
 - Message events from outside.
 - Compensation.
-- A graphical diagram editor.
+- A free-form diagram editor. The block-structured canvas is `workflows.md` phase 8.
 
 ## Rules for every phase
 
@@ -87,7 +87,7 @@ Tests.
 
 Branches. `StepKind::Branch { branches: Vec<{ when: Vec<FieldPredicate>, steps: Vec<ProcessStep> }>, otherwise: Vec<ProcessStep> }`. The first branch whose conditions hold runs its steps. Otherwise `otherwise` runs. Nesting is at most two levels, and the validator counts steps (at most 50 per rule, at most 20 per branch). Branch decisions are events.
 
-Effects across tables. `ActionType::CreateRecord { table_id, fields: Vec<(String, Expr)> }` and `ActionType::UpdateLinked { link_field, fields: Vec<(String, Expr)> }`. `Expr` is a formula from `calc-graph.md`, evaluated with the triggering record. Authorization is the Cedar action `run_automation` on the target table, through `decide`, with the triggering person as principal, and each write goes through `write_record` with `actor_kind` of `automation` and a batch shared by the run. The loop guard and depth cap from stage one apply, and a rule cannot create a record that triggers itself on the same table.
+Effects across tables and apps are defined in `workflows.md` phase 1: grants, addresses, and a service identity. This phase implements branches, manual triggers, and date triggers only. Do not implement `CreateRecord` or `UpdateLinked` here.
 
 Triggers. `TriggerEvent::Manual` for the button field (`field-types.md` phase 5), and `TriggerEvent::DateField { field, offset_days, at }`, for example thirty days before a deadline. A scheduled job, `scan_date_triggers`, runs hourly. For each rule with a date trigger it finds records whose date plus offset falls in the window since the last scan, using the index on the date field, and starts an instance for each with `dedupe_key` of rule, record, and the date, so a record is started once per date even if the job runs twice or is resumed. The validator requires the date field to be indexed and adds it.
 
@@ -97,7 +97,7 @@ Tests.
 
 1. A grant over the threshold takes the dean branch. One under it takes the default. The events show which.
 2. A nested branch three levels deep fails validation.
-3. `CreateRecord` writes a record in another table as the triggering person under `run_automation`, in history as an automation batch. A person without that action starts the rule and the write is refused, and the instance fails with the reason.
+3. Cross-table and cross-app effects are tested in `workflows.md` phase 1.
 4. A rule that would create a record triggering itself on the same table fails validation.
 5. A date trigger fires once for a record even if the job runs twice in the window, and not again the next scan.
 6. A `Manual` trigger with no button fails validation.

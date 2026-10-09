@@ -4,7 +4,7 @@ Hand this file to Gemini Flash. Do one phase per session. Stop when that phase's
 
 Run order is `docs/plans/README.md`. Phase 1 needs `mcp-apps.md` phase 5. Phase 2 needs `integrations.md` phase 2. Phase 3 runs alongside every other brief: each adds its own scenarios.
 
-Scaffoldry is MCP-first. Thousands of faculty will ask an agent for thousands of different things, and the platform ships no model. Whether it works depends on whether a small, general set of tools can express what faculty ask for, and whether the tools say what went wrong in words an agent can act on. Testing each tool alone does not show that. A scripted set of real requests does.
+Scaffoldry is MCP-first. Thousands of faculty will ask their own AI tools for thousands of different things, and the platform ships no model. Whether it works depends on whether a small, general set of tools can express what faculty ask for, and whether the tools say what went wrong in words an agent can act on. Testing each tool alone does not show that. A scripted set of real requests does.
 
 This brief builds that suite, adds a budget that keeps the tool list small, and makes the platform teach the agent how to use it.
 
