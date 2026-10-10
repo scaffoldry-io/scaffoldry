@@ -368,11 +368,10 @@ pub(crate) fn table_fields_lenient(app_slug: &str, table_id: &str, state: &Share
 
 /// The fields of a table that follow from others. A history row does not record them.
 pub(crate) fn computed_fields(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
-    use scaffoldry_engine::FieldType::*;
     let (fields, _) = table_fields_lenient(app_slug, table_id, state);
     fields
         .into_iter()
-        .filter(|f| matches!(f.field_type, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime))
+        .filter(|f| f.field_type.is_computed())
         .map(|f| f.name)
         .collect()
 }

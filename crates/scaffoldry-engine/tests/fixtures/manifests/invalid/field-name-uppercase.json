@@ -1,0 +1,24 @@
+{
+  "slug": "advising",
+  "title": "Advising",
+  "description": "Advising notes",
+  "organization_code": "ADV",
+  "department": "advising",
+  "views": [],
+  "tables": [
+    {
+      "id": "t",
+      "name": "T",
+      "slug": "t",
+      "fields": [
+        {
+          "name": "GPA",
+          "label": "Gpa",
+          "field_type": "Number",
+          "required": false,
+          "ferpa_sensitive": false
+        }
+      ]
+    }
+  ]
+}

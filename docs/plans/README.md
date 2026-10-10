@@ -58,7 +58,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 35 | [record-history.md](record-history.md) | 1 | Every record change is recorded in the same transaction, with the actor | **COMPLETED** |
 | 36 | [row-scale.md](row-scale.md) | 2 | Sort and filter on an indexed field use the pivot index. Multi-valued fields index one row per value |
 | 37 | [jobs.md](jobs.md) | 3 | Index building and flag recomputation run as jobs, with a visible `building` state |
-| 38 | [mcp-apps.md](mcp-apps.md) | 3 | The app manifest has a published schema, pages, and size limits |
+| 38 | [mcp-apps.md](mcp-apps.md) | 3 | The app manifest has a published schema, pages, and size limits | **COMPLETED** |
 | 39 | [mcp-apps.md](mcp-apps.md) | 4 | An agent proposes an app change, with page source. A person approves it |
 | 40 | [links.md](links.md) | 1 | Records link by id. A link field and its index |
 | 41 | [links.md](links.md) | 2 | Two-way links, and what delete does to them |

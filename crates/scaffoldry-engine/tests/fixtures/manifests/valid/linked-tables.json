@@ -1,0 +1,67 @@
+{
+  "slug": "advising",
+  "title": "Advising",
+  "description": "Advising notes",
+  "organization_code": "ADV",
+  "department": "advising",
+  "views": [],
+  "tables": [
+    {
+      "id": "students",
+      "name": "Students",
+      "slug": "students",
+      "fields": [
+        {
+          "name": "name",
+          "label": "Name",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "credits",
+          "label": "Credits",
+          "field_type": "Rollup",
+          "required": false,
+          "ferpa_sensitive": false,
+          "target_table_id": "courses",
+          "target_display_field": "credits",
+          "rollup_function": "sum"
+        }
+      ]
+    },
+    {
+      "id": "courses",
+      "name": "Courses",
+      "slug": "courses",
+      "fields": [
+        {
+          "name": "title",
+          "label": "Title",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "credits",
+          "label": "Credits",
+          "field_type": "Number",
+          "required": false,
+          "ferpa_sensitive": false
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r1",
+      "name": "enrolled",
+      "source_table_id": "students",
+      "target_table_id": "courses",
+      "source_field": "name",
+      "target_field": "title",
+      "relationship_type": "many_to_many",
+      "display_field": "title"
+    }
+  ]
+}

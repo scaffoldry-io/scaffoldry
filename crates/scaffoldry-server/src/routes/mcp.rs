@@ -222,6 +222,12 @@ async fn handle_mcp_request(
                         "mimeType": "application/json"
                     },
                     {
+                        "uri": "scaffoldry://schema/app-manifest",
+                        "name": "App Manifest Schema",
+                        "description": "JSON Schema 2020-12 for the app manifest an agent builds against",
+                        "mimeType": "application/json"
+                    },
+                    {
                         "uri": "ui://workspaces/{id}/settings",
                         "name": "Workspace Security & Access Controls",
                         "description": "Interactive sovereign MCP App UI for workspace sharing and OSCAL AC-02/AC-03 settings",
@@ -348,6 +354,15 @@ async fn handle_mcp_request(
                             ]
                         })
                     }
+                    "scaffoldry://schema/app-manifest" => json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "application/json",
+                                "text": include_str!("../../../../governance/schema/app-manifest.schema.json")
+                            }
+                        ]
+                    }),
                     _ => json!({
                         "contents": []
                     }),

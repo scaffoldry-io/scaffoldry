@@ -1,0 +1,20 @@
+{
+  "slug": "advising",
+  "title": "Advising",
+  "description": "Advising notes",
+  "organization_code": "ADV",
+  "department": "advising",
+  "views": [],
+  "pages": [
+    {
+      "id": "p",
+      "title": "P",
+      "kind": {
+        "Custom": {
+          "source_sha256": "abc",
+          "grants": []
+        }
+      }
+    }
+  ]
+}

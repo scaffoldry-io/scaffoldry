@@ -2,9 +2,11 @@
 
 pub mod automation;
 pub mod detect;
+pub mod manifest;
 pub mod sensitivity;
 
 pub use automation::*;
+pub use manifest::validate_manifest;
 
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_policy::ScaffoldryPolicyEngine;
@@ -119,6 +121,14 @@ pub enum FieldType {
     Count,
     Rollup,
     Formula,
+}
+
+impl FieldType {
+    /// True when the value follows from other values, so nobody writes it.
+    pub fn is_computed(self) -> bool {
+        use FieldType::*;
+        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -772,6 +782,20 @@ impl<'a> FormulaParser<'a> {
     }
 }
 
+/// The field names a formula uses, or `None` when it does not parse.
+pub fn formula_field_refs(expression: &str) -> Option<Vec<String>> {
+    let tokens = tokenize_formula(expression)?;
+    Some(
+        tokens
+            .into_iter()
+            .filter_map(|t| match t {
+                FormulaToken::Field(name) => Some(name),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
 pub fn evaluate_formula(expression: &str, record: &Value) -> Value {
     let expr = expression.trim();
     if expr.is_empty() || expr.len() > 500 {
@@ -1098,6 +1122,40 @@ pub struct AppManifest {
     pub views: Vec<AppView>,
     #[serde(default)]
     pub ceds_mappings: HashMap<String, String>,
+    #[serde(default)]
+    pub pages: Vec<AppPage>,
+}
+
+/// A screen of an app: a built-in view, or a custom page an agent wrote.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppPage {
+    pub id: String,
+    pub title: String,
+    pub kind: PageKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PageKind {
+    View { view_id: String },
+    /// The source is stored apart from the manifest and named by its hash.
+    Custom { source_sha256: String, grants: Vec<PageGrant> },
+}
+
+/// What a custom page may do to one table. A page has nothing beyond its grants. There is no
+/// wildcard, and a table with no grant is invisible to the page.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PageGrant {
+    pub table_id: String,
+    /// Field names the page may receive.
+    #[serde(default)]
+    pub read: Vec<String>,
+    /// Field names the page may set.
+    #[serde(default)]
+    pub write: Vec<String>,
+    #[serde(default)]
+    pub create: bool,
+    #[serde(default)]
+    pub delete: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
