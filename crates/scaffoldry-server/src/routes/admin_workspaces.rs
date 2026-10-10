@@ -217,14 +217,11 @@ async fn list_workspaces(
         repo.count_records_by_app_slugs(&page_app_slugs)
             .map_err(|e| ServiceError::internal(e.to_string()))?
     } else {
-        let records = state
-            .records
-            .read()
-            .map_err(|e| ServiceError::internal(e.to_string()))?;
         let mut map = HashMap::new();
         for slug in &page_app_slugs {
-            if let Some(recs) = records.get(slug) {
-                map.insert(slug.clone(), recs.len());
+            let n = state.count_app_records(slug).map_err(ServiceError::internal)?;
+            if n > 0 {
+                map.insert(slug.clone(), n);
             }
         }
         map
@@ -336,14 +333,11 @@ async fn get_workspace(
         repo.count_records_by_app_slugs(&app_slugs)
             .map_err(|e| ServiceError::internal(e.to_string()))?
     } else {
-        let records = state
-            .records
-            .read()
-            .map_err(|e| ServiceError::internal(e.to_string()))?;
         let mut map = HashMap::new();
         for slug in &app_slugs {
-            if let Some(recs) = records.get(slug) {
-                map.insert(slug.clone(), recs.len());
+            let n = state.count_app_records(slug).map_err(ServiceError::internal)?;
+            if n > 0 {
+                map.insert(slug.clone(), n);
             }
         }
         map
@@ -541,11 +535,7 @@ fn get_records_per_table(
         repo.list_records(&manifest.slug)
             .map_err(|e| ServiceError::internal(e.to_string()))?
     } else {
-        let recs_guard = state
-            .records
-            .read()
-            .map_err(|e| ServiceError::internal(e.to_string()))?;
-        recs_guard.get(&manifest.slug).cloned().unwrap_or_default()
+        state.list_app_records(&manifest.slug).map_err(ServiceError::internal)?
     };
 
     let mut counts: HashMap<String, usize> = HashMap::new();

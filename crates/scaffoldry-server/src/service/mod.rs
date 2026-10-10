@@ -76,6 +76,8 @@ pub enum ServiceError {
     Conflict(String),
     /// The position already has as many holders as it allows.
     PositionFull(String),
+    /// A save named a version that is no longer the stored one. `version` is the current one.
+    StaleVersion { message: String, version: i32 },
     TooLarge(String),
     Internal(String),
 }
@@ -116,7 +118,7 @@ impl ServiceError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::PositionFull(_) => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } => StatusCode::CONFLICT,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -129,7 +131,7 @@ impl ServiceError {
             Self::Forbidden { .. } => "forbidden",
             Self::NotFound(_) => "not_found",
             Self::BadRequest(_) | Self::Invalid { .. } => "bad_request",
-            Self::Conflict(_) => "version_conflict",
+            Self::Conflict(_) | Self::StaleVersion { .. } => "version_conflict",
             Self::PositionFull(_) => "position_full",
             Self::TooLarge(_) => "too_large",
             Self::Internal(_) => "internal",
@@ -145,7 +147,7 @@ impl ServiceError {
             | Self::PositionFull(msg)
             | Self::TooLarge(msg)
             | Self::Internal(msg) => msg,
-            Self::Forbidden { message, .. } | Self::Invalid { message, .. } => message,
+            Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } => message,
         }
     }
 
@@ -164,6 +166,9 @@ impl ServiceError {
             }
             Self::Invalid { fields, .. } => {
                 body.insert("fields".to_string(), serde_json::to_value(fields).unwrap_or(Value::Null));
+            }
+            Self::StaleVersion { version, .. } => {
+                body.insert("version".to_string(), Value::from(*version));
             }
             _ => {}
         }

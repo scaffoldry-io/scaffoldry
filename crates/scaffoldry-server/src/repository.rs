@@ -26,6 +26,7 @@ const SCHEMA_0003: &str = include_str!("../../scaffoldry-core/migrations/0003_pe
 const SCHEMA_0004: &str = include_str!("../../scaffoldry-core/migrations/0004_organization_scope.sql");
 const SCHEMA_0005: &str = include_str!("../../scaffoldry-core/migrations/0005_process_instances.sql");
 const SCHEMA_0006: &str = include_str!("../../scaffoldry-core/migrations/0006_role_source.sql");
+const SCHEMA_0007: &str = include_str!("../../scaffoldry-core/migrations/0007_record_version.sql");
 const SCHEMA_0008: &str = include_str!("../../scaffoldry-core/migrations/0008_schema_migrations.sql");
 const SCHEMA_0009: &str = include_str!("../../scaffoldry-core/migrations/0009_ledger_append_only.sql");
 const SCHEMA_0010: &str = include_str!("../../scaffoldry-core/migrations/0010_app_workspace.sql");
@@ -53,6 +54,29 @@ pub enum RepositoryError {
 }
 
 type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
+
+/// The result of a conditional write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordWrite {
+    /// Written. The new version.
+    Saved(i32),
+    /// The stored version was not the one given. The current version.
+    Conflict(i32),
+    Missing,
+}
+
+fn record_from_row(r: &postgres::Row) -> DatasetRecord {
+    DatasetRecord {
+        id: r.get(0),
+        app_slug: r.get(1),
+        data: r.get(2),
+        ceds_mapping: r.get(3),
+        is_ferpa_sensitive: r.get(4),
+        created_at: r.get(5),
+        created_by: r.get(6),
+        version: r.get(7),
+    }
+}
 
 #[derive(Clone)]
 pub struct PostgresRepository {
@@ -110,7 +134,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 15] = [
+                        let migrations: [(&str, &str); 16] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -124,6 +148,7 @@ impl PostgresRepository {
                             ("0013_platform_settings.sql", SCHEMA_0013),
                             ("0021_positions.sql", SCHEMA_0021),
                             ("0022_record_created_by.sql", SCHEMA_0022),
+                            ("0007_record_version.sql", SCHEMA_0007),
                             ("0026_jobs.sql", SCHEMA_0026),
                             ("0044_job_schedules.sql", SCHEMA_0044),
                         ];
@@ -686,20 +711,86 @@ impl PostgresRepository {
         let slug = app_slug.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text, created_by \
-                 FROM dataset_records WHERE app_slug = $1 ORDER BY created_at ASC",
+                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text, created_by, version \
+                 FROM dataset_records WHERE app_slug = $1 ORDER BY created_at ASC, id ASC",
                 &[&slug],
             )?;
+            Ok(rows.iter().map(record_from_row).collect())
+        })
+    }
 
-            Ok(rows.iter().map(|r| DatasetRecord {
-                id: r.get(0),
-                app_slug: r.get(1),
-                data: r.get(2),
-                ceds_mapping: r.get(3),
-                is_ferpa_sensitive: r.get(4),
-                created_at: r.get(5),
-                created_by: r.get(6),
-            }).collect())
+    pub fn get_record(&self, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, RepositoryError> {
+        let (slug, id) = (app_slug.to_string(), id.to_string());
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text, created_by, version \
+                 FROM dataset_records WHERE app_slug = $1 AND id = $2",
+                &[&slug, &id],
+            )?;
+            Ok(row.as_ref().map(record_from_row))
+        })
+    }
+
+    /// A new record. The version starts at 1.
+    pub fn insert_record(&self, rec: &DatasetRecord) -> Result<(), RepositoryError> {
+        let rec = rec.clone();
+        self.with_client(move |client| {
+            client.execute(
+                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// One conditional update. Zero rows means the version moved, or the record is gone.
+    pub fn update_record_checked(
+        &self,
+        app_slug: &str,
+        id: &str,
+        data: &Value,
+        expected_version: i32,
+    ) -> Result<RecordWrite, RepositoryError> {
+        let (slug, id, data) = (app_slug.to_string(), id.to_string(), data.clone());
+        self.with_client(move |client| {
+            let updated = client.query_opt(
+                "UPDATE dataset_records SET data = $1, version = version + 1 \
+                 WHERE app_slug = $2 AND id = $3 AND version = $4 RETURNING version",
+                &[&data, &slug, &id, &expected_version],
+            )?;
+            if let Some(row) = updated {
+                return Ok(RecordWrite::Saved(row.get(0)));
+            }
+            let current = client.query_opt(
+                "SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2",
+                &[&slug, &id],
+            )?;
+            Ok(match current {
+                Some(row) => RecordWrite::Conflict(row.get(0)),
+                None => RecordWrite::Missing,
+            })
+        })
+    }
+
+    /// A write by the system, such as an automation. It always applies and still bumps the version.
+    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value) -> Result<Option<i32>, RepositoryError> {
+        let (slug, id, data) = (app_slug.to_string(), id.to_string(), data.clone());
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "UPDATE dataset_records SET data = $1, version = version + 1 \
+                 WHERE app_slug = $2 AND id = $3 RETURNING version",
+                &[&data, &slug, &id],
+            )?;
+            Ok(row.map(|r| r.get(0)))
+        })
+    }
+
+    pub fn delete_record(&self, app_slug: &str, id: &str) -> Result<bool, RepositoryError> {
+        let (slug, id) = (app_slug.to_string(), id.to_string());
+        self.with_client(move |client| {
+            let n = client.execute("DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2", &[&slug, &id])?;
+            Ok(n > 0)
         })
     }
 
@@ -712,7 +803,8 @@ impl PostgresRepository {
                  ON CONFLICT (id) DO UPDATE SET \
                     data = EXCLUDED.data, \
                     ceds_mapping = EXCLUDED.ceds_mapping, \
-                    is_ferpa_sensitive = EXCLUDED.is_ferpa_sensitive",
+                    is_ferpa_sensitive = EXCLUDED.is_ferpa_sensitive, \
+                    version = dataset_records.version + 1",
                 &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by],
             )?;
             Ok(())
@@ -923,6 +1015,49 @@ impl PostgresRepository {
         })
     }
 
+    pub fn app_manifest_version(&self, slug: &str) -> Result<Option<i32>, RepositoryError> {
+        let slug = slug.to_string();
+        self.with_client(move |client| {
+            let row = client.query_opt("SELECT version FROM app_manifests WHERE slug = $1", &[&slug])?;
+            Ok(row.map(|r| r.get(0)))
+        })
+    }
+
+    /// Saves a manifest only when the stored version is the one the caller read.
+    pub fn update_app_manifest_checked(&self, m: &AppManifest, expected_version: i32) -> Result<RecordWrite, RepositoryError> {
+        let m = m.clone();
+        self.with_client(move |client| {
+            let manifest_json = serde_json::to_value(&m)?;
+            let updated = client.query_opt(
+                "UPDATE app_manifests SET title = $2, description = $3, organization_code = $4, department = $5, \
+                        herm_capability_id = $6, custom_domain = $7, custom_domain_verified = $8, workspace_id = $9, \
+                        manifest = $10, version = version + 1, updated_at = NOW() \
+                 WHERE slug = $1 AND version = $11 RETURNING version",
+                &[
+                    &m.slug,
+                    &m.title,
+                    &m.description,
+                    &m.organization_code,
+                    &m.department,
+                    &m.herm_capability_id,
+                    &m.custom_domain,
+                    &m.custom_domain_verified,
+                    &m.workspace_id,
+                    &manifest_json,
+                    &expected_version,
+                ],
+            )?;
+            if let Some(row) = updated {
+                return Ok(RecordWrite::Saved(row.get(0)));
+            }
+            let current = client.query_opt("SELECT version FROM app_manifests WHERE slug = $1", &[&m.slug])?;
+            Ok(match current {
+                Some(row) => RecordWrite::Conflict(row.get(0)),
+                None => RecordWrite::Missing,
+            })
+        })
+    }
+
     pub fn upsert_app_manifest(&self, m: &AppManifest) -> Result<(), RepositoryError> {
         let m = m.clone();
         self.with_client(move |client| {
@@ -941,6 +1076,7 @@ impl PostgresRepository {
                     custom_domain_verified = EXCLUDED.custom_domain_verified, \
                     workspace_id = EXCLUDED.workspace_id, \
                     manifest = EXCLUDED.manifest, \
+                    version = app_manifests.version + 1, \
                     updated_at = NOW()",
                 &[
                     &m.slug,

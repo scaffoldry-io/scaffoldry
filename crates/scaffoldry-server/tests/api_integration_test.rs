@@ -352,7 +352,8 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
             "proposal_title": "Quantum Lattice Simulation (Revised)",
             "student_pi": "Alice Walker",
             "amount": 175000
-        }
+        },
+        "version": 1
     });
     let resp = app
         .clone()
@@ -1351,7 +1352,8 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
             "title": "Quantum Photonics & Computing",
             "amount": 275000,
             "status": "Approved"
-        }
+        },
+        "version": 1
     });
     let resp = app
         .clone()
@@ -1734,18 +1736,16 @@ async fn test_automation_retrigger_loop_guard() {
         "id": "rec-1",
         "status": "Pending"
     });
-    state.records.write().unwrap().insert(
-        "test-slug".to_string(),
-        vec![scaffoldry_server::state::DatasetRecord {
-            id: "rec-1".to_string(),
-            app_slug: "test-slug".to_string(),
-            data: initial_rec.clone(),
-            ceds_mapping: Default::default(),
-            is_ferpa_sensitive: false,
-            created_at: "".to_string(),
-            created_by: None,
-        }],
-    );
+    state.put_record(&scaffoldry_server::state::DatasetRecord {
+        id: "rec-1".to_string(),
+        app_slug: "test-slug".to_string(),
+        data: initial_rec.clone(),
+        ceds_mapping: Default::default(),
+        is_ferpa_sensitive: false,
+        created_at: "".to_string(),
+        created_by: None,
+        version: 1,
+    }).unwrap();
 
     let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
         eppn: "dr.smith@university.edu".to_string(),
@@ -1766,8 +1766,7 @@ async fn test_automation_retrigger_loop_guard() {
 
     // Rule was applied exactly once in the re-entry chain due to loop guard
     assert_eq!(applied_ids, vec!["rule-loop-guard".to_string()]);
-    let records = state.records.read().unwrap();
-    let updated = &records["test-slug"][0];
+    let updated = state.find_record("test-slug", "rec-1").unwrap().unwrap();
     assert_eq!(updated.data["status"], "Processed");
 }
 
@@ -1854,18 +1853,16 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         "id": rec_id,
         "status": "UnderReview"
     });
-    state.records.write().unwrap().insert(
-        app_slug.to_string(),
-        vec![scaffoldry_server::state::DatasetRecord {
-            id: rec_id.to_string(),
-            app_slug: app_slug.to_string(),
-            data: initial_rec.clone(),
-            ceds_mapping: Default::default(),
-            is_ferpa_sensitive: false,
-            created_at: "".to_string(),
-            created_by: None,
-        }],
-    );
+    state.put_record(&scaffoldry_server::state::DatasetRecord {
+        id: rec_id.to_string(),
+        app_slug: app_slug.to_string(),
+        data: initial_rec.clone(),
+        ceds_mapping: Default::default(),
+        is_ferpa_sensitive: false,
+        created_at: "".to_string(),
+        created_by: None,
+        version: 1,
+    }).unwrap();
 
     let instance_id = format!("{rule_id}:{rec_id}");
     let initial_instance = scaffoldry_core::ProcessInstance {
@@ -1905,8 +1902,8 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
     {
         let instances = state.process_instances.read().unwrap();
         assert_eq!(instances[&instance_id].status, scaffoldry_core::ProcessStatus::Waiting);
-        let records = state.records.read().unwrap();
-        assert_eq!(records[app_slug][0].data["status"], "UnderReview");
+        let rec = state.find_record(app_slug, rec_id).unwrap().unwrap();
+        assert_eq!(rec.data["status"], "UnderReview");
     }
 
     // 2. Faculty decides approve -> 200 OK
@@ -1931,8 +1928,8 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         let inst = &instances[&instance_id];
         assert_eq!(inst.status, scaffoldry_core::ProcessStatus::Completed);
         assert!(inst.waiting_step_id.is_none());
-        let records = state.records.read().unwrap();
-        assert_eq!(records[app_slug][0].data["status"], "Approved");
+        let rec = state.find_record(app_slug, rec_id).unwrap().unwrap();
+        assert_eq!(rec.data["status"], "Approved");
     }
 
     // Ledger must contain WorkflowRuleApproved entry with AC-03

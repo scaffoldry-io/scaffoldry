@@ -142,8 +142,9 @@ async fn list_table_records(
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let records = state.records.read().unwrap_or_else(|p| p.into_inner());
-    let app_records = records.get(&slug).cloned().unwrap_or_default();
+    let app_records = state
+        .list_app_records(&slug)
+        .map_err(|e| ServiceError::internal(e).into_pair())?;
 
     // Filter by table_id (match tagged _table_id or match all if untagged single-table)
     let mut table_records: Vec<DatasetRecord> = app_records
@@ -281,8 +282,9 @@ async fn list_records(
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let records = state.records.read().unwrap_or_else(|p| p.into_inner());
-    let app_records = records.get(&slug).cloned().unwrap_or_default();
+    let app_records = state
+        .list_app_records(&slug)
+        .map_err(|e| ServiceError::internal(e).into_pair())?;
     let total = app_records.len();
 
     Ok(Json(json!({
@@ -320,15 +322,11 @@ async fn get_record(
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let records = state.records.read().unwrap_or_else(|p| p.into_inner());
-    let app_records = records
-        .get(&slug)
-        .ok_or_else(|| ServiceError::not_found("App records not found").into_pair())?;
-    let record = app_records
-        .iter()
-        .find(|r| r.id == id)
+    let record = state
+        .find_record(&slug, &id)
+        .map_err(|e| ServiceError::internal(e).into_pair())?
         .ok_or_else(|| ServiceError::not_found("Record not found").into_pair())?;
-    Ok(Json(record.clone()))
+    Ok(Json(record))
 }
 
 async fn update_record(

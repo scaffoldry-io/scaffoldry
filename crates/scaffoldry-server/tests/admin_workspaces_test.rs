@@ -159,11 +159,9 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             is_ferpa_sensitive: false,
             created_at: "2026-10-10T01:00:00Z".to_string(),
             created_by: None,
+            version: 1,
         };
-        if let Some(ref repo) = c.state.repository {
-            repo.upsert_record(&rec).unwrap();
-        }
-        c.state.records.write().unwrap().entry(app1_slug.clone()).or_default().push(rec);
+        c.state.put_record(&rec).unwrap();
     }
     for i in 0..2 {
         let rec = DatasetRecord {
@@ -174,11 +172,9 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             is_ferpa_sensitive: false,
             created_at: "2026-10-10T02:00:00Z".to_string(),
             created_by: None,
+            version: 1,
         };
-        if let Some(ref repo) = c.state.repository {
-            repo.upsert_record(&rec).unwrap();
-        }
-        c.state.records.write().unwrap().entry(app2_slug.clone()).or_default().push(rec);
+        c.state.put_record(&rec).unwrap();
     }
 
     let (status, body) = send(&c.app, "GET", &format!("/api/v1/admin/workspaces?search={ws_id}"), Some(&c.admin), None).await;
