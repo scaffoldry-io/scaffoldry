@@ -11,6 +11,63 @@ pub enum AppAction {
     Manage,
 }
 
+/// Checks one Cedar workspace action for the caller: `access_workspace`, `manage_workspace`.
+/// The service functions run the same check themselves. This is the tool gate's copy.
+pub fn authorize_workspace(
+    caller: &AuthUser,
+    ws_id: &str,
+    cedar_action: &str,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let ws = {
+        let ws_guard = state
+            .workspaces
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        ws_guard
+            .get(ws_id)
+            .cloned()
+            .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{ws_id}' not found")))?
+    };
+
+    let collabs = {
+        let collabs_guard = state
+            .collaborators
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        collabs_guard.get(ws_id).cloned().unwrap_or_default()
+    };
+    let (is_member, member_role) = match collabs.iter().find(|m| m.eppn == caller.eppn) {
+        Some(m) => (true, Some(m.role.to_lowercase())),
+        None => (false, None),
+    };
+
+    let decision = state
+        .policy_engine
+        .authorize_workspace_action(&WorkspaceActionInput {
+            principal_eppn: &caller.eppn,
+            principal_affiliation: &caller.affiliation,
+            principal_department: &caller.department,
+            action_name: cedar_action,
+            workspace_id: &ws.id,
+            workspace_department: &ws.department,
+            workspace_visibility: &ws.visibility,
+            is_member,
+            member_role: member_role.as_deref(),
+        })
+        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    if decision.decision == PolicyDecision::Allow {
+        return Ok(());
+    }
+    Err(ServiceError::Forbidden {
+        message: format!("403 Forbidden: Cedar Policy denies {cedar_action} on this workspace"),
+        reasons: decision.reasons,
+        diagnostics: decision.diagnostics,
+        policy: decision.deciding_policy,
+    })
+}
+
 pub fn authorize_app(
     caller: &AuthUser,
     slug: &str,

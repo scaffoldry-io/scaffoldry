@@ -41,7 +41,6 @@ interface AppBuilderProps {
   onBack: () => void;
   onOpenPublishedApp: (slug: string) => void;
   onOpenIntakeForm?: (tableId?: string) => void;
-  onOpenAiAssistant?: () => void;
   onSaveApp?: (updated: RegisteredApp) => void;
 }
 
@@ -50,7 +49,6 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   onBack,
   onOpenPublishedApp,
   onOpenIntakeForm,
-  onOpenAiAssistant,
   onSaveApp,
 }) => {
   const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings">("pages");
@@ -1063,15 +1061,6 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
             </button>
           )}
 
-          {onOpenAiAssistant && (
-            <button
-              type="button"
-              onClick={onOpenAiAssistant}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/70 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 text-xs font-semibold hover:bg-purple-100 dark:hover:bg-purple-900/60 transition-colors cursor-pointer"
-            >
-              ✨ AI Co-Builder (MCP)
-            </button>
-          )}
           <button
             type="button"
             onClick={handleSave}

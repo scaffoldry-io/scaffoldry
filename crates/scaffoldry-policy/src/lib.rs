@@ -77,6 +77,7 @@ pub struct ScaffoldryPolicyEngine {
     authorizer: Authorizer,
     policies: PolicySet,
     schema: Schema,
+    source: std::sync::Arc<str>,
 }
 
 impl Clone for ScaffoldryPolicyEngine {
@@ -85,6 +86,7 @@ impl Clone for ScaffoldryPolicyEngine {
             authorizer: Authorizer::new(),
             policies: self.policies.clone(),
             schema: self.schema.clone(),
+            source: self.source.clone(),
         }
     }
 }
@@ -115,7 +117,13 @@ impl ScaffoldryPolicyEngine {
             authorizer: Authorizer::new(),
             policies,
             schema,
+            source: policy_src.into(),
         })
+    }
+
+    /// The Cedar text this engine was built from, exactly as given.
+    pub fn policy_source(&self) -> &str {
+        &self.source
     }
 
     /// The id and plain description of every policy in the set, in set order.
