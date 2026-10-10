@@ -232,3 +232,45 @@ describe("Phase 5: ProcessDesk Decisions Queue", () => {
     expect(screen.getByText(/403/)).toBeInTheDocument();
   });
 });
+
+describe("Approvers: the desk shows what the server returned", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("asks for mine=true and does not compare roles in the browser", async () => {
+    const row = {
+      id: "rule-chair:rec-7",
+      rule_id: "rule-chair",
+      app_slug: "cs-admissions",
+      record_id: "rec-7",
+      status: "Waiting",
+      waiting_step_id: "step-chair",
+      // A role the caller does not have. The old browser check would have hidden this row.
+      role: "dean",
+      prompt: "Sign off as chair",
+      log: [],
+    };
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve({ ok: true, status: 200, json: async () => [row] })
+    );
+    global.fetch = fetchMock;
+
+    render(
+      <ProcessDesk
+        apps={[mockApp]}
+        callerPersona={{ ...mockPersona, affiliation: "student" }}
+        callerWorkspaceRole="viewer"
+      />
+    );
+
+    expect(await screen.findByTestId("process-row-rule-chair:rec-7")).toBeInTheDocument();
+    expect(fetchMock.mock.calls[0][0]).toContain("mine=true");
+  });
+
+  it("shows nothing when the server returns nothing", async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+    render(<ProcessDesk apps={[mockApp]} callerPersona={mockPersona} callerWorkspaceRole="chair" />);
+    expect(await screen.findByText("No decisions waiting")).toBeInTheDocument();
+  });
+});

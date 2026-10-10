@@ -241,3 +241,31 @@ fn validate_approver_checks_keys_people_and_role_names() {
     assert!(validate_approver(&ApproverSpec::Person { eppn: "ghost".into() }, &known).is_err());
     assert!(validate_approver(&ApproverSpec::Role { name: "  ".into() }, &known).is_err());
 }
+
+// can_decide is the one rule the engine calls.
+#[test]
+fn can_decide_follows_the_resolver_the_assignment_and_the_exclusions() {
+    let ctx = base();
+    // The chair of the submitter's department.
+    assert!(can_decide("rivera", "faculty", None, &chair(true), &ctx));
+    // Another chair, and the submitter, cannot.
+    assert!(!can_decide("okafor", "faculty", None, &chair(true), &ctx));
+    assert!(!can_decide("sam", "faculty", None, &chair(true), &ctx));
+    // An assignment narrows the step to the assignee, who still cannot be the submitter.
+    assert!(can_decide("dean", "faculty", Some("dean"), &chair(true), &ctx));
+    assert!(!can_decide("rivera", "faculty", Some("dean"), &chair(true), &ctx));
+    assert!(!can_decide("sam", "faculty", Some("sam"), &chair(true), &ctx));
+    // The starter never decides, even when assigned.
+    let mut started = base();
+    started.starter = Some("rivera".into());
+    assert!(!can_decide("rivera", "faculty", Some("rivera"), &chair(true), &started));
+}
+
+#[test]
+fn an_old_role_rule_also_accepts_a_callers_own_affiliation() {
+    let ctx = base();
+    let role = ApproverSpec::Role { name: "faculty".into() };
+    assert!(can_decide("okafor", "faculty", None, &role, &ctx), "affiliation equals the role name");
+    assert!(!can_decide("okafor", "student", None, &role, &ctx));
+    assert!(!can_decide("sam", "faculty", None, &role, &ctx), "never the submitter");
+}

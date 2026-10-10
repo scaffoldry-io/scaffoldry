@@ -43,7 +43,7 @@ async fn send_req(
 
 #[test]
 fn test_decision_types_properties_and_pinned_hashes() {
-    assert_eq!(DecisionType::ALL.len(), 22);
+    assert_eq!(DecisionType::ALL.len(), 24);
 
     for &dt in DecisionType::ALL {
         let s = dt.as_str();
@@ -124,6 +124,7 @@ fn test_is_platform_admin_and_unit_in_scope_agreement() {
             role_title: "Platform Administrator".to_string(),
             is_primary: true,
             source: "api".to_string(),
+            position_key: None,
         },
     ];
 
@@ -166,7 +167,7 @@ async fn test_admin_routes_enforce_platform_admin_and_auth() {
     let faculty_token = scaffoldry_server::service::identity::issue_test_token_and_user("faculty.curie@state.edu");
 
     for &(method, path) in ADMIN_ROUTES {
-        let path = path.replace("{id}", "00000000-0000-0000-0000-0000000000aa");
+        let path = path.replace("{id}", "00000000-0000-0000-0000-0000000000aa").replace("{key}", "chair");
         let uri = if path.starts_with("/api/v1") {
             path.to_string()
         } else {
@@ -285,6 +286,7 @@ async fn test_overview_counts_match_fixture() {
         role_title: "Platform Administrator".to_string(),
         is_primary: true,
         source: "api".to_string(),
+        position_key: None,
     });
 
     // 3. Setup 1 workspace

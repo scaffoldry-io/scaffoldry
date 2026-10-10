@@ -131,6 +131,7 @@ async fn list_users(State(state): State<SharedState>) -> impl IntoResponse {
 pub fn sync_org_roles(
     user: &ScimUser,
     orgs: &[OrganizationNode],
+    positions: &[crate::state::PositionType],
 ) -> Vec<RoleRow> {
     if !user.active {
         return Vec::new();
@@ -220,7 +221,39 @@ pub fn sync_org_roles(
             scoped_affiliation: scoped_affiliation.clone(),
             is_primary,
             source: "scim".to_string(),
+            position_key: None,
         });
+    }
+
+    // 3a. Positions. Only an explicit `scaffoldry-position` entry creates a holding. A job
+    // title never does. An unknown, retired or non-applicable key inserts nothing.
+    if let Some(deepest) = deepest_id {
+        let unit_type = orgs.iter().find(|o| o.id == deepest).map(|o| o.org_type.as_str()).unwrap_or("");
+        for r in &user.roles {
+            let typ = r.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let val = r.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            if !typ.eq_ignore_ascii_case("scaffoldry-position") {
+                continue;
+            }
+            let Some(pt) = positions.iter().find(|p| p.key == val) else { continue };
+            if pt.retired_at.is_some() || !pt.org_types.iter().any(|t| t == unit_type) {
+                continue;
+            }
+            if new_roles.iter().any(|n| n.position_key.as_deref() == Some(val)) {
+                continue;
+            }
+            new_roles.push(RoleRow {
+                id: Uuid::new_v4(),
+                person_id,
+                eppn: user.user_name.clone(),
+                organization_id: deepest,
+                role_title: pt.name.clone(),
+                scoped_affiliation: "position".to_string(),
+                is_primary: false,
+                source: "scim".to_string(),
+                position_key: Some(pt.key.clone()),
+            });
+        }
     }
 
     // 3. Scaffoldry roles
@@ -239,6 +272,7 @@ pub fn sync_org_roles(
                         scoped_affiliation: "unit_admin".to_string(),
                         is_primary: false,
                         source: "scim".to_string(),
+                        position_key: None,
                     });
                 }
             } else if val.eq_ignore_ascii_case("platform_admin") {
@@ -252,6 +286,7 @@ pub fn sync_org_roles(
                         scoped_affiliation: "platform_admin".to_string(),
                         is_primary: false,
                         source: "scim".to_string(),
+                        position_key: None,
                     });
                 }
             }
@@ -361,7 +396,8 @@ async fn update_user(
     drop(users);
 
     let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
-    let new_roles = sync_org_roles(&updated_user, &all_orgs);
+    let positions: Vec<crate::state::PositionType> = state.position_types.read().unwrap().values().cloned().collect();
+    let new_roles = sync_org_roles(&updated_user, &all_orgs, &positions);
     let _ = state.delete_scim_roles(&updated_user.user_name);
     for r in new_roles {
         let _ = state.persist_role(&r);

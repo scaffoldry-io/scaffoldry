@@ -11,6 +11,10 @@ export interface ProcessInstance {
   role?: string | null;
   prompt?: string | null;
   log?: string[];
+  /** Why nobody can decide the step, when the server knows. */
+  no_approver?: string | null;
+  /** Who may decide it now. */
+  approvers?: { eppn: string; display_name: string; via: unknown }[];
 }
 
 export interface ProcessDeskProps {
@@ -19,11 +23,7 @@ export interface ProcessDeskProps {
   callerWorkspaceRole?: string | null;
 }
 
-export const ProcessDesk: React.FC<ProcessDeskProps> = ({
-  apps,
-  callerPersona,
-  callerWorkspaceRole,
-}) => {
+export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps }) => {
   const [instances, setInstances] = useState<ProcessInstance[]>([]);
   const [, setLoading] = useState<boolean>(true);
   const [errorMap, setErrorMap] = useState<Record<string, string>>({});
@@ -35,7 +35,7 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({
         const results = await Promise.all(
           apps.map(async (app) => {
             try {
-              const res = await fetch(`/api/v1/apps/${app.slug}/processes?status=Waiting`);
+              const res = await fetch(`/api/v1/apps/${app.slug}/processes?status=Waiting&mine=true`);
               if (res.ok) {
                 const data = await res.json();
                 return Array.isArray(data) ? data : [];
@@ -58,25 +58,6 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({
       isMounted = false;
     };
   }, [apps]);
-
-  const isPlatformAdmin =
-    callerPersona.affiliation === "central_admin" || Boolean(callerPersona.isAdmin);
-  const isOrgUnitAdmin = callerWorkspaceRole === "unit_admin";
-
-  const canSeeInstance = (inst: ProcessInstance): boolean => {
-    if (isPlatformAdmin) return true;
-    if (isOrgUnitAdmin) return true;
-    if (!inst.role) return true;
-    const targetRole = inst.role.toLowerCase();
-    const userWsRole = callerWorkspaceRole?.toLowerCase();
-    const userAffiliation = callerPersona.affiliation?.toLowerCase();
-    return (
-      userWsRole === targetRole ||
-      userAffiliation === targetRole ||
-      userWsRole === "owner" ||
-      userWsRole === "admin"
-    );
-  };
 
   const handleDecide = async (inst: ProcessInstance, decision: "approve" | "reject") => {
     try {
@@ -109,7 +90,8 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({
     }
   };
 
-  const visibleInstances = instances.filter(canSeeInstance);
+  // The server decides who may decide. The desk shows what `mine=true` returned.
+  const visibleInstances = instances;
 
   return (
     <div

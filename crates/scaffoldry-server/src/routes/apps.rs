@@ -243,6 +243,7 @@ async fn create_app_automation(
     let mut rule: AutomationRule = serde_json::from_value(payload)
         .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
     rule.app_slug = slug.clone();
+    crate::service::approvers::validate_rule(&state, &rule).map_err(ServiceError::into_pair)?;
 
     let mut automations = state.automations.write().map_err(|_| lock_err())?;
     let rules = automations.entry(slug).or_default();
@@ -300,6 +301,8 @@ async fn simulate_app_automation(
 #[derive(Debug, Deserialize, Default)]
 pub struct ProcessListQuery {
     pub status: Option<String>,
+    /// Only the instances the caller can decide now.
+    pub mine: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -312,15 +315,28 @@ async fn list_app_processes(
     headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<ProcessListQuery>,
-) -> Result<Json<Vec<ProcessInstance>>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Vec<Value>>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let instances = state.process_instances.read().map_err(|_| lock_err())?;
-    let filtered: Vec<ProcessInstance> = instances
+    let mut all: Vec<ProcessInstance> = state
+        .process_instances
+        .read()
+        .map_err(|_| lock_err())?
         .values()
+        .filter(|inst| inst.app_slug == slug)
+        .cloned()
+        .collect();
+    // Who may decide changes as people are appointed, so the flag is refreshed when listed.
+    for inst in all.iter_mut() {
+        if crate::service::approvers::refresh_no_approver(&state, inst) {
+            let _ = state.persist_process_instance(inst.clone());
+        }
+    }
+    let filtered: Vec<Value> = all
+        .iter()
         .filter(|inst| {
             if inst.app_slug != slug {
                 return false;
@@ -336,9 +352,14 @@ async fn list_app_processes(
                     return false;
                 }
             }
+            if query.mine.unwrap_or(false)
+                && !crate::service::approvers::caller_can_decide(&state, &user, inst)
+            {
+                return false;
+            }
             true
         })
-        .cloned()
+        .map(|inst| crate::service::approvers::instance_view(&state, inst))
         .collect();
     Ok(Json(filtered))
 }
@@ -415,32 +436,14 @@ async fn decide_app_process(
         }
     }
 
-    let req_role = required_role.ok_or_else(|| {
+    required_role.ok_or_else(|| {
         ServiceError::bad_request("Waiting step not found in automations").into_pair()
     })?;
 
-    // Check caller's collaborator role or affiliation equals the waiting step's role.
-    // A Platform Admin does not bypass the role match.
-    use scaffoldry_engine::HostRouter;
-    let app_manifest = {
-        let engine = state.engine.read().map_err(|_| lock_err())?;
-        engine.resolve_by_slug(&slug).cloned().ok_or_else(|| {
-            ServiceError::not_found("App not found").into_pair()
-        })?
-    };
-    let ws_id = app_manifest.workspace_id.ok_or_else(|| {
-        ServiceError::bad_request("App has no workspace").into_pair()
-    })?;
-    let collabs = {
-        let collabs_guard = state.collaborators.read().map_err(|_| lock_err())?;
-        collabs_guard.get(&ws_id).cloned().unwrap_or_default()
-    };
-    let caller_member_role = collabs.iter().find(|m| m.eppn == user.eppn).map(|m| m.role.clone());
-    let role_matches = caller_member_role.as_ref().map(|r| r.eq_ignore_ascii_case(&req_role)).unwrap_or(false)
-        || user.affiliation.eq_ignore_ascii_case(&req_role);
-
-    if !role_matches {
-        return Err(ServiceError::forbidden("Forbidden: Caller does not match waiting step role").into_pair());
+    // The resolver decides who may act. The submitter and the starter never may, and a Platform
+    // Admin does not bypass it.
+    if !crate::service::approvers::caller_can_decide(&state, &user, &instance) {
+        return Err(ServiceError::forbidden("Forbidden: Caller may not decide this step").into_pair());
     }
 
     // Apply field effects and write record

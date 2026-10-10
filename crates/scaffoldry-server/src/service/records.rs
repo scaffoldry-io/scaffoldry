@@ -317,6 +317,7 @@ pub fn run_automations(
                     let mut inst = inst;
                     inst.started_by = Some(actor.identity.eppn.clone());
                     inst.started_at = Utc::now().to_rfc3339();
+                    crate::service::approvers::refresh_no_approver(state, &mut inst);
                     let _ = state.persist_process_instance(inst);
                 }
             }
