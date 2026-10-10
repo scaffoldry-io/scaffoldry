@@ -39,7 +39,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 16 | [organization.md](organization.md) | 1, 2, 5 | Code is in the working tree, not committed. Run its tests, fix what earlier phases changed, commit | **COMPLETED** |
 | 17 | [organization.md](organization.md) | 3 | A Platform Admin opens `/admin` → Organization and manages the tree | **COMPLETED** |
 | 18 | [organization.md](organization.md) | 4 | An Org Unit Admin sees only their units on the workspace rail | **COMPLETED** |
-| 19 | [admin-console.md](admin-console.md) | 1 | A real console shell, one guard, an overview, and one ledger definition per decision type |
+| 19 | [admin-console.md](admin-console.md) | 1 | A real console shell, one guard, an overview, and one ledger definition per decision type | **COMPLETED** |
 | 20 | [admin-console.md](admin-console.md) | 2 | People: search, hold, revoke tokens, appointments, manual users |
 | 21 | [approvers.md](approvers.md) | 1 | Positions in the org tree, record authors, and a pure approver resolver with separation of duties |
 | 22 | [admin-console.md](admin-console.md) | 3 | Workspaces and apps inventory |

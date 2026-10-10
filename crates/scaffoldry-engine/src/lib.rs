@@ -1087,6 +1087,10 @@ impl ManifestEngine {
         })
     }
 
+    pub fn manifests_count(&self) -> usize {
+        self.manifests_by_slug.len()
+    }
+
     pub fn register_manifest(&mut self, manifest: AppManifest) -> Result<(), EngineError> {
         if manifest.slug.trim().is_empty() {
             return Err(EngineError::ValidationError("App slug cannot be empty".to_string()));
