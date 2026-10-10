@@ -106,12 +106,7 @@ fn a_million_characters_scan_in_time_proportional_to_the_length() {
         let t = Instant::now();
         let n_large = scan(&large, d).len();
         let large_time = t.elapsed();
-        println!(
-            "detect: {:?} found {n_small} in {} chars ({small_time:?}) and {n_large} in {} chars ({large_time:?})",
-            d.kind,
-            small.len(),
-            large.len()
-        );
+        println!("detect: {:?} timings {small_time:?} and {large_time:?}", d.kind);
         assert!(n_large > n_small, "the larger text has more matches");
         assert!(large_time.as_millis() < 3000, "{:?} took {large_time:?} on a million characters", d.kind);
         // 4x the text. Linear is about 4x. Quadratic would be about 16x.
@@ -148,8 +143,8 @@ fn detect_output_holds_offsets_and_never_the_matched_value() {
     let debug = format!("{found:?}");
     let json = serde_json::to_string(&found).unwrap();
     for rendered in [debug, json] {
-        assert!(!rendered.contains(planted), "the match leaked the value: {rendered}");
-        assert!(!rendered.contains("6789"), "or part of it: {rendered}");
+        assert!(!rendered.contains(planted), "the match leaked the value");
+        assert!(!rendered.contains("6789"), "or part of it");
     }
 }
 
