@@ -658,13 +658,14 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"overview" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
+  const [adminTab, setAdminTab] = useState<"overview" | "org" | "policy" | "ledger" | "impersonation" | "settings" | "people">(() => {
     if (typeof window !== "undefined") {
       const p = window.location.pathname;
       if (p === "/admin/org") return "org";
       if (p === "/admin/policy") return "policy";
       if (p === "/admin/ledger") return "ledger";
       if (p === "/admin/impersonation") return "impersonation";
+      if (p === "/admin/people") return "people";
       if (p === "/admin/settings") return "settings";
     }
     return "overview";
@@ -2018,6 +2019,22 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                       {navRailExpanded && <span>Platform Settings</span>}
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    data-testid="admin-people-tab-btn"
+                    onClick={() => setAdminTab("people")}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "people"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    {navRailExpanded && <span>People</span>}
+                  </button>
 
                   <button
                     type="button"

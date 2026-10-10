@@ -11,6 +11,7 @@ pub mod access;
 pub mod workspaces;
 pub mod identity;
 pub mod admin;
+pub mod people;
 pub mod tools;
 
 use axum::http::StatusCode;
