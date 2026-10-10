@@ -32,6 +32,7 @@ impl AutomationEngine {
         event: &TriggerEvent,
         record: &Value,
         identity: &EduPersonIdentity,
+        principal_department: &str,
         depth: u8,
     ) -> WorkflowExecutionResult {
         let timestamp = SystemTime::now()
@@ -106,6 +107,7 @@ impl AutomationEngine {
             // Documented action name pair: "record_decision" with is_ferpa_sensitive distinguishes faculty (permit) and student (forbid) under default Cedar policies
             match self.policy_engine.authorize_record_action(
                 identity,
+                principal_department,
                 "record_decision",
                 &rule.app_slug,
                 "institutional",

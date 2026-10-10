@@ -86,7 +86,7 @@ pub fn create_record(
         app_slug,
         TriggerEvent::RecordCreated,
         &record_val,
-        &identity,
+        &Actor { identity: &identity, department: &caller.department },
         0,
         &mut applied_rule_ids,
     );
@@ -197,7 +197,7 @@ pub fn update_record(
         app_slug,
         TriggerEvent::RecordUpdated,
         &record_val,
-        &identity,
+        &Actor { identity: &identity, department: &caller.department },
         0,
         &mut applied_rule_ids,
     );
@@ -228,12 +228,18 @@ pub fn delete_record(
     Ok(())
 }
 
+/// Who triggered an automation: their identity and their stored department.
+pub struct Actor<'a> {
+    pub identity: &'a EduPersonIdentity,
+    pub department: &'a str,
+}
+
 pub fn run_automations(
     state: &SharedState,
     app_slug: &str,
     event: TriggerEvent,
     record: &Value,
-    identity: &EduPersonIdentity,
+    actor: &Actor<'_>,
     depth: u8,
     applied_rule_ids: &mut Vec<String>,
 ) {
@@ -258,7 +264,7 @@ pub fn run_automations(
             continue;
         }
 
-        let res = auto_engine.evaluate_rule(rule, &event, &modified, identity, depth);
+        let res = auto_engine.evaluate_rule(rule, &event, &modified, actor.identity, actor.department, depth);
         if res.trigger_matched && res.conditions_met && res.cedar_authorized {
             applied_rule_ids.push(rule.id.clone());
             if !res.effects.is_empty() {
@@ -297,7 +303,7 @@ pub fn run_automations(
                 app_slug,
                 retrigger_event,
                 &modified,
-                identity,
+                actor,
                 depth + 1,
                 applied_rule_ids,
             );

@@ -17,6 +17,7 @@ fn test_ceds_eduperson_policy_authorization() {
     // 1. Biology Faculty can read and write Biology Lab records
     let bio_faculty_write = engine.authorize_record_action(
         &faculty,
+        "biology",
         "write",
         "bio-lab-inventory",
         "biology",
@@ -27,6 +28,7 @@ fn test_ceds_eduperson_policy_authorization() {
     // 2. Student can read non-FERPA records
     let student_read = engine.authorize_record_action(
         &student,
+        "biology",
         "read",
         "bio-lab-inventory",
         "biology",
@@ -37,6 +39,7 @@ fn test_ceds_eduperson_policy_authorization() {
     // 3. Student is FORBIDDEN from exporting FERPA-sensitive records
     let student_ferpa_export = engine.authorize_record_action(
         &student,
+        "biology",
         "export",
         "bio-lab-inventory",
         "biology",
@@ -47,6 +50,7 @@ fn test_ceds_eduperson_policy_authorization() {
     // 4. Compliance staff CAN export FERPA-sensitive records
     let compliance_export = engine.authorize_record_action(
         &compliance,
+        "biology",
         "export",
         "bio-lab-inventory",
         "biology",
@@ -57,6 +61,7 @@ fn test_ceds_eduperson_policy_authorization() {
     // 5. Cross-department access: Physics student denied access to Biology app
     let cross_dept_access = engine.authorize_record_action(
         &physics_student,
+        "physics",
         "read",
         "bio-lab-inventory",
         "biology",
