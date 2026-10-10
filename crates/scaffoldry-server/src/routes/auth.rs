@@ -76,6 +76,7 @@ pub struct AuthResponse {
     pub user: AuthUser,
     pub is_impersonating: bool,
     pub original_admin: Option<AuthUser>,
+    pub is_platform_admin: bool,
 }
 
 async fn list_tokens(
@@ -239,6 +240,7 @@ async fn get_current_user(
 
     let is_impersonating = row.kind == "impersonation" && row.original_admin.is_some();
     let original_admin = row.original_admin.as_ref().and_then(|admin_eppn| resolve_user(admin_eppn, &state));
+    let is_platform_admin = crate::service::admin::require_platform_admin(&user, &state).is_ok();
 
     (
         StatusCode::OK,
@@ -247,6 +249,7 @@ async fn get_current_user(
             user,
             is_impersonating,
             original_admin,
+            is_platform_admin,
         })),
     )
         .into_response()
@@ -346,6 +349,7 @@ async fn impersonate_user(
             .into_response();
     }
 
+    let is_target_platform_admin = crate::service::admin::require_platform_admin(&target_user, &state).is_ok();
     (
         StatusCode::OK,
         Json(json!(AuthResponse {
@@ -353,6 +357,7 @@ async fn impersonate_user(
             user: target_user,
             is_impersonating: true,
             original_admin: Some(real_admin),
+            is_platform_admin: is_target_platform_admin,
         })),
     )
         .into_response()

@@ -9,28 +9,36 @@ pub struct OrgCaller {
     pub affiliation: String,
 }
 
+pub fn is_platform_admin(
+    caller: &OrgCaller,
+    orgs: &[OrganizationNode],
+    roles: &[RoleRow],
+) -> bool {
+    // 1. central_admin is platform admin
+    if caller.affiliation == "central_admin" {
+        return true;
+    }
+
+    // 2. platform_admin role on the root unit (parent_id is None)
+    roles.iter().any(|r| {
+        r.eppn == caller.eppn
+            && r.scoped_affiliation == "platform_admin"
+            && orgs.iter().any(|o| o.id == r.organization_id && o.parent_id.is_none())
+    })
+}
+
 pub fn unit_in_scope(
     caller: &OrgCaller,
     org_id: Uuid,
     orgs: &[OrganizationNode],
     roles: &[RoleRow],
 ) -> bool {
-    // 1. central_admin is in scope everywhere
-    if caller.affiliation == "central_admin" {
+    // 1. Platform admin is in scope everywhere
+    if is_platform_admin(caller, orgs, roles) {
         return true;
     }
 
-    // 2. Platform admin on root institution is in scope everywhere
-    let is_platform_admin = roles.iter().any(|r| {
-        r.eppn == caller.eppn
-            && r.scoped_affiliation == "platform_admin"
-            && orgs.iter().any(|o| o.id == r.organization_id && o.parent_id.is_none())
-    });
-    if is_platform_admin {
-        return true;
-    }
-
-    // 3. Walk parent_id from org_id up to the root, checking for unit_admin role on any ancestor node.
+    // 2. Walk parent_id from org_id up to the root, checking for unit_admin role on any ancestor node.
     let mut current_id = org_id;
     let mut visited = HashSet::new();
     let mut steps = 0;

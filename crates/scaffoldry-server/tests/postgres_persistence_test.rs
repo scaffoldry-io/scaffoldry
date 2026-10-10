@@ -234,6 +234,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         user_name: "curie_persisted".to_string(),
         name: serde_json::json!({"formatted": "Marie Curie"}),
         active: true,
+        admin_hold: false,
         emails: vec![serde_json::json!({"value": "curie@persisted.edu", "primary": true})],
         roles: vec![],
         enterprise_extension: None,

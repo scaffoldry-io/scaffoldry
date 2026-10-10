@@ -38,7 +38,7 @@ pub enum LedgerError {
     RepositoryError(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum DecisionType {
     AppPublished,
     VanityDnsBound,
@@ -54,6 +54,69 @@ pub enum DecisionType {
     WorkspaceMemberAdded,
     WorkspaceMemberRemoved,
     WorkspaceMemberRoleUpdated,
+    UserAccessChanged,
+    AccessRoleRevoked,
+    TokenRevoked,
+    DataLabelChanged,
+    ProcessDefinitionChanged,
+    ProcessInstanceReassigned,
+    ProcessInstanceCancelled,
+}
+
+impl DecisionType {
+    pub const ALL: &'static [DecisionType] = &[
+        DecisionType::AppPublished,
+        DecisionType::VanityDnsBound,
+        DecisionType::PolicyRevision,
+        DecisionType::WorkflowRuleApproved,
+        DecisionType::AccessRoleGranted,
+        DecisionType::DatasetAccessShared,
+        DecisionType::StatutoryAttestation,
+        DecisionType::ImpersonationSessionStarted,
+        DecisionType::ImpersonationSessionEnded,
+        DecisionType::WorkspaceCreated,
+        DecisionType::WorkspaceUpdated,
+        DecisionType::WorkspaceMemberAdded,
+        DecisionType::WorkspaceMemberRemoved,
+        DecisionType::WorkspaceMemberRoleUpdated,
+        DecisionType::UserAccessChanged,
+        DecisionType::AccessRoleRevoked,
+        DecisionType::TokenRevoked,
+        DecisionType::DataLabelChanged,
+        DecisionType::ProcessDefinitionChanged,
+        DecisionType::ProcessInstanceReassigned,
+        DecisionType::ProcessInstanceCancelled,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DecisionType::AppPublished => "AppPublished",
+            DecisionType::VanityDnsBound => "VanityDnsBound",
+            DecisionType::PolicyRevision => "PolicyRevision",
+            DecisionType::WorkflowRuleApproved => "WorkflowRuleApproved",
+            DecisionType::AccessRoleGranted => "AccessRoleGranted",
+            DecisionType::DatasetAccessShared => "DatasetAccessShared",
+            DecisionType::StatutoryAttestation => "StatutoryAttestation",
+            DecisionType::ImpersonationSessionStarted => "ImpersonationSessionStarted",
+            DecisionType::ImpersonationSessionEnded => "ImpersonationSessionEnded",
+            DecisionType::WorkspaceCreated => "WorkspaceCreated",
+            DecisionType::WorkspaceUpdated => "WorkspaceUpdated",
+            DecisionType::WorkspaceMemberAdded => "WorkspaceMemberAdded",
+            DecisionType::WorkspaceMemberRemoved => "WorkspaceMemberRemoved",
+            DecisionType::WorkspaceMemberRoleUpdated => "WorkspaceMemberRoleUpdated",
+            DecisionType::UserAccessChanged => "UserAccessChanged",
+            DecisionType::AccessRoleRevoked => "AccessRoleRevoked",
+            DecisionType::TokenRevoked => "TokenRevoked",
+            DecisionType::DataLabelChanged => "DataLabelChanged",
+            DecisionType::ProcessDefinitionChanged => "ProcessDefinitionChanged",
+            DecisionType::ProcessInstanceReassigned => "ProcessInstanceReassigned",
+            DecisionType::ProcessInstanceCancelled => "ProcessInstanceCancelled",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.iter().find(|d| d.as_str() == s).copied()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -108,22 +171,7 @@ impl LedgerEntry {
     }
 
     pub fn compute_entry_hash(input: &LedgerHashInput<'_>) -> String {
-        let dec_str = match input.decision_type {
-            DecisionType::AppPublished => "AppPublished",
-            DecisionType::VanityDnsBound => "VanityDnsBound",
-            DecisionType::PolicyRevision => "PolicyRevision",
-            DecisionType::WorkflowRuleApproved => "WorkflowRuleApproved",
-            DecisionType::AccessRoleGranted => "AccessRoleGranted",
-            DecisionType::DatasetAccessShared => "DatasetAccessShared",
-            DecisionType::StatutoryAttestation => "StatutoryAttestation",
-            DecisionType::ImpersonationSessionStarted => "ImpersonationSessionStarted",
-            DecisionType::ImpersonationSessionEnded => "ImpersonationSessionEnded",
-            DecisionType::WorkspaceCreated => "WorkspaceCreated",
-            DecisionType::WorkspaceUpdated => "WorkspaceUpdated",
-            DecisionType::WorkspaceMemberAdded => "WorkspaceMemberAdded",
-            DecisionType::WorkspaceMemberRemoved => "WorkspaceMemberRemoved",
-            DecisionType::WorkspaceMemberRoleUpdated => "WorkspaceMemberRoleUpdated",
-        };
+        let dec_str = input.decision_type.as_str();
 
         let content = format!(
             "{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",

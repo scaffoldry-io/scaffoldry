@@ -32,7 +32,7 @@ fn resolve_caller(
         .ok_or_else(|| ServiceError::Unauthorized("A valid session is required".to_string()))
 }
 
-pub(crate) fn is_platform_admin(caller: &AuthUser, state: &SharedState) -> bool {
+fn is_platform_admin(caller: &AuthUser, state: &SharedState) -> bool {
     if caller.affiliation == "central_admin" {
         return true;
     }

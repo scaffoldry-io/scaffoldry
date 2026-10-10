@@ -146,9 +146,7 @@ pub fn call(caller: &AuthUser, name: &str, args: Value, state: &SharedState) -> 
             authorize_workspace(caller, ws_id, cedar_action, state)?;
         }
         Scope::PlatformAdmin => {
-            if !crate::routes::organizations::is_platform_admin(caller, state) {
-                return Err(ServiceError::forbidden("This tool is for Platform Admins"));
-            }
+            crate::service::admin::require_platform_admin(caller, state)?;
         }
     }
 
