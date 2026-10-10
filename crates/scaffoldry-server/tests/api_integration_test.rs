@@ -1791,7 +1791,8 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         tables: vec![],
         relationships: vec![],
         views: vec![],
-        ceds_mappings: Default::default(),
+        pages: vec![],
+            ceds_mappings: Default::default(),
     };
     state.engine.write().unwrap().register_manifest(manifest).unwrap();
     state.collaborators.write().unwrap().entry("ws-physics-optics".to_string()).or_default().extend(vec![

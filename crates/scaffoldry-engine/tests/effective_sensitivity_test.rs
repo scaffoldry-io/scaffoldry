@@ -98,7 +98,8 @@ fn manifest() -> AppManifest {
             ViewType::Table,
             vec![field("title", false), field("notes", false), field_in("card", &["pci"])],
         )],
-        ceds_mappings: Default::default(),
+        pages: vec![],
+            ceds_mappings: Default::default(),
         tables: vec![],
         relationships: vec![],
     }

@@ -135,7 +135,8 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
         tables: vec![],
         relationships: vec![],
         views: vec![],
-        ceds_mappings: std::collections::HashMap::new(),
+        pages: vec![],
+            ceds_mappings: std::collections::HashMap::new(),
     };
     let mut m2 = m1.clone();
     m2.slug = app2_slug.clone();
@@ -492,7 +493,8 @@ async fn test_apps_inventory_list_and_filters() {
         tables: vec![],
         relationships: vec![],
         views: vec![],
-        ceds_mappings: std::collections::HashMap::new(),
+        pages: vec![],
+            ceds_mappings: std::collections::HashMap::new(),
     };
     c.state.engine.write().unwrap().register_manifest(manifest.clone()).unwrap();
     if let Some(ref repo) = c.state.repository {

@@ -99,6 +99,9 @@ async fn create_app_in_workspace(
         .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
 
     manifest.workspace_id = Some(ws_id.clone());
+    // Nothing verifies a domain yet, so a new app cannot start verified.
+    manifest.custom_domain_verified = false;
+    check_manifest(&manifest)?;
 
     let mut engine = state.engine.write().map_err(|_| lock_err())?;
     engine
@@ -133,6 +136,13 @@ async fn get_app(
             .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?
     };
     Ok(Json(with_version(&state, &manifest)))
+}
+
+/// Every path that stores a manifest checks it first, and reports every problem.
+fn check_manifest(manifest: &AppManifest) -> Result<(), (StatusCode, Json<Value>)> {
+    scaffoldry_engine::validate_manifest(manifest).map_err(|problems| {
+        ServiceError::bad_request(format!("The manifest has {} problem(s): {}", problems.len(), problems.join("; "))).into_pair()
+    })
 }
 
 /// The manifest as JSON, with the version a save must name.
@@ -191,6 +201,7 @@ async fn update_app(
     manifest.department = existing.department;
     manifest.custom_domain = existing.custom_domain;
     manifest.custom_domain_verified = existing.custom_domain_verified;
+    check_manifest(&manifest)?;
 
     // The conditional update comes first. Only a save that wins reaches the running engine.
     if let Some(ref repo) = state.repository {

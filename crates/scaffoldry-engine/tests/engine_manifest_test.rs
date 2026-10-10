@@ -29,7 +29,8 @@ fn sample_manifest() -> AppManifest {
                 ],
             )
         ],
-        ceds_mappings: [
+        pages: vec![],
+            ceds_mappings: [
             ("item_name".to_string(), "000185".to_string()), // CEDS FacilityIdentifier / Equipment
         ].into_iter().collect(),
         tables: vec![],

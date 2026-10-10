@@ -213,7 +213,8 @@ async fn world() -> (World, People) {
         tables: vec![],
         relationships: vec![],
         views: vec![],
-        ceds_mappings: Default::default(),
+        pages: vec![],
+            ceds_mappings: Default::default(),
     }).unwrap();
 
     let (sam, rivera, okafor, dean) = (person("sam"), person("rivera"), person("okafor"), person("dean"));
