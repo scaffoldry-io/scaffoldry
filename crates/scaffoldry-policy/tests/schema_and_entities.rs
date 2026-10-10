@@ -49,7 +49,7 @@ fn a_non_member_has_an_empty_member_role_and_policy_13_evaluates_without_error()
     assert_eq!(ws.entity_member_role(), "");
     let result = authorize(&engine, &principal("faculty", "biology"), "manage_workspace", &Resource::Workspace(ws))
         .expect("evaluation must succeed");
-    assert!(result.diagnostics.is_empty(), "no Cedar evaluation error: {:?}", result.diagnostics);
+    assert!(result.diagnostics.is_empty(), "evaluation must report no Cedar errors");
     assert_eq!(result.decision, PolicyDecision::Deny);
 }
 
@@ -102,7 +102,10 @@ fn a_denial_from_a_forbid_names_that_policy() {
     assert_eq!(result.decision, PolicyDecision::Deny);
     let deciding = result.deciding_policy.expect("a forbid denial names its policy");
     assert!(!deciding.id.is_empty());
-    assert!(deciding.description.to_lowercase().contains("sensitive"), "got: {}", deciding.description);
+    assert!(
+        deciding.description.to_lowercase().contains("sensitive"),
+        "the deciding policy must be the sensitive-records rule"
+    );
 }
 
 #[test]
