@@ -17,6 +17,11 @@ use crate::service::ServiceError;
 #[derive(Debug, Deserialize, Default)]
 pub struct RecordListQuery {
     pub page_size: Option<usize>,
+    /// Rows per page. `page_size` is the older name for the same thing.
+    pub limit: Option<usize>,
+    /// Where the next page starts: the `next_cursor` of the previous page.
+    pub cursor: Option<String>,
+    /// Only the filter, sort and offset paths below read this. It goes when phases 2 and 4 land.
     pub offset: Option<usize>,
     pub view: Option<String>,
     pub filter_by_formula: Option<String>,
@@ -141,6 +146,34 @@ async fn list_table_records(
 
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
+
+    // A plain list is one indexed page. Filter, sort and offset have no indexed form until the
+    // pivot index exists (row-scale phase 2), so a request that uses one still takes the older
+    // path below, which reads the whole app.
+    let older_path = query.filter_by_formula.is_some() || query.sort_field.is_some() || query.offset.is_some();
+    if !older_path {
+        let limit = query.limit.or(query.page_size).unwrap_or(100).clamp(1, 1000);
+        let cursor = match query.cursor.as_deref() {
+            Some(c) => Some(decode_cursor(c).map_err(ServiceError::into_pair)?),
+            None => None,
+        };
+        // One extra row says whether another page follows.
+        let mut rows = state
+            .list_records_page(&slug, &table_id, limit + 1, cursor)
+            .map_err(|e| ServiceError::internal(e).into_pair())?;
+        let next_cursor = if rows.len() > limit {
+            rows.truncate(limit);
+            rows.last().map(|r| encode_cursor(&r.created_at, &r.id))
+        } else {
+            None
+        };
+        return Ok(Json(json!({
+            "app_slug": slug,
+            "table_id": table_id,
+            "records": rows,
+            "next_cursor": next_cursor,
+        })));
+    }
 
     let app_records = state
         .list_app_records(&slug)
@@ -414,4 +447,23 @@ fn evaluate_formula_filter(record_data: &Value, formula: &str) -> bool {
     }
 
     true
+}
+
+/// A page cursor is the last row's `(created_at, id)`, opaque to the caller.
+fn encode_cursor(created_at: &str, id: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("{created_at}\n{id}"))
+}
+
+fn decode_cursor(cursor: &str) -> Result<(String, String), ServiceError> {
+    use base64::Engine;
+    let bad = || ServiceError::bad_request("cursor is not one this server issued");
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cursor).map_err(|_| bad())?;
+    let text = String::from_utf8(bytes).map_err(|_| bad())?;
+    let (created_at, id) = text.split_once('\n').ok_or_else(bad)?;
+    // The timestamp is compared as a timestamp in SQL, so refuse anything that is not one.
+    if created_at.len() > 40 || !created_at.chars().all(|c| c.is_ascii_digit() || " :-.+TZ".contains(c)) {
+        return Err(bad());
+    }
+    Ok((created_at.to_string(), id.to_string()))
 }
