@@ -719,6 +719,26 @@ impl PostgresRepository {
         })
     }
 
+    pub fn count_records_by_app_slugs(&self, app_slugs: &[String]) -> Result<HashMap<String, usize>, RepositoryError> {
+        if app_slugs.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let slugs = app_slugs.to_vec();
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT app_slug, count(*)::bigint FROM dataset_records WHERE app_slug = ANY($1) GROUP BY app_slug",
+                &[&slugs],
+            )?;
+            let mut map = HashMap::new();
+            for r in rows {
+                let slug: String = r.get(0);
+                let count: i64 = r.get(1);
+                map.insert(slug, count as usize);
+            }
+            Ok(map)
+        })
+    }
+
     // -------------------------------------------------------------------------
     // SESSIONS
     // -------------------------------------------------------------------------

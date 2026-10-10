@@ -64,10 +64,73 @@ export interface AdminJobDetail extends AdminJobRow {
 }
 
 import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, Workspace } from "./types";
+export type { OrganizationNode };
 
 export interface PolicyRef {
   id: string;
   description: string;
+}
+
+export interface AdminWorkspaceRow {
+  id: string;
+  name: string;
+  code: string;
+  unit_name: string;
+  classification: string;
+  visibility: string;
+  owners: string[];
+  collaborator_count: number;
+  app_count: number;
+  record_count: number;
+  created: string;
+  organization_id?: string;
+  description?: string;
+}
+
+export interface AdminAppRow {
+  slug: string;
+  title: string;
+  workspace: string;
+  version: string;
+  table_count: number;
+  page_count: number;
+  custom_page_count: number;
+  record_count_per_table: Record<string, number>;
+  updated: string;
+}
+
+export interface AdminWorkspaceDetail {
+  id: string;
+  name: string;
+  code: string;
+  unit_name: string;
+  classification: string;
+  visibility: string;
+  owners: string[];
+  collaborator_count: number;
+  app_count: number;
+  record_count: number;
+  created: string;
+  organization_id?: string;
+  description?: string;
+  collaborators: {
+    id: string;
+    workspace_id: string;
+    eppn: string;
+    name: string;
+    role: string;
+    scoped_affiliation: string;
+    department: string;
+    added_at: string;
+  }[];
+  apps: AdminAppRow[];
+}
+
+export interface AdminPatchWorkspacePayload {
+  organization_id?: string;
+  data_classification?: string;
+  visibility?: string;
+  reason: string;
 }
 
 export interface AdminUserRow {
@@ -290,6 +353,46 @@ export const apiClient = {
     }>("/auth/me");
   },
 
+  adminListWorkspaces: async (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== "") q.set(k, v);
+    }
+    const qs = q.toString();
+    return request<{ rows: AdminWorkspaceRow[]; next_cursor: string | null }>(
+      `/admin/workspaces${qs ? `?${qs}` : ""}`
+    );
+  },
+
+  adminGetWorkspace: async (id: string) => {
+    return request<AdminWorkspaceDetail>(`/admin/workspaces/${encodeURIComponent(id)}`);
+  },
+
+  adminPatchWorkspace: async (id: string, payload: AdminPatchWorkspacePayload) => {
+    return request<AdminWorkspaceDetail>(`/admin/workspaces/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  adminTransferWorkspaceOwnership: async (id: string, eppn: string, reason: string) => {
+    return request<any>(`/admin/workspaces/${encodeURIComponent(id)}/transfer-ownership`, {
+      method: "POST",
+      body: JSON.stringify({ eppn, reason }),
+    });
+  },
+
+  adminListApps: async (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== "") q.set(k, v);
+    }
+    const qs = q.toString();
+    return request<{ rows: AdminAppRow[]; next_cursor: string | null }>(
+      `/admin/apps${qs ? `?${qs}` : ""}`
+    );
+  },
+
   adminListUsers: async (params: Record<string, string | undefined> = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
@@ -445,6 +548,10 @@ export const apiClient = {
   },
 
   // Organizations
+  getOrgs: async (): Promise<OrganizationNode[]> => {
+    return request<OrganizationNode[]>("/orgs");
+  },
+
   listOrganizations: async (): Promise<OrganizationNode[]> => {
     return request<OrganizationNode[]>("/orgs");
   },
