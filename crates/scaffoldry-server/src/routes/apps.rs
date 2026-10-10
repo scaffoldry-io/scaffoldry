@@ -1,7 +1,7 @@
 use crate::guard::session_user;
 use crate::service::access::{authorize_app, AppAction};
 use crate::service::organizations::{unit_in_scope, OrgCaller};
-use crate::state::{lock_err, RecordDecisionInput, SharedState};
+use crate::state::{lock_err, SharedState};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -10,8 +10,7 @@ use axum::{
 };
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::{
-    ActionEffect, ActionType, AutomationRule, DecisionType, ProcessInstance, ProcessStatus,
-    StepKind, TriggerEvent, WorkflowExecutionResult,
+    AutomationRule, ProcessInstance, ProcessStatus, TriggerEvent, WorkflowExecutionResult,
 };
 use scaffoldry_engine::{AppManifest, AutomationEngine};
 use scaffoldry_policy::{PolicyDecision, WorkspaceActionInput};
@@ -459,118 +458,12 @@ async fn decide_app_process(
 ) -> Result<Json<ProcessInstance>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
 
-    authorize_app(&user, &slug, AppAction::Read, &state)
-        .map_err(ServiceError::into_pair)?;
-
-    let decision = payload.decision.to_lowercase();
-    if decision != "approve" && decision != "reject" {
-        return Err(ServiceError::bad_request("Decision must be 'approve' or 'reject'").into_pair());
-    }
-
-    // Unknown affiliation is 403. Delete unwrap_or(EduPersonAffiliation::Faculty).
-    let _ = EduPersonAffiliation::from_str(&user.affiliation)
-        .map_err(|_| ServiceError::forbidden("Unknown affiliation").into_pair())?;
-
-    let mut instance = {
-        let instances = state.process_instances.read().map_err(|_| lock_err())?;
-        instances.get(&id).cloned().ok_or_else(|| {
-            ServiceError::not_found("Process instance not found").into_pair()
-        })?
-    };
-
-    if instance.app_slug != slug {
-        return Err(ServiceError::not_found("Process instance not found in this app").into_pair());
-    }
-
-    if instance.status != ProcessStatus::Waiting {
-        return Err(ServiceError::conflict("Process instance is not in Waiting status").into_pair());
-    }
-
-    let waiting_step_id = instance.waiting_step_id.clone().unwrap_or_default();
-    let mut required_role: Option<String> = None;
-    let mut field_effects = Vec::new();
-
-    // The step is read from the version of the rule the instance started under.
-    if let Some(rule) = crate::service::processes::rule_for(&state, &instance) {
-        if let Some(step) = rule.steps.iter().find(|s| s.id == waiting_step_id) {
-            if let StepKind::UserTask { ref role, ref approve, ref reject, .. } = step.kind {
-                required_role = Some(role.clone());
-                let actions = if decision == "approve" { approve } else { reject };
-                for act in actions {
-                    match act {
-                        ActionType::UpdateRecordStatus { new_status } => {
-                            field_effects.push(ActionEffect::SetFields {
-                                fields: vec![("status".into(), new_status.clone())],
-                            });
-                        }
-                        ActionType::NotifyCollaborator { role, message_template } => {
-                            instance.log.push(format!("Notified role '{role}': {message_template}"));
-                        }
-                        ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
-                            instance.log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
-                        }
-                        ActionType::WebhookDispatch { target_url } => {
-                            instance.log.push(format!("Webhook not sent: {target_url}"));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    required_role.ok_or_else(|| {
-        ServiceError::bad_request("Waiting step not found in automations").into_pair()
-    })?;
-
-    // The resolver decides who may act. The submitter and the starter never may, and a Platform
-    // Admin does not bypass it.
-    if !crate::service::approvers::caller_can_decide(&state, &user, &instance) {
-        return Err(ServiceError::forbidden("Forbidden: Caller may not decide this step").into_pair());
-    }
-
-    // Apply field effects and write the record. This is a system write, so it needs no version.
-    if !field_effects.is_empty() {
-        let current = state
-            .find_record(&slug, &instance.record_id)
-            .map_err(|e| ServiceError::internal(e).into_pair())?;
-        if let Some(rec) = current {
-            let mut data = rec.data.clone();
-            scaffoldry_core::workflow::apply_field_effects(&mut data, &field_effects);
-            // The person who decided is the actor.
-            let ctx = crate::service::history::ctx_for(&user.eppn, crate::repository::ActorKind::User, &slug, &data, &state);
-            state
-                .overwrite_record_data(&slug, &instance.record_id, &data, &ctx)
-                .map_err(|e| ServiceError::internal(e).into_pair())?;
-        }
-    }
-
-    // Append ledger entry
-    let decision_payload = json!({
-        "instance_id": instance.id,
-        "decision": decision,
-    });
-    state.append_ledger_entry(RecordDecisionInput {
-        principal: user.eppn.clone(),
-        organization_code: "institutional".to_string(),
-        app_slug: Some(instance.app_slug.clone()),
-        decision_type: DecisionType::WorkflowRuleApproved,
-        oscal_control_id: "AC-03".to_string(),
-        rationale: format!("{decision} by {} on {}", user.eppn, instance.id),
-        payload: &decision_payload,
-    }).map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-
-    // Update instance status and clear waiting_step_id
-    if decision == "approve" {
-        instance.status = ProcessStatus::Completed;
-    } else {
-        instance.status = ProcessStatus::Rejected;
-    }
-    instance.waiting_step_id = None;
-
-    state.persist_process_instance(instance.clone()).map_err(|e| {
-        ServiceError::internal(e.to_string()).into_pair()
-    })?;
-
-    Ok(Json(instance))
+    let (user, state) = (user, state.clone());
+    tokio::task::spawn_blocking(move || crate::service::processes::decide_process(&user, &origin, &slug, &id, &payload.decision, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The decision stopped before it finished").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
 }

@@ -4,11 +4,17 @@
 //! one function that writes a rule version, and approval and the administrator's enable and
 //! disable are the only callers.
 
+use crate::service::access::{authorize_app, AppAction};
+use crate::service::history::Origin;
 use crate::service::ServiceError;
-use crate::state::SharedState;
+use crate::state::{AuthUser, RecordDecisionInput, SharedState};
 use scaffoldry_core::approver::{effective_approver, validate_approver};
 use scaffoldry_core::workflow::{ActionType, FieldPredicate, StepKind, TriggerEvent};
-use scaffoldry_core::{AutomationRule, ProcessInstance};
+use scaffoldry_core::standards::eduperson::EduPersonAffiliation;
+use scaffoldry_core::workflow::ActionEffect;
+use scaffoldry_core::{AutomationRule, DecisionType, ProcessInstance, ProcessStatus};
+use serde_json::{json, Value};
+use std::str::FromStr;
 use scaffoldry_engine::{AppManifest, HostRouter};
 use std::collections::{BTreeSet, HashSet};
 use uuid::Uuid;
@@ -166,4 +172,136 @@ pub fn reload_rules(state: &SharedState, app_slug: &str) {
             state.automations.write().unwrap_or_else(|p| p.into_inner()).insert(app_slug.to_string(), rows);
         }
     }
+}
+
+/// Decides a waiting process step. The REST route and the `decide_process` tool both call this.
+///
+/// The resolver says who may act. The submitter and the starter never may, and a Platform Admin
+/// does not bypass it. The step is read from the version of the rule the instance started under.
+pub fn decide_process(
+    caller: &AuthUser,
+    _origin: &Origin,
+    slug: &str,
+    instance_id: &str,
+    decision: &str,
+    state: &SharedState,
+) -> Result<ProcessInstance, ServiceError> {
+    authorize_app(caller, slug, AppAction::Read, state)?;
+
+    let decision = decision.to_lowercase();
+    if decision != "approve" && decision != "reject" {
+        return Err(ServiceError::BadRequest("Decision must be 'approve' or 'reject'".to_string()));
+    }
+    // Unknown affiliation is 403.
+    EduPersonAffiliation::from_str(&caller.affiliation).map_err(|_| ServiceError::forbidden("Unknown affiliation"))?;
+
+    let mut instance = state
+        .process_instances
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .get(instance_id)
+        .cloned()
+        .ok_or_else(|| ServiceError::NotFound("Process instance not found".to_string()))?;
+    if instance.app_slug != slug {
+        return Err(ServiceError::NotFound("Process instance not found in this app".to_string()));
+    }
+    if instance.status != ProcessStatus::Waiting {
+        return Err(ServiceError::conflict("Process instance is not in Waiting status"));
+    }
+
+    let waiting_step_id = instance.waiting_step_id.clone().unwrap_or_default();
+    let mut found_step = false;
+    let mut field_effects = Vec::new();
+    if let Some(rule) = rule_for(state, &instance) {
+        if let Some(step) = rule.steps.iter().find(|s| s.id == waiting_step_id) {
+            if let StepKind::UserTask { approve, reject, .. } = &step.kind {
+                found_step = true;
+                let actions = if decision == "approve" { approve } else { reject };
+                for act in actions {
+                    match act {
+                        ActionType::UpdateRecordStatus { new_status } => {
+                            field_effects.push(ActionEffect::SetFields { fields: vec![("status".into(), new_status.clone())] });
+                        }
+                        ActionType::NotifyCollaborator { role, message_template } => {
+                            instance.log.push(format!("Notified role '{role}': {message_template}"));
+                        }
+                        ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
+                            instance.log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
+                        }
+                        ActionType::WebhookDispatch { target_url } => {
+                            instance.log.push(format!("Webhook not sent: {target_url}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !found_step {
+        return Err(ServiceError::BadRequest("Waiting step not found in automations".to_string()));
+    }
+
+    if !crate::service::approvers::caller_can_decide(state, caller, &instance) {
+        return Err(ServiceError::forbidden("Forbidden: Caller may not decide this step"));
+    }
+
+    // Apply field effects and write the record. This is a system write, so it needs no version.
+    if !field_effects.is_empty() {
+        let current = state.find_record(slug, &instance.record_id).map_err(ServiceError::Internal)?;
+        if let Some(rec) = current {
+            let mut data = rec.data.clone();
+            scaffoldry_core::workflow::apply_field_effects(&mut data, &field_effects);
+            // The person who decided is the actor.
+            let ctx = crate::service::history::ctx_for(&caller.eppn, crate::repository::ActorKind::User, slug, &data, state);
+            state.overwrite_record_data(slug, &instance.record_id, &data, &ctx).map_err(ServiceError::Internal)?;
+        }
+    }
+
+    let decision_payload = json!({ "instance_id": instance.id, "decision": decision });
+    state
+        .append_ledger_entry(RecordDecisionInput {
+            principal: caller.eppn.clone(),
+            organization_code: "institutional".to_string(),
+            app_slug: Some(instance.app_slug.clone()),
+            decision_type: DecisionType::WorkflowRuleApproved,
+            oscal_control_id: "AC-03".to_string(),
+            rationale: format!("{decision} by {} on {}", caller.eppn, instance.id),
+            payload: &decision_payload,
+        })
+        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    instance.status = if decision == "approve" { ProcessStatus::Completed } else { ProcessStatus::Rejected };
+    instance.waiting_step_id = None;
+    state.persist_process_instance(instance.clone()).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    Ok(instance)
+}
+
+/// The most waiting decisions one call returns.
+pub const MAX_WAITING: usize = 200;
+
+/// Waiting instances in apps the caller can read, where the caller may decide now.
+pub fn list_waiting_decisions(caller: &AuthUser, state: &SharedState) -> Result<Vec<Value>, ServiceError> {
+    let waiting: Vec<ProcessInstance> = state
+        .process_instances
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .values()
+        .filter(|i| i.status == ProcessStatus::Waiting)
+        .cloned()
+        .collect();
+    let mut readable: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    let mut out: Vec<Value> = Vec::new();
+    let mut sorted = waiting;
+    sorted.sort_by(|a, b| a.started_at.cmp(&b.started_at).then_with(|| a.id.cmp(&b.id)));
+    for inst in sorted {
+        let can_read = *readable
+            .entry(inst.app_slug.clone())
+            .or_insert_with(|| authorize_app(caller, &inst.app_slug, AppAction::Read, state).is_ok());
+        if can_read && crate::service::approvers::caller_can_decide(state, caller, &inst) {
+            out.push(crate::service::approvers::instance_view(state, &inst));
+            if out.len() >= MAX_WAITING {
+                break;
+            }
+        }
+    }
+    Ok(out)
 }
