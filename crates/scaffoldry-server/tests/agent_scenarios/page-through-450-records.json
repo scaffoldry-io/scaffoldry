@@ -1,0 +1,137 @@
+{
+  "id": "page-through-450-records",
+  "ask": "Show me all 450 applications, a page at a time.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "Applicant $i",
+          "amount": 100
+        }
+      },
+      "repeat": 450
+    },
+    {
+      "tool": "list_records",
+      "args": {
+        "app_slug": "$app",
+        "table_id": "applications",
+        "limit": 200
+      },
+      "expect": {
+        "records": {
+          "len": 200
+        }
+      },
+      "save": {
+        "c1": "$.next_cursor"
+      }
+    },
+    {
+      "tool": "list_records",
+      "args": {
+        "app_slug": "$app",
+        "table_id": "applications",
+        "limit": 200,
+        "cursor": "$c1"
+      },
+      "expect": {
+        "records": {
+          "len": 200
+        }
+      },
+      "save": {
+        "c2": "$.next_cursor"
+      }
+    },
+    {
+      "tool": "list_records",
+      "args": {
+        "app_slug": "$app",
+        "table_id": "applications",
+        "limit": 200,
+        "cursor": "$c2"
+      },
+      "expect": {
+        "records": {
+          "len": 50
+        },
+        "next_cursor": {
+          "absent": true
+        }
+      }
+    }
+  ],
+  "after": [
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

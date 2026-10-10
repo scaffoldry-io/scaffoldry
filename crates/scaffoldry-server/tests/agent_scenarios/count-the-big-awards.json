@@ -1,0 +1,136 @@
+{
+  "id": "count-the-big-awards",
+  "ask": "How many applications are over $5,000?",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "Small",
+          "amount": 1000
+        }
+      }
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "Big one",
+          "amount": 6000
+        }
+      }
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "Big two",
+          "amount": 9000
+        }
+      }
+    },
+    {
+      "tool": "list_records",
+      "args": {
+        "app_slug": "$app",
+        "table_id": "applications",
+        "filter": {
+          "conjunction": "And",
+          "clauses": [
+            {
+              "id": "c1",
+              "field_name": "amount",
+              "operator": "GreaterThan",
+              "value": "5000"
+            }
+          ]
+        },
+        "sort": {
+          "field_name": "amount",
+          "direction": "Desc"
+        }
+      },
+      "expect": {
+        "records": {
+          "len": 2
+        },
+        "records.0.data.applicant": "Big two"
+      }
+    }
+  ],
+  "after": [
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

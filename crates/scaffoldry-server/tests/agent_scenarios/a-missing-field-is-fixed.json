@@ -1,0 +1,205 @@
+{
+  "id": "a-missing-field-is-fixed",
+  "ask": "Add a column that doubles the cost.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "double",
+                  "label": "Double",
+                  "field_type": "Formula",
+                  "required": false,
+                  "ferpa_sensitive": false,
+                  "formula_expression": "{cost} * 2"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "error": {
+        "code": "bad_request",
+        "contains": "cost"
+      }
+    },
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "double",
+                  "label": "Double",
+                  "field_type": "Formula",
+                  "required": false,
+                  "ferpa_sensitive": false,
+                  "formula_expression": "{amount} * 2"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p2": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p2",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    }
+  ],
+  "after": [
+    {
+      "ledger_has": "AppPublished"
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

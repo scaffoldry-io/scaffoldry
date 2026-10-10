@@ -1,0 +1,8 @@
+{
+  "id": "a-long-job-is-polled",
+  "ask": "Start the import and tell me when it is done.",
+  "persona": "faculty-owner",
+  "status": "unsupported",
+  "unsupported_reason": "No tool starts a job yet. Jobs arrive with import and index building, so there is nothing for an agent to poll but get_job on an id it cannot obtain.",
+  "steps": []
+}

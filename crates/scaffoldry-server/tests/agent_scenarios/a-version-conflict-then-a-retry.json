@@ -1,0 +1,145 @@
+{
+  "id": "a-version-conflict-then-a-retry",
+  "ask": "Two of us edited the same application. Show me what went wrong and fix it.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "Shared",
+          "amount": 1,
+          "status": "New"
+        }
+      },
+      "save": {
+        "id": "$.id"
+      }
+    },
+    {
+      "tool": "update_record",
+      "args": {
+        "app_slug": "$app",
+        "record_id": "$id",
+        "version": 1,
+        "data": {
+          "status": "First"
+        }
+      },
+      "expect": {
+        "version": 2
+      }
+    },
+    {
+      "tool": "update_record",
+      "args": {
+        "app_slug": "$app",
+        "record_id": "$id",
+        "version": 1,
+        "data": {
+          "status": "Second"
+        }
+      },
+      "error": {
+        "code": "bad_request",
+        "contains": "current version is 2"
+      }
+    },
+    {
+      "tool": "get_record",
+      "args": {
+        "app_slug": "$app",
+        "record_id": "$id"
+      },
+      "expect": {
+        "version": 2,
+        "data.status": "First"
+      }
+    },
+    {
+      "tool": "update_record",
+      "args": {
+        "app_slug": "$app",
+        "record_id": "$id",
+        "version": 2,
+        "data": {
+          "status": "Second"
+        }
+      },
+      "expect": {
+        "version": 3,
+        "data.status": "Second"
+      }
+    }
+  ],
+  "after": [
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "a-scoped-token-cannot-approve",
+  "ask": "Give my assistant a token that can read but not approve.",
+  "persona": "agent",
+  "status": "unsupported",
+  "unsupported_reason": "Tokens carry the whole of their owner's rights. There is no scope on a token to narrow them.",
+  "steps": []
+}

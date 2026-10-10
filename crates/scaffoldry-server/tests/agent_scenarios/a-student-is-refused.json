@@ -1,0 +1,176 @@
+{
+  "id": "a-student-is-refused",
+  "ask": "Can a student approve an application?",
+  "persona": "student",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      },
+      "as": "faculty-owner"
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      },
+      "as": "faculty-owner"
+    },
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "rules": [
+          {
+            "id": "r-$suffix",
+            "name": "Chair review",
+            "enabled": true,
+            "trigger": "RecordCreated",
+            "predicates": [],
+            "steps": [
+              {
+                "id": "decide",
+                "when": [],
+                "kind": {
+                  "UserTask": {
+                    "role": "owner",
+                    "prompt": "Approve this award",
+                    "approve": [
+                      {
+                        "UpdateRecordStatus": {
+                          "new_status": "Admitted"
+                        }
+                      }
+                    ],
+                    "reject": [
+                      {
+                        "UpdateRecordStatus": {
+                          "new_status": "Denied"
+                        }
+                      }
+                    ],
+                    "approver": {
+                      "Role": {
+                        "name": "owner"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "app_slug": "$app"
+      },
+      "save": {
+        "rp": "$.proposal_id"
+      },
+      "as": "faculty-owner"
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$rp",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      },
+      "as": "faculty-owner"
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "Target",
+          "amount": 9000
+        }
+      },
+      "save": {
+        "rid": "$.id"
+      },
+      "as": "editor"
+    },
+    {
+      "tool": "decide_process",
+      "args": {
+        "app_slug": "$app",
+        "instance_id": "r-$suffix:$rid",
+        "decision": "approve"
+      },
+      "error": {
+        "code": "forbidden"
+      }
+    },
+    {
+      "tool": "list_waiting_decisions",
+      "args": {},
+      "expect": {
+        "": {
+          "len": 0
+        }
+      }
+    }
+  ],
+  "after": [
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+{
+  "id": "the-chair-decides",
+  "ask": "As the chair, approve the application that is waiting.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "rules": [
+          {
+            "id": "r-$suffix",
+            "name": "Chair review",
+            "enabled": true,
+            "trigger": "RecordCreated",
+            "predicates": [],
+            "steps": [
+              {
+                "id": "decide",
+                "when": [],
+                "kind": {
+                  "UserTask": {
+                    "role": "owner",
+                    "prompt": "Approve this award",
+                    "approve": [
+                      {
+                        "UpdateRecordStatus": {
+                          "new_status": "Admitted"
+                        }
+                      }
+                    ],
+                    "reject": [
+                      {
+                        "UpdateRecordStatus": {
+                          "new_status": "Denied"
+                        }
+                      }
+                    ],
+                    "approver": {
+                      "Role": {
+                        "name": "owner"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "app_slug": "$app"
+      },
+      "save": {
+        "rp": "$.proposal_id"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$rp",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "To Approve",
+          "amount": 9000,
+          "status": "New"
+        }
+      },
+      "save": {
+        "rid": "$.id"
+      },
+      "as": "editor"
+    },
+    {
+      "tool": "decide_process",
+      "args": {
+        "app_slug": "$app",
+        "instance_id": "r-$suffix:$rid",
+        "decision": "approve"
+      },
+      "expect": {
+        "status": "Completed"
+      }
+    },
+    {
+      "tool": "get_record",
+      "args": {
+        "app_slug": "$app",
+        "record_id": "$rid"
+      },
+      "expect": {
+        "data.status": "Admitted"
+      }
+    }
+  ],
+  "after": [
+    {
+      "ledger_has": "WorkflowRuleApproved"
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}
