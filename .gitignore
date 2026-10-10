@@ -27,3 +27,6 @@ target/
 node_modules/
 dist/
 .vite/
+
+# Build agent scratch space (reports and bundles, never committed)
+.agent/
