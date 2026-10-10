@@ -17,6 +17,7 @@ use scaffoldry_core::{
 };
 use scaffoldry_engine::AppManifest;
 use serde_json::Value;
+pub use crate::repository_index::{build_indexed_sql, IndexPhase, IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, sync_channel, Sender};
 
@@ -33,6 +34,7 @@ const SCHEMA_0010: &str = include_str!("../../scaffoldry-core/migrations/0010_ap
 const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_api_tokens.sql");
 const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
 const SCHEMA_0014: &str = include_str!("../../scaffoldry-core/migrations/0014_record_table_id.sql");
+const SCHEMA_0015: &str = include_str!("../../scaffoldry-core/migrations/0015_record_index.sql");
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
@@ -112,6 +114,8 @@ pub struct WriteCtx {
     pub computed_fields: Vec<String>,
     /// Set when this write undoes another batch.
     pub reverts_batch: Option<uuid::Uuid>,
+    /// The indexed fields of the record's table. Every write keeps their index rows current.
+    pub index_fields: Vec<scaffoldry_engine::FieldSpec>,
 }
 
 impl WriteCtx {
@@ -123,6 +127,7 @@ impl WriteCtx {
             batch_id: uuid::Uuid::new_v4(),
             computed_fields: Vec::new(),
             reverts_batch: None,
+            index_fields: Vec::new(),
         }
     }
 
@@ -257,6 +262,20 @@ pub enum SqlParam {
     Int(i64),
 }
 
+/// Boxes parameters for the driver.
+pub(crate) fn to_sql_params(params: Vec<SqlParam>) -> Vec<Box<dyn postgres::types::ToSql + Sync>> {
+    params
+        .into_iter()
+        .map(|p| -> Box<dyn postgres::types::ToSql + Sync> {
+            match p {
+                SqlParam::Text(t) => Box::new(t),
+                SqlParam::Float(f) => Box::new(f),
+                SqlParam::Int(i) => Box::new(i),
+            }
+        })
+        .collect()
+}
+
 /// The statement for a `RecordQuery`, and its parameters in order. Pure, so it can be tested
 /// without a database.
 pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlParam>) {
@@ -357,7 +376,7 @@ pub enum RecordWrite {
     Missing,
 }
 
-fn record_from_row(r: &postgres::Row) -> DatasetRecord {
+pub(crate) fn record_from_row(r: &postgres::Row) -> DatasetRecord {
     DatasetRecord {
         id: r.get(0),
         app_slug: r.get(1),
@@ -426,7 +445,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 22] = [
+                        let migrations: [(&str, &str); 23] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -439,6 +458,7 @@ impl PostgresRepository {
                             ("0012_api_tokens.sql", SCHEMA_0012),
                             ("0013_platform_settings.sql", SCHEMA_0013),
                             ("0014_record_table_id.sql", SCHEMA_0014),
+                            ("0015_record_index.sql", SCHEMA_0015),
                             ("0021_positions.sql", SCHEMA_0021),
                             ("0022_record_created_by.sql", SCHEMA_0022),
                             ("0007_record_version.sql", SCHEMA_0007),
@@ -1088,6 +1108,7 @@ impl PostgresRepository {
                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
             )?;
+            crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
             let changes = diff_fields(None, Some(&rec.data), &ctx.computed_fields);
             write_history(&mut tx, Touched { app_slug: &rec.app_slug, table_id: &table, record_id: &rec.id, version: 1, action: "create" }, &changes, &ctx)?;
             tx.commit()?;
@@ -1130,6 +1151,7 @@ impl PostgresRepository {
                     &[&data, &new_table, &slug, &id],
                 )?
                 .get(0);
+            crate::repository_index::write_record_index(&mut tx, &slug, &new_table, &id, &data, &ctx.index_fields)?;
             write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
             tx.commit()?;
             Ok(RecordWrite::Saved(next))
@@ -1161,6 +1183,7 @@ impl PostgresRepository {
                     &[&data, &new_table, &slug, &id],
                 )?
                 .get(0);
+            crate::repository_index::write_record_index(&mut tx, &slug, &new_table, &id, &data, &ctx.index_fields)?;
             write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
             tx.commit()?;
             Ok(Some(next))
@@ -1231,6 +1254,7 @@ impl PostgresRepository {
                     &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
                 )?
                 .get(0);
+            crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
             let changes = diff_fields(old.as_ref(), Some(&rec.data), &ctx.computed_fields);
             if old.is_none() || !changes.is_empty() {
                 let action = if old.is_none() { "create" } else { "update" };

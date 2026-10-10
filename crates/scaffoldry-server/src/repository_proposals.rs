@@ -245,6 +245,7 @@ impl PostgresRepository {
                         }),
                     },
                 )?);
+                sync_indexes_in_tx(&mut tx, manifest, p.base_version)?;
                 write_manifest_in_tx(&mut tx, manifest, raw, p.base_version)?;
             }
 
@@ -265,6 +266,27 @@ impl PostgresRepository {
             Ok(Approval::Approved(Box::new(Approved { entries, rules: saved_rules })))
         })
     }
+}
+
+/// The approved manifest indexes different fields than the live one. Drop the rows of the fields
+/// that left, and write the rows of the fields that joined, in the approval's transaction.
+fn sync_indexes_in_tx(tx: &mut postgres::Transaction<'_>, new: &AppManifest, base_version: Option<i32>) -> Result<(), RepositoryError> {
+    let old: Option<AppManifest> = match base_version {
+        Some(_) => tx
+            .query_opt("SELECT manifest FROM app_manifests WHERE slug = $1", &[&new.slug])?
+            .and_then(|r| serde_json::from_value(r.get::<_, Value>(0)).ok()),
+        None => None,
+    };
+    for table in &new.tables {
+        let now = scaffoldry_engine::indexed_fields(new, &table.id);
+        let before = old.as_ref().map(|m| scaffoldry_engine::indexed_fields(m, &table.id)).unwrap_or_default();
+        let left: Vec<String> = before.difference(&now).cloned().collect();
+        let joined: Vec<scaffoldry_engine::FieldSpec> = table.fields.iter().filter(|f| now.contains(&f.name) && !before.contains(&f.name)).cloned().collect();
+        if !left.is_empty() || !joined.is_empty() {
+            crate::repository_index::sync_index(tx, &new.slug, &table.id, &left, &joined)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_manifest_in_tx(

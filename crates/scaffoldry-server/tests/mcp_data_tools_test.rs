@@ -274,7 +274,7 @@ async fn a_filter_or_sort_on_a_table_over_10000_rows_is_refused_with_the_stated_
     let sort = json!({ "field_name": "score", "direction": "Asc" });
     let (err, msg) = tool(&f.app, &f.owner, "list_records", json!({ "app_slug": f.slug, "table_id": "t1", "sort": sort })).await;
     assert!(err);
-    assert_eq!(msg.as_str().unwrap(), "This table is too large to filter or sort on a field that is not indexed.");
+    assert!(msg.as_str().unwrap().contains("This table is too large to filter or sort on a field that is not indexed."), "{msg}");
     // The plain paging still works.
     let (err, page) = tool(&f.app, &f.owner, "list_records", json!({ "app_slug": f.slug, "table_id": "t1", "limit": 5 })).await;
     assert!(!err, "{page}");

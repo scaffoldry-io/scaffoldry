@@ -2,10 +2,12 @@
 
 pub mod automation;
 pub mod detect;
+pub mod index;
 pub mod manifest;
 pub mod sensitivity;
 
 pub use automation::*;
+pub use index::{index_column, index_rows, index_value, indexed_fields, parse_instant, IndexColumn, IndexCols, MAX_INDEXED_FIELDS};
 pub use manifest::validate_manifest;
 
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
@@ -168,6 +170,9 @@ pub struct FieldSpec {
     pub currency_symbol: Option<String>,
     #[serde(default)]
     pub precision: Option<u8>,
+    /// Sorting and filtering on this field use the pivot index. A table indexes at most 20 fields.
+    #[serde(default)]
+    pub indexed: bool,
 }
 
 /// An overlay on one field that can only add protection. It is how a compliance officer raises a
@@ -233,6 +238,7 @@ impl FieldSpec {
             select_options: Vec::new(),
             currency_symbol: None,
             precision: None,
+            indexed: false,
         }
     }
 }
