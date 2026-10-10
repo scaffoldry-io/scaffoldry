@@ -33,14 +33,14 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "oidc.issuer" | "oidc.audience" => value.is_string(),
         "oidc.jwks" => value.is_object(),
         "cors.allowed_origins" => {
-            value.as_array().map_or(false, |arr| arr.iter().all(|v| v.is_string()))
+            value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
         "tokens.max_days" | "process.stale_days" => {
-            value.as_i64().map_or(false, |n| (1..=365).contains(&n))
+            value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
         "tokens.agent_enabled" => value.is_boolean(),
         "mcp.disabled_tools" | "pages.disabled" => {
-            value.as_array().map_or(false, |arr| arr.iter().all(|v| v.is_string()))
+            value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
         _ => false,
     }

@@ -1092,7 +1092,7 @@ async fn test_phase_7_second_boot_prints_no_setup_token() {
     let app = build_app().expect("router");
     let _admin = login(&app, "jordan.lee@state.edu").await;
     // With admin present in DB, check_boot_setup_token returns None
-    assert!(scaffoldry_server::service::identity::boot_setup_token_needed(&scaffoldry_server::state::ServerState::new().unwrap()) == false, "Second boot must not need setup token");
+    assert!(!scaffoldry_server::service::identity::boot_setup_token_needed(&scaffoldry_server::state::ServerState::new().unwrap()), "Second boot must not need setup token");
 }
 
 

@@ -4,7 +4,7 @@ pub mod automation;
 pub use automation::*;
 
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
-use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine};
+use scaffoldry_policy::ScaffoldryPolicyEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -220,8 +220,8 @@ fn tokenize_formula(input: &str) -> Option<Vec<FormulaToken>> {
 
         if ch == '{' {
             let mut close = None;
-            for j in (i + 1)..n {
-                if chars[j] == '}' {
+            for (j, c) in chars.iter().enumerate().take(n).skip(i + 1) {
+                if *c == '}' {
                     close = Some(j);
                     break;
                 }
@@ -648,7 +648,7 @@ impl<'a> FormulaParser<'a> {
     fn call_func(&self, name: &str, args: &[Value]) -> Value {
         match name {
             "IF" => {
-                let cond = args.get(0).unwrap_or(&Value::Null);
+                let cond = args.first().unwrap_or(&Value::Null);
                 if Self::is_truthy(cond) {
                     args.get(1).cloned().unwrap_or(Value::Null)
                 } else {
@@ -677,7 +677,7 @@ impl<'a> FormulaParser<'a> {
                 }
             }
             "ROUND" => {
-                if let Some(n) = args.get(0).and_then(Self::to_number) {
+                if let Some(n) = args.first().and_then(Self::to_number) {
                     let digits = args.get(1).and_then(Self::to_number).unwrap_or(0.0) as i32;
                     let factor = 10f64.powi(digits);
                     let rounded = (n * factor).round() / factor;
@@ -687,7 +687,7 @@ impl<'a> FormulaParser<'a> {
                 }
             }
             "ABS" => {
-                if let Some(n) = args.get(0).and_then(Self::to_number) {
+                if let Some(n) = args.first().and_then(Self::to_number) {
                     Value::from(n.abs())
                 } else {
                     Value::Null
@@ -709,7 +709,7 @@ impl<'a> FormulaParser<'a> {
                 Value::from(s)
             }
             "LEN" => {
-                let val = args.get(0).unwrap_or(&Value::Null);
+                let val = args.first().unwrap_or(&Value::Null);
                 if val.is_null() {
                     Value::from(0)
                 } else if let Some(s) = val.as_str() {
@@ -720,7 +720,7 @@ impl<'a> FormulaParser<'a> {
             }
             "BLANK" => Value::Null,
             "ISBLANK" => {
-                let val = args.get(0).unwrap_or(&Value::Null);
+                let val = args.first().unwrap_or(&Value::Null);
                 let is_blank = val.is_null() || (val.as_str().map(|s| s.is_empty()).unwrap_or(false));
                 Value::Bool(is_blank)
             }
@@ -1074,17 +1074,16 @@ pub trait HostRouter {
 pub struct ManifestEngine {
     manifests_by_slug: HashMap<String, AppManifest>,
     manifests_by_domain: HashMap<String, String>,
-    policy_engine: ScaffoldryPolicyEngine,
 }
 
 impl ManifestEngine {
     pub fn new() -> Result<Self, EngineError> {
-        let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        // Fail construction early if the built in policy set does not load.
+        ScaffoldryPolicyEngine::default_institutional_engine()
             .map_err(|e| EngineError::PolicyError(e.to_string()))?;
         Ok(Self {
             manifests_by_slug: HashMap::new(),
             manifests_by_domain: HashMap::new(),
-            policy_engine,
         })
     }
 

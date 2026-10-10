@@ -859,7 +859,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     assert!(initial_count >= 4);
     let entries = ledger_res["entries"].as_array().unwrap();
     assert_eq!(entries[0]["sequence"].as_u64().unwrap(), 0);
-    assert_eq!(entries[0]["oscal_control_id"], "CM-03");
+    assert_eq!(entries[0]["oscal_control_id"], "PL-02");
 
     // 2. POST /api/v1/governance/ledger/append - append an approval block
     let append_payload = json!({
@@ -2035,7 +2035,7 @@ async fn test_phase2_organization_api_and_scoping() {
     // 1. central_admin creates a College and Departments
     let college_payload = json!({
         "name": "College of Sciences",
-        "code": "SCI",
+        "code": "SCI-API",
         "org_type": "College",
         "parent_id": root_id.to_string(),
     });
@@ -2053,7 +2053,7 @@ async fn test_phase2_organization_api_and_scoping() {
 
     let dept_phys_payload = json!({
         "name": "Department of Physics",
-        "code": "PHYS",
+        "code": "PHYS-API",
         "org_type": "Department",
         "parent_id": college_id,
     });

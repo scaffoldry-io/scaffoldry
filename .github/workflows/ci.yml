@@ -82,7 +82,8 @@ jobs:
 
       - name: Hard Gate - Rust Monorepo Test & Clippy
         run: |
-          cargo test
+          # The tests share one database and the process environment, so they run one at a time.
+          cargo test -- --test-threads=1
           cargo clippy --all-targets -- -D warnings
 
       - name: Hard Gate - Web Unit Tests & Build

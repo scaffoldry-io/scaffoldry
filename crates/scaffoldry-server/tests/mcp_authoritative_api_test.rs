@@ -5,7 +5,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
-use scaffoldry_server::build_app;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

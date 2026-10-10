@@ -136,20 +136,18 @@ impl PostgresRepository {
                         let _ = client.execute("DELETE FROM auth_sessions WHERE token LIKE 'sct_%'", &[]);
                         Ok(fresh_install)
                     })();
-                    let _ = client.execute("SELECT pg_advisory_unlock(742199)", &[]);
                     res
                 })();
 
-                let fresh_install = match mig_res {
-                    Ok(f) => f,
-                    Err(e) => {
-                        let _ = init_tx_0.send(Err(RepositoryError::Db(e)));
-                        return;
-                    }
+                // Verify (and on a fresh install seed) the ledger before the lock is released.
+                // Otherwise a concurrent boot sees the migrated schema, treats it as an existing
+                // install, and reports the not yet seeded ledger as tampering.
+                let verified = match mig_res {
+                    Ok(fresh_install) => Self::verify_client_ledger(&mut client, fresh_install),
+                    Err(e) => Err(RepositoryError::Db(e)),
                 };
-
-                // Verify ledger hash chain on client 0 before opening worker pool
-                if let Err(e) = Self::verify_client_ledger(&mut client, fresh_install) {
+                let _ = client.execute("SELECT pg_advisory_unlock(742199)", &[]);
+                if let Err(e) = verified {
                     let _ = init_tx_0.send(Err(e));
                     return;
                 }

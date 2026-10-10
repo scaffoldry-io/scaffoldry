@@ -58,10 +58,7 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
         let _ = state.update_token_last_used(&hash, now);
     }
 
-    let user = resolve_user(&row.eppn, state);
-    if user.is_none() {
-    }
-    user
+    resolve_user(&row.eppn, state)
 }
 
 pub fn unauthorized() -> Response {
