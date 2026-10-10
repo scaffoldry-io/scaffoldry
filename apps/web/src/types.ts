@@ -418,3 +418,20 @@ export interface OrgRole {
   is_primary: boolean;
   source: string;
 }
+
+export interface GuardRule {
+  template: string;
+  affiliations?: string[];
+  unit_ids?: string[];
+}
+
+export interface WorkspaceGuardRecord {
+  workspace_id: string;
+  version: number;
+  rules: GuardRule[] | null;
+  compiled: string;
+  sentences?: string[];
+  reason: string;
+  created_by: string;
+  created_at: string;
+}
