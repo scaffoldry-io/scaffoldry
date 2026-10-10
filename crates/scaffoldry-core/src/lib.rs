@@ -1,5 +1,6 @@
 //! Scaffoldry Core Domain Models & Standards Crosswalks
 
+pub mod approver;
 pub mod dataset;
 pub mod ledger;
 pub mod standards;

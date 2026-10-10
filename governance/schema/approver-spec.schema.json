@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/approver-spec.schema.json",
+  "title": "ApproverSpec",
+  "description": "Who decides a user task. The default external tag, like every other enum on the wire. A rule with no approver means Role with the step's role name.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["Position"],
+      "additionalProperties": false,
+      "properties": {
+        "Position": {
+          "type": "object",
+          "required": ["key", "from", "walk_up"],
+          "additionalProperties": false,
+          "properties": {
+            "key": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "from": { "enum": ["Submitter", "Workspace"] },
+            "walk_up": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["Person"],
+      "additionalProperties": false,
+      "properties": {
+        "Person": {
+          "type": "object",
+          "required": ["eppn"],
+          "additionalProperties": false,
+          "properties": { "eppn": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["Role"],
+      "additionalProperties": false,
+      "properties": {
+        "Role": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": { "name": { "type": "string", "minLength": 1 } }
+        }
+      }
+    }
+  ]
+}

@@ -187,6 +187,10 @@ impl AutomationEngine {
                                     role: Some(role.clone()),
                                     prompt: Some(prompt.clone()),
                                     log: vec![],
+                                    started_by: None,
+                                    started_at: String::new(),
+                                    assigned_to: None,
+                                    no_approver: None,
                                 });
                                 break;
                             }
