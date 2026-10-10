@@ -249,6 +249,8 @@ async fn test_workspace_update_fails_when_ledger_fails() {
             data_classification: None,
             icon: None,
             cedar_policy_guard: None,
+            organization_id: None,
+            reason: None,
         };
 
         let res = scaffoldry_server::service::workspaces::update_workspace(

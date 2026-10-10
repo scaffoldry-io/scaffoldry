@@ -17,6 +17,11 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/admin/users/{id}/hold"),
     ("POST", "/admin/users/{id}/revoke-tokens"),
     ("GET", "/admin/groups"),
+    ("GET", "/admin/workspaces"),
+    ("GET", "/admin/workspaces/{id}"),
+    ("PATCH", "/admin/workspaces/{id}"),
+    ("POST", "/admin/workspaces/{id}/transfer-ownership"),
+    ("GET", "/admin/apps"),
 ];
 
 pub fn require_platform_admin(caller: &AuthUser, state: &SharedState) -> Result<(), ServiceError> {

@@ -364,6 +364,8 @@ fn run_update_workspace(caller: &AuthUser, args: Value, state: &SharedState) -> 
         data_classification: text(&args, "data_classification"),
         icon: text(&args, "icon"),
         cedar_policy_guard: text(&args, "cedar_policy_guard"),
+        organization_id: text(&args, "organization_id").and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+        reason: text(&args, "reason"),
     };
     to_value(&workspaces::update_workspace(caller, &ws_id, input, state)?)
 }

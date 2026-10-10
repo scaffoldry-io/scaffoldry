@@ -1091,6 +1091,10 @@ impl ManifestEngine {
         self.manifests_by_slug.len()
     }
 
+    pub fn list_manifests(&self) -> Vec<AppManifest> {
+        self.manifests_by_slug.values().cloned().collect()
+    }
+
     pub fn register_manifest(&mut self, manifest: AppManifest) -> Result<(), EngineError> {
         if manifest.slug.trim().is_empty() {
             return Err(EngineError::ValidationError("App slug cannot be empty".to_string()));
