@@ -550,7 +550,7 @@ impl ServerState {
                 principal: input.principal.clone(),
                 organization_code: input.organization_code.clone(),
                 app_slug: input.app_slug.clone(),
-                decision_type: input.decision_type.clone(),
+                decision_type: input.decision_type,
                 oscal_control_id: input.oscal_control_id.clone(),
                 rationale: input.rationale.clone(),
                 payload: input.payload.clone(),
