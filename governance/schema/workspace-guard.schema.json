@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/workspace-guard.schema.json",
+  "title": "WorkspaceGuardRules",
+  "description": "Rules for a workspace guard compiled to Cedar forbid policies.",
+  "type": "array",
+  "maxItems": 20,
+  "items": {
+    "type": "object",
+    "required": ["template"],
+    "properties": {
+      "template": {
+        "type": "string",
+        "enum": [
+          "deny_export_unless_affiliation",
+          "deny_write_for_affiliation",
+          "deny_access_outside_units",
+          "deny_sensitive_unless_affiliation"
+        ]
+      },
+      "affiliations": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "faculty",
+            "student",
+            "staff",
+            "employee",
+            "member",
+            "affiliate",
+            "alum",
+            "compliance",
+            "central_admin"
+          ]
+        }
+      },
+      "unit_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

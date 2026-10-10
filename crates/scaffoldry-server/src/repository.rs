@@ -34,6 +34,7 @@ const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_ap
 const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
+const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_job_schedules.sql");
 
@@ -134,7 +135,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 16] = [
+                        let migrations: [(&str, &str); 17] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -149,6 +150,7 @@ impl PostgresRepository {
                             ("0021_positions.sql", SCHEMA_0021),
                             ("0022_record_created_by.sql", SCHEMA_0022),
                             ("0007_record_version.sql", SCHEMA_0007),
+                            ("0023_workspace_guards.sql", SCHEMA_0023),
                             ("0026_jobs.sql", SCHEMA_0026),
                             ("0044_job_schedules.sql", SCHEMA_0044),
                         ];
@@ -489,7 +491,7 @@ impl PostgresRepository {
         self.with_client(|client| {
             let rows = client.query(
                 "SELECT id, name, code, organization, department, description, icon, lead, \
-                        visibility, allowed_affiliations, data_classification, cedar_policy_guard, \
+                        visibility, allowed_affiliations, data_classification, \
                         created_at::text, organization_id \
                  FROM workspaces ORDER BY created_at ASC",
                 &[],
@@ -511,9 +513,8 @@ impl PostgresRepository {
                     visibility: r.get(8),
                     allowed_affiliations: affs,
                     data_classification: r.get(10),
-                    cedar_policy_guard: r.get(11),
-                    created_at: r.get(12),
-                    organization_id: r.get(13),
+                    created_at: r.get(11),
+                    organization_id: r.get(12),
                 });
             }
             Ok(workspaces)
@@ -525,7 +526,7 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let row = client.query_opt(
                 "SELECT id, name, code, organization, department, description, icon, lead, \
-                        visibility, allowed_affiliations, data_classification, cedar_policy_guard, \
+                        visibility, allowed_affiliations, data_classification, \
                         created_at::text, organization_id \
                  FROM workspaces WHERE id = $1",
                 &[&id_str],
@@ -546,9 +547,8 @@ impl PostgresRepository {
                     visibility: r.get(8),
                     allowed_affiliations: affs,
                     data_classification: r.get(10),
-                    cedar_policy_guard: r.get(11),
-                    created_at: r.get(12),
-                    organization_id: r.get(13),
+                    created_at: r.get(11),
+                    organization_id: r.get(12),
                 }
             }))
         })
@@ -560,8 +560,8 @@ impl PostgresRepository {
             let affs_json = serde_json::to_value(&ws.allowed_affiliations)?;
             client.execute(
                 "INSERT INTO workspaces (id, name, code, organization, department, description, \
-                        icon, lead, visibility, allowed_affiliations, data_classification, cedar_policy_guard, organization_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+                        icon, lead, visibility, allowed_affiliations, data_classification, organization_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
                  ON CONFLICT (id) DO UPDATE SET \
                     name = EXCLUDED.name, \
                     code = EXCLUDED.code, \
@@ -573,7 +573,6 @@ impl PostgresRepository {
                     visibility = EXCLUDED.visibility, \
                     allowed_affiliations = EXCLUDED.allowed_affiliations, \
                     data_classification = EXCLUDED.data_classification, \
-                    cedar_policy_guard = EXCLUDED.cedar_policy_guard, \
                     organization_id = EXCLUDED.organization_id",
                 &[
                     &ws.id,
@@ -587,7 +586,6 @@ impl PostgresRepository {
                     &ws.visibility,
                     &affs_json,
                     &ws.data_classification,
-                    &ws.cedar_policy_guard,
                     &ws.organization_id,
                 ],
             )?;
@@ -603,8 +601,8 @@ impl PostgresRepository {
                 let affs_json = serde_json::to_value(&ws.allowed_affiliations)?;
                 tx.execute(
                     "INSERT INTO workspaces (id, name, code, organization, department, description, \
-                            icon, lead, visibility, allowed_affiliations, data_classification, cedar_policy_guard, organization_id) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+                            icon, lead, visibility, allowed_affiliations, data_classification, organization_id) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
                      ON CONFLICT (id) DO UPDATE SET \
                         name = EXCLUDED.name, \
                         code = EXCLUDED.code, \
@@ -616,7 +614,6 @@ impl PostgresRepository {
                         visibility = EXCLUDED.visibility, \
                         allowed_affiliations = EXCLUDED.allowed_affiliations, \
                         data_classification = EXCLUDED.data_classification, \
-                        cedar_policy_guard = EXCLUDED.cedar_policy_guard, \
                         organization_id = EXCLUDED.organization_id",
                     &[
                         &ws.id,
@@ -630,7 +627,6 @@ impl PostgresRepository {
                         &ws.visibility,
                         &affs_json,
                         &ws.data_classification,
-                        &ws.cedar_policy_guard,
                         &ws.organization_id,
                     ],
                 )?;
@@ -1898,6 +1894,69 @@ impl PostgresRepository {
             client.execute(
                 "INSERT INTO platform_settings (key, value, updated_by, updated_at)                  VALUES ($1, $2, $3, NOW())                  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()",
                 &[&k, &val, &by],
+            )?;
+            Ok(())
+        })
+    }
+    pub fn count_legacy_workspace_guards(&self) -> Result<i64, RepositoryError> {
+        self.with_client(|client| {
+            let row = client.query_one("SELECT COUNT(*) FROM workspace_guards_legacy", &[])?;
+            let count: i64 = row.get(0);
+            Ok(count)
+        })
+    }
+
+    pub fn list_all_workspace_guards(&self) -> Result<Vec<scaffoldry_core::WorkspaceGuardRecord>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT workspace_id, version, rules, compiled, reason, created_by, created_at::text                  FROM workspace_guards ORDER BY workspace_id ASC, version ASC",
+                &[],
+            )?;
+            let mut list = Vec::new();
+            for r in rows {
+                list.push(scaffoldry_core::WorkspaceGuardRecord {
+                    workspace_id: r.get(0),
+                    version: r.get(1),
+                    rules: r.get(2),
+                    compiled: r.get(3),
+                    reason: r.get(4),
+                    created_by: r.get(5),
+                    created_at: r.get(6),
+                });
+            }
+            Ok(list)
+        })
+    }
+
+    pub fn get_workspace_guards(&self, workspace_id: &str) -> Result<Vec<scaffoldry_core::WorkspaceGuardRecord>, RepositoryError> {
+        let ws_id = workspace_id.to_string();
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT workspace_id, version, rules, compiled, reason, created_by, created_at::text                  FROM workspace_guards WHERE workspace_id = $1 ORDER BY version ASC",
+                &[&ws_id],
+            )?;
+            let mut list = Vec::new();
+            for r in rows {
+                list.push(scaffoldry_core::WorkspaceGuardRecord {
+                    workspace_id: r.get(0),
+                    version: r.get(1),
+                    rules: r.get(2),
+                    compiled: r.get(3),
+                    reason: r.get(4),
+                    created_by: r.get(5),
+                    created_at: r.get(6),
+                });
+            }
+            Ok(list)
+        })
+    }
+
+    pub fn insert_workspace_guard(&self, guard: &scaffoldry_core::WorkspaceGuardRecord) -> Result<(), RepositoryError> {
+        let g = guard.clone();
+        self.with_client(move |client| {
+            client.execute(
+                "INSERT INTO workspace_guards (workspace_id, version, rules, compiled, reason, created_by, created_at)                  VALUES ($1, $2, $3, $4, $5, $6, NOW())",
+                &[&g.workspace_id, &g.version, &g.rules, &g.compiled, &g.reason, &g.created_by],
             )?;
             Ok(())
         })

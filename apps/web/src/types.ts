@@ -211,7 +211,6 @@ export interface Workspace {
   visibility: "restricted" | "departmental" | "institutional";
   allowed_affiliations?: string[];
   data_classification?: string;
-  cedar_policy_guard?: string;
   collaborators: Collaborator[];
 }
 
@@ -379,7 +378,6 @@ export interface WorkflowAutomationRule {
   description: string;
   enabled: boolean;
   trigger: WorkflowTriggerEvent;
-  cedar_policy_guard?: string;
   predicates: WorkflowPredicate[];
   actions: WorkflowActionItem[];
   steps?: ProcessStepItem[];

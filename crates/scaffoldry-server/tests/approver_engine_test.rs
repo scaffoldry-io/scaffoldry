@@ -94,7 +94,6 @@ impl World {
             description: String::new(),
             enabled: true,
             trigger: TriggerEvent::RecordCreated,
-            cedar_policy_guard: None,
             predicates: vec![],
             actions: vec![],
             steps: vec![ProcessStep {

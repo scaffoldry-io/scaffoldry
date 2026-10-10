@@ -110,7 +110,6 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
         visibility: "departmental".to_string(),
         allowed_affiliations: vec!["faculty".to_string()],
         data_classification: "Internal".to_string(),
-        cedar_policy_guard: None,
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
     };
@@ -236,7 +235,6 @@ async fn test_patch_moving_workspace_to_another_unit() {
         visibility: "departmental".to_string(),
         allowed_affiliations: vec![],
         data_classification: "Internal".to_string(),
-        cedar_policy_guard: None,
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: Some(old_unit_id),
     };
@@ -315,7 +313,6 @@ async fn test_bad_classification_and_visibility_is_400() {
         visibility: "departmental".to_string(),
         allowed_affiliations: vec![],
         data_classification: "Internal".to_string(),
-        cedar_policy_guard: None,
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
     };
@@ -397,7 +394,6 @@ async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
         visibility: "restricted".to_string(),
         allowed_affiliations: vec![],
         data_classification: "Restricted".to_string(),
-        cedar_policy_guard: None,
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
     };
@@ -473,7 +469,6 @@ async fn test_apps_inventory_list_and_filters() {
         visibility: "institutional".to_string(),
         allowed_affiliations: vec![],
         data_classification: "Public".to_string(),
-        cedar_policy_guard: None,
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
     };

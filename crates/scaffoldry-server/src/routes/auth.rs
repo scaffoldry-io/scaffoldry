@@ -13,7 +13,6 @@ use axum::{
 };
 use chrono::Utc;
 use scaffoldry_core::DecisionType;
-use scaffoldry_policy::PolicyDecision;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -265,31 +264,21 @@ async fn impersonate_user(
         None => return unauthorized(),
     };
 
-    // Check Cedar policy: principal must have central_admin affiliation
-    let auth_check = state.policy_engine.authorize_institutional_action(
-        &real_admin.eppn,
-        &real_admin.affiliation,
-        &real_admin.department,
-        "impersonate",
-        "system",
-    );
-
-    match auth_check {
-        Ok(result) => {
-            if result.decision != PolicyDecision::Allow {
-                return ServiceError::Forbidden {
-                    message: "Forbidden: Cedar policy denies Action::impersonate to non-central_admin principals".to_string(),
-                    reasons: result.reasons,
-                    diagnostics: result.diagnostics,
-                    policy: result.deciding_policy,
-                }
-                .into_response();
-            }
+    // Check Cedar policy: principal must have central_admin affiliation via decide
+    let res = scaffoldry_policy::entities::Resource::System(scaffoldry_policy::entities::SystemCtx {
+        id: "system".to_string(),
+        department: "central_admin".to_string(),
+        is_ferpa_sensitive: false,
+    });
+    let dec = crate::service::access::decide(&state, &real_admin, "impersonate", &res);
+    if !dec.allowed {
+        return ServiceError::Forbidden {
+            message: "Forbidden: Cedar policy denies Action::impersonate to non-central_admin principals".to_string(),
+            reasons: vec![],
+            diagnostics: vec![],
+            policy: dec.policy,
         }
-        Err(e) => {
-            return ServiceError::internal(format!("Policy evaluation error: {e}")).into_pair()
-                .into_response();
-        }
+        .into_response();
     }
 
     let target_user = match resolve_user(&payload.target_eppn, &state) {
