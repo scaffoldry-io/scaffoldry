@@ -84,7 +84,7 @@ async fn create_user(c: &Ctx, user_name: &str, affiliation: &str) -> Value {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "create {user_name}: {body}");
+    assert_eq!(status, StatusCode::CREATED, "creating a test user failed with status {status}");
     body["user"].clone()
 }
 
