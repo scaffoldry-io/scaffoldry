@@ -26,7 +26,7 @@ Nothing here adds a feature. It makes the server refuse what it cannot prove, st
 | 10 | [foundation.md](foundation.md) | 7 | Tokens are hashed rows a user can mint and revoke. First boot prints a setup token | **COMPLETED** |
 | 11 | [foundation.md](foundation.md) | 8 | Institution settings live in PostgreSQL and every change is in the ledger. `SCAFFOLDRY_ENV` is gone | **COMPLETED** |
 | 12 | [foundation.md](foundation.md) | 9 | A user mints an agent token in the settings pane. A Platform Admin edits settings in `/admin` | **COMPLETED** |
-| 13 | [ux-standards.md](ux-standards.md) | 1 | One component kit and a review checklist | Open |
+| 13 | [ux-standards.md](ux-standards.md) | 1 | One component kit and a review checklist | **COMPLETED** |
 | 14 | [jobs.md](jobs.md) | 1 | A durable job queue on PostgreSQL | Open |
 | 15 | [jobs.md](jobs.md) | 2 | A scheduler, a Jobs panel, and job tools for agents | Open |
 
