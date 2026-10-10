@@ -145,6 +145,9 @@ pub struct DatasetRecord {
     pub ceds_mapping: Value,
     pub is_ferpa_sensitive: bool,
     pub created_at: String,
+    /// The eppn of the principal who created the record. Absent on records written before 0022.
+    #[serde(default)]
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

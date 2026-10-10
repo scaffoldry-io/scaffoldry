@@ -80,6 +80,9 @@ pub enum StepKind {
         prompt: String,
         approve: Vec<ActionType>,
         reject: Vec<ActionType>,
+        /// Who decides. When absent, the step uses `Role { name: role }`.
+        #[serde(default)]
+        approver: Option<crate::approver::ApproverSpec>,
     },
 }
 
@@ -103,6 +106,18 @@ pub struct ProcessInstance {
     pub prompt: Option<String>,
     #[serde(default)]
     pub log: Vec<String>,
+    /// The principal whose write started this process.
+    #[serde(default)]
+    pub started_by: Option<String>,
+    /// RFC 3339.
+    #[serde(default)]
+    pub started_at: String,
+    /// Set by an administrator reassigning the instance.
+    #[serde(default)]
+    pub assigned_to: Option<String>,
+    /// Why nobody can decide the waiting step. Set by the engine.
+    #[serde(default)]
+    pub no_approver: Option<String>,
 }
 
 pub fn effects_retrigger(effects: &[ActionEffect]) -> Option<TriggerEvent> {
