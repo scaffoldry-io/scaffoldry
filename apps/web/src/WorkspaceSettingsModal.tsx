@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Collaborator, LedgerEntryItem, Persona, Workspace } from "./types";
 import { apiClient, computeSha256 } from "./api";
+import { WorkspaceRulesTab } from "./WorkspaceRulesTab";
 
 interface WorkspaceSettingsModalProps {
   workspace: Workspace;
@@ -21,7 +22,7 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
   onSave,
   ledgerEntries,
 }) => {
-  const [tab, setTab] = useState<"general" | "access" | "members" | "audit">("general");
+  const [tab, setTab] = useState<"general" | "access" | "members" | "audit" | "rules">("general");
 
   // Form states
   const [name, setName] = useState(workspace.name);
@@ -404,10 +405,29 @@ when {
           >
             Audit Ledger ({workspaceLedger.length})
           </button>
+          <button
+            type="button"
+            data-testid="guard-rules"
+            onClick={() => setTab("rules")}
+            className={`py-3 px-3.5 font-medium border-b-2 transition-colors cursor-pointer ${
+              tab === "rules"
+                ? "border-blue-600 text-blue-600 dark:text-blue-400 font-semibold"
+                : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+            }`}
+          >
+            Rules
+          </button>
         </div>
 
         {/* Tab Body */}
         <div className="flex-1 overflow-y-auto p-6 text-xs space-y-4">
+          {tab === "rules" && (
+            <WorkspaceRulesTab
+              workspace={workspace}
+              activePersona={activePersona}
+              allPersonas={allPersonas}
+            />
+          )}
           {tab === "general" && (
             <form onSubmit={handleSaveGeneralOrAccess} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
