@@ -24,6 +24,9 @@ pub enum Scope {
     App(AppAction),
     /// Reads `workspace_id` from the arguments and checks this Cedar action on that workspace.
     Workspace(&'static str),
+    /// Reads `proposal_id` from the arguments and checks this Cedar action on the workspace the
+    /// proposal belongs to.
+    Proposal(&'static str),
     /// A Platform Admin only.
     PlatformAdmin,
 }
@@ -184,6 +187,38 @@ pub static TOOLS: &[Tool] = &[
         run: run_delete_record,
     },
     Tool {
+        name: "propose_app_change",
+        description: "Propose a new app or a change to one. Send the whole manifest and the source of each custom page. Nothing changes until a person approves it. Returns the proposal id, the checks, and the change list.",
+        input_schema: schema_propose_app_change,
+        scope: Scope::Workspace("access_workspace"),
+        read_only: false,
+        run: run_propose_app_change,
+    },
+    Tool {
+        name: "list_proposals",
+        description: "The proposals of a workspace, pending first.",
+        input_schema: schema_list_proposals,
+        scope: Scope::Workspace("access_workspace"),
+        read_only: true,
+        run: run_list_proposals,
+    },
+    Tool {
+        name: "get_proposal",
+        description: "One proposal with its checks and its change list.",
+        input_schema: schema_get_proposal,
+        scope: Scope::Proposal("access_workspace"),
+        read_only: true,
+        run: run_get_proposal,
+    },
+    Tool {
+        name: "decide_proposal",
+        description: "Approve or reject a proposal. A workspace owner or admin only. A change with a failed sensitivity, data loss, or page sensitivity check needs a second person.",
+        input_schema: schema_decide_proposal,
+        scope: Scope::Proposal("manage_workspace"),
+        read_only: false,
+        run: run_decide_proposal,
+    },
+    Tool {
         name: "get_job",
         description: "Get status, progress, result, error, and logs of a job (only creator or Platform Admin).",
         input_schema: schema_get_job,
@@ -218,6 +253,11 @@ pub fn call(caller: &AuthUser, origin: &Origin, name: &str, args: Value, state: 
         Scope::Workspace(cedar_action) => {
             let ws_id = required_str(&args, "workspace_id")?;
             authorize_workspace(caller, ws_id, cedar_action, state)?;
+        }
+        Scope::Proposal(cedar_action) => {
+            let id = required_str(&args, "proposal_id")?;
+            let ws_id = crate::service::proposals::workspace_of(id, state)?;
+            authorize_workspace(caller, &ws_id, cedar_action, state)?;
         }
         Scope::PlatformAdmin => {
             crate::service::admin::require_platform_admin(caller, state)?;
@@ -879,4 +919,93 @@ fn run_get_record_history(caller: &AuthUser, _origin: &Origin, args: Value, stat
         state,
     )?;
     Ok(json!({ "entries": page.entries, "next_cursor": page.next_cursor }))
+}
+
+fn schema_propose_app_change() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "workspace_id": { "type": "string", "description": "Unique workspace identifier" },
+            "manifest": { "type": "object", "description": "The whole app manifest. Read scaffoldry://schema/app-manifest" },
+            "summary": { "type": "string", "description": "What changes and why, in a sentence or two" },
+            "page_sources": { "type": "array", "items": { "type": "string" }, "description": "The source of every new or changed custom page. Each is stored under its SHA-256, which the manifest names" }
+        },
+        "required": ["workspace_id", "manifest", "summary"]
+    })
+}
+
+fn schema_list_proposals() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "workspace_id": { "type": "string", "description": "Unique workspace identifier" } },
+        "required": ["workspace_id"]
+    })
+}
+
+fn schema_get_proposal() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "proposal_id": { "type": "string", "description": "UUID of the proposal" } },
+        "required": ["proposal_id"]
+    })
+}
+
+fn schema_decide_proposal() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "proposal_id": { "type": "string", "description": "UUID of the proposal" },
+            "decision": { "type": "string", "description": "approve or reject" },
+            "rationale": { "type": "string", "description": "Why. It is recorded in the ledger" }
+        },
+        "required": ["proposal_id", "decision", "rationale"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposeArgs {
+    workspace_id: String,
+    manifest: Value,
+    summary: String,
+    #[serde(default)]
+    page_sources: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProposalIdArgs {
+    proposal_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecideArgs {
+    proposal_id: String,
+    decision: String,
+    rationale: String,
+}
+
+fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ProposeArgs = parse(args)?;
+    crate::service::proposals::propose(
+        caller,
+        crate::service::proposals::ProposeInput { workspace_id: a.workspace_id, manifest: a.manifest, summary: a.summary, page_sources: a.page_sources },
+        state,
+    )
+}
+
+fn run_list_proposals(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ListAppsArgs = parse(args)?;
+    crate::service::proposals::list(&a.workspace_id, state)
+}
+
+fn run_get_proposal(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ProposalIdArgs = parse(args)?;
+    crate::service::proposals::get(&a.proposal_id, state)
+}
+
+fn run_decide_proposal(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: DecideArgs = parse(args)?;
+    crate::service::proposals::decide(caller, &a.proposal_id, &a.decision, &a.rationale, state)
 }
