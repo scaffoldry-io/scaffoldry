@@ -21,7 +21,7 @@ Nothing here adds a feature. It makes the server refuse what it cannot prove, st
 | 5 | [foundation.md](foundation.md) | 4 | Eight database connections | **COMPLETED** |
 | 6 | [foundation.md](foundation.md) | 5 | An app belongs to a workspace. App and record access comes from stored roles | **COMPLETED** |
 | 7 | [foundation.md](foundation.md) | 6 | No route is left without an access check | **COMPLETED** |
-| 8 | [guards.md](guards.md) | 1 | One Cedar schema and one typed entity builder. Every policy has a plain description. A denial names the policy | Open |
+| 8 | [guards.md](guards.md) | 1 | One Cedar schema and one typed entity builder. Every policy has a plain description. A denial names the policy | **COMPLETED** |
 | 9 | [business-process.md](business-process.md) | open phases | Verify each phase's tests. The completion report in that brief does not match the code. Fix the report | **COMPLETED** |
 | 10 | [foundation.md](foundation.md) | 7 | Tokens are hashed rows a user can mint and revoke. First boot prints a setup token | **COMPLETED** |
 | 11 | [foundation.md](foundation.md) | 8 | Institution settings live in PostgreSQL and every change is in the ledger. `SCAFFOLDRY_ENV` is gone | **COMPLETED** |
