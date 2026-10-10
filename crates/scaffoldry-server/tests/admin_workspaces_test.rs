@@ -158,6 +158,7 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             ceds_mapping: json!({}),
             is_ferpa_sensitive: false,
             created_at: "2026-10-10T01:00:00Z".to_string(),
+            created_by: None,
         };
         if let Some(ref repo) = c.state.repository {
             repo.upsert_record(&rec).unwrap();
@@ -172,6 +173,7 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             ceds_mapping: json!({}),
             is_ferpa_sensitive: false,
             created_at: "2026-10-10T02:00:00Z".to_string(),
+            created_by: None,
         };
         if let Some(ref repo) = c.state.repository {
             repo.upsert_record(&rec).unwrap();
