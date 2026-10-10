@@ -706,6 +706,31 @@ export const apiClient = {
       body: JSON.stringify(decision),
     });
   },
+
+  getWorkspaceGuards: async (id: string) => {
+    return request<{ current: any; history: any[] }>(`/workspaces/${id}/guards`);
+  },
+
+  putWorkspaceGuards: async (id: string, payload: { rules?: any[]; source?: string; reason: string }) => {
+    return request<any>(`/workspaces/${id}/guards`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  impactWorkspaceGuards: async (id: string, payload: { rules?: any[]; source?: string }) => {
+    return request<{ changes: any[] }>(`/workspaces/${id}/guards/impact`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  testWorkspaceGuards: async (id: string, payload: { user: string; action: string; is_ferpa_sensitive?: boolean; rules?: any[]; source?: string }) => {
+    return request<{ current: { allowed: boolean; policy?: any }; proposed: { allowed: boolean; policy?: any } }>(`/workspaces/${id}/guards/test`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
 };
 
 export const computeSha256 = async (message: string): Promise<string> => {
