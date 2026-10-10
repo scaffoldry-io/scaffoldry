@@ -1,6 +1,7 @@
 //! Scaffoldry Sovereign API Server (Layer 1 / Layer 2 / Layer 3 Bridge)
 
 pub mod guard;
+pub mod jobs;
 pub mod jwt;
 pub mod repository;
 pub mod routes;

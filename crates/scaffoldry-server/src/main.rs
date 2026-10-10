@@ -1,6 +1,6 @@
 //! Scaffoldry API Server Daemon Entrypoint
 
-use scaffoldry_server::{build_app_with_state, service, state::ServerState};
+use scaffoldry_server::{build_app_with_state, jobs, service, state::ServerState};
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -40,6 +40,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+
+    // Workers start after migrations. With no job kinds registered there is nothing to claim, so
+    // none start. The runner stops its workers when it is dropped.
+    let _job_runner = match state.repository.as_deref() {
+        Some(repo) if !jobs::JOB_KINDS.is_empty() => {
+            Some(jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?)
+        }
+        _ => None,
+    };
 
     let app = build_app_with_state(state)?;
 
