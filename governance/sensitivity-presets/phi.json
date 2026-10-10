@@ -1,0 +1,18 @@
+{
+  "category": {
+    "id": "phi",
+    "name": "Protected health information",
+    "source": "HIPAA Privacy Rule, 45 CFR Part 164",
+    "protected": true,
+    "detectors": ["phi_mrn_example"]
+  },
+  "detectors": [
+    {
+      "id": "phi_mrn_example",
+      "kind": "shape",
+      "shape": "MRN-########",
+      "action": "flag",
+      "enabled": false
+    }
+  ]
+}

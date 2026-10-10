@@ -43,6 +43,9 @@ pub struct RecordCtx {
     pub department: String,
     pub workspace_id: String,
     pub is_ferpa_sensitive: bool,
+    /// The sensitivity categories of the fields this record holds. No default policy reads them.
+    /// A workspace guard can name one.
+    pub categories: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +139,7 @@ impl RecordCtx {
                 "department": self.department,
                 "workspace_id": self.workspace_id,
                 "is_ferpa_sensitive": self.is_ferpa_sensitive,
+                "categories": self.categories,
             }),
         )
     }

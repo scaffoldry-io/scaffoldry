@@ -96,6 +96,7 @@ fn a_denial_from_a_forbid_names_that_policy() {
         department: "biology".into(),
         workspace_id: String::new(),
         is_ferpa_sensitive: true,
+        categories: Default::default(),
     };
     let result = authorize(&engine, &principal("student", "biology"), "export", &Resource::Record(record))
         .expect("evaluation must succeed");
@@ -116,6 +117,7 @@ fn an_implicit_deny_names_no_policy() {
         department: "biology".into(),
         workspace_id: String::new(),
         is_ferpa_sensitive: false,
+        categories: Default::default(),
     };
     // Different department, no permit applies, no forbid applies.
     let result = authorize(&engine, &principal("faculty", "physics"), "read", &Resource::Record(record))
@@ -142,4 +144,36 @@ fn the_legacy_workspace_wrapper_reports_the_deciding_policy_too() {
         .unwrap();
     assert_eq!(result.decision, PolicyDecision::Deny);
     assert!(result.deciding_policy.is_some(), "the restricted-workspace forbid decided this");
+}
+
+/// Sensitive content phase 1: a record carries the categories of the fields it holds, so a
+/// workspace guard can name one later. No default policy reads them.
+#[test]
+fn a_record_entity_carries_its_categories_and_the_schema_accepts_them() {
+    let engine = ScaffoldryPolicyEngine::default_institutional_engine().unwrap();
+    let with = |categories: &[&str]| RecordCtx {
+        app_slug: "bio-lab".into(),
+        department: "biology".into(),
+        workspace_id: String::new(),
+        is_ferpa_sensitive: false,
+        categories: categories.iter().map(|c| c.to_string()).collect(),
+    };
+
+    let entity = with(&["pci", "pii"]).entity();
+    assert_eq!(entity["attrs"]["categories"], serde_json::json!(["pci", "pii"]));
+    assert_eq!(with(&[]).entity()["attrs"]["categories"], serde_json::json!([]));
+
+    // The decision is the same with and without categories: no default policy reads them.
+    for action in ["read", "write", "export"] {
+        let plain = authorize(&engine, &principal("faculty", "biology"), action, &Resource::Record(with(&[])))
+            .expect("evaluation must succeed");
+        let tagged = authorize(&engine, &principal("faculty", "biology"), action, &Resource::Record(with(&["pci", "pii"])))
+            .expect("evaluation must succeed with categories present");
+        assert_eq!(plain.decision, tagged.decision, "{action}");
+        assert_eq!(
+            plain.deciding_policy.map(|p| p.id),
+            tagged.deciding_policy.map(|p| p.id),
+            "{action}: the same policy decides"
+        );
+    }
 }

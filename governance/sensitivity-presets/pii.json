@@ -1,0 +1,13 @@
+{
+  "category": {
+    "id": "pii",
+    "name": "Personally identifiable information",
+    "source": "NIST SP 800-122",
+    "protected": true,
+    "detectors": ["us_ssn", "email"]
+  },
+  "detectors": [
+    { "id": "us_ssn", "kind": "us_ssn", "action": "flag", "enabled": true },
+    { "id": "email", "kind": "email", "action": "flag", "enabled": false }
+  ]
+}

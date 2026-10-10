@@ -523,12 +523,14 @@ async fn impact_workspace_guards(
                         department: ws.department.clone(),
                         workspace_id: id.clone(),
                         is_ferpa_sensitive: sensitive,
+                        categories: Default::default(),
                     }),
                     _ => Resource::Record(RecordCtx {
                         app_slug: "app".to_string(),
                         department: ws.department.clone(),
                         workspace_id: id.clone(),
                         is_ferpa_sensitive: sensitive,
+                        categories: Default::default(),
                     }),
                 };
 
@@ -625,6 +627,7 @@ async fn test_workspace_guards(
             department: ws.department.clone(),
             workspace_id: id.clone(),
             is_ferpa_sensitive: is_sensitive,
+            categories: Default::default(),
         }),
     };
 

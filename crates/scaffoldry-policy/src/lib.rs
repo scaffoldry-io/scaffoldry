@@ -590,6 +590,7 @@ impl ScaffoldryPolicyEngine {
             department: resource_department.to_string(),
             workspace_id: String::new(),
             is_ferpa_sensitive,
+            categories: Default::default(),
         });
         authorize(self, &principal, action_name, &resource)
     }

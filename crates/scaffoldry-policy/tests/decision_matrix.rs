@@ -174,6 +174,7 @@ fn evaluate_direct(engine: &ScaffoldryPolicyEngine, case: &Case) -> String {
                 department: resource_department.to_string(),
                 workspace_id: String::new(),
                 is_ferpa_sensitive: *sensitive,
+                categories: Default::default(),
             }),
         ),
         Case::Institutional { affiliation, department, action } => authorize(

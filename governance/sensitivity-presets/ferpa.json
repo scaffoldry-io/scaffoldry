@@ -1,0 +1,18 @@
+{
+  "category": {
+    "id": "ferpa",
+    "name": "Student education records",
+    "source": "FERPA, 34 CFR Part 99",
+    "protected": true,
+    "detectors": ["ferpa_student_id_example"]
+  },
+  "detectors": [
+    {
+      "id": "ferpa_student_id_example",
+      "kind": "shape",
+      "shape": "S########",
+      "action": "flag",
+      "enabled": false
+    }
+  ]
+}

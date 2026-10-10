@@ -80,3 +80,57 @@ async fn a_label_raises_the_flag_of_a_record_that_holds_the_field() {
     let unaffected = create(&app, &token, &slug, json!({ "title": "C" })).await;
     assert_eq!(unaffected["is_ferpa_sensitive"], false, "a record without the field is not raised");
 }
+
+/// Sensitive content phase 1: a field carries categories, and the organization's settings say
+/// which of them are protected. A record is flagged by a protected category and by nothing else.
+#[tokio::test]
+async fn a_protected_category_flags_a_record_and_an_unprotected_one_does_not() {
+    let state = Arc::new(ServerState::new().expect("state"));
+    state.seed_demo().expect("seed");
+    let slug = format!("cats-{}", &Uuid::new_v4().to_string()[..8]);
+    let mut card = FieldSpec::simple("card", "Card", FieldType::Text, false, false);
+    card.categories = vec!["pci".to_string()];
+    state
+        .engine
+        .write()
+        .unwrap()
+        .register_manifest(AppManifest {
+            slug: slug.clone(),
+            title: "Categories".to_string(),
+            description: String::new(),
+            organization_code: "PHYS".to_string(),
+            department: "physics".to_string(),
+            workspace_id: Some("ws-physics-optics".to_string()),
+            herm_capability_id: None,
+            custom_domain: None,
+            custom_domain_verified: false,
+            views: vec![AppView::table(
+                "main",
+                "Main",
+                ViewType::Table,
+                vec![FieldSpec::simple("title", "Title", FieldType::Text, false, false), card],
+            )],
+            ceds_mappings: Default::default(),
+            tables: vec![],
+            relationships: vec![],
+        })
+        .unwrap();
+    let app = build_app_with_state(state.clone()).expect("router");
+    let token = issue_test_token_and_user("jordan.lee@state.edu");
+    let set = |protected: bool| {
+        state.settings.write().unwrap().insert(
+            "sensitivity.categories".to_string(),
+            json!([{ "id": "pci", "name": "Payment card data", "protected": protected, "detectors": [] }]),
+        );
+    };
+
+    set(true);
+    let held = create(&app, &token, &slug, json!({ "title": "A", "card": "x" })).await;
+    assert_eq!(held["is_ferpa_sensitive"], true, "pci is protected and the record holds the field");
+    let absent = create(&app, &token, &slug, json!({ "title": "B" })).await;
+    assert_eq!(absent["is_ferpa_sensitive"], false, "a record without the field is not flagged");
+
+    set(false);
+    let open = create(&app, &token, &slug, json!({ "title": "C", "card": "x" })).await;
+    assert_eq!(open["is_ferpa_sensitive"], false, "the organization marked pci unprotected");
+}
