@@ -31,6 +31,7 @@ const SCHEMA_0009: &str = include_str!("../../scaffoldry-core/migrations/0009_le
 const SCHEMA_0010: &str = include_str!("../../scaffoldry-core/migrations/0010_app_workspace.sql");
 const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_api_tokens.sql");
 const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
+const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
@@ -52,6 +53,7 @@ type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
 pub struct PostgresRepository {
     worker_tx: Sender<WorkerJob>,
     worker_count: usize,
+    db_url: std::sync::Arc<String>,
 }
 
 impl std::fmt::Debug for PostgresRepository {
@@ -103,7 +105,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 11] = [
+                        let migrations: [(&str, &str); 12] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -115,6 +117,7 @@ impl PostgresRepository {
                             ("0010_app_workspace.sql", SCHEMA_0010),
                             ("0012_api_tokens.sql", SCHEMA_0012),
                             ("0013_platform_settings.sql", SCHEMA_0013),
+                            ("0026_jobs.sql", SCHEMA_0026),
                         ];
 
                         let mut fresh_install = false;
@@ -205,7 +208,11 @@ impl PostgresRepository {
                 .map_err(|e| RepositoryError::NotFound(format!("Failed to spawn db worker thread {w_idx}: {e}")))?;
         }
 
-        let repo = Self { worker_tx, worker_count: num_workers };
+        let repo = Self {
+            worker_tx,
+            worker_count: num_workers,
+            db_url: std::sync::Arc::new(db_url),
+        };
         Ok(repo)
     }
 
@@ -218,6 +225,12 @@ impl PostgresRepository {
             let rows = client.query("SELECT filename FROM schema_migrations ORDER BY filename ASC", &[])?;
             Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
         })
+    }
+
+    /// A new connection that the caller owns. Job workers use one each, so a long job never
+    /// holds up the request workers.
+    pub fn dedicated_client(&self) -> Result<Client, RepositoryError> {
+        Ok(Client::connect(&self.db_url, NoTls)?)
     }
 
     pub fn with_client<R: Send + 'static>(
