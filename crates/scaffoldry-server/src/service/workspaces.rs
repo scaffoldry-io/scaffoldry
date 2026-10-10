@@ -43,6 +43,8 @@ pub struct UpdateWorkspacePayload {
     pub data_classification: Option<String>,
     pub icon: Option<String>,
     pub cedar_policy_guard: Option<String>,
+    pub organization_id: Option<uuid::Uuid>,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,11 +344,22 @@ pub fn update_workspace(
 
     let norm_role = member_role.map(str::to_lowercase);
 
+    let is_admin = {
+        let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().map(|g| g.values().cloned().collect()).unwrap_or_default();
+        let roles: Vec<crate::state::RoleRow> = state.roles.read().map(|g| g.clone()).unwrap_or_default();
+        let org_caller = crate::service::organizations::OrgCaller {
+            eppn: caller.eppn.clone(),
+            affiliation: caller.affiliation.clone(),
+        };
+        crate::service::organizations::is_platform_admin(&org_caller, &orgs, &roles)
+    };
+    let effective_aff = if is_admin { "central_admin" } else { &caller.affiliation };
+
     let decision = state
         .policy_engine
         .authorize_workspace_action(&WorkspaceActionInput {
             principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
+            principal_affiliation: effective_aff,
             principal_department: &caller.department,
             action_name: "manage_workspace",
             workspace_id: &ws.id,
@@ -365,6 +378,40 @@ pub fn update_workspace(
             policy: decision.deciding_policy,
         });
     }
+
+    if let Some(ref class) = payload.data_classification {
+        match class.as_str() {
+            "Public" | "Internal" | "Restricted" | "FERPA Sensitive" => {}
+            _ => {
+                return Err(ServiceError::BadRequest(
+                    "Invalid data_classification: must be one of Public, Internal, Restricted, FERPA Sensitive".to_string(),
+                ));
+            }
+        }
+    }
+    if let Some(ref vis) = payload.visibility {
+        match vis.as_str() {
+            "restricted" | "departmental" | "institutional" => {}
+            _ => {
+                return Err(ServiceError::BadRequest(
+                    "Invalid visibility: must be one of restricted, departmental, institutional".to_string(),
+                ));
+            }
+        }
+    }
+    if let Some(org_id) = payload.organization_id {
+        let exists = {
+            let orgs = state.organizations.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
+            orgs.contains_key(&org_id)
+        };
+        if !exists {
+            return Err(ServiceError::BadRequest("Organization unit does not exist".to_string()));
+        }
+    }
+
+    let old_org_id = ws.organization_id;
+    let old_visibility = ws.visibility.clone();
+    let old_classification = ws.data_classification.clone();
 
     if let Some(name) = payload.name {
         ws.name = name;
@@ -390,6 +437,36 @@ pub fn update_workspace(
     if let Some(guard) = payload.cedar_policy_guard {
         ws.cedar_policy_guard = Some(guard);
     }
+    if let Some(org_id) = payload.organization_id {
+        ws.organization_id = Some(org_id);
+    }
+
+    let rationale = payload.reason.filter(|r| !r.trim().is_empty()).unwrap_or_else(|| {
+        format!(
+            "Principal {} updated configuration for workspace {}",
+            caller.eppn, ws.name
+        )
+    });
+
+    let mut changes = serde_json::Map::new();
+    if old_org_id != ws.organization_id {
+        changes.insert(
+            "organization_id".to_string(),
+            json!({ "old": old_org_id, "new": ws.organization_id }),
+        );
+    }
+    if old_visibility != ws.visibility {
+        changes.insert(
+            "visibility".to_string(),
+            json!({ "old": old_visibility, "new": ws.visibility }),
+        );
+    }
+    if old_classification != ws.data_classification {
+        changes.insert(
+            "data_classification".to_string(),
+            json!({ "old": old_classification, "new": ws.data_classification }),
+        );
+    }
 
     state.append_ledger_entry(RecordDecisionInput {
         principal: caller.eppn.clone(),
@@ -397,11 +474,17 @@ pub fn update_workspace(
         app_slug: None,
         decision_type: DecisionType::WorkspaceUpdated,
         oscal_control_id: "AC-03".to_string(),
-        rationale: format!(
-            "Principal {} updated configuration for workspace {}",
-            caller.eppn, ws.name
-        ),
-        payload: &json!({ "workspace_id": id, "visibility": ws.visibility }),
+        rationale,
+        payload: &json!({
+            "workspace_id": id,
+            "visibility": ws.visibility,
+            "old_visibility": old_visibility,
+            "organization_id": ws.organization_id,
+            "old_organization_id": old_org_id,
+            "data_classification": ws.data_classification,
+            "old_data_classification": old_classification,
+            "changes": changes,
+        }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
     if let Some(ref repo) = state.repository {
