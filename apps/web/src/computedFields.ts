@@ -9,90 +9,478 @@ export function evaluateClientFormula(
   expression: string,
   record: Record<string, any>
 ): any {
+  if (!expression || typeof expression !== "string") return null;
   const expr = expression.trim();
-  if (!expr) return "";
+  if (!expr || expr.length > 500) return null;
 
-  // Direct reference e.g. "{budget}"
-  if (expr.startsWith("{") && expr.endsWith("}") && !expr.slice(1, -1).includes("}")) {
-    const field = expr.slice(1, -1);
-    return record[field] ?? "";
-  }
+  const tokens = tokenize(expr);
+  if (!tokens) return null;
 
-  // Multiplication: {budget} * 0.20
-  if (expr.includes("*")) {
-    const [left, right] = expr.split("*");
-    const v1 = parseOperand(left, record);
-    const v2 = parseOperand(right, record);
-    if (typeof v1 === "number" && typeof v2 === "number") {
-      return v1 * v2;
+  const parser = new FormulaParser(tokens, record);
+  return parser.parse();
+}
+
+type TokenType =
+  | "NUMBER"
+  | "STRING"
+  | "FIELD"
+  | "IDENT"
+  | "PLUS"
+  | "MINUS"
+  | "STAR"
+  | "SLASH"
+  | "EQ"
+  | "NEQ"
+  | "LT"
+  | "LTE"
+  | "GT"
+  | "GTE"
+  | "LPAREN"
+  | "RPAREN"
+  | "COMMA"
+  | "EOF";
+
+interface Token {
+  type: TokenType;
+  value?: any;
+}
+
+function tokenize(input: string): Token[] | null {
+  const tokens: Token[] = [];
+  let i = 0;
+  const n = input.length;
+
+  while (i < n) {
+    const ch = input[i];
+
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
     }
-  }
 
-  // Division: {budget} / 12
-  if (expr.includes("/")) {
-    const [left, right] = expr.split("/");
-    const v1 = parseOperand(left, record);
-    const v2 = parseOperand(right, record);
-    if (typeof v1 === "number" && typeof v2 === "number" && v2 !== 0) {
-      return v1 / v2;
+    if (ch === "{") {
+      const close = input.indexOf("}", i);
+      if (close === -1) return null;
+      tokens.push({ type: "FIELD", value: input.slice(i + 1, close) });
+      i = close + 1;
+      continue;
     }
-  }
 
-  // Addition or string concatenation
-  if (expr.includes("+")) {
-    const parts = expr.split("+").map((s) => s.trim());
-    let allNumbers = true;
-    let sum = 0;
-    let concatStr = "";
-
-    for (const part of parts) {
-      const v = parseOperand(part, record);
-      if (typeof v === "number" && !isNaN(v)) {
-        sum += v;
-      } else {
-        allNumbers = false;
+    if (ch === '"' || ch === "'") {
+      let str = "";
+      i++;
+      let closed = false;
+      while (i < n) {
+        if (input[i] === ch) {
+          closed = true;
+          i++;
+          break;
+        }
+        if (input[i] === "\\") {
+          i++;
+          if (i < n) {
+            str += input[i];
+            i++;
+          }
+        } else {
+          str += input[i];
+          i++;
+        }
       }
-      concatStr += String(v ?? "");
+      if (!closed) return null;
+      tokens.push({ type: "STRING", value: str });
+      continue;
     }
 
-    return allNumbers && parts.length > 1 ? sum : concatStr;
+    if (/[0-9]/.test(ch) || (ch === "." && i + 1 < n && /[0-9]/.test(input[i + 1]))) {
+      let numStr = "";
+      while (i < n && /[0-9.]/.test(input[i])) {
+        numStr += input[i];
+        i++;
+      }
+      const num = Number(numStr);
+      if (isNaN(num)) return null;
+      tokens.push({ type: "NUMBER", value: num });
+      continue;
+    }
+
+    if (/[a-zA-Z_]/.test(ch)) {
+      let idStr = "";
+      while (i < n && /[a-zA-Z0-9_]/.test(input[i])) {
+        idStr += input[i];
+        i++;
+      }
+      tokens.push({ type: "IDENT", value: idStr });
+      continue;
+    }
+
+    if (ch === "!" && i + 1 < n && input[i + 1] === "=") {
+      tokens.push({ type: "NEQ" });
+      i += 2;
+      continue;
+    }
+    if (ch === "<" && i + 1 < n && input[i + 1] === "=") {
+      tokens.push({ type: "LTE" });
+      i += 2;
+      continue;
+    }
+    if (ch === ">" && i + 1 < n && input[i + 1] === "=") {
+      tokens.push({ type: "GTE" });
+      i += 2;
+      continue;
+    }
+    if (ch === "<" && i + 1 < n && input[i + 1] === ">") {
+      tokens.push({ type: "NEQ" });
+      i += 2;
+      continue;
+    }
+
+    switch (ch) {
+      case "+": tokens.push({ type: "PLUS" }); break;
+      case "-": tokens.push({ type: "MINUS" }); break;
+      case "*": tokens.push({ type: "STAR" }); break;
+      case "/": tokens.push({ type: "SLASH" }); break;
+      case "=": tokens.push({ type: "EQ" }); break;
+      case "<": tokens.push({ type: "LT" }); break;
+      case ">": tokens.push({ type: "GT" }); break;
+      case "(": tokens.push({ type: "LPAREN" }); break;
+      case ")": tokens.push({ type: "RPAREN" }); break;
+      case ",": tokens.push({ type: "COMMA" }); break;
+      default: return null;
+    }
+    i++;
   }
 
-  // Subtraction: {budget} - {spent}
-  if (expr.includes("-")) {
-    const [left, right] = expr.split("-");
-    const v1 = parseOperand(left, record);
-    const v2 = parseOperand(right, record);
-    if (typeof v1 === "number" && typeof v2 === "number") {
-      return v1 - v2;
+  tokens.push({ type: "EOF" });
+  return tokens;
+}
+
+class FormulaParser {
+  private pos = 0;
+  private depth = 0;
+
+  constructor(
+    private tokens: Token[],
+    private record: Record<string, any>
+  ) {}
+
+  private peek(): Token {
+    return this.tokens[this.pos] || { type: "EOF" };
+  }
+
+  private advance(): Token {
+    const t = this.tokens[this.pos];
+    this.pos++;
+    return t;
+  }
+
+  private isTruthy(v: any): boolean {
+    if (v === null || v === undefined || v === "" || v === 0 || v === false) {
+      return false;
+    }
+    return true;
+  }
+
+  public parse(): any {
+    try {
+      const res = this.expr();
+      return res;
+    } catch {
+      return null;
     }
   }
 
-  return parseOperand(expr, record);
+  private withDepth<T>(fn: () => T): T {
+    this.depth++;
+    if (this.depth > 32) throw new Error("Max depth exceeded");
+    try {
+      return fn();
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private expr(): any {
+    return this.or();
+  }
+
+  private or(): any {
+    return this.withDepth(() => {
+      let left = this.and();
+      while (
+        this.peek().type === "IDENT" &&
+        this.peek().value?.toUpperCase() === "OR"
+      ) {
+        this.advance();
+        const right = this.and();
+        left = Boolean(this.isTruthy(left) || this.isTruthy(right));
+      }
+      return left;
+    });
+  }
+
+  private and(): any {
+    return this.withDepth(() => {
+      let left = this.not();
+      while (
+        this.peek().type === "IDENT" &&
+        this.peek().value?.toUpperCase() === "AND"
+      ) {
+        this.advance();
+        const right = this.not();
+        left = Boolean(this.isTruthy(left) && this.isTruthy(right));
+      }
+      return left;
+    });
+  }
+
+  private not(): any {
+    return this.withDepth(() => {
+      if (
+        this.peek().type === "IDENT" &&
+        this.peek().value?.toUpperCase() === "NOT"
+      ) {
+        this.advance();
+        const inner = this.not();
+        return !this.isTruthy(inner);
+      }
+      return this.cmp();
+    });
+  }
+
+  private cmp(): any {
+    return this.withDepth(() => {
+      const left = this.add();
+      const p = this.peek();
+      if (
+        p.type === "EQ" ||
+        p.type === "NEQ" ||
+        p.type === "LT" ||
+        p.type === "LTE" ||
+        p.type === "GT" ||
+        p.type === "GTE"
+      ) {
+        const op = this.advance().type;
+        const right = this.add();
+        return this.compare(left, right, op);
+      }
+      return left;
+    });
+  }
+
+  private compare(left: any, right: any, op: TokenType): boolean {
+    if (typeof left === "number" && typeof right === "number") {
+      switch (op) {
+        case "EQ": return left === right;
+        case "NEQ": return left !== right;
+        case "LT": return left < right;
+        case "LTE": return left <= right;
+        case "GT": return left > right;
+        case "GTE": return left >= right;
+      }
+    }
+    const sLeft = left === null || left === undefined ? "" : String(left);
+    const sRight = right === null || right === undefined ? "" : String(right);
+    switch (op) {
+      case "EQ":
+        return left === right || sLeft === sRight;
+      case "NEQ":
+        return left !== right && sLeft !== sRight;
+      case "LT": return sLeft < sRight;
+      case "LTE": return sLeft <= sRight;
+      case "GT": return sLeft > sRight;
+      case "GTE": return sLeft >= sRight;
+    }
+    return false;
+  }
+
+  private add(): any {
+    return this.withDepth(() => {
+      let left = this.mul();
+      while (this.peek().type === "PLUS" || this.peek().type === "MINUS") {
+        const op = this.advance().type;
+        const right = this.mul();
+        if (op === "PLUS") {
+          if (typeof left === "string" || typeof right === "string") {
+            const sl = left === null || left === undefined ? "" : String(left);
+            const sr = right === null || right === undefined ? "" : String(right);
+            left = sl + sr;
+          } else if (typeof left === "number" && typeof right === "number") {
+            left = left + right;
+          } else {
+            left = null;
+          }
+        } else {
+          if (typeof left === "number" && typeof right === "number") {
+            left = left - right;
+          } else {
+            left = null;
+          }
+        }
+      }
+      return left;
+    });
+  }
+
+  private mul(): any {
+    return this.withDepth(() => {
+      let left = this.unary();
+      while (this.peek().type === "STAR" || this.peek().type === "SLASH") {
+        const op = this.advance().type;
+        const right = this.unary();
+        if (typeof left === "number" && typeof right === "number") {
+          if (op === "STAR") {
+            left = left * right;
+          } else {
+            if (right === 0) {
+              left = null;
+            } else {
+              left = left / right;
+            }
+          }
+        } else {
+          left = null;
+        }
+      }
+      return left;
+    });
+  }
+
+  private unary(): any {
+    return this.withDepth(() => {
+      if (this.peek().type === "MINUS") {
+        this.advance();
+        const inner = this.unary();
+        if (typeof inner === "number") {
+          return -inner;
+        }
+        return null;
+      }
+      return this.primary();
+    });
+  }
+
+  private primary(): any {
+    return this.withDepth(() => {
+      const p = this.peek();
+
+      if (p.type === "NUMBER") {
+        this.advance();
+        return p.value;
+      }
+
+      if (p.type === "STRING") {
+        this.advance();
+        return p.value;
+      }
+
+      if (p.type === "FIELD") {
+        this.advance();
+        const val = this.record[p.value];
+        if (val === undefined || val === null) return null;
+        return val;
+      }
+
+      if (p.type === "LPAREN") {
+        this.advance();
+        const val = this.expr();
+        if (this.peek().type === "RPAREN") {
+          this.advance();
+        } else {
+          throw new Error("Expected closing parenthesis");
+        }
+        return val;
+      }
+
+      if (p.type === "IDENT") {
+        const idToken = this.advance();
+        if (this.peek().type === "LPAREN") {
+          this.advance();
+          const args: any[] = [];
+          if (this.peek().type !== "RPAREN") {
+            args.push(this.expr());
+            while (this.peek().type === "COMMA") {
+              this.advance();
+              args.push(this.expr());
+            }
+          }
+          if (this.peek().type === "RPAREN") {
+            this.advance();
+          } else {
+            throw new Error("Expected closing parenthesis");
+          }
+          return this.callFunc(idToken.value.toUpperCase(), args);
+        }
+        return null;
+      }
+
+      return null;
+    });
+  }
+
+  private callFunc(name: string, args: any[]): any {
+    switch (name) {
+      case "IF": {
+        const cond = args[0];
+        if (this.isTruthy(cond)) {
+          return args.length > 1 ? args[1] : null;
+        } else {
+          return args.length > 2 ? args[2] : null;
+        }
+      }
+      case "AND": {
+        if (args.length === 0) return null;
+        return args.every((a) => this.isTruthy(a));
+      }
+      case "OR": {
+        if (args.length === 0) return null;
+        return args.some((a) => this.isTruthy(a));
+      }
+      case "NOT": {
+        if (args.length === 0) return null;
+        return !this.isTruthy(args[0]);
+      }
+      case "ROUND": {
+        if (typeof args[0] !== "number") return null;
+        const digits = typeof args[1] === "number" ? args[1] : 0;
+        const factor = Math.pow(10, digits);
+        return Math.round(args[0] * factor) / factor;
+      }
+      case "ABS": {
+        if (typeof args[0] !== "number") return null;
+        return Math.abs(args[0]);
+      }
+      case "CONCAT": {
+        let str = "";
+        for (const a of args) {
+          if (a !== null && a !== undefined) {
+            str += String(a);
+          }
+        }
+        return str;
+      }
+      case "LEN": {
+        const val = args[0];
+        if (val === null || val === undefined) return 0;
+        return String(val).length;
+      }
+      case "BLANK": {
+        return null;
+      }
+      case "ISBLANK": {
+        const val = args[0];
+        return val === null || val === undefined || val === "";
+      }
+      default:
+        return null;
+    }
+  }
 }
 
-function parseOperand(op: string, record: Record<string, any>): any {
-  const trimmed = op.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    const key = trimmed.slice(1, -1);
-    const val = record[key];
-    const num = Number(val);
-    return !isNaN(num) && val !== "" && val !== null && typeof val !== "boolean" ? num : val ?? "";
-  }
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  const n = Number(trimmed);
-  if (!isNaN(n)) return n;
-  return record[trimmed] ?? "";
+export function parseOperand(op: string, record: Record<string, any>): any {
+  return evaluateClientFormula(op, record);
 }
 
-/**
- * Resolves computed field values across tables (Lookup, Count, Rollup, Formula).
- */
 export function computeFieldValue(
   field: FieldSpec,
   record: Record<string, any>,

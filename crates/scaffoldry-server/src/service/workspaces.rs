@@ -30,6 +30,7 @@ pub struct CreateWorkspacePayload {
     pub visibility: Option<String>,
     pub allowed_affiliations: Option<Vec<String>>,
     pub data_classification: Option<String>,
+    pub organization_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -66,6 +67,14 @@ pub fn list_workspaces(
         .read()
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
 
+    let org_caller = crate::service::organizations::OrgCaller {
+        eppn: caller.eppn.clone(),
+        affiliation: caller.affiliation.clone(),
+    };
+    let orgs_map = state.organizations.read().unwrap();
+    let all_orgs: Vec<crate::state::OrganizationNode> = orgs_map.values().cloned().collect();
+    let roles: Vec<crate::state::RoleRow> = state.roles.read().unwrap().clone();
+
     let mut response_list = Vec::new();
 
     for ws in ws_guard.values() {
@@ -75,6 +84,24 @@ pub fn list_workspaces(
                 Some(m) => (true, Some(m.role.clone())),
                 None => (false, None),
             };
+
+        let in_org_scope = match ws.organization_id {
+            Some(org_id) => crate::service::organizations::unit_in_scope(&org_caller, org_id, &all_orgs, &roles),
+            None => caller.affiliation == "central_admin",
+        };
+
+        if !in_org_scope && !is_member {
+            continue;
+        }
+
+        if in_org_scope && !is_member {
+            response_list.push(WorkspaceResponse {
+                workspace: ws.clone(),
+                collaborators: collabs,
+                user_role: Some("admin".to_string()),
+            });
+            continue;
+        }
 
         let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
 
@@ -173,6 +200,26 @@ pub fn create_workspace(
     payload: CreateWorkspacePayload,
     state: &SharedState,
 ) -> Result<WorkspaceRecord, ServiceError> {
+    let target_org_id = payload.organization_id.unwrap_or_else(|| {
+        uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()
+    });
+
+    {
+        let orgs_map = state.organizations.read().unwrap();
+        if !orgs_map.contains_key(&target_org_id) {
+            return Err(ServiceError::BadRequest(format!("Unknown organization_id: {target_org_id}")));
+        }
+        let all_orgs: Vec<_> = orgs_map.values().cloned().collect();
+        let roles = state.roles.read().unwrap().clone();
+        let org_caller = crate::service::organizations::OrgCaller {
+            eppn: caller.eppn.clone(),
+            affiliation: caller.affiliation.clone(),
+        };
+        if !crate::service::organizations::unit_in_scope(&org_caller, target_org_id, &all_orgs, &roles) {
+            return Err(ServiceError::forbidden("organization_id is not in scope"));
+        }
+    }
+
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
@@ -204,7 +251,28 @@ pub fn create_workspace(
             .unwrap_or_else(|| "Internal".to_string()),
         cedar_policy_guard: None,
         created_at: now.clone(),
+        organization_id: payload.organization_id.or_else(|| {
+            uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").ok()
+        }),
     };
+
+    state.append_ledger_entry(RecordDecisionInput {
+        principal: caller.eppn.clone(),
+        organization_code: payload.code,
+        app_slug: None,
+        decision_type: DecisionType::WorkspaceCreated,
+        oscal_control_id: "AC-02".to_string(),
+        rationale: format!(
+            "Principal {} created workspace {}",
+            caller.eppn, record.name
+        ),
+        payload: &json!({
+            "workspace_id": id,
+            "name": record.name,
+            "department": record.department,
+            "visibility": record.visibility
+        }),
+    }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
     {
         let mut ws_guard = state
@@ -225,6 +293,11 @@ pub fn create_workspace(
         added_at: now,
     };
 
+    if let Some(ref repo) = state.repository {
+        repo.upsert_workspace(&record).map_err(|e| ServiceError::Internal(e.to_string()))?;
+        repo.upsert_collaborator(&initial_owner).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    }
+
     {
         let mut collabs_guard = state
             .collaborators
@@ -232,24 +305,6 @@ pub fn create_workspace(
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
         collabs_guard.entry(id.clone()).or_default().push(initial_owner);
     }
-
-    let _ = state.append_ledger_entry(RecordDecisionInput {
-        principal: caller.eppn.clone(),
-        organization_code: payload.code,
-        app_slug: None,
-        decision_type: DecisionType::WorkspaceCreated,
-        oscal_control_id: "AC-02".to_string(),
-        rationale: format!(
-            "Principal {} created workspace {}",
-            caller.eppn, record.name
-        ),
-        payload: &json!({
-            "workspace_id": id,
-            "name": record.name,
-            "department": record.department,
-            "visibility": record.visibility
-        }),
-    });
 
     Ok(record)
 }
@@ -334,15 +389,7 @@ pub fn update_workspace(
         ws.cedar_policy_guard = Some(guard);
     }
 
-    {
-        let mut ws_guard = state
-            .workspaces
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        ws_guard.insert(id.to_string(), ws.clone());
-    }
-
-    let _ = state.append_ledger_entry(RecordDecisionInput {
+    state.append_ledger_entry(RecordDecisionInput {
         principal: caller.eppn.clone(),
         organization_code: ws.code.clone(),
         app_slug: None,
@@ -353,7 +400,19 @@ pub fn update_workspace(
             caller.eppn, ws.name
         ),
         payload: &json!({ "workspace_id": id, "visibility": ws.visibility }),
-    });
+    }).map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    if let Some(ref repo) = state.repository {
+        repo.upsert_workspace(&ws).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    }
+
+    {
+        let mut ws_guard = state
+            .workspaces
+            .write()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        ws_guard.insert(id.to_string(), ws.clone());
+    }
 
     Ok(ws)
 }
@@ -453,18 +512,7 @@ pub fn add_collaborator(
         added_at: Utc::now().to_rfc3339(),
     };
 
-    {
-        let mut collabs_guard = state
-            .collaborators
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard
-            .entry(workspace_id.to_string())
-            .or_default()
-            .push(new_member.clone());
-    }
-
-    let _ = state.append_ledger_entry(RecordDecisionInput {
+    state.append_ledger_entry(RecordDecisionInput {
         principal: caller.eppn.clone(),
         organization_code: ws.code,
         app_slug: None,
@@ -479,7 +527,22 @@ pub fn add_collaborator(
             "target_eppn": payload.eppn,
             "role": role_str
         }),
-    });
+    }).map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    if let Some(ref repo) = state.repository {
+        repo.upsert_collaborator(&new_member).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    }
+
+    {
+        let mut collabs_guard = state
+            .collaborators
+            .write()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        collabs_guard
+            .entry(workspace_id.to_string())
+            .or_default()
+            .push(new_member.clone());
+    }
 
     Ok(new_member)
 }
@@ -547,15 +610,7 @@ pub fn update_collaborator_role(
     member.role = new_role.to_string();
     let updated = member.clone();
 
-    {
-        let mut collabs_guard = state
-            .collaborators
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.insert(workspace_id.to_string(), collabs);
-    }
-
-    let _ = state.append_ledger_entry(RecordDecisionInput {
+    state.append_ledger_entry(RecordDecisionInput {
         principal: caller.eppn.clone(),
         organization_code: ws.code,
         app_slug: None,
@@ -570,7 +625,19 @@ pub fn update_collaborator_role(
             "target_eppn": target_eppn,
             "new_role": new_role
         }),
-    });
+    }).map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    if let Some(ref repo) = state.repository {
+        repo.upsert_collaborator(&updated).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    }
+
+    {
+        let mut collabs_guard = state
+            .collaborators
+            .write()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        collabs_guard.insert(workspace_id.to_string(), collabs);
+    }
 
     Ok(updated)
 }
@@ -637,15 +704,7 @@ pub fn remove_collaborator(
         return Err(ServiceError::NotFound(format!("Member '{target_eppn}' not found")));
     }
 
-    {
-        let mut collabs_guard = state
-            .collaborators
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.insert(workspace_id.to_string(), remaining);
-    }
-
-    let _ = state.append_ledger_entry(RecordDecisionInput {
+    state.append_ledger_entry(RecordDecisionInput {
         principal: caller.eppn.clone(),
         organization_code: ws.code,
         app_slug: None,
@@ -659,7 +718,19 @@ pub fn remove_collaborator(
             "workspace_id": workspace_id,
             "removed_eppn": target_eppn
         }),
-    });
+    }).map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    if let Some(ref repo) = state.repository {
+        repo.remove_collaborator(workspace_id, target_eppn).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    }
+
+    {
+        let mut collabs_guard = state
+            .collaborators
+            .write()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        collabs_guard.insert(workspace_id.to_string(), remaining);
+    }
 
     Ok(())
 }

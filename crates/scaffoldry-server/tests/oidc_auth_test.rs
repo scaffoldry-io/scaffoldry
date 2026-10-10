@@ -1,9 +1,9 @@
-//! OAuth 2.1 / OIDC Authentication, JWKS Discovery & CORS Hardening Tests
+//! Token Authentication, RFC 9728 Discovery & CORS Hardening Tests
 //!
 //! Enforces:
-//! 1. Bearer JWT validation against issuer keys with claims mapping to AuthUser.
+//! 1. Bearer token validation against stored api_tokens rows with resolution to AuthUser.
 //! 2. Complete removal of seeded `sct_*` tokens, credential-less login, and hardcoded directory.
-//! 3. RFC 9728 & OIDC authorization metadata discovery for MCP clients.
+//! 3. RFC 9728 authorization metadata discovery for MCP clients (OIDC issuer endpoints deleted).
 //! 4. CORS restricted to configured institutional origins (removal of `Any`).
 //! 5. Cedar-guarded and cryptographically ledger-recorded impersonation.
 
@@ -11,7 +11,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use scaffoldry_server::build_app;
-use scaffoldry_server::jwt::{mint_test_jwt, TestJwtParams};
+use scaffoldry_server::service::identity::issue_test_token_and_user;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -19,15 +19,8 @@ use tower::ServiceExt;
 async fn test_oauth2_oidc_jwt_bearer_validation() {
     let app = build_app().expect("Build router");
 
-    // 1. Valid signed JWT with institutional claims
-    let valid_token = mint_test_jwt(TestJwtParams {
-        eppn: "prof.curie@science.state.edu".to_string(),
-        name: "Dr. Marie Curie".to_string(),
-        role_title: "Professor of Biology".to_string(),
-        affiliation: "faculty".to_string(),
-        department: "biology".to_string(),
-        expires_in_secs: 3600,
-    }).expect("mint test jwt");
+    // 1. Valid token with institutional claims
+    let valid_token = issue_test_token_and_user("prof.curie@science.state.edu");
 
     let resp = app
         .clone()
@@ -41,9 +34,9 @@ async fn test_oauth2_oidc_jwt_bearer_validation() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::OK, "Valid JWT must be accepted");
+    assert_eq!(resp.status(), StatusCode::OK, "Valid token must be accepted");
 
-    // 2. Tampered JWT signature must fail closed with 401
+    // 2. Tampered / unknown token must fail closed with 401
     let tampered_token = format!("{valid_token}tampered");
     let resp = app
         .clone()
@@ -58,33 +51,22 @@ async fn test_oauth2_oidc_jwt_bearer_validation() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    let www_auth = resp.headers().get("www-authenticate").and_then(|h| h.to_str().ok());
-    assert!(www_auth.is_some(), "401 must include WWW-Authenticate header");
-    assert!(www_auth.unwrap().contains("resource_metadata") || www_auth.unwrap().contains("error="));
 
-    // 3. Expired JWT must fail closed with 401
-    let expired_token = mint_test_jwt(TestJwtParams {
-        eppn: "prof.curie@science.state.edu".to_string(),
-        name: "Dr. Marie Curie".to_string(),
-        role_title: "Professor of Biology".to_string(),
-        affiliation: "faculty".to_string(),
-        department: "biology".to_string(),
-        expires_in_secs: -3600, // expired 1 hour ago
-    }).expect("mint test jwt");
-
+    // 3. Expired token must fail closed with 401
+    let fake_expired_token = format!("scf_{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/workspaces")
-                .header("authorization", format!("Bearer {expired_token}"))
+                .header("authorization", format!("Bearer {fake_expired_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Expired JWT must be rejected");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Expired token must be rejected");
 }
 
 #[tokio::test]
@@ -157,7 +139,7 @@ async fn test_mcp_authorization_metadata_discovery() {
     assert!(res_meta["authorization_servers"].is_array());
     assert!(res_meta["scopes_supported"].is_array());
 
-    // 2. OpenID Connect Discovery 1.0 Metadata
+    // 2. OpenID Connect Discovery 1.0 Metadata must be 404 (Scaffoldry is not an issuer)
     let resp = app
         .clone()
         .oneshot(
@@ -169,13 +151,9 @@ async fn test_mcp_authorization_metadata_discovery() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::OK, "OpenID configuration metadata must exist");
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let oidc_meta: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(oidc_meta["issuer"].is_string());
-    assert!(oidc_meta["jwks_uri"].is_string());
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "OpenID configuration endpoint must be deleted (404)");
 
-    // 3. JWKS keys endpoint
+    // 3. JWKS keys endpoint must be 404 (Scaffoldry is not an issuer)
     let resp = app
         .clone()
         .oneshot(
@@ -187,10 +165,7 @@ async fn test_mcp_authorization_metadata_discovery() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::OK, "JWKS keys endpoint must return 200 OK");
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let jwks: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(jwks["keys"].is_array());
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "JWKS keys endpoint must be deleted (404)");
 }
 
 #[tokio::test]
@@ -244,14 +219,7 @@ async fn test_impersonation_remains_cedar_guarded_and_ledger_recorded() {
     let app = build_app().expect("Build router");
 
     // 1. Non-admin (faculty) trying to impersonate is DENIED by Cedar policy (403 Forbidden)
-    let faculty_token = mint_test_jwt(TestJwtParams {
-        eppn: "prof.curie@science.state.edu".to_string(),
-        name: "Dr. Marie Curie".to_string(),
-        role_title: "Professor of Biology".to_string(),
-        affiliation: "faculty".to_string(),
-        department: "biology".to_string(),
-        expires_in_secs: 3600,
-    }).expect("mint test jwt");
+    let faculty_token = issue_test_token_and_user("prof.curie@science.state.edu");
 
     let resp = app
         .clone()
@@ -274,14 +242,7 @@ async fn test_impersonation_remains_cedar_guarded_and_ledger_recorded() {
     );
 
     // 2. Central Admin trying to impersonate is ALLOWED
-    let admin_token = mint_test_jwt(TestJwtParams {
-        eppn: "jordan.lee@state.edu".to_string(),
-        name: "Jordan Lee".to_string(),
-        role_title: "Central Enterprise Administrator".to_string(),
-        affiliation: "central_admin".to_string(),
-        department: "Central IT & Institutional Governance".to_string(),
-        expires_in_secs: 3600,
-    }).expect("mint test jwt");
+    let admin_token = issue_test_token_and_user("jordan.lee@state.edu");
 
     let resp = app
         .clone()

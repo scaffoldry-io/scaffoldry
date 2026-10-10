@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_dataset_records_app_slug ON dataset_records(app_s
 CREATE INDEX IF NOT EXISTS idx_dataset_records_data_gin ON dataset_records USING gin(data);
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
-    token VARCHAR(255) PRIMARY KEY,
+    token TEXT PRIMARY KEY,
     user_eppn VARCHAR(255) NOT NULL,
     user_name VARCHAR(255) NOT NULL,
     user_role_title VARCHAR(255) NOT NULL,

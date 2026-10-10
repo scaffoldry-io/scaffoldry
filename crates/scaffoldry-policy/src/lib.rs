@@ -289,6 +289,72 @@ impl ScaffoldryPolicyEngine {
                 principal.scoped_affiliation != "faculty" &&
                 principal.scoped_affiliation != "staff"
             };
+
+            // 20. Permit faculty, staff, and central_admin to approve workflow decisions
+            permit (
+                principal,
+                action == Action::"approve",
+                resource
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                principal.scoped_affiliation == "compliance" ||
+                principal.scoped_affiliation == "faculty" ||
+                principal.scoped_affiliation == "staff"
+            };
+
+            // 21. Forbid students and affiliates from approving workflow decisions
+            forbid (
+                principal,
+                action == Action::"approve",
+                resource
+            )
+            when {
+                principal.scoped_affiliation != "central_admin" &&
+                principal.scoped_affiliation != "compliance" &&
+                principal.scoped_affiliation != "faculty" &&
+                principal.scoped_affiliation != "staff"
+            };
+
+            // 22. Permit workspace collaborators and central_admin to read app
+            permit (
+                principal,
+                action == Action::"read_app",
+                resource is Workspace
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                resource.is_member == true
+            };
+
+            // 23. Permit workspace owner, admin, and editor to write records
+            permit (
+                principal,
+                action == Action::"write_record",
+                resource is Workspace
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                (resource.is_member == true && (
+                    resource.member_role == "owner" ||
+                    resource.member_role == "admin" ||
+                    resource.member_role == "editor"
+                ))
+            };
+
+            // 24. Permit workspace owner and admin to manage app
+            permit (
+                principal,
+                action == Action::"manage_app",
+                resource is Workspace
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                (resource.is_member == true && (
+                    resource.member_role == "owner" ||
+                    resource.member_role == "admin"
+                ))
+            };
         "#;
         Self::new(default_policies)
     }
@@ -301,10 +367,12 @@ impl ScaffoldryPolicyEngine {
         resource_department: &str,
         is_ferpa_sensitive: bool,
     ) -> Result<AuthorizationResult, PolicyError> {
-        let principal_dept = if identity.eppn.contains("physics") {
-            "physics"
-        } else {
-            "biology"
+        let stripped_realm = identity.realm.strip_suffix(".state.edu")
+            .or_else(|| identity.realm.strip_suffix(".edu"))
+            .unwrap_or(&identity.realm);
+        let principal_dept = match stripped_realm {
+            "science" => "biology",
+            other => other,
         };
 
         let primary_affiliation = match identity.affiliations.first() {

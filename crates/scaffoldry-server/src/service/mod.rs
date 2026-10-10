@@ -5,8 +5,11 @@
 //! to this service layer.
 
 pub mod governance;
+pub mod organizations;
 pub mod records;
+pub mod access;
 pub mod workspaces;
+pub mod identity;
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

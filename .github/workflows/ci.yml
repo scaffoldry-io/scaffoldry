@@ -5,6 +5,13 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # The build agent pushes with the workflow token, which does not start CI by itself.
+  # Its publish job starts CI on the branch with this trigger. See docs/operations/build-agent.md.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   validate:
@@ -12,6 +19,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,6 +56,26 @@ jobs:
         run: |
           python3 governance/scripts/audit-skills.py
 
+      - name: Hard Gate - Governance Script Tests
+        run: |
+          python3 -m unittest discover -s governance/scripts -p "test_*.py"
+      - name: Hard Gate - Web Server Path Safety Test
+        run: |
+          node --test deploy/server.test.mjs
+
+
+      - name: Hard Gate - Build Agent Changes Stay In Bounds
+        if: startsWith(github.head_ref || github.ref_name, 'agent/')
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flag=""
+          if gh pr list --head "$BRANCH" --state open --json labels --jq '.[].labels[].name' | grep -qx 'deps-approved'; then
+            flag="--deps-approved"
+          fi
+          python3 governance/scripts/agent-guard.py --branch "$BRANCH" --base origin/main --head HEAD $flag
+
       - name: Hard Gate - License Hygiene Audit
         run: |
           python3 governance/scripts/audit-licenses.py
@@ -57,7 +86,8 @@ jobs:
 
       - name: Hard Gate - Rust Monorepo Test & Clippy
         run: |
-          cargo test
+          # The tests share one database and the process environment, so they run one at a time.
+          cargo test -- --test-threads=1
           cargo clippy --all-targets -- -D warnings
 
       - name: Hard Gate - Web Unit Tests & Build

@@ -90,6 +90,7 @@ async fn create_workspace(
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()),
         data_classification: payload.get("data_classification").and_then(|v| v.as_str()).map(str::to_string),
+        organization_id: payload.get("organization_id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()),
     };
 
     let ws = workspace_service::create_workspace(&caller, input, &state)?;

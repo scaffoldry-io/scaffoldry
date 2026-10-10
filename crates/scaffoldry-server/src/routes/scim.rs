@@ -1,6 +1,8 @@
 //! SCIM 2.0 Identity Provisioning Endpoints (RFC 7643 / RFC 7644)
 
-use crate::state::{ScimGroup, ScimUser, SharedState};
+use crate::state::{OrganizationNode, RoleRow, ScimGroup, ScimUser, SharedState};
+use scaffoldry_core::standards::eduperson::EduPersonAffiliation;
+use std::str::FromStr;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -26,7 +28,7 @@ async fn service_provider_config() -> impl IntoResponse {
     let config = json!({
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
         "documentationUri": "https://scaffoldry.io/docs/scim",
-        "patch": { "supported": true },
+        "patch": { "supported": false },
         "bulk": { "supported": false, "maxOperations": 0, "maxPayloadSize": 0 },
         "filter": { "supported": true, "maxResults": 200 },
         "changePassword": { "supported": false },
@@ -125,6 +127,139 @@ async fn list_users(State(state): State<SharedState>) -> impl IntoResponse {
     }))
 }
 
+pub fn sync_org_roles(
+    user: &ScimUser,
+    orgs: &[OrganizationNode],
+) -> Vec<RoleRow> {
+    if !user.active {
+        return Vec::new();
+    }
+
+    // 1. Scoped affiliation from roles[]
+    let mut scoped_affiliation = "member".to_string();
+    for r in &user.roles {
+        if let Some(typ) = r.get("type").and_then(|v| v.as_str()) {
+            if typ.eq_ignore_ascii_case("eduPersonScopedAffiliation") {
+                if let Some(val) = r.get("value").and_then(|v| v.as_str()) {
+                    let aff_str = val.split('@').next().unwrap_or(val);
+                    if let Ok(aff) = EduPersonAffiliation::from_str(aff_str) {
+                        scoped_affiliation = match aff {
+                            EduPersonAffiliation::Faculty => "faculty",
+                            EduPersonAffiliation::Student => "student",
+                            EduPersonAffiliation::Staff => "staff",
+                            EduPersonAffiliation::Employee => "employee",
+                            EduPersonAffiliation::Member => "member",
+                            EduPersonAffiliation::Affiliate => "affiliate",
+                            EduPersonAffiliation::Alum => "alum",
+                        }.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let role_title = user.title.clone().unwrap_or_default();
+
+    // 2. Enterprise Extension matching: department, division, organization
+    let mut dept_match = None;
+    let mut div_match = None;
+    let mut org_match = None;
+
+    if let Some(ref ent) = user.enterprise_extension {
+        let match_node = |val: &str| -> Option<Uuid> {
+            if let Some(node) = orgs.iter().find(|o| o.code.eq_ignore_ascii_case(val)) {
+                return Some(node.id);
+            }
+            if let Some(node) = orgs.iter().find(|o| o.name.eq_ignore_ascii_case(val)) {
+                return Some(node.id);
+            }
+            None
+        };
+
+        if let Some(dept_str) = ent.get("department").and_then(|v| v.as_str()) {
+            dept_match = match_node(dept_str);
+        }
+        if let Some(div_str) = ent.get("division").and_then(|v| v.as_str()) {
+            div_match = match_node(div_str);
+        }
+        if let Some(org_str) = ent.get("organization").and_then(|v| v.as_str()) {
+            org_match = match_node(org_str);
+        }
+    }
+
+    let deepest_id = dept_match.or(div_match).or(org_match);
+
+    let mut matched_units = Vec::new();
+    if let Some(id) = dept_match {
+        matched_units.push(id);
+    }
+    if let Some(id) = div_match {
+        if !matched_units.contains(&id) {
+            matched_units.push(id);
+        }
+    }
+    if let Some(id) = org_match {
+        if !matched_units.contains(&id) {
+            matched_units.push(id);
+        }
+    }
+
+    let mut new_roles = Vec::new();
+    let person_id = Uuid::new_v4();
+
+    for unit_id in matched_units {
+        let is_primary = Some(unit_id) == deepest_id;
+        new_roles.push(RoleRow {
+            id: Uuid::new_v4(),
+            person_id,
+            eppn: user.user_name.clone(),
+            organization_id: unit_id,
+            role_title: role_title.clone(),
+            scoped_affiliation: scoped_affiliation.clone(),
+            is_primary,
+            source: "scim".to_string(),
+        });
+    }
+
+    // 3. Scaffoldry roles
+    for r in &user.roles {
+        let typ = r.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let val = r.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        if typ.eq_ignore_ascii_case("scaffoldry") {
+            if val.eq_ignore_ascii_case("unit_admin") {
+                if let Some(deepest) = deepest_id {
+                    new_roles.push(RoleRow {
+                        id: Uuid::new_v4(),
+                        person_id,
+                        eppn: user.user_name.clone(),
+                        organization_id: deepest,
+                        role_title: role_title.clone(),
+                        scoped_affiliation: "unit_admin".to_string(),
+                        is_primary: false,
+                        source: "scim".to_string(),
+                    });
+                }
+            } else if val.eq_ignore_ascii_case("platform_admin") {
+                if let Some(root_node) = orgs.iter().find(|o| o.parent_id.is_none()) {
+                    new_roles.push(RoleRow {
+                        id: Uuid::new_v4(),
+                        person_id,
+                        eppn: user.user_name.clone(),
+                        organization_id: root_node.id,
+                        role_title: role_title.clone(),
+                        scoped_affiliation: "platform_admin".to_string(),
+                        is_primary: false,
+                        source: "scim".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    new_roles
+}
+
 async fn create_user(
     State(state): State<SharedState>,
     Json(payload): Json<Value>,
@@ -140,6 +275,7 @@ async fn create_user(
     let emails = payload.get("emails").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     let roles = payload.get("roles").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     let enterprise = payload.get("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User").cloned();
+    let title = payload.get("title").and_then(|v| v.as_str()).map(str::to_string);
 
     let scim_user = ScimUser {
         id: id.clone(),
@@ -149,11 +285,20 @@ async fn create_user(
         emails: emails.clone(),
         roles: roles.clone(),
         enterprise_extension: enterprise.clone(),
+        title,
     };
 
     state.users.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), scim_user.clone());
     if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_scim_user(&scim_user);
+        repo.upsert_scim_user(&scim_user)
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to persist SCIM user"}))))?;
+    }
+
+    let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
+    let new_roles = sync_org_roles(&scim_user, &all_orgs);
+    let _ = state.delete_scim_roles(&scim_user.user_name);
+    for r in new_roles {
+        let _ = state.persist_role(&r);
     }
 
     let resp = json!({
@@ -220,9 +365,23 @@ async fn update_user(
     if let Some(ent) = payload.get("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User") {
         u.enterprise_extension = Some(ent.clone());
     }
+    if let Some(t) = payload.get("title").and_then(|v| v.as_str()) {
+        u.title = Some(t.to_string());
+    }
 
     if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_scim_user(u);
+        repo.upsert_scim_user(u)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+
+    let updated_user = u.clone();
+    drop(users);
+
+    let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
+    let new_roles = sync_org_roles(&updated_user, &all_orgs);
+    let _ = state.delete_scim_roles(&updated_user.user_name);
+    for r in new_roles {
+        let _ = state.persist_role(&r);
     }
 
     Ok(Json(json!({
@@ -230,13 +389,13 @@ async fn update_user(
             "urn:ietf:params:scim:schemas:core:2.0:User",
             "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
         ],
-        "id": u.id,
-        "userName": u.user_name,
-        "name": u.name,
-        "active": u.active,
-        "emails": u.emails,
-        "roles": u.roles,
-        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": u.enterprise_extension
+        "id": updated_user.id,
+        "userName": updated_user.user_name,
+        "name": updated_user.name,
+        "active": updated_user.active,
+        "emails": updated_user.emails,
+        "roles": updated_user.roles,
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": updated_user.enterprise_extension
     })))
 }
 
@@ -245,10 +404,13 @@ async fn delete_user(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
-    if users.remove(&id).is_some() {
+    if let Some(u) = users.remove(&id) {
         if let Some(ref repo) = state.repository {
-            let _ = repo.delete_scim_user(&id);
+            repo.delete_scim_user(&id)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
+        drop(users);
+        let _ = state.delete_scim_roles(&u.user_name);
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -299,7 +461,8 @@ async fn create_group(
 
     state.groups.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), group.clone());
     if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_scim_group(&group);
+        repo.upsert_scim_group(&group)
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to persist SCIM group"}))))?;
     }
 
     let resp = json!({
@@ -342,7 +505,8 @@ async fn update_group(
     }
 
     if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_scim_group(g);
+        repo.upsert_scim_group(g)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
     Ok(Json(json!({
@@ -360,7 +524,8 @@ async fn delete_group(
     let mut groups = state.groups.write().unwrap_or_else(|p| p.into_inner());
     if groups.remove(&id).is_some() {
         if let Some(ref repo) = state.repository {
-            let _ = repo.delete_scim_group(&id);
+            repo.delete_scim_group(&id)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
         Ok(StatusCode::NO_CONTENT)
     } else {

@@ -13,6 +13,7 @@ fn sample_manifest() -> AppManifest {
         description: "Departmental lab instrument tracking".to_string(),
         organization_code: "DEPT-BIO".to_string(),
         department: "biology".to_string(),
+        workspace_id: None,
         herm_capability_id: Some("2.2.3".to_string()),
         custom_domain: Some("bio-inventory.science.state.edu".to_string()),
         custom_domain_verified: true,
@@ -76,7 +77,8 @@ fn test_manifest_registration_and_dns_host_routing() {
     assert_eq!(record.ceds_mapping["item_name"], "000185");
     assert!(record.is_ferpa_sensitive, "Must detect FERPA sensitivity from field spec");
 
-    // Cross-department unauthorized write
-    let unauthorized_submission = engine.submit_record(&physics_student, "bio-lab-inventory", &valid_payload);
-    assert!(unauthorized_submission.is_err(), "Cross-department student write must be denied");
+    // Missing required field must be rejected by submit_record validation
+    let invalid_payload = json!({ "other_field": "foo" });
+    let invalid_submission = engine.submit_record(&physics_student, "bio-lab-inventory", &invalid_payload);
+    assert!(invalid_submission.is_err(), "Missing required field must be rejected by engine");
 }

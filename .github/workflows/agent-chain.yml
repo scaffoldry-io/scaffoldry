@@ -1,0 +1,81 @@
+name: Build Agent Chain
+
+# After a person merges an agent pull request, start the next open phase of the run order.
+# Off by default. Turn it on with the AGENT_AUTOCHAIN variable. Stops at any phase that needs a person.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  next:
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'agent/') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CHAIN: ${{ vars.AGENT_AUTOCHAIN }}
+      CAP: ${{ vars.AGENT_MAX_RUNS_PER_DAY }}
+    steps:
+      - name: Check the switch
+        id: switch
+        run: |
+          if [ "$CHAIN" = "true" ]; then echo "on=true" >> "$GITHUB_OUTPUT"; else echo "Auto chain is off."; echo "on=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Check out main
+        if: steps.switch.outputs.on == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Find the next phase
+        id: next
+        if: steps.switch.outputs.on == 'true'
+        run: |
+          set +e
+          out=$(python3 governance/scripts/next-phase.py next)
+          code=$?
+          echo "$out"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "text=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Stop at a phase that needs a person
+        if: steps.switch.outputs.on == 'true' && steps.next.outputs.code == '3'
+        env:
+          TEXT: ${{ steps.next.outputs.text }}
+        run: |
+          title="Build agent needs a person: ${TEXT:0:120}"
+          existing=$(gh issue list --state open --search "\"Build agent needs a person\" in:title" --json number --jq 'length')
+          if [ "$existing" = "0" ]; then
+            gh label create agent-blocked --color d93f0b --description "The build agent cannot continue" 2>/dev/null || true
+            gh issue create --title "$title" --label agent-blocked \
+              --body "The run order has reached a phase the build agent may not start by itself. $TEXT. See docs/plans/README.md. Decide or supply what it needs, then start the phase by hand."
+          fi
+
+      - name: Start the next phase, within the daily cap
+        if: steps.switch.outputs.on == 'true' && steps.next.outputs.code == '0'
+        env:
+          NEXT: ${{ steps.next.outputs.text }}
+        run: |
+          set -euo pipefail
+          cap="${CAP:-6}"
+          since=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          used=$(gh run list --workflow build-agent.yml --created ">=$since" --json databaseId --jq 'length')
+          if [ "$used" -ge "$cap" ]; then
+            echo "Daily cap reached ($used of $cap). Not starting another run."
+            exit 0
+          fi
+          brief="${NEXT%% *}"
+          phase="${NEXT##* }"
+          gh workflow run build-agent.yml -f brief="$brief" -f phase="$phase" -f mode=build
+          echo "Started $brief phase $phase."

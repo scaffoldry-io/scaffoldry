@@ -1,0 +1,47 @@
+name: Build Agent Repair
+
+# When CI fails on an agent branch, ask the agent to fix it, up to three times.
+# Off by default. Turn it on with the AGENT_AUTOREPAIR variable.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: write
+
+jobs:
+  repair:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      startsWith(github.event.workflow_run.head_branch, 'agent/') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPAIR: ${{ vars.AGENT_AUTOREPAIR }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - name: Decide
+        run: |
+          set -euo pipefail
+          if [ "$REPAIR" != "true" ]; then echo "Auto repair is off."; exit 0; fi
+          re='^agent/([a-z0-9-]+)-phase-([0-9]+[a-z]?(-[0-9]+[a-z]?)?)$'
+          [[ "$BRANCH" =~ $re ]] || { echo "Not a branch this workflow understands."; exit 0; }
+          brief="${BASH_REMATCH[1]}"
+          phase="${BASH_REMATCH[2]}"
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          [ -n "$pr" ] || { echo "No open pull request for $BRANCH."; exit 0; }
+          attempts=$(gh pr view "$pr" --json labels --jq '[.labels[].name | select(startswith("agent-attempt-"))] | length')
+          if [ "$attempts" -ge 3 ]; then
+            gh label create agent-stuck --color b60205 --description "The build agent could not fix CI" 2>/dev/null || true
+            gh pr edit "$pr" --add-label agent-stuck
+            gh pr comment "$pr" --body "The build agent tried three times and CI is still failing. A person needs to look at this."
+            exit 0
+          fi
+          gh workflow run build-agent.yml -f brief="$brief" -f phase="$phase" -f mode=fix -f pr="$pr"
+          echo "Asked the agent to repair pull request $pr (attempt $((attempts + 1)))."

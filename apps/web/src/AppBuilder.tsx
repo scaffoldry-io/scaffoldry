@@ -5,6 +5,8 @@ import {
   AppTable,
   AppView,
   CompoundFilter,
+  FieldSpec,
+  FieldType,
   FilterClause,
   GovernedComponentSpec,
   GovernedComponentType,
@@ -23,6 +25,7 @@ import { RecordDetailDrawer } from "./RecordDetailDrawer";
 import { CsvImportModal } from "./CsvImportModal";
 import { AddViewModal } from "./AddViewModal";
 import { CreateTableModal } from "./CreateTableModal";
+import { LinkedFieldModal } from "./LinkedFieldModal";
 import {
   applyCompoundFilter,
   applyMultiSort,
@@ -181,6 +184,35 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const [activeTableId, setActiveTableId] = useState<string>("tbl-proposals");
   const [tableSearchFilter, setTableSearchFilter] = useState<string>("");
   const [isAddTableModalOpen, setIsAddTableModalOpen] = useState<boolean>(false);
+  const [isLinkedFieldModalOpen, setIsLinkedFieldModalOpen] = useState<boolean>(false);
+  const [editingLinkField, setEditingLinkField] = useState<FieldSpec | null>(null);
+
+  const handleOpenAddLinkedField = () => {
+    setEditingLinkField(null);
+    setIsLinkedFieldModalOpen(true);
+  };
+
+  const handleOpenEditLinkedField = (field: FieldSpec) => {
+    setEditingLinkField(field);
+    setIsLinkedFieldModalOpen(true);
+    setActiveColumnMenu(null);
+  };
+
+  const handleSaveLinkedField = (savedField: FieldSpec) => {
+    setTables((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTable.id) return t;
+        const exists = t.fields.some((f) => f.name === savedField.name);
+        let nextFields: FieldSpec[];
+        if (exists) {
+          nextFields = t.fields.map((f) => (f.name === savedField.name ? savedField : f));
+        } else {
+          nextFields = [...t.fields, savedField];
+        }
+        return { ...t, fields: nextFields };
+      })
+    );
+  };
   const [newTableName, setNewTableName] = useState<string>("");
   const [newTableIcon, setNewTableIcon] = useState<string>("📋");
 
@@ -404,6 +436,157 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
       next.delete(recordId);
       return next;
     });
+  };
+
+  // Phase 5: Column Schema in Builder Grid
+  const [activeColumnMenu, setActiveColumnMenu] = useState<string | null>(null);
+  const [renameLabel, setRenameLabel] = useState<string>("");
+  const [formulaInput, setFormulaInput] = useState<string>("");
+  const [renameNotice, setRenameNotice] = useState<string | null>(null);
+
+  const handleRenameField = (fieldName: string, newLabel: string) => {
+    const trimmed = newLabel.trim();
+    if (!trimmed) return;
+    const hasData = (activeTable.records || []).some((r) => {
+      const v = r[fieldName];
+      return v !== undefined && v !== null && v !== "";
+    });
+
+    let targetName = fieldName;
+    if (!hasData) {
+      targetName = trimmed.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+      if (!targetName) targetName = fieldName;
+    }
+
+    setTables((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTable.id) return t;
+        const updatedFields = t.fields.map((f) => {
+          if (f.name !== fieldName) return f;
+          return {
+            ...f,
+            label: trimmed,
+            name: targetName,
+          };
+        });
+        let updatedRecords = t.records || [];
+        if (!hasData && targetName !== fieldName) {
+          updatedRecords = updatedRecords.map((r) => {
+            const next = { ...r };
+            if (fieldName in next) {
+              next[targetName] = next[fieldName];
+              delete next[fieldName];
+            }
+            return next;
+          });
+        }
+        return {
+          ...t,
+          fields: updatedFields,
+          records: updatedRecords,
+        };
+      })
+    );
+
+    if (hasData) {
+      setRenameNotice(`Key '${fieldName}' kept because existing records contain data`);
+    } else {
+      setActiveColumnMenu(null);
+      setRenameNotice(null);
+    }
+  };
+
+  const handleChangeFieldType = (fieldName: string, newType: FieldType) => {
+    if (newType === "Relation") {
+      const targetF = activeTable.fields.find((f) => f.name === fieldName);
+      if (targetF) {
+        handleOpenEditLinkedField(targetF);
+        return;
+      }
+    }
+    setTables((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTable.id) return t;
+        const updatedFields = t.fields.map((f) => {
+          if (f.name !== fieldName) return f;
+          return { ...f, field_type: newType };
+        });
+        let updatedRecords = t.records || [];
+        if (newType === "Formula") {
+          updatedRecords = updatedRecords.map((r) => {
+            const next = { ...r };
+            delete next[fieldName];
+            return next;
+          });
+        }
+        return {
+          ...t,
+          fields: updatedFields,
+          records: updatedRecords,
+        };
+      })
+    );
+  };
+
+  const handleSaveFormula = (fieldName: string, expr: string) => {
+    setTables((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTable.id) return t;
+        const updatedFields = t.fields.map((f) => {
+          if (f.name !== fieldName) return f;
+          return { ...f, formula_expression: expr };
+        });
+        return { ...t, fields: updatedFields };
+      })
+    );
+    setActiveColumnMenu(null);
+  };
+
+  const handleInsertField = (fieldName: string, direction: "left" | "right") => {
+    const n = activeTable.fields.length + 1;
+    const newField: FieldSpec = {
+      name: `field_${n}`,
+      label: `Field ${n}`,
+      field_type: "Text",
+      required: false,
+      ferpa_sensitive: false,
+    };
+    const idx = activeTable.fields.findIndex((f) => f.name === fieldName);
+    const insertIdx = direction === "left" ? idx : idx + 1;
+    setTables((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTable.id) return t;
+        const nextFields = [...t.fields];
+        nextFields.splice(insertIdx, 0, newField);
+        return { ...t, fields: nextFields };
+      })
+    );
+    setActiveColumnMenu(null);
+  };
+
+  const handleDeleteField = (fieldName: string) => {
+    const isPrimary = fieldName === (activeTable.primary_field || activeTable.fields[0]?.name);
+    if (isPrimary) {
+      alert("Cannot delete primary field");
+      return;
+    }
+    setTables((prev) =>
+      prev.map((t) => {
+        if (t.id !== activeTable.id) return t;
+        const nextFields = t.fields.filter((f) => f.name !== fieldName);
+        const nextRecords = (t.records || []).map((r) => {
+          const next = { ...r };
+          delete next[fieldName];
+          return next;
+        });
+        return {
+          ...t,
+          fields: nextFields,
+          records: nextRecords,
+        };
+      })
+    );
+    setActiveColumnMenu(null);
   };
 
   // Bulk Selection Handlers
@@ -1421,20 +1604,220 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                             </th>
                             <th className="py-2 px-2 w-16 text-center">Actions</th>
                             {activeTable.fields.map((field) => (
-                              <th key={field.name} className={`${cellPadding} font-semibold`}>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-slate-400 font-mono text-[11px]">
-                                    {getFieldTypeIcon(field.field_type)}
-                                  </span>
-                                  <span>{field.label}</span>
-                                  {field.field_type === "Relation" && (
-                                    <span className="text-purple-500" title="Relational Linked Record">
-                                      🔗
+                              <th key={field.name} className={`${cellPadding} font-semibold relative`}>
+                                <div className="flex items-center justify-between gap-1.5">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-slate-400 font-mono text-[11px] shrink-0">
+                                      {getFieldTypeIcon(field.field_type)}
                                     </span>
-                                  )}
+                                    <span className="truncate">{field.label}</span>
+                                    {field.field_type === "Relation" && (
+                                      <span className="text-purple-500 shrink-0" title="Relational Linked Record">
+                                        🔗
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="relative shrink-0">
+                                    <button
+                                      type="button"
+                                      data-testid={`column-menu-btn-${field.name}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (activeColumnMenu === field.name) {
+                                          setActiveColumnMenu(null);
+                                        } else {
+                                          setActiveColumnMenu(field.name);
+                                          setRenameLabel(field.label);
+                                          setFormulaInput(field.formula_expression || "");
+                                          setRenameNotice(null);
+                                        }
+                                      }}
+                                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer text-xs leading-none"
+                                      aria-label={`Column options for ${field.label}`}
+                                    >
+                                      ▾
+                                    </button>
+
+                                    {activeColumnMenu === field.name && (
+                                      <div
+                                        data-testid={`column-menu-popover-${field.name}`}
+                                        className="absolute z-50 right-0 top-full mt-1 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-2.5 text-xs text-slate-700 dark:text-slate-200 space-y-2.5 text-left font-normal"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {/* Rename */}
+                                        <div className="space-y-1">
+                                          <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                                            Rename Field
+                                          </div>
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              type="text"
+                                              data-testid="rename-field-input"
+                                              value={renameLabel}
+                                              onChange={(e) => setRenameLabel(e.target.value)}
+                                              placeholder="Label"
+                                              className="flex-1 px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
+                                            />
+                                            <button
+                                              type="button"
+                                              data-testid="save-rename-btn"
+                                              onClick={() => handleRenameField(field.name, renameLabel)}
+                                              className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 cursor-pointer"
+                                            >
+                                              Save
+                                            </button>
+                                          </div>
+                                          {renameNotice && (
+                                            <div data-testid="rename-notice" className="text-[10px] text-amber-600 dark:text-amber-400">
+                                              {renameNotice}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Change Type */}
+                                        <div className="space-y-1 border-t border-slate-100 dark:border-slate-700 pt-2">
+                                          <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                                            Change Type
+                                          </div>
+                                          <select
+                                            data-testid="change-type-select"
+                                            value={field.field_type}
+                                            onChange={(e) => handleChangeFieldType(field.name, e.target.value as FieldType)}
+                                            className="w-full px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
+                                          >
+                                            {[
+                                              "Text",
+                                              "Number",
+                                              "Date",
+                                              "Select",
+                                              "Checkbox",
+                                              "MultiSelect",
+                                              "Currency",
+                                              "Percent",
+                                              "Rating",
+                                              "Email",
+                                              "Phone",
+                                              "Url",
+                                              "Formula",
+                                              "Relation",
+                                            ].map((t) => (
+                                              <option key={t} value={t}>
+                                                {t}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        {/* Configure Link Characteristics */}
+                                        {field.field_type === "Relation" && (
+                                          <div className="border-t border-slate-100 dark:border-slate-700 pt-2">
+                                            <button
+                                              type="button"
+                                              data-testid="configure-link-btn"
+                                              onClick={() => handleOpenEditLinkedField(field)}
+                                              className="w-full text-left px-2 py-1.5 rounded bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-semibold cursor-pointer text-xs"
+                                            >
+                                              ⚙️ Configure Link Characteristics
+                                            </button>
+                                          </div>
+                                        )}
+
+                                        {/* Edit Formula */}
+                                        {field.field_type === "Formula" && (
+                                          <div className="space-y-1 border-t border-slate-100 dark:border-slate-700 pt-2">
+                                            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                                              Formula Expression
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              <input
+                                                type="text"
+                                                data-testid="formula-expression-input"
+                                                value={formulaInput}
+                                                onChange={(e) => setFormulaInput(e.target.value)}
+                                                placeholder="{field} * 1.5"
+                                                className="flex-1 px-2 py-1 text-xs font-mono border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
+                                              />
+                                              <button
+                                                type="button"
+                                                data-testid="save-formula-btn"
+                                                onClick={() => handleSaveFormula(field.name, formulaInput)}
+                                                className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 cursor-pointer"
+                                              >
+                                                Save
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Insert Left / Right */}
+                                        <div className="border-t border-slate-100 dark:border-slate-700 pt-2 space-y-1">
+                                          <button
+                                            type="button"
+                                            data-testid="insert-field-left-btn"
+                                            onClick={() => handleInsertField(field.name, "left")}
+                                            className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                          >
+                                            Insert field left
+                                          </button>
+                                          <button
+                                            type="button"
+                                            data-testid="insert-field-right-btn"
+                                            onClick={() => handleInsertField(field.name, "right")}
+                                            className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                          >
+                                            Insert field right
+                                          </button>
+                                        </div>
+
+                                        {/* Delete field */}
+                                        <div className="border-t border-slate-100 dark:border-slate-700 pt-2">
+                                          <button
+                                            type="button"
+                                            data-testid="delete-field-btn"
+                                            onClick={() => handleDeleteField(field.name)}
+                                            disabled={field.name === (activeTable.primary_field || activeTable.fields[0]?.name)}
+                                            className={`w-full text-left px-2 py-1 rounded cursor-pointer ${
+                                              field.name === (activeTable.primary_field || activeTable.fields[0]?.name)
+                                                ? "text-slate-400 cursor-not-allowed"
+                                                : "text-rose-600 dark:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                            }`}
+                                            title={
+                                              field.name === (activeTable.primary_field || activeTable.fields[0]?.name)
+                                                ? "Cannot delete primary field"
+                                                : "Delete field"
+                                            }
+                                          >
+                                            Delete field
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
+
+                                {/* Formula Expression display under header */}
+                                {field.field_type === "Formula" && field.formula_expression && (
+                                  <div
+                                    data-testid={`formula-expression-${field.name}`}
+                                    className="text-[10px] text-slate-400 font-mono font-normal mt-0.5"
+                                  >
+                                    {field.formula_expression}
+                                  </div>
+                                )}
                               </th>
                             ))}
+                            <th className="py-2 px-3 text-left w-28 whitespace-nowrap">
+                              <button
+                                type="button"
+                                data-testid="add-column-header-btn"
+                                onClick={handleOpenAddLinkedField}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-500 hover:text-purple-600 dark:text-slate-400 dark:hover:text-purple-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-dashed border-slate-300 dark:border-slate-700"
+                                title="Add a new linked field to another record"
+                              >
+                                <span>+ Add Field</span>
+                              </button>
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1444,7 +1827,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                               {groupByField && (
                                 <tr className="bg-slate-100/70 dark:bg-slate-800/60 font-semibold text-slate-700 dark:text-slate-300">
                                   <td
-                                    colSpan={activeTable.fields.length + 2}
+                                    colSpan={activeTable.fields.length + 3}
                                     className="py-2 px-3 text-[11px] font-mono flex items-center justify-between"
                                   >
                                     <div className="flex items-center gap-2">
@@ -1527,12 +1910,24 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                       const targetTable = tables.find(
                                         (t) => t.id === field.target_table_id
                                       );
-                                      const targetRecords = targetTable?.records || [];
+                                      const rawRecords = targetTable?.records || [];
+                                      const targetRecords = rawRecords.filter((tr) => {
+                                        if (!field.link_filter || !field.link_filter.field) return true;
+                                        const val = String(tr[field.link_filter.field] ?? "").toLowerCase();
+                                        const expected = String(field.link_filter.value ?? "").toLowerCase();
+                                        if (field.link_filter.operator === "equals") return val === expected;
+                                        if (field.link_filter.operator === "not_equals") return val !== expected;
+                                        if (field.link_filter.operator === "contains") return val.includes(expected);
+                                        return true;
+                                      });
+                                      const labelPrefix = field.display_label_override || "";
+                                      const displayCol = field.target_display_field || "name";
 
                                       return (
                                         <td key={field.name} className={cellPadding}>
-                                          <div className="relative inline-block">
+                                          <div className="relative inline-flex items-center gap-1.5 flex-wrap">
                                             <select
+                                              data-testid={`link-cell-select-${record.id}-${field.name}`}
                                               value={cellValue || ""}
                                               onChange={(e) =>
                                                 handleUpdateRecordField(
@@ -1543,14 +1938,15 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                               }
                                               className="appearance-none inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/70 dark:hover:bg-purple-900/70 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 cursor-pointer pr-5"
                                             >
-                                              {targetRecords.map((tr) => (
-                                                <option key={tr.id} value={tr.id}>
-                                                  {tr[field.target_display_field || "name"] ||
-                                                    tr.name ||
-                                                    tr.title ||
-                                                    tr.id}
-                                                </option>
-                                              ))}
+                                              <option value="">Select link...</option>
+                                              {targetRecords.map((tr) => {
+                                                const recName = tr[displayCol] || tr.name || tr.title || tr.id;
+                                                return (
+                                                  <option key={tr.id} value={tr.id}>
+                                                    {labelPrefix}{recName}
+                                                  </option>
+                                                );
+                                              })}
                                             </select>
                                             <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-purple-500">
                                               ▾
@@ -1662,7 +2058,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                                             <span className="text-[10px]">ƒx</span>
                                             {typeof cellValue === "number"
-                                              ? `$${cellValue.toLocaleString()}`
+                                              ? (field.currency_symbol
+                                                  ? `${field.currency_symbol}${cellValue.toLocaleString()}`
+                                                  : (field.name.includes("cost") || field.name.includes("budget") || field.name.includes("amount")
+                                                      ? `$${cellValue.toLocaleString()}`
+                                                      : String(cellValue)))
                                               : String(cellValue ?? "")}
                                           </span>
                                         </td>
@@ -1734,6 +2134,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                       </td>
                                     );
                                   })}
+                                  <td className="py-2 px-3 text-center text-slate-300 dark:text-slate-700"></td>
                                 </tr>
                               );
                             })}
@@ -1840,6 +2241,15 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   newViewType={newViewType}
                   setNewViewType={setNewViewType}
                   onCreateNewView={handleCreateNewView}
+                />
+
+                <LinkedFieldModal
+                  isOpen={isLinkedFieldModalOpen}
+                  onClose={() => setIsLinkedFieldModalOpen(false)}
+                  tables={tables}
+                  activeTableId={activeTable.id}
+                  initialField={editingLinkField}
+                  onSave={handleSaveLinkedField}
                 />
               </div>
             </div>

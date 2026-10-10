@@ -1,6 +1,7 @@
+import { WorkflowBuilder } from "../WorkflowBuilder";
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { AppBuilder } from "../AppBuilder";
 import { PublishedAppView } from "../PublishedAppView";
@@ -253,8 +254,10 @@ describe("Milestone 1: Rich Field Types & Computed Field Engine Usability", () =
     const record = {
       budget: 500000,
       spent: 120000,
+      rate: 0.2,
       first_name: "Ada",
       last_name: "Lovelace",
+      title: "",
     };
 
     expect(evaluateClientFormula("{budget}", record)).toBe(500000);
@@ -262,6 +265,14 @@ describe("Milestone 1: Rich Field Types & Computed Field Engine Usability", () =
     expect(evaluateClientFormula("{budget} / 10", record)).toBe(50000);
     expect(evaluateClientFormula("{budget} - {spent}", record)).toBe(380000);
     expect(evaluateClientFormula('{first_name} + " " + {last_name}', record)).toBe("Ada Lovelace");
+    expect(evaluateClientFormula("{budget} - {spent} * {rate}", record)).toBe(476000);
+    expect(evaluateClientFormula("({budget} - {spent}) * {rate}", record)).toBe(76000);
+    expect(evaluateClientFormula("IF({spent} > 100000, {budget} - {spent}, 0)", record)).toBe(380000);
+    expect(evaluateClientFormula('IF(ISBLANK({title}), "untitled", {title})', record)).toBe("untitled");
+    expect(evaluateClientFormula("ROUND({budget} * {rate}, 0)", record)).toBe(100000);
+    expect(evaluateClientFormula("AND({spent} > 0, {budget} > {spent})", record)).toBe(true);
+    expect(evaluateClientFormula("{missing}", record)).toBeNull();
+    expect(evaluateClientFormula("{budget} / 0", record)).toBeNull();
   });
 
   it("computes relational lookups, counts, and rollups across tables reactively", () => {
@@ -892,15 +903,28 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
   });
 
   describe("Workspace Sharing Security, Cedar ABAC & Security Configuration Usability", () => {
-    it("enforces workspace boundary: non-member is denied access to restricted workspace and sees Cedar 403 screen", () => {
+    it("enforces workspace boundary: restricted workspaces do not appear in list for non-members and direct access triggers Cedar 403 screen", () => {
+      // 1. Verify restricted workspaces do NOT appear in the list for unauthorized non-members
       window.history.pushState(null, "", "/");
       render(<AdminDesk />);
 
       // Dr. Sarah Connor is default active user (Computer Science faculty)
-      // Attempt to access restricted Biology Lab workspace via rail button
-      const bioRailBtn = screen.getByTestId("restricted-ws-btn-ws-bio-lab");
-      expect(bioRailBtn).toBeInTheDocument();
-      fireEvent.click(bioRailBtn);
+      // Biology Lab & Physics are restricted to their members and must NOT appear in rail or switcher
+      expect(screen.queryByTestId("restricted-ws-btn-ws-bio-lab")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("workspace-rail-btn-ws-bio-lab")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("workspace-rail-btn-ws-physics-optics")).not.toBeInTheDocument();
+
+      // Switcher dropdown options must only contain accessible workspaces
+      const switcherSelect = screen.getByTestId("workspace-switcher-select");
+      expect(switcherSelect).toBeInTheDocument();
+      expect(screen.queryByText(/Biology Research Laboratory/i)).not.toBeInTheDocument();
+      expect(screen.getAllByText(/Computer Science & Systems Lab/i).length).toBeGreaterThan(0);
+    });
+
+    it("enforces Cedar 403 Forbidden screen upon direct URL navigation to restricted workspace", () => {
+      // Non-member navigates directly to restricted Biology Lab workspace URL
+      window.history.pushState(null, "", "/workspace/ws-bio-lab");
+      render(<AdminDesk />);
 
       // Cedar 403 Forbidden screen must be shown
       const deniedCard = screen.getByTestId("workspace-access-denied");
@@ -916,6 +940,56 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       // Successfully redirected back to accessible workspace
       expect(screen.queryByTestId("workspace-access-denied")).not.toBeInTheDocument();
       expect(screen.getAllByText(/Computer Science & Systems Lab/i).length).toBeGreaterThan(0);
+    });
+
+    it("supports grouping workspaces by organization and department in the rail", () => {
+      window.history.pushState(null, "", "/");
+      render(<AdminDesk />);
+
+      // Grouped by organization by default
+      const orgGroup = screen.getByTestId("workspace-group-college-of-engineering");
+      expect(orgGroup).toBeInTheDocument();
+      expect(screen.getByTestId("workspace-rail-btn-ws-cs-research")).toBeInTheDocument();
+
+      // Toggle grouping to department
+      const groupByDeptBtn = screen.getByTestId("group-by-dept-btn");
+      fireEvent.click(groupByDeptBtn);
+      expect(screen.getByTestId("workspace-group-computer-science")).toBeInTheDocument();
+
+      // Toggle back to organization
+      const groupByOrgBtn = screen.getByTestId("group-by-org-btn");
+      fireEvent.click(groupByOrgBtn);
+      expect(screen.getByTestId("workspace-group-college-of-engineering")).toBeInTheDocument();
+    });
+
+    it("supports pinning and unpinning workspaces with dedicated pinned section and switcher integration", () => {
+      window.history.pushState(null, "", "/");
+      render(<AdminDesk />);
+
+      // Initially no pinned group
+      expect(screen.queryByTestId("pinned-workspaces-group")).not.toBeInTheDocument();
+
+      // Pin the workspace from rail
+      const pinBtn = screen.getByTestId("pin-workspace-ws-cs-research");
+      fireEvent.click(pinBtn);
+
+      // Pinned group appears in the rail
+      const pinnedGroup = screen.getByTestId("pinned-workspaces-group");
+      expect(pinnedGroup).toBeInTheDocument();
+      expect(pinnedGroup).toHaveTextContent(/Pinned/i);
+
+      // Switcher also includes pinned optgroup
+      expect(screen.getByTestId("pinned-optgroup")).toBeInTheDocument();
+
+      // Header button also reflects pinned state
+      const headerPinBtn = screen.getByTestId("workspace-header-pin-btn-ws-cs-research");
+      expect(headerPinBtn).toHaveTextContent(/Pinned/i);
+
+      // Unpin using header button
+      fireEvent.click(headerPinBtn);
+      expect(screen.queryByTestId("pinned-workspaces-group")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("pinned-optgroup")).not.toBeInTheDocument();
+      expect(headerPinBtn).toHaveTextContent(/Pin/i);
     });
 
     it("allows workspace owner to open Workspace Settings & Security modal and configure details", () => {
@@ -987,8 +1061,286 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       // central_admin can manage workspace settings
       expect(screen.getByTestId("workspace-settings-btn")).toBeInTheDocument();
     });
+
+    it("enforces Cedar security rules at the app level and prevents bypassing workspace restrictions in All Campus Apps", () => {
+      window.history.pushState(null, "", "/");
+      render(<AdminDesk />);
+
+      // Switch to All Campus Apps
+      const allAppsBtn = screen.getByText("All Campus Apps");
+      fireEvent.click(allAppsBtn);
+
+      // Dr. Sarah Connor (CS) must NOT see apps from restricted workspaces where she is not a member (e.g. bio-lab-inventory)
+      expect(screen.queryByText("Biology Lab Equipment & Bioassay Register")).not.toBeInTheDocument();
+
+      // Direct URL navigation to a restricted app must show 403 Forbidden screen
+      window.history.pushState(null, "", "/app/bio-lab-inventory");
+      render(<AdminDesk />);
+      expect(screen.getByTestId("workspace-access-denied")).toBeInTheDocument();
+      expect(screen.getByText(/Action::"access_app"/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("Phase 5: Builder Column Schema Modification", () => {
+    it("inserts a field via header menu in builder data-tab grid", () => {
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+
+      // Switch to Data tab
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // Click column options menu button for budget field
+      const menuBtn = screen.getByTestId("column-menu-btn-budget");
+      fireEvent.click(menuBtn);
+
+      // Menu popover should open with insert options
+      const insertRightBtn = screen.getByTestId("insert-field-right-btn");
+      fireEvent.click(insertRightBtn);
+
+      // New field should be inserted with label "Field N" (where N = field count + 1)
+      // Original field count was 14, so new field is Field 15
+      expect(screen.getAllByText("Field 15").length).toBeGreaterThan(0);
+    });
+
+    it("renders evaluateClientFormula output for Formula field in builder grid", () => {
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+
+      // Switch to Data tab
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // Open column options for indirect_cost Formula field
+      const menuBtn = screen.getByTestId("column-menu-btn-indirect_cost");
+      fireEvent.click(menuBtn);
+
+      // Edit formula expression to "{budget} * 0.10"
+      const formulaInput = screen.getByTestId("formula-expression-input");
+      fireEvent.change(formulaInput, { target: { value: "{budget} * 0.10" } });
+      fireEvent.click(screen.getByTestId("save-formula-btn"));
+
+      // Formula expression should be displayed under the header
+      expect(screen.getByTestId("formula-expression-indirect_cost")).toHaveTextContent("{budget} * 0.10");
+
+      // Grid should re-evaluate and display 5,000 for APP-001 (450,000 * 0.10)
+      expect(screen.getByText("$45,000")).toBeInTheDocument();
+    });
+
+    it("renames field, preserving key when data exists and updating key when empty", () => {
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // Rename budget field (which has data)
+      fireEvent.click(screen.getByTestId("column-menu-btn-budget"));
+      const input = screen.getByTestId("rename-field-input");
+      fireEvent.change(input, { target: { value: "Approved Budget" } });
+      fireEvent.click(screen.getByTestId("save-rename-btn"));
+
+      // Label updated
+      expect(screen.getAllByText("Approved Budget").length).toBeGreaterThan(0);
+      // Notice shown that key is kept
+      expect(screen.getByTestId("rename-notice")).toHaveTextContent("Key 'budget' kept");
+    });
+
+    it("changes field type and clears stored records when changing to Formula", () => {
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // Change status field to Formula
+      fireEvent.click(screen.getByTestId("column-menu-btn-status"));
+      const typeSelect = screen.getByTestId("change-type-select");
+      fireEvent.change(typeSelect, { target: { value: "Formula" } });
+
+      // Popover shows Formula Expression input now that type is Formula
+      expect(screen.getByTestId("formula-expression-input")).toBeInTheDocument();
+    });
+
+    it("deletes non-primary field and blocks deletion of primary field", () => {
+      const alertMock = vi.spyOn(window, "alert").mockImplementation(() => {});
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // Try deleting primary field 'title'
+      fireEvent.click(screen.getByTestId("column-menu-btn-title"));
+      const deletePrimaryBtn = screen.getByTestId("delete-field-btn");
+      expect(deletePrimaryBtn).toBeDisabled();
+      fireEvent.click(deletePrimaryBtn);
+      // Not deleted
+      expect(screen.getAllByText("Proposal Title").length).toBeGreaterThan(0);
+
+      // Now delete a non-primary field: department
+      fireEvent.click(screen.getByTestId("column-menu-btn-department"));
+      const deleteDeptBtn = screen.getByTestId("delete-field-btn");
+      expect(deleteDeptBtn).not.toBeDisabled();
+      fireEvent.click(deleteDeptBtn);
+
+      // Department should no longer be in headers
+      expect(screen.queryByTestId("column-menu-btn-department")).not.toBeInTheDocument();
+      alertMock.mockRestore();
+    });
+  });
+
+  describe("Phase 6: Linked Field & Airtable-style Link Characteristics Usability", () => {
+    it("adds a linked field via + Add Field button with Airtable-style link characteristics", () => {
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // Click "+ Add Field" header button
+      const addFieldBtn = screen.getByTestId("add-column-header-btn");
+      expect(addFieldBtn).toBeInTheDocument();
+      fireEvent.click(addFieldBtn);
+
+      // Link characteristics modal opens
+      expect(screen.getByTestId("link-characteristics-modal")).toBeInTheDocument();
+
+      // Configure field label
+      const labelInput = screen.getByTestId("link-field-label-input");
+      fireEvent.change(labelInput, { target: { value: "Assigned Investigator" } });
+
+      // Configure target table
+      const tableSelect = screen.getByTestId("link-target-table-select");
+      fireEvent.change(tableSelect, { target: { value: "tbl-investigators" } });
+
+      // Configure cardinality: multiple records
+      const multipleBtn = screen.getByTestId("link-cardinality-multiple");
+      fireEvent.click(multipleBtn);
+
+      // Configure display field & label override
+      const displaySelect = screen.getByTestId("link-display-field-select");
+      fireEvent.change(displaySelect, { target: { value: "name" } });
+
+      const overrideInput = screen.getByTestId("link-label-override-input");
+      fireEvent.change(overrideInput, { target: { value: "Lead PI: " } });
+
+      // Enable and configure filter
+      const filterCheckbox = screen.getByTestId("link-filter-enable-checkbox");
+      fireEvent.click(filterCheckbox);
+
+      const filterFieldSelect = screen.getByTestId("link-filter-field-select");
+      fireEvent.change(filterFieldSelect, { target: { value: "department" } });
+
+      const filterOpSelect = screen.getByTestId("link-filter-operator-select");
+      fireEvent.change(filterOpSelect, { target: { value: "equals" } });
+
+      const filterValInput = screen.getByTestId("link-filter-value-input");
+      fireEvent.change(filterValInput, { target: { value: "Physics" } });
+
+      // Save linked field
+      fireEvent.click(screen.getByTestId("save-linked-field-btn"));
+
+      // Modal closed, new linked column exists
+      expect(screen.queryByTestId("link-characteristics-modal")).not.toBeInTheDocument();
+      expect(screen.getAllByText("Assigned Investigator").length).toBeGreaterThan(0);
+    });
+
+    it("opens link characteristics configuration modal from column menu for existing relation field", () => {
+      render(
+        <AppBuilder
+          app={mockApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // Open column menu for lead_investigator_id (Relation field)
+      const menuBtn = screen.getByTestId("column-menu-btn-lead_investigator_id");
+      fireEvent.click(menuBtn);
+
+      // Configure Link Characteristics button is present
+      const configBtn = screen.getByTestId("configure-link-btn");
+      expect(configBtn).toBeInTheDocument();
+      fireEvent.click(configBtn);
+
+      // Modal opens with pre-populated values
+      expect(screen.getByTestId("link-characteristics-modal")).toBeInTheDocument();
+      const labelInput = screen.getByTestId("link-field-label-input") as HTMLInputElement;
+      expect(labelInput.value).toBe("Lead Investigator");
+
+      // Close modal
+      fireEvent.click(screen.getByTestId("close-link-modal-btn"));
+      expect(screen.queryByTestId("link-characteristics-modal")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Phase 6 — the builder tells the truth", () => {
+    it("click simulate calls fetch with /api/v1/apps/{slug}/automations/simulate", async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ rule_id: "rule-1", trigger_matched: true }],
+        });
+      });
+      global.fetch = fetchMock;
+
+      render(
+        <WorkflowBuilder
+          appSlug="physics-grants"
+          appTitle="Physics Grants"
+          fields={[]}
+          rules={[
+            {
+              id: "rule-1",
+              app_slug: "physics-grants",
+              name: "Test Rule",
+              description: "A test rule",
+              enabled: true,
+              trigger: { type: "RecordCreated" },
+              predicates: [],
+              actions: [],
+            },
+          ]}
+          onSaveRule={vi.fn()}
+          onDeleteRule={vi.fn()}
+          onToggleRule={vi.fn()}
+        />
+      );
+
+      const simulateBtn = screen.getByText("▶ Test Simulation");
+      fireEvent.click(simulateBtn);
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/v1/apps/physics-grants/automations/simulate",
+          expect.objectContaining({
+            method: "POST",
+          })
+        );
+      });
+    });
   });
 });
-
-
-

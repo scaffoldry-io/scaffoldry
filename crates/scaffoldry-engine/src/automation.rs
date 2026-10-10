@@ -4,9 +4,10 @@
 //! and dispatches workflow actions with audit tracking.
 
 use std::time::{SystemTime, UNIX_EPOCH};
+use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_core::{
-    ActionType, AutomationRule, ConditionOperator, FieldPredicate,
-    TriggerEvent, WorkflowExecutionResult,
+    ActionEffect, ActionType, AutomationRule, ConditionOperator, FieldPredicate,
+    StepKind, TriggerEvent, WorkflowExecutionResult,
 };
 use scaffoldry_policy::ScaffoldryPolicyEngine;
 use serde_json::Value;
@@ -30,7 +31,8 @@ impl AutomationEngine {
         rule: &AutomationRule,
         event: &TriggerEvent,
         record: &Value,
-        principal_eppn: &str,
+        identity: &EduPersonIdentity,
+        depth: u8,
     ) -> WorkflowExecutionResult {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -45,6 +47,8 @@ impl AutomationEngine {
                 conditions_met: false,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
@@ -72,6 +76,8 @@ impl AutomationEngine {
                 conditions_met: false,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
@@ -89,21 +95,24 @@ impl AutomationEngine {
                 conditions_met: false,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
 
         // 3. Cedar Policy Authorization Check
-        let cedar_authorized = if let Some(ref policy_id) = rule.cedar_policy_guard {
-            // Check if principal is authorized for this workflow action
-            let is_ferpa = policy_id.to_lowercase().contains("ferpa");
-            let is_registrar = principal_eppn.contains("registrar") || principal_eppn.contains("compliance");
-            let is_faculty = principal_eppn.contains("faculty") || principal_eppn.contains("dr.");
-            
-            if is_ferpa {
-                is_registrar || is_faculty
-            } else {
-                true
+        let cedar_authorized = if rule.cedar_policy_guard.is_some() {
+            // Documented action name pair: "record_decision" with is_ferpa_sensitive distinguishes faculty (permit) and student (forbid) under default Cedar policies
+            match self.policy_engine.authorize_record_action(
+                identity,
+                "record_decision",
+                &rule.app_slug,
+                "institutional",
+                rule.cedar_policy_guard.as_deref().is_some_and(|p| p.to_lowercase().contains("ferpa")),
+            ) {
+                Ok(res) => res.decision == scaffoldry_policy::PolicyDecision::Allow,
+                Err(_) => false,
             }
         } else {
             true
@@ -117,26 +126,75 @@ impl AutomationEngine {
                 conditions_met: true,
                 cedar_authorized: false,
                 actions_executed: vec![],
+                effects: vec![],
+                waiting_instance: None,
                 execution_timestamp: timestamp,
             };
         }
 
-        // 4. Dispatch Actions
+        // Depth backstop check
+        if depth >= 3 {
+            return WorkflowExecutionResult {
+                rule_id: rule.id.clone(),
+                rule_name: rule.name.clone(),
+                trigger_matched: true,
+                conditions_met: true,
+                cedar_authorized: true,
+                actions_executed: vec!["stopped: depth".to_string()],
+                effects: vec![],
+                waiting_instance: None,
+                execution_timestamp: timestamp,
+            };
+        }
+
+        // 4. Dispatch Actions / Steps
         let mut executed = Vec::new();
-        for action in &rule.actions {
-            match action {
-                ActionType::NotifyCollaborator { role, message_template } => {
-                    executed.push(format!("Notified role '{role}': {message_template}"));
+        let mut effects = Vec::new();
+        let mut waiting_instance = None;
+
+        if !rule.steps.is_empty() {
+            for step in &rule.steps {
+                let when_matches = step.when.is_empty()
+                    || step.when.iter().all(|pred| Self::evaluate_predicate(pred, record));
+                if !when_matches {
+                    continue;
                 }
-                ActionType::UpdateRecordStatus { new_status } => {
-                    executed.push(format!("Updated record status to '{new_status}'"));
+                match &step.kind {
+                    StepKind::Service { action } => {
+                        Self::dispatch_action(action, &mut executed, &mut effects);
+                    }
+                    StepKind::UserTask { role, prompt, .. } => {
+                        let record_id_opt = match record.get("id") {
+                            Some(Value::String(s)) => Some(s.clone()),
+                            Some(Value::Number(n)) => Some(n.to_string()),
+                            _ => None,
+                        };
+                        match record_id_opt {
+                            None => {
+                                executed.push("stopped: record has no id".to_string());
+                                break;
+                            }
+                            Some(rec_id) => {
+                                waiting_instance = Some(scaffoldry_core::ProcessInstance {
+                                    id: format!("{}:{}", rule.id, rec_id),
+                                    rule_id: rule.id.clone(),
+                                    app_slug: rule.app_slug.clone(),
+                                    record_id: rec_id,
+                                    status: scaffoldry_core::ProcessStatus::Waiting,
+                                    waiting_step_id: Some(step.id.clone()),
+                                    role: Some(role.clone()),
+                                    prompt: Some(prompt.clone()),
+                                    log: vec![],
+                                });
+                                break;
+                            }
+                        }
+                    }
                 }
-                ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
-                    executed.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
-                }
-                ActionType::WebhookDispatch { target_url } => {
-                    executed.push(format!("Dispatched secure webhook payload to {target_url}"));
-                }
+            }
+        } else {
+            for action in &rule.actions {
+                Self::dispatch_action(action, &mut executed, &mut effects);
             }
         }
 
@@ -147,7 +205,45 @@ impl AutomationEngine {
             conditions_met: true,
             cedar_authorized: true,
             actions_executed: executed,
+            effects,
+            waiting_instance,
             execution_timestamp: timestamp,
+        }
+    }
+
+
+    fn dispatch_action(
+        action: &ActionType,
+        executed: &mut Vec<String>,
+        effects: &mut Vec<ActionEffect>,
+    ) {
+        match action {
+            ActionType::NotifyCollaborator { role, message_template } => {
+                executed.push(format!("Notified role '{role}': {message_template}"));
+                effects.push(ActionEffect::Notify {
+                    role: role.clone(),
+                    message: message_template.clone(),
+                });
+            }
+            ActionType::UpdateRecordStatus { new_status } => {
+                executed.push(format!("Updated record status to '{new_status}'"));
+                effects.push(ActionEffect::SetFields {
+                    fields: vec![("status".into(), new_status.clone())],
+                });
+            }
+            ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
+                executed.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
+                effects.push(ActionEffect::LedgerNote {
+                    summary: summary.clone(),
+                    oscal_control: oscal_control.clone(),
+                });
+            }
+            ActionType::WebhookDispatch { target_url } => {
+                executed.push(format!("Webhook not sent: {target_url}"));
+                effects.push(ActionEffect::Rejected {
+                    reason: format!("webhook disabled: {target_url}"),
+                });
+            }
         }
     }
 

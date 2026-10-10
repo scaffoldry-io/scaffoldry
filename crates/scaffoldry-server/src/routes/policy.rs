@@ -1,6 +1,8 @@
 //! Cedar Policy Evaluation and Simulation Endpoints
 
 use crate::state::SharedState;
+use crate::guard::session_user;
+use axum::http::HeaderMap;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -47,8 +49,15 @@ async fn list_policies() -> impl IntoResponse {
 
 async fn simulate_policy(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+
+    if user.affiliation != "central_admin" && user.affiliation != "compliance" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden: Requires Platform Admin or compliance affiliation"}))));
+    }
     let eppn = payload["eppn"]
         .as_str()
         .unwrap_or("sim.user@university.edu");

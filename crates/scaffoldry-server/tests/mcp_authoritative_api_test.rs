@@ -5,27 +5,35 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
-use scaffoldry_server::build_app;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-async fn login_user(app: &Router, eppn: &str) -> String {
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/auth/token")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&json!({ "eppn": eppn })).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let body: Value = serde_json::from_slice(&bytes).unwrap();
-    body["token"].as_str().unwrap().to_string()
+async fn reset_test_db() {
+    tokio::task::spawn_blocking(|| {
+        let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
+        });
+        if let Ok(mut client) = postgres::Client::connect(&db_url, postgres::NoTls) {
+            let _ = client.batch_execute("
+                TRUNCATE TABLE organizations CASCADE;
+                TRUNCATE TABLE workspaces CASCADE;
+                TRUNCATE TABLE app_manifests CASCADE;
+                TRUNCATE TABLE dataset_records CASCADE;
+                TRUNCATE TABLE published_datasets CASCADE;
+                TRUNCATE TABLE dataset_relationships CASCADE;
+                TRUNCATE TABLE workflow_automations CASCADE;
+                TRUNCATE TABLE process_instances CASCADE;
+                TRUNCATE TABLE scim_users CASCADE;
+                TRUNCATE TABLE scim_groups CASCADE;
+                TRUNCATE TABLE roles CASCADE;
+                TRUNCATE TABLE workspace_collaborators CASCADE;
+            ");
+        }
+    }).await.unwrap();
+}
+
+async fn login_user(_app: &Router, eppn: &str) -> String {
+    scaffoldry_server::service::identity::issue_test_token_and_user(eppn)
 }
 
 async fn mcp_call(
@@ -61,7 +69,10 @@ async fn mcp_call(
 
 #[tokio::test]
 async fn test_mcp_workspace_tools_allow_and_deny_by_role() {
-    let app = build_app().expect("Failed to build router");
+    reset_test_db().await;
+    let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("state"));
+    state.seed_demo().expect("seed");
+    let app = scaffoldry_server::build_app_with_state(state).expect("Failed to build router");
 
     // Sarah Connor is member/owner of ws-cs-research, but not ws-bio-lab
     let sarah_token = login_user(&app, "sarah.connor@state.edu").await;
@@ -115,6 +126,7 @@ async fn test_mcp_workspace_tools_allow_and_deny_by_role() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+
     assert_eq!(res["result"]["isError"], Value::Null);
     let content = &res["result"]["content"][0]["text"];
     assert!(content.as_str().unwrap().contains("ws-bio-lab"));
@@ -196,7 +208,10 @@ async fn test_mcp_workspace_tools_allow_and_deny_by_role() {
 
 #[tokio::test]
 async fn test_mcp_record_tools_allow_and_deny_by_department() {
-    let app = build_app().expect("Failed to build router");
+    reset_test_db().await;
+    let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("state"));
+    state.seed_demo().expect("seed");
+    let app = scaffoldry_server::build_app_with_state(state).expect("Failed to build router");
 
     let einstein_token = login_user(&app, "einstein@physics.state.edu").await;
     let curie_token = login_user(&app, "prof.curie@science.state.edu").await;
@@ -260,7 +275,9 @@ async fn test_mcp_record_tools_allow_and_deny_by_department() {
 
 #[tokio::test]
 async fn test_mcp_apps_ui_resources() {
-    let app = build_app().expect("Failed to build router");
+    let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("state"));
+    state.seed_demo().expect("seed");
+    let app = scaffoldry_server::build_app_with_state(state).expect("Failed to build router");
     let admin_token = login_user(&app, "jordan.lee@state.edu").await;
 
     // 1. Read UI resource for workspace security settings

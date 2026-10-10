@@ -636,12 +636,21 @@ async fn handle_mcp_request(
                         }
                     });
 
+                    let ws_id = args.get("workspace_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .or_else(|| {
+                            let ws_guard = state.workspaces.read().unwrap();
+                            ws_guard.values().find(|w| w.department.eq_ignore_ascii_case(department)).map(|w| w.id.clone())
+                        });
+
                     let manifest = scaffoldry_engine::AppManifest {
                         slug: slug.clone(),
                         title: title.to_string(),
                         description: desc.to_string(),
                         organization_code: org.to_string(),
                         department: department.to_string(),
+                        workspace_id: ws_id,
                         herm_capability_id: None,
                         custom_domain: None,
                         custom_domain_verified: false,

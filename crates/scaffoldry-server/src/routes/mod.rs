@@ -10,7 +10,9 @@ pub mod mcp;
 pub mod policy;
 pub mod records;
 pub mod scim;
+pub mod organizations;
 pub mod workspaces;
+pub mod settings;
 
 use crate::state::SharedState;
 use axum::{
@@ -24,12 +26,14 @@ pub fn api_router(state: SharedState) -> Router {
     let api_v1 = Router::new()
         .merge(auth::router())
         .merge(workspaces::router())
+        .merge(organizations::router())
         .merge(apps::router())
         .merge(records::router())
         .merge(datasets::router())
         .merge(framework::router())
         .merge(policy::router())
         .merge(governance::router())
+        .merge(settings::router())
         .merge(mcp::router())
         .with_state(state.clone());
 

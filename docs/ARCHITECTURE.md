@@ -41,7 +41,7 @@ Scaffoldry ships as a self-contained appliance that runs on **one standard Linux
 
 #### 2.3 Separation of Concerns
 The platform cleanly separates four critical duties:
-1. **Calculation:** Performed in-memory by `scaffoldry-engine` for microsecond spreadsheet interactivity.
+1. **Calculation:** Performed in-memory by `scaffoldry-engine` for responsive spreadsheet interactivity.
 2. **Durability:** Handled by an ACID-compliant PostgreSQL 17 relational database.
 3. **Authorization:** Decided by an embedded Cedar policy engine at the API boundary.
 4. **Audit & Governance:** Permanently recorded in an immutable SHA-256 cryptographic decision ledger.
@@ -72,7 +72,7 @@ All documentation, user interfaces, error messages, and commit histories must fo
 |                                LAYER 2: ACCESS & POLICY                                 |
 |                                   Cedar Policy Engine                                   |
 |                                                                                         |
-|       * Sub-millisecond authorization checks for every cell, view, and action           |
+|       * Real-time authorization checks for every cell, view, and action                 |
 |       * Clear separation of departmental authority vs. central IT controls              |
 |       * Declarative rules written in plain policy syntax                                |
 +-----------------------------------------------------------------------------------------+
@@ -131,7 +131,7 @@ All documentation, user interfaces, error messages, and commit histories must fo
 - **Technology:** `scaffoldry-engine` (native Rust).
 - **Responsibilities:**
   - Hold active sheet schemas, views, and field specifications in memory.
-  - Recompute calculated formulas, relational rollups, and lookups across columns in RAM in under 5ms.
+  - Recompute calculated formulas, relational rollups, and lookups across columns in RAM.
   - Eliminate the need to issue complex, blocking SQL queries to PostgreSQL during interactive user editing.
 
 ### Layer 4: Durable Operational Store (PostgreSQL)
@@ -155,6 +155,48 @@ All documentation, user interfaces, error messages, and commit histories must fo
   - Serve as the export lattice for institutional compliance reporting.
   - Allow university compliance officers to generate automated System Security Plans (SSPs) directly from the running appliance.
   - Validated via automated CI scripts (`governance/scripts/validate-oscal.py`).
+
+### Organization Tree & Scope Hierarchy
+- **Standards Alignment:** NCES CEDS (Common Education Data Standards) organization hierarchy; REFEDS eduPerson scoped affiliations (`faculty`, `staff`, `student`, `employee`, `member`, `affiliate`, `alum`).
+- **Hierarchy Structure:**
+  - Strict single-parent tree: `organizations.parent_id` points to exactly one parent. Closed `org_type` values (`Institution`, `College`, `Department`, `Center`, `Program`). There is exactly one root row (`org_type = "Institution"`, `parent_id = NULL`).
+  - Scoping Pure Function: `unit_in_scope` walks ancestors with an explicit 32-step cycle guard. If an organization node is unreachable or cycles, traversal terminates safely.
+- **Administrative Roles & UI Labels:**
+  - **Platform Admin:** Stored affiliation `central_admin` or root `platform_admin` role. Has supervisory access to all units, all workspaces, and the full `/admin` console (policy, ledger, infra, SCIM, and org tree management).
+  - **Org Unit Admin:** Stored role `roles.scoped_affiliation = "unit_admin"`. Scoped strictly to that unit and its descendants. Sees "Your units" on the workspace rail filter and can create workspaces within assigned units. Never gets `/admin` policy or ledger access.
+  - *Strict Rule:* Never use the labels "Super Admin", "System Admin", or "Org Admin". Admin status is never inferred from job titles (e.g., "Chair" or "Dean").
+- **Identity & SCIM Synchronization:**
+  - SCIM 2.0 provisioning route synchronizes enterprise academic/position attributes (`sync_org_roles`).
+  - Maps `department`, `division`, and `organization` to tree units; deepest match receives `is_primary = true`.
+  - Roles carry a `source` tag (`scim` or `api`). SCIM resync drops only `source = "scim"` records, preserving manual API appointments (`source = "api"`).
+- **Workspace Scoping:**
+  - Workspaces reside in organization units (`workspaces.organization_id`).
+  - `list_workspaces` evaluates `unit_in_scope` before checking individual workspace collaborator roles, preventing cross-department workspace leakage.
+
+### Spreadsheet Data Grid Parity
+- **Technology:** React 19, `@tanstack/react-table`, custom virtualized canvas grid (`DataGrid.tsx`).
+- **Interaction & Editing Parity:**
+  - Type-aware inline cell editors across all rich types: Text, Number, Date, Select, Checkbox, MultiSelect, Currency, Percent, Rating, Email, Phone, Url, Formula, Linked records.
+  - Excel/Airtable interaction model: Bulk rectangular cell selection, clipboard TSV copy/paste, bulk clear, drag-to-fill handle, and undo/redo history stack.
+  - Column chrome controls: Column hiding, freeze/pin column left, multi-column sort, filter popovers, and type badges.
+  - Column schema manipulation in `AppBuilder`: Dynamic field renaming, type conversion, formula expression editing, insert field left/right, and field deletion without requiring SQL DDL migrations.
+  - Linked fields with relational characteristics: Target table binding, display label overrides, relational filtering, and cardinality enforcement (has-one vs has-many).
+- **Calculation Engine:**
+  - Client-side parser and evaluator (`evaluateClientFormula`) mirrors the sovereign Rust engine (`scaffoldry-engine`).
+  - Evaluates arithmetic, string manipulation, logical conditions (`IF`), aggregation (`SUM`, `AVG`), and relational rollups in-memory.
+
+### Sovereign Business Process Engine
+- **Standards Alignment:** BPMN 2.0 vocabulary and semantics (Start events, Sequence flows, Conditional gates, Service tasks, User tasks, End events).
+- **Core Architecture:**
+  - **Action Effects as Data:** Workflow execution yields structured `ActionEffect` values (`UpdateRecordStatus`, `NotifyCollaborator`, `WebhookDispatch`, `CreateLedgerAuditEntry`, `CedarPolicyDenied`, `UserTaskCreated`, `RetriggerSuppressed`) rather than unverified log strings.
+  - **Cedar ABAC Enforcement:** Every automated record modification and action execution is gated by real-time Cedar policy checks (`scaffoldry_policy::authorize_record_action`).
+  - **Retrigger & Cycle Guard:** Embedded retrigger loop guard suppresses cascaded automation loops on same-record triggers, backed by a strict depth backstop (depth cap = 3).
+  - **Human Decision Steps (UserTask):**
+    - Workflow steps can declare `Step::UserTask` targeting specific roles or groups.
+    - When a user task step is encountered, execution suspends: a `ProcessInstance` is persisted in PostgreSQL with status `Waiting` (`0005_process_instances.sql`).
+    - The pending task surfaces in the **ProcessDesk** queue for authorized chairs and reviewers.
+    - Human decisions (`Approve` or `Reject`) advance the process instance to `Completed` or `Rejected` and record a permanent `WorkflowRuleApproved` block into the SHA-256 `governance_ledger`.
+
 
 ### Standardized Interface: Model Context Protocol (MCP) as Authoritative API
 - **Standards Search & Alignment:**
@@ -180,7 +222,7 @@ Scaffoldry deploys as a single compose stack:
    - Cloudflare provides edge TLS termination, DDoS defense, and optional Zero Trust access control.
 3. **Automated Off-Machine Backup:**
    - A daily timer executes a snapshot script.
-   - Dumps PostgreSQL (`pg_dump`) and bundles the local `.git` ledger.
+   - Dumps PostgreSQL (`pg_dump`). The ledger is contained directly within the PostgreSQL database dump.
    - Encrypts the snapshot archive and uploads it to off-machine object storage (Backblaze B2, Google Cloud Storage, or Proton Drive).
 
 ---
@@ -193,7 +235,7 @@ Applications created on Scaffoldry (e.g., Departmental Admissions Review, Grant 
 
 Changes to an application never push directly to live data. Every creation, formula update, or schema alteration follows a governed path:
 
-1. **The Proposal (Branch):** When an end user or AI modifies an app, the platform generates a Git branch: `proposal/<change-summary>`.
+1. **The Proposal:** When an agent or user proposes changes to an app, the platform stores a proposal row holding the draft manifest.
 2. **Automated Pre-Review Checks:** Before notifying a human reviewer, the platform runs automated checks:
    - **Data Sensitivity Scan:** Scans the schema and fields to detect FERPA, HIPAA, or restricted research data markers.
    - **Policy Evaluation:** Asserts that the requested changes comply with institutional rules via Cedar.
@@ -202,7 +244,7 @@ Changes to an application never push directly to live data. Every creation, form
    - Visual before-and-after view of the schema and formula changes.
    - Data sensitivity classification and required approvals.
    - Automated check results (Pass/Fail).
-4. **Governed Deployment:** When approved, the system merges the branch into `main` and signs the commit. The production database and calculation engine reload the new schema instantly.
+4. **Governed Deployment:** When approved, the system writes the manifest and appends an audit block to the `governance_ledger` in one transaction. The production database and calculation engine reload the new manifest instantly.
 
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
@@ -218,8 +260,8 @@ Scaffoldry supports two operating modes to accommodate both non-technical depart
 
 - **Mode A: The Invisible Git Workflow (Default):**
   Faculty, staff, and departmental administrators interact entirely through The Desk. Embedded Git manages branches, approvals, and merges behind the scenes. Users experience the collaborative ease of low-code without developer tooling.
-- **Mode B: Enterprise Git Sync (Central IT Integration):**
-  The platform syncs departmental application repositories with the university's existing GitHub Enterprise or GitLab infrastructure.
+- **Mode B: Enterprise Git Sync (Central IT Integration) (Not Built):**
+  Planned export to sync departmental application definitions with the university's existing GitHub Enterprise or GitLab infrastructure.
   - Central IT security tools (Dependabot, Snyk, CodeQL, Trivy) continuously scan application code and dependencies.
   - Central enterprise engineers can review and audit departmental applications through standard GitHub Pull Requests.
 
@@ -232,6 +274,10 @@ Future AI assistants working on Scaffoldry must strictly follow these instructio
 1. **Never introduce hypervisor or VM nesting.** Do not suggest QEMU, nested libvirt, or host-level Podman quadlet workarounds. Everything runs in standard, portable containers.
 2. **Never store long-lived credentials in scripts.** Never create credential-minting bash scripts or SSH scrapers. Use standard environment variables and scoped service tokens.
 3. **Never bypass human approval for production changes.** Production deployments and schema modifications must always originate from an approved merge into `main`.
-4. **Never write raw SQL migrations for user-defined fields.** User-created columns live in flexible JSONB/Arrow columnar memory; do not run dynamic `ALTER TABLE` DDL queries against PostgreSQL.
+4. **Never write raw SQL migrations for user-defined fields.** User-created columns live in record JSONB; do not run dynamic `ALTER TABLE` DDL queries against PostgreSQL.
 5. **Adhere to Write for People.** Write simple, clear prose. Avoid dense sentence structures, pseudo-philosophical aphorisms, and nested subordinate clauses.
+6. **Preserve Organization Tree Invariants.** Units form a single-parent tree. Never give a unit two parents. Never use labels other than Platform Admin and Org Unit Admin. Never infer admin privileges from job titles.
+7. **Maintain Business Process Human Gates.** Human decision steps (`UserTask`) must wait for real human decisions via ProcessDesk and append to `governance_ledger`. Never fire-and-forget or bypass human authority.
+8. **Preserve Retrigger and Loop Guards.** Automation rules must respect retrigger suppression and the depth-3 backstop to prevent infinite execution cycles.
+9. **Sovereign Engine & Cryptographic Ledger Integrity.** The calculation engine is native Rust (`scaffoldry-engine`), never Arrow/DataFusion. The audit ledger is an immutable SHA-256 blockchain stored in PostgreSQL, never embedded Git.
 

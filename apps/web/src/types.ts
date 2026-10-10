@@ -64,6 +64,14 @@ export type FieldType =
   | "Rollup"
   | "Formula";
 
+export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
+
+export interface LinkFilter {
+  field: string;
+  operator: "equals" | "not_equals" | "contains" | "greater_than" | "less_than";
+  value: string;
+}
+
 export interface FieldSpec {
   name: string;
   label: string;
@@ -74,6 +82,10 @@ export interface FieldSpec {
   linked_field?: string;
   target_table_id?: string;
   target_display_field?: string;
+  display_label_override?: string;
+  cardinality?: LinkCardinality;
+  allow_multiple?: boolean;
+  link_filter?: LinkFilter;
   formula_expression?: string;
   rollup_function?: "sum" | "avg" | "min" | "max" | "count" | "concat";
   select_options?: string[];
@@ -93,6 +105,11 @@ export interface AppView {
   row_density?: RowDensity;
   kanban_column_field?: string;
   calendar_date_field?: string;
+  column_order?: string[];
+  column_widths?: [string, number][];
+  hidden_columns?: string[];
+  frozen_through?: string;
+  column_summary?: [string, string][];
 }
 
 export interface Collaborator {
@@ -330,6 +347,31 @@ export type WorkflowActionItem =
   | { type: "CreateLedgerAuditEntry"; summary: string; oscal_control: string }
   | { type: "WebhookDispatch"; target_url: string };
 
+export type ProcessStepKind =
+  | {
+      Service: {
+        action:
+          | { NotifyCollaborator: { role: string; message_template: string } }
+          | { UpdateRecordStatus: { new_status: string } }
+          | { CreateLedgerAuditEntry: { summary: string; oscal_control: string } }
+          | { WebhookDispatch: { target_url: string } };
+      };
+    }
+  | {
+      UserTask: {
+        role: string;
+        prompt: string;
+        approve: any[];
+        reject: any[];
+      };
+    };
+
+export interface ProcessStepItem {
+  id: string;
+  when: WorkflowPredicate[];
+  kind: ProcessStepKind;
+}
+
 export interface WorkflowAutomationRule {
   id: string;
   app_slug: string;
@@ -340,6 +382,7 @@ export interface WorkflowAutomationRule {
   cedar_policy_guard?: string;
   predicates: WorkflowPredicate[];
   actions: WorkflowActionItem[];
+  steps?: ProcessStepItem[];
 }
 
 export interface LedgerEntryItem {
@@ -358,3 +401,22 @@ export interface LedgerEntryItem {
 }
 
 
+
+export interface OrganizationNode {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  code: string;
+  org_type: string;
+}
+
+export interface OrgRole {
+  id: string;
+  person_id: string;
+  eppn: string;
+  organization_id: string;
+  role_title: string;
+  scoped_affiliation: string;
+  is_primary: boolean;
+  source: string;
+}

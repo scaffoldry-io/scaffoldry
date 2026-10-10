@@ -29,6 +29,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
   const [expectedValue, setExpectedValue] = useState("3.85");
   const [actionType, setActionType] = useState<"NotifyCollaborator" | "CreateLedgerAuditEntry" | "UpdateRecordStatus">("NotifyCollaborator");
   const [actionParam, setActionParam] = useState("Candidate approved with honors fellowship eligibility");
+  const [addAsServiceStep, setAddAsServiceStep] = useState(false);
   const [simulationResult, setSimulationResult] = useState<string | null>(null);
 
   // Template Quick-Starters
@@ -120,34 +121,70 @@ export const WorkflowBuilder: React.FC<Props> = ({
       actions: [action],
     };
 
+    if (addAsServiceStep) {
+      let stepAction: any;
+      if (actionType === "NotifyCollaborator") {
+        stepAction = { NotifyCollaborator: { role: "chair", message_template: actionParam } };
+      } else if (actionType === "CreateLedgerAuditEntry") {
+        stepAction = { CreateLedgerAuditEntry: { summary: actionParam, oscal_control: "AC-03" } };
+      } else {
+        stepAction = { UpdateRecordStatus: { new_status: actionParam } };
+      }
+
+      newRule.steps = [
+        {
+          id: `step-${Date.now()}`,
+          when: [
+            {
+              field_name: selectedField,
+              operator,
+              expected_value: expectedValue,
+            },
+          ],
+          kind: {
+            Service: { action: stepAction },
+          },
+        },
+      ];
+    }
+
     onSaveRule(newRule);
     setIsCreating(false);
     setRuleName("");
     setRuleDesc("");
+    setAddAsServiceStep(false);
   };
 
-  const handleSimulateRule = (rule: WorkflowAutomationRule) => {
-    setSimulationResult(
-      JSON.stringify(
-        {
-          simulation: "Scaffoldry Governed Automation Engine",
-          rule_id: rule.id,
-          rule_name: rule.name,
-          trigger_matched: true,
-          predicates_satisfied: true,
-          cedar_policy_evaluation: "ALLOW (Principal dr.curie holds verified affiliation)",
-          actions_dispatched: rule.actions.map((a) => {
-            if (a.type === "NotifyCollaborator") return `Dispatched alert to role '${a.role}'`;
-            if (a.type === "CreateLedgerAuditEntry") return `Recorded immutable audit log (${a.oscal_control})`;
-            if (a.type === "UpdateRecordStatus") return `Updated status to '${a.new_status}'`;
-            return `Webhook dispatched`;
-          }),
-          latency: "0.2 ms",
-        },
-        null,
-        2
-      )
-    );
+  const handleSimulateRule = async (rule: WorkflowAutomationRule) => {
+    try {
+      let eventPayload: any = rule.trigger.type;
+      if (rule.trigger.type === "StatusChanged") {
+        eventPayload = { StatusChanged: { to_status: (rule.trigger as any).to_status || "Approved" } };
+      } else if (rule.trigger.type === "FieldChanged") {
+        eventPayload = { FieldChanged: { field_name: (rule.trigger as any).field_name || "status" } };
+      }
+
+      const res = await fetch(`/api/v1/apps/${appSlug}/automations/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: eventPayload,
+          record: { id: "rec-simulation-test", [selectedField]: expectedValue, status: "Submitted" },
+          principal: "dr.smith@university.edu",
+          affiliation: "faculty",
+        }),
+      });
+
+      if (!res.ok) {
+        setSimulationResult(`HTTP ${res.status}`);
+        return;
+      }
+
+      const body = await res.json();
+      setSimulationResult(JSON.stringify(body, null, 2));
+    } catch (err: any) {
+      setSimulationResult(`Error: ${err?.message || "Simulation failed"}`);
+    }
   };
 
   return (
@@ -341,6 +378,18 @@ export const WorkflowBuilder: React.FC<Props> = ({
                 />
               </div>
             </div>
+          </div>
+
+          <div className="pt-1">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={addAsServiceStep}
+                onChange={(e) => setAddAsServiceStep(e.target.checked)}
+                className="rounded text-blue-600 focus:ring-blue-500"
+              />
+              <span>Add as multi-step pipeline service step (Phase 6)</span>
+            </label>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
