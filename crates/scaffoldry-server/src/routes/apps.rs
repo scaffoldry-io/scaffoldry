@@ -500,8 +500,10 @@ async fn decide_app_process(
         if let Some(rec) = current {
             let mut data = rec.data.clone();
             scaffoldry_core::workflow::apply_field_effects(&mut data, &field_effects);
+            // The person who decided is the actor.
+            let ctx = crate::service::history::ctx_for(&user.eppn, crate::repository::ActorKind::User, &slug, &data, &state);
             state
-                .overwrite_record_data(&slug, &instance.record_id, &data)
+                .overwrite_record_data(&slug, &instance.record_id, &data, &ctx)
                 .map_err(|e| ServiceError::internal(e).into_pair())?;
         }
     }

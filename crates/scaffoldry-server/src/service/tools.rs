@@ -6,6 +6,7 @@
 //! perform the step.
 
 use crate::service::access::{authorize_app, authorize_workspace, AppAction};
+use crate::service::history::Origin;
 use crate::service::{records, workspaces, ServiceError};
 use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
@@ -34,7 +35,7 @@ pub struct Tool {
     pub scope: Scope,
     /// True when the tool changes nothing. It becomes the `readOnlyHint` annotation.
     pub read_only: bool,
-    pub run: fn(&AuthUser, Value, &SharedState) -> Result<Value, ServiceError>,
+    pub run: fn(&AuthUser, &Origin, Value, &SharedState) -> Result<Value, ServiceError>,
 }
 
 pub static TOOLS: &[Tool] = &[
@@ -159,6 +160,14 @@ pub static TOOLS: &[Tool] = &[
         run: run_get_record,
     },
     Tool {
+        name: "get_record_history",
+        description: "The changes made to a record, newest first, with who made each one. A field you may not read shows only that it changed.",
+        input_schema: schema_get_record_history,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_get_record_history,
+    },
+    Tool {
         name: "update_record",
         description: "Change fields of a record. Send the version you read. Fields you do not name keep their value. A stale version is an error that names the current one.",
         input_schema: schema_update_record,
@@ -193,7 +202,7 @@ pub static TOOLS: &[Tool] = &[
 ];
 
 /// The one gate. Finds the tool, checks its scope, checks the arguments, and runs it.
-pub fn call(caller: &AuthUser, name: &str, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+pub fn call(caller: &AuthUser, origin: &Origin, name: &str, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let tool = TOOLS
         .iter()
         .find(|t| t.name == name)
@@ -216,7 +225,7 @@ pub fn call(caller: &AuthUser, name: &str, args: Value, state: &SharedState) -> 
     }
 
     validate_args(&(tool.input_schema)(), &args)?;
-    (tool.run)(caller, args, state)
+    (tool.run)(caller, origin, args, state)
 }
 
 fn required_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, ServiceError> {
@@ -389,16 +398,16 @@ fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, ServiceError> {
     serde_json::to_value(v).map_err(|e| ServiceError::Internal(e.to_string()))
 }
 
-fn run_list_workspaces(caller: &AuthUser, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_workspaces(caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     to_value(&workspaces::list_workspaces(caller, state)?)
 }
 
-fn run_get_workspace(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_get_workspace(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let ws_id = required_str(&args, "workspace_id")?;
     to_value(&workspaces::get_workspace(caller, ws_id, state)?)
 }
 
-fn run_update_workspace(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_update_workspace(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let ws_id = required_str(&args, "workspace_id")?.to_string();
     let input = workspaces::UpdateWorkspacePayload {
         name: text(&args, "name"),
@@ -417,7 +426,7 @@ fn run_update_workspace(caller: &AuthUser, args: Value, state: &SharedState) -> 
     to_value(&workspaces::update_workspace(caller, &ws_id, input, state)?)
 }
 
-fn run_manage_workspace_member(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_manage_workspace_member(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let ws_id = required_str(&args, "workspace_id")?;
     let action = required_str(&args, "action")?;
     let eppn = required_str(&args, "eppn")?;
@@ -426,13 +435,13 @@ fn run_manage_workspace_member(caller: &AuthUser, args: Value, state: &SharedSta
     workspaces::manage_workspace_member(caller, ws_id, action, eppn, role, name, state)
 }
 
-fn run_create_record(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_create_record(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let app_slug = required_str(&args, "app_slug")?;
     let data = args.get("data").cloned().unwrap_or_else(|| json!({}));
-    to_value(&records::create_record(caller, app_slug, &data, state)?)
+    to_value(&records::create_record(caller, origin, app_slug, &data, state)?)
 }
 
-fn run_list_datasets(_caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_datasets(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
     let dept_filter = args.get("department").and_then(|v| v.as_str());
     let list: Vec<_> = datasets
@@ -443,7 +452,7 @@ fn run_list_datasets(_caller: &AuthUser, args: Value, state: &SharedState) -> Re
     to_value(&list)
 }
 
-fn run_simulate_cedar_policy(_caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_simulate_cedar_policy(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let eppn = required_str(&args, "eppn")?;
     let action = required_str(&args, "action")?;
     let affiliation_word = text(&args, "affiliation").unwrap_or_else(|| "staff".to_string());
@@ -487,7 +496,7 @@ fn run_simulate_cedar_policy(_caller: &AuthUser, args: Value, state: &SharedStat
     }))
 }
 
-fn run_record_governance_decision(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_record_governance_decision(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     // The same Cedar rule the REST route applies. A student may not record a decision.
     let auth = state
         .policy_engine
@@ -541,15 +550,15 @@ fn run_record_governance_decision(caller: &AuthUser, args: Value, state: &Shared
     }))
 }
 
-fn run_verify_decision_ledger(_caller: &AuthUser, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_verify_decision_ledger(_caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     crate::service::governance::verify_decision_ledger(state)
 }
 
-fn run_export_oscal_compliance(_caller: &AuthUser, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_export_oscal_compliance(_caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     Ok(state.export_oscal_component_definition())
 }
 
-fn run_get_framework_spec(_caller: &AuthUser, _args: Value, _state: &SharedState) -> Result<Value, ServiceError> {
+fn run_get_framework_spec(_caller: &AuthUser, _origin: &Origin, _args: Value, _state: &SharedState) -> Result<Value, ServiceError> {
     Ok(crate::routes::framework::build_framework_spec_json())
 }
 
@@ -573,7 +582,7 @@ fn schema_cancel_job() -> Value {
     })
 }
 
-fn run_get_job(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_get_job(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let job_id_str = required_str(&args, "job_id")?;
     let uuid = uuid::Uuid::parse_str(job_id_str)
         .map_err(|_| ServiceError::NotFound("Job not found".to_string()))?;
@@ -593,7 +602,7 @@ fn run_get_job(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Va
     }
 }
 
-fn run_cancel_job(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_cancel_job(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let job_id_str = required_str(&args, "job_id")?;
     let uuid = uuid::Uuid::parse_str(job_id_str)
         .map_err(|_| ServiceError::NotFound("Job not found".to_string()))?;
@@ -759,7 +768,7 @@ struct DeleteRecordArgs {
     version: i32,
 }
 
-fn run_list_apps(_caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_apps(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: ListAppsArgs = parse(args)?;
     let engine = state.engine.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
     let mut apps: Vec<Value> = engine
@@ -772,7 +781,7 @@ fn run_list_apps(_caller: &AuthUser, args: Value, state: &SharedState) -> Result
     Ok(Value::Array(apps))
 }
 
-fn run_describe_app(_caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_describe_app(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: DescribeAppArgs = parse(args)?;
     let manifest = state
         .engine
@@ -784,7 +793,7 @@ fn run_describe_app(_caller: &AuthUser, args: Value, state: &SharedState) -> Res
     Ok(crate::routes::apps::with_version(state, &manifest))
 }
 
-fn run_list_records(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: ListRecordsArgs = parse(args)?;
     let limit = args.limit.unwrap_or(50);
     if limit == 0 || limit > MAX_ROWS {
@@ -810,12 +819,12 @@ fn run_list_records(caller: &AuthUser, args: Value, state: &SharedState) -> Resu
     Ok(json!({ "records": page.records, "next_cursor": page.next_cursor }))
 }
 
-fn run_get_record(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_get_record(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: GetRecordArgs = parse(args)?;
     to_value(&records::get_record(caller, &args.app_slug, &args.record_id, state)?)
 }
 
-fn run_update_record(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_update_record(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: UpdateRecordArgs = parse(args)?;
     // The agent names the fields to change. The rest of the row stays as it is.
     let current = records::get_record(caller, &args.app_slug, &args.record_id, state)?;
@@ -824,12 +833,50 @@ fn run_update_record(caller: &AuthUser, args: Value, state: &SharedState) -> Res
         data.insert(name, value);
     }
     let payload = json!({ "data": data, "version": args.version });
-    let saved = records::update_record(caller, &args.app_slug, &args.record_id, &payload, state).map_err(stale_as_text)?;
+    let saved = records::update_record(caller, origin, &args.app_slug, &args.record_id, &payload, state).map_err(stale_as_text)?;
     to_value(&saved)
 }
 
-fn run_delete_record(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_delete_record(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: DeleteRecordArgs = parse(args)?;
-    records::delete_record_checked(caller, &args.app_slug, &args.record_id, args.version, state).map_err(stale_as_text)?;
+    records::delete_record_checked(caller, origin, &args.app_slug, &args.record_id, args.version, state).map_err(stale_as_text)?;
     Ok(json!({ "deleted": true }))
+}
+
+fn schema_get_record_history() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "record_id": { "type": "string", "description": "Record id" },
+            "limit": { "type": "integer", "description": "Entries per page, 1 to 200. Default 50" },
+            "cursor": { "type": "string", "description": "The next_cursor of the previous page" }
+        },
+        "required": ["app_slug", "record_id"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GetRecordHistoryArgs {
+    app_slug: String,
+    record_id: String,
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+fn run_get_record_history(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: GetRecordHistoryArgs = parse(args)?;
+    let limit = args.limit.unwrap_or(crate::service::history::DEFAULT_PAGE);
+    if limit == 0 || limit > MAX_ROWS {
+        return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
+    }
+    let page = crate::service::history::record_history(
+        caller,
+        &args.app_slug,
+        &args.record_id,
+        crate::service::history::HistoryQuery { filter: Default::default(), cursor: args.cursor, limit },
+        state,
+    )?;
+    Ok(json!({ "entries": page.entries, "next_cursor": page.next_cursor }))
 }

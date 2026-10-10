@@ -123,7 +123,7 @@ impl World {
             created_at: String::new(),
             created_by: Some(submitter.to_string()),
             version: 1,
-        }).unwrap();
+        }, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
         let id = format!("{rule_id}:{record_id}");
         self.state.process_instances.write().unwrap().insert(id.clone(), ProcessInstance {
             id: id.clone(),
@@ -409,7 +409,7 @@ async fn a_new_instance_records_its_starter_and_flags_a_vacant_step_with_a_log_l
     w.state.put_record(&DatasetRecord {
         id: "rec-n1".to_string(), app_slug: APP.to_string(), data: json!({ "id": "rec-n1", "status": "New" }),
         ceds_mapping: Default::default(), is_ferpa_sensitive: false, created_at: String::new(), created_by: Some(geo.clone()), version: 1,
-    }).unwrap();
+    }, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
 
     let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
         eppn: p.sam.clone(),
