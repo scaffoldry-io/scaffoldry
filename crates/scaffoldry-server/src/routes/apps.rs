@@ -117,7 +117,7 @@ async fn get_app(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Path(slug): Path<String>,
-) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
@@ -125,11 +125,28 @@ async fn get_app(
         .map_err(ServiceError::into_pair)?;
 
     use scaffoldry_engine::HostRouter;
-    let engine = state.engine.read().map_err(|_| lock_err())?;
-    let manifest = engine
-        .resolve_by_slug(&slug)
-        .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?;
-    Ok(Json(manifest.clone()))
+    let manifest = {
+        let engine = state.engine.read().map_err(|_| lock_err())?;
+        engine
+            .resolve_by_slug(&slug)
+            .cloned()
+            .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?
+    };
+    Ok(Json(with_version(&state, &manifest)))
+}
+
+/// The manifest as JSON, with the version a save must name.
+fn with_version(state: &SharedState, manifest: &AppManifest) -> Value {
+    let version = state
+        .repository
+        .as_ref()
+        .and_then(|r| r.app_manifest_version(&manifest.slug).ok().flatten())
+        .unwrap_or(1);
+    let mut v = serde_json::to_value(manifest).unwrap_or(Value::Null);
+    if let Some(map) = v.as_object_mut() {
+        map.insert("version".to_string(), Value::from(version));
+    }
+    v
 }
 
 async fn update_app(
@@ -137,12 +154,25 @@ async fn update_app(
     headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
-) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     authorize_app(&user, &slug, AppAction::Manage, &state)
         .map_err(ServiceError::into_pair)?;
+
+    // A save names the version it read. Without one there is nothing to check it against.
+    let expected_version = payload
+        .get("version")
+        .and_then(|v| v.as_i64())
+        .and_then(|n| i32::try_from(n).ok())
+        .ok_or_else(|| {
+            ServiceError::Invalid {
+                message: "version is required: send the version you read".to_string(),
+                fields: std::collections::BTreeMap::from([("version".to_string(), "required".to_string())]),
+            }
+            .into_pair()
+        })?;
 
     use scaffoldry_engine::HostRouter;
     let existing = {
@@ -162,17 +192,33 @@ async fn update_app(
     manifest.custom_domain = existing.custom_domain;
     manifest.custom_domain_verified = existing.custom_domain_verified;
 
+    // The conditional update comes first. Only a save that wins reaches the running engine.
+    if let Some(ref repo) = state.repository {
+        match repo
+            .update_app_manifest_checked(&manifest, expected_version)
+            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?
+        {
+            crate::repository::RecordWrite::Saved(_) => {}
+            crate::repository::RecordWrite::Conflict(version) => {
+                return Err(ServiceError::StaleVersion {
+                    message: "Someone else saved this app first. Reload it and try again.".to_string(),
+                    version,
+                }
+                .into_pair());
+            }
+            crate::repository::RecordWrite::Missing => {
+                return Err(ServiceError::not_found("App not found").into_pair());
+            }
+        }
+    }
+
     let mut engine = state.engine.write().map_err(|_| lock_err())?;
     engine
         .register_manifest(manifest.clone())
         .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
+    drop(engine);
 
-    if let Some(ref repo) = state.repository {
-        repo.upsert_app_manifest(&manifest)
-            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-    }
-
-    Ok(Json(manifest))
+    Ok(Json(with_version(&state, &manifest)))
 }
 
 async fn publish_app(
@@ -446,25 +492,17 @@ async fn decide_app_process(
         return Err(ServiceError::forbidden("Forbidden: Caller may not decide this step").into_pair());
     }
 
-    // Apply field effects and write record
-    let mut updated_record: Option<crate::state::DatasetRecord> = None;
+    // Apply field effects and write the record. This is a system write, so it needs no version.
     if !field_effects.is_empty() {
-        if let Ok(mut records) = state.records.write() {
-            if let Some(app_records) = records.get_mut(&slug) {
-                if let Some(rec) = app_records.iter_mut().find(|r| r.id == instance.record_id) {
-                    scaffoldry_core::workflow::apply_field_effects(&mut rec.data, &field_effects);
-                    updated_record = Some(rec.clone());
-                }
-            }
-        }
-    }
-
-    // decide_app_process writes the changed record with repo.upsert_record and returns the error.
-    if let Some(ref rec) = updated_record {
-        if let Some(ref repo) = state.repository {
-            repo.upsert_record(rec).map_err(|e| {
-                ServiceError::internal(e.to_string()).into_pair()
-            })?;
+        let current = state
+            .find_record(&slug, &instance.record_id)
+            .map_err(|e| ServiceError::internal(e).into_pair())?;
+        if let Some(rec) = current {
+            let mut data = rec.data.clone();
+            scaffoldry_core::workflow::apply_field_effects(&mut data, &field_effects);
+            state
+                .overwrite_record_data(&slug, &instance.record_id, &data)
+                .map_err(|e| ServiceError::internal(e).into_pair())?;
         }
     }
 

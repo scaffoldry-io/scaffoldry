@@ -296,13 +296,17 @@ async fn app_and_dataset_routes_enforce_cedar_policy_authorization() {
     ).await;
     assert_eq!(status, StatusCode::CREATED, "Department faculty can create app");
 
+    // A save names the version it read.
+    let (_, current) = send(&app, "GET", "/api/v1/apps/bio-lab-inventory", Some(&faculty), &[], None).await;
+    let mut versioned_manifest = app_manifest.clone();
+    versioned_manifest["version"] = current["version"].clone();
     let (status, _) = send(
         &app,
         "PUT",
         "/api/v1/apps/bio-lab-inventory",
         Some(&faculty),
         &[],
-        Some(app_manifest.clone()),
+        Some(versioned_manifest),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "Department faculty can update app");
@@ -600,7 +604,7 @@ async fn test_phase_5_app_workspace_scoping_and_stored_row_access() {
         &format!("/api/v1/apps/app-in-a/records/{rec_id}"),
         Some(&editor_a),
         &[],
-        Some(json!({ "data": { "name": "Updated by editor" } })),
+        Some(json!({ "data": { "name": "Updated by editor" }, "version": 1 })),
     ).await;
     assert_eq!(status, StatusCode::OK, "A's editor must get 200 on record update");
 

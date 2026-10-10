@@ -162,6 +162,13 @@ pub struct DatasetRecord {
     /// The eppn of the principal who created the record. Absent on records written before 0022.
     #[serde(default)]
     pub created_by: Option<String>,
+    /// Changes by one on every save. A save names the version it read.
+    #[serde(default = "default_record_version")]
+    pub version: i32,
+}
+
+fn default_record_version() -> i32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,9 +193,11 @@ pub struct ServerState {
     pub groups: RwLock<HashMap<String, ScimGroup>>,
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
     pub collaborators: RwLock<HashMap<String, Vec<CollaboratorRecord>>>,
+    /// Records live in PostgreSQL. This map holds them only when there is no repository, which
+    /// is the case for tests that call `ServerState::in_memory`.
+    memory_records: RwLock<HashMap<String, Vec<DatasetRecord>>>,
     pub guards: RwLock<HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>>>,
     pub guard_policy_cache: RwLock<HashMap<(String, i32), scaffoldry_policy::PolicySet>>,
-    pub records: RwLock<HashMap<String, Vec<DatasetRecord>>>,
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
     pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
@@ -438,9 +447,9 @@ impl ServerState {
             groups: RwLock::new(groups),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
+            memory_records: RwLock::new(HashMap::new()),
             guards: RwLock::new(guards),
             guard_policy_cache: RwLock::new(HashMap::new()),
-            records: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
             automations: RwLock::new(automations),
@@ -486,6 +495,127 @@ impl ServerState {
             repo.delete_scim_roles_for_user(eppn)?;
         }
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // RECORDS. PostgreSQL holds the rows. Nothing is loaded at boot.
+    // -------------------------------------------------------------------------
+
+    fn memory(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, Vec<DatasetRecord>>> {
+        self.memory_records.write().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub fn list_app_records(&self, app_slug: &str) -> Result<Vec<DatasetRecord>, String> {
+        match self.repository {
+            Some(ref repo) => repo.list_records(app_slug).map_err(|e| e.to_string()),
+            None => Ok(self.memory().get(app_slug).cloned().unwrap_or_default()),
+        }
+    }
+
+    pub fn count_app_records(&self, app_slug: &str) -> Result<usize, String> {
+        Ok(self.list_app_records(app_slug)?.len())
+    }
+
+    pub fn find_record(&self, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, String> {
+        match self.repository {
+            Some(ref repo) => repo.get_record(app_slug, id).map_err(|e| e.to_string()),
+            None => Ok(self.memory().get(app_slug).and_then(|v| v.iter().find(|r| r.id == id).cloned())),
+        }
+    }
+
+    /// A new record, at version 1.
+    pub fn insert_record(&self, rec: &DatasetRecord) -> Result<(), String> {
+        match self.repository {
+            Some(ref repo) => repo.insert_record(rec).map_err(|e| e.to_string()),
+            None => {
+                self.memory().entry(rec.app_slug.clone()).or_default().push(rec.clone());
+                Ok(())
+            }
+        }
+    }
+
+    /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
+    pub fn put_record(&self, rec: &DatasetRecord) -> Result<(), String> {
+        match self.repository {
+            Some(ref repo) => repo.upsert_record(rec).map_err(|e| e.to_string()),
+            None => {
+                let mut map = self.memory();
+                let list = map.entry(rec.app_slug.clone()).or_default();
+                match list.iter_mut().find(|r| r.id == rec.id) {
+                    Some(existing) => {
+                        let next = existing.version + 1;
+                        *existing = rec.clone();
+                        existing.version = next;
+                    }
+                    None => list.push(rec.clone()),
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Saves new data when the stored version is the one the caller read.
+    pub fn save_record_checked(
+        &self,
+        app_slug: &str,
+        id: &str,
+        data: &Value,
+        expected_version: i32,
+    ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), String> {
+        use crate::repository::RecordWrite;
+        let outcome = match self.repository {
+            Some(ref repo) => repo
+                .update_record_checked(app_slug, id, data, expected_version)
+                .map_err(|e| e.to_string())?,
+            None => {
+                let mut map = self.memory();
+                match map.get_mut(app_slug).and_then(|v| v.iter_mut().find(|r| r.id == id)) {
+                    None => RecordWrite::Missing,
+                    Some(r) if r.version != expected_version => RecordWrite::Conflict(r.version),
+                    Some(r) => {
+                        r.data = data.clone();
+                        r.version += 1;
+                        RecordWrite::Saved(r.version)
+                    }
+                }
+            }
+        };
+        let saved = if matches!(outcome, RecordWrite::Saved(_)) { self.find_record(app_slug, id)? } else { None };
+        Ok((outcome, saved))
+    }
+
+    /// A write by the system, such as an automation. It always applies and still bumps the version.
+    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value) -> Result<bool, String> {
+        match self.repository {
+            Some(ref repo) => repo
+                .overwrite_record_data(app_slug, id, data)
+                .map(|v| v.is_some())
+                .map_err(|e| e.to_string()),
+            None => {
+                let mut map = self.memory();
+                match map.get_mut(app_slug).and_then(|v| v.iter_mut().find(|r| r.id == id)) {
+                    Some(r) => {
+                        r.data = data.clone();
+                        r.version += 1;
+                        Ok(true)
+                    }
+                    None => Ok(false),
+                }
+            }
+        }
+    }
+
+    pub fn remove_record(&self, app_slug: &str, id: &str) -> Result<bool, String> {
+        match self.repository {
+            Some(ref repo) => repo.delete_record(app_slug, id).map_err(|e| e.to_string()),
+            None => {
+                let mut map = self.memory();
+                let Some(list) = map.get_mut(app_slug) else { return Ok(false) };
+                let before = list.len();
+                list.retain(|r| r.id != id);
+                Ok(list.len() != before)
+            }
+        }
     }
 
     pub fn persist_position_type(&self, pt: &PositionType) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -875,9 +1005,9 @@ impl ServerState {
             groups: RwLock::new(groups),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
+            memory_records: RwLock::new(HashMap::new()),
             guards: RwLock::new(HashMap::new()),
             guard_policy_cache: RwLock::new(HashMap::new()),
-            records: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
             automations: RwLock::new(automations),
@@ -1318,6 +1448,42 @@ impl ServerState {
 
 
 
+        // The demo set is compiled in. Each row is written only when its id is absent, and then it
+        // is the institution's data. A later boot never writes it over an edit.
+        let stored_workspaces: std::collections::HashSet<String> = match self.repository {
+            Some(ref repo) => repo.list_workspaces().unwrap_or_default().into_iter().map(|w| w.id).collect(),
+            None => self.workspaces.read().unwrap().keys().cloned().collect(),
+        };
+        let stored_datasets: std::collections::HashSet<String> = match self.repository {
+            Some(ref repo) => repo.list_published_datasets().unwrap_or_default().into_iter().map(|d| d.id).collect(),
+            None => self.datasets.read().unwrap().keys().cloned().collect(),
+        };
+        let stored_relationships: std::collections::HashSet<String> = match self.repository {
+            Some(ref repo) => repo.list_dataset_relationships().unwrap_or_default().into_iter().map(|r| r.id).collect(),
+            None => self.relationships.read().unwrap().keys().cloned().collect(),
+        };
+        let stored_rules: std::collections::HashSet<String> = match self.repository {
+            Some(ref repo) => repo.list_workflow_automations(None).unwrap_or_default().into_iter().map(|r| r.id).collect(),
+            None => self.automations.read().unwrap().values().flatten().map(|r| r.id.clone()).collect(),
+        };
+        let manifest_stored = match self.repository {
+            Some(ref repo) => repo.get_app_manifest(&demo_app.slug).ok().flatten().is_some(),
+            None => {
+                use scaffoldry_engine::HostRouter;
+                self.engine.read().unwrap().resolve_by_slug(&demo_app.slug).is_some()
+            }
+        };
+
+        // A workspace that is stored stays as stored, collaborators included.
+        workspaces.retain(|id, _| !stored_workspaces.contains(id));
+        collaborators.retain(|id, _| workspaces.contains_key(id));
+        datasets.retain(|id, _| !stored_datasets.contains(id));
+        relationships.retain(|id, _| !stored_relationships.contains(id));
+        for rules in automations.values_mut() {
+            rules.retain(|r| !stored_rules.contains(&r.id));
+        }
+        automations.retain(|_, rules| !rules.is_empty());
+
         if let Some(ref repo) = self.repository {
             for ws in workspaces.values() {
                 let _ = repo.upsert_workspace(ws);
@@ -1333,34 +1499,53 @@ impl ServerState {
             for rel in relationships.values() {
                 let _ = repo.upsert_dataset_relationship(rel);
             }
-            let _ = repo.upsert_app_manifest(&demo_app);
+            if !manifest_stored {
+                let _ = repo.upsert_app_manifest(&demo_app);
+            }
             for rules in automations.values() {
                 for r in rules {
                     let _ = repo.upsert_workflow_automation(r);
                 }
             }
-            let _ = repo.append_ledger_entry(&entry_1, &json!({"domain": "inventory.biology.state.edu", "verified": true}));
-            let _ = repo.append_ledger_entry(&entry_2, &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}));
-            let _ = repo.append_ledger_entry(&entry_3, &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}));
+        }
+
+        // The ledger is only written while it holds nothing but the genesis entry.
+        let ledger_is_new = self.ledger.read().unwrap().len() <= 1;
+        if ledger_is_new {
+            if let Some(ref repo) = self.repository {
+                let _ = repo.append_ledger_entry(&entry_1, &json!({"domain": "inventory.biology.state.edu", "verified": true}));
+                let _ = repo.append_ledger_entry(&entry_2, &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}));
+                let _ = repo.append_ledger_entry(&entry_3, &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}));
+            }
         }
 
         for (k, v) in workspaces {
-            self.workspaces.write().unwrap().insert(k, v);
+            self.workspaces.write().unwrap().entry(k).or_insert(v);
         }
         for (k, v) in collaborators {
-            self.collaborators.write().unwrap().insert(k, v);
+            self.collaborators.write().unwrap().entry(k).or_insert(v);
         }
         for (k, v) in datasets {
-            self.datasets.write().unwrap().insert(k, v);
+            self.datasets.write().unwrap().entry(k).or_insert(v);
         }
         for (k, v) in relationships {
-            self.relationships.write().unwrap().insert(k, v);
+            self.relationships.write().unwrap().entry(k).or_insert(v);
         }
         for (k, v) in automations {
-            self.automations.write().unwrap().insert(k, v);
+            let mut guard = self.automations.write().unwrap();
+            let list = guard.entry(k).or_default();
+            for r in v {
+                if !list.iter().any(|x| x.id == r.id) {
+                    list.push(r);
+                }
+            }
         }
-        let _ = self.engine.write().unwrap().register_manifest(demo_app);
-        self.ledger.write().unwrap().extend(vec![entry_1, entry_2, entry_3]);
+        if !manifest_stored {
+            let _ = self.engine.write().unwrap().register_manifest(demo_app);
+        }
+        if ledger_is_new {
+            self.ledger.write().unwrap().extend(vec![entry_1, entry_2, entry_3]);
+        }
 
         Ok(())
     }

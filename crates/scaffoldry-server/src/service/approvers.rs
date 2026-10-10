@@ -63,11 +63,7 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
         .map(|c| Collaborator { eppn: c.eppn, role: c.role, affiliation: c.scoped_affiliation })
         .collect();
 
-    let submitter = state
-        .records
-        .read()
-        .ok()
-        .and_then(|r| r.get(app_slug).and_then(|recs| recs.iter().find(|x| x.id == record_id).and_then(|x| x.created_by.clone())));
+    let submitter = state.find_record(app_slug, record_id).ok().flatten().and_then(|r| r.created_by);
 
     // People the platform holds a user record for carry their state. Anyone else, such as a
     // seeded persona, counts as active, since nothing says otherwise.

@@ -67,18 +67,12 @@ pub fn create_record(
         is_ferpa_sensitive: submitted.is_ferpa_sensitive,
         created_at: Utc::now().to_rfc3339(),
         created_by: Some(caller.eppn.clone()),
+        version: 1,
     };
 
-    {
-        let mut records = state
-            .records
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        records
-            .entry(app_slug.to_string())
-            .or_default()
-            .push(record.clone());
-    }
+    state
+        .insert_record(&record)
+        .map_err(|e| ServiceError::Internal(format!("Failed to store the record: {e}")))?;
 
     let mut record_val = record.data.clone();
     if let Some(map) = record_val.as_object_mut() {
@@ -107,11 +101,7 @@ pub fn list_records(
     state: &SharedState,
 ) -> Result<Vec<DatasetRecord>, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
-    let records = state
-        .records
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    Ok(records.get(app_slug).cloned().unwrap_or_default())
+    state.list_app_records(app_slug).map_err(ServiceError::Internal)
 }
 
 pub fn get_record(
@@ -121,18 +111,10 @@ pub fn get_record(
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
-    let records = state
-        .records
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    let app_records = records
-        .get(app_slug)
-        .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' records not found")))?;
-    let record = app_records
-        .iter()
-        .find(|r| r.id == id)
-        .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
-    Ok(record.clone())
+    state
+        .find_record(app_slug, id)
+        .map_err(ServiceError::Internal)?
+        .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))
 }
 
 pub fn update_record(
@@ -143,34 +125,48 @@ pub fn update_record(
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
-    let mut records = state
-        .records
-        .write()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    let app_records = records
-        .get_mut(app_slug)
-        .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
-    let record = app_records
-        .iter_mut()
-        .find(|r| r.id == id)
+
+    // A save names the version it read. Without one there is nothing to check it against.
+    let expected_version = match payload.get("version") {
+        Some(v) => v
+            .as_i64()
+            .and_then(|n| i32::try_from(n).ok())
+            .ok_or_else(|| version_required("version must be a whole number"))?,
+        None => return Err(version_required("version is required: send the version you read")),
+    };
+
+    let current = state
+        .find_record(app_slug, id)
+        .map_err(ServiceError::Internal)?
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
 
-    let current_table_id = record.data.get("_table_id").cloned();
-
-    if let Some(new_data) = payload.get("data") {
-        record.data = new_data.clone();
-    } else {
-        record.data = payload.clone();
-    }
-
-    if let (Some(tid), Some(map)) = (current_table_id, record.data.as_object_mut()) {
-        if !map.contains_key("_table_id") {
-            map.insert("_table_id".to_string(), tid);
+    let mut new_data = match payload.get("data") {
+        Some(d) => d.clone(),
+        None => {
+            let mut rest = payload.clone();
+            if let Some(map) = rest.as_object_mut() {
+                map.remove("version");
+            }
+            rest
         }
+    };
+    if let (Some(tid), Some(map)) = (current.data.get("_table_id").cloned(), new_data.as_object_mut()) {
+        map.entry("_table_id".to_string()).or_insert(tid);
     }
 
-    let updated_rec = record.clone();
-    drop(records); // release lock before automations
+    let (outcome, saved) = state
+        .save_record_checked(app_slug, id, &new_data, expected_version)
+        .map_err(ServiceError::Internal)?;
+    let updated_rec = match (outcome, saved) {
+        (crate::repository::RecordWrite::Saved(_), Some(rec)) => rec,
+        (crate::repository::RecordWrite::Conflict(version), _) => {
+            return Err(ServiceError::StaleVersion {
+                message: "Someone else saved this record first. Reload it and try again.".to_string(),
+                version,
+            })
+        }
+        _ => return Err(ServiceError::NotFound(format!("Record '{id}' not found"))),
+    };
 
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,
@@ -217,19 +213,11 @@ pub fn delete_record(
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
-    let mut records = state
-        .records
-        .write()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    let app_records = records
-        .get_mut(app_slug)
-        .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
-    let initial_len = app_records.len();
-    app_records.retain(|r| r.id != id);
-    if app_records.len() == initial_len {
-        return Err(ServiceError::NotFound(format!("Record '{id}' not found")));
+    if state.remove_record(app_slug, id).map_err(ServiceError::Internal)? {
+        Ok(())
+    } else {
+        Err(ServiceError::NotFound(format!("Record '{id}' not found")))
     }
-    Ok(())
 }
 
 /// Who triggered an automation: their identity and their stored department.
@@ -326,13 +314,7 @@ pub fn run_automations(
 
     if modified != *record {
         if let Some(record_id) = record.get("id").and_then(|v| v.as_str()) {
-            if let Ok(mut records) = state.records.write() {
-                if let Some(app_records) = records.get_mut(app_slug) {
-                    if let Some(rec) = app_records.iter_mut().find(|r| r.id == record_id) {
-                        rec.data = modified.clone();
-                    }
-                }
-            }
+            let _ = state.overwrite_record_data(app_slug, record_id, &modified);
         }
 
         if let Some(retrigger_event) = scaffoldry_core::workflow::effects_retrigger(&all_effects) {
@@ -346,5 +328,12 @@ pub fn run_automations(
                 applied_rule_ids,
             );
         }
+    }
+}
+
+fn version_required(message: &str) -> ServiceError {
+    ServiceError::Invalid {
+        message: message.to_string(),
+        fields: std::collections::BTreeMap::from([("version".to_string(), "required".to_string())]),
     }
 }

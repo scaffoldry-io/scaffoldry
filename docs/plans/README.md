@@ -47,7 +47,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 24 | [approvers.md](approvers.md) | 3 | A step waits for a named position. The submitter cannot decide | **COMPLETED** |
 | 25 | [guards.md](guards.md) | 2 | Workspace guards are evaluated on every decision. The old unevaluated field is removed | **COMPLETED** |
 | 26 | [guards.md](guards.md) | 3 | A workspace owner adds a rule from a template and sees who it affects | **COMPLETED** |
-| 27 | [live-data.md](live-data.md) | 1–2 | Records live in PostgreSQL only. A save carries a version and conflicts return 409 |
+| 27 | [live-data.md](live-data.md) | 1–2 | Records live in PostgreSQL only. A save carries a version and conflicts return 409 | **COMPLETED** |
 | 28 | [row-scale.md](row-scale.md) | 1 | A record has a `table_id`. A list is one indexed page |
 | 29 | [mcp-apps.md](mcp-apps.md) | 1 | One tool registry with one gate. The fake tools are gone | **COMPLETED** |
 | 30 | [agent-coverage.md](agent-coverage.md) | 1 | A scenario runner and twenty scripted faculty requests run against the real server |
