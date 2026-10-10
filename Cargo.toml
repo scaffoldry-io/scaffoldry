@@ -11,7 +11,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-authors = ["Johann van Amsterdam <johann@scaffoldry.io>"]
+authors = ["Johann <johann@scaffoldry.io>"]
 repository = "https://github.com/scaffoldry-io/scaffoldry"
 
 [workspace.dependencies]
