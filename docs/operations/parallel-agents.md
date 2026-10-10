@@ -4,6 +4,12 @@ Two agents can work on the plans at the same time. They must never take the same
 
 The lock is a branch. A branch name can be created on GitHub only once. The first agent to push `feat/<brief>-phase-<n>` owns that phase.
 
+## Any tool can take part
+
+The agents do not need to share a session, a project, or a vendor. A claim is a branch on GitHub, so any agent that can run Python and `git push` can take part. Nothing here depends on one tool.
+
+Each agent merges its own pull request when CI is green. If your tool cannot merge, say so in your final message so Johann can do it. Do not leave a green pull request waiting.
+
 ## The commands
 
 Run these from the repository root. They use only Python and git.
@@ -49,7 +55,7 @@ Before you claim, read the opening lines of your brief. If it needs a phase that
 1. Merge `origin/main` into your branch. Another agent's pull request may have landed.
 2. Run every check again after the merge. Paste the output.
 3. If `docs/plans/README.md` conflicts, keep both Status cells. Change only your own row.
-4. Open the pull request to `main`. Merge it when CI is green.
+4. Open the pull request to `main`. Merge it yourself when CI is green. Use a squash merge, as the history does.
 5. Your claim ends when your row says COMPLETED. Delete the branch if you like. A leftover branch for a COMPLETED row holds nothing.
 
 ## When to stop and tell Johann
