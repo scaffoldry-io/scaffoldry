@@ -211,6 +211,9 @@ pub struct ServerState {
     pub organizations: RwLock<HashMap<uuid::Uuid, OrganizationNode>>,
     pub roles: RwLock<Vec<RoleRow>>,
     pub position_types: RwLock<HashMap<String, PositionType>>,
+    /// Sensitivity labels by `(app, table, field)`. They can only raise a field's sensitivity.
+    /// Empty until the label table exists (admin console phase 4, later part).
+    pub labels: RwLock<scaffoldry_engine::LabelSet>,
     pub settings: RwLock<HashMap<String, serde_json::Value>>,
 }
 
@@ -463,6 +466,7 @@ impl ServerState {
             organizations: RwLock::new(organizations),
             roles: RwLock::new(roles),
             position_types: RwLock::new(position_types),
+            labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
             settings: RwLock::new(settings_map),
         })
     }
@@ -1053,6 +1057,7 @@ impl ServerState {
             organizations: RwLock::new(organizations),
             roles: RwLock::new(roles),
             position_types: RwLock::new(position_types),
+            labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
             settings: RwLock::new(settings_map),
         }
     }
