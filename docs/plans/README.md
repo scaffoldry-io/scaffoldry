@@ -45,7 +45,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 22 | [admin-console.md](admin-console.md) | 3 | Workspaces and apps inventory | **COMPLETED** |
 | 23 | [approvers.md](approvers.md) | 2 | Position types, holders, and vacancies | **COMPLETED** |
 | 24 | [approvers.md](approvers.md) | 3 | A step waits for a named position. The submitter cannot decide | **COMPLETED** |
-| 25 | [guards.md](guards.md) | 2 | Workspace guards are evaluated on every decision. The old unevaluated field is removed |
+| 25 | [guards.md](guards.md) | 2 | Workspace guards are evaluated on every decision. The old unevaluated field is removed | **COMPLETED** |
 | 26 | [guards.md](guards.md) | 3 | A workspace owner adds a rule from a template and sees who it affects |
 | 27 | [live-data.md](live-data.md) | 1–2 | Records live in PostgreSQL only. A save carries a version and conflicts return 409 |
 | 28 | [row-scale.md](row-scale.md) | 1 | A record has a `table_id`. A list is one indexed page |

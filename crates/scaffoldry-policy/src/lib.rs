@@ -6,8 +6,10 @@
 
 pub mod entities;
 
+pub use cedar_policy::{Effect, Policy, PolicyId, PolicySet};
+
 use cedar_policy::{
-    Authorizer, Context, Decision, EntityId, EntityTypeName, EntityUid, Entities, PolicyId, PolicySet,
+    Authorizer, Context, Decision, EntityId, EntityTypeName, EntityUid, Entities,
     Request, Schema, ValidationMode, Validator,
 };
 use entities::{authorize, PrincipalCtx, RecordCtx, Resource, SystemCtx, WorkspaceCtx};
@@ -18,6 +20,54 @@ use std::str::FromStr;
 use thiserror::Error;
 
 const SCHEMA_SRC: &str = include_str!("../schema/scaffoldry.cedarschema");
+
+pub fn validate_raw_source(source: &str) -> Result<PolicySet, PolicyError> {
+    if source.len() > 8192 {
+        return Err(PolicyError::PolicyParseError(format!(
+            "Raw Cedar source length {} exceeds maximum limit of 8192 bytes",
+            source.len()
+        )));
+    }
+    let policies: PolicySet = source
+        .parse()
+        .map_err(|e: cedar_policy::ParseErrors| PolicyError::PolicyParseError(e.to_string()))?;
+
+    for p in policies.policies() {
+        if p.effect() != Effect::Forbid {
+            return Err(PolicyError::PolicyParseError(format!(
+                "Raw Cedar policy '{}' is a permit; guards may only forbid",
+                p.id()
+            )));
+        }
+    }
+
+    let (schema, _) = Schema::from_cedarschema_str(SCHEMA_SRC)
+        .map_err(|e| PolicyError::PolicyParseError(format!("schema: {e}")))?;
+
+    let result = Validator::new(schema).validate(&policies, ValidationMode::Strict);
+    if !result.validation_passed() {
+        let errors: Vec<String> = result.validation_errors().map(|e| e.to_string()).collect();
+        return Err(PolicyError::PolicyParseError(errors.join("; ")));
+    }
+
+    Ok(policies)
+}
+
+pub fn parse_guard_policy(
+    id: &str,
+    text: &str,
+) -> Result<Policy, PolicyError> {
+    let policy_id = PolicyId::new(id);
+    let policy = Policy::parse(Some(policy_id), text)
+        .map_err(|e: cedar_policy::ParseErrors| PolicyError::PolicyParseError(e.to_string()))?;
+    if policy.effect() != Effect::Forbid {
+        return Err(PolicyError::PolicyParseError(format!(
+            "Guard policy '{}' must be forbid",
+            id
+        )));
+    }
+    Ok(policy)
+}
 
 #[derive(Error, Debug)]
 pub enum PolicyError {
@@ -127,6 +177,64 @@ impl ScaffoldryPolicyEngine {
     }
 
     /// The id and plain description of every policy in the set, in set order.
+    pub fn policies(&self) -> &PolicySet {
+        &self.policies
+    }
+
+    pub fn schema(&self) -> &Schema {
+        &self.schema
+    }
+
+    pub fn evaluate_with_policy_set(
+        &self,
+        policies: &PolicySet,
+        entity_values: Vec<serde_json::Value>,
+        principal: (&str, &str),
+        action_name: &str,
+        resource: (&str, &str),
+    ) -> Result<AuthorizationResult, PolicyError> {
+        let entities = Entities::from_json_value(serde_json::Value::Array(entity_values), Some(&self.schema))
+            .map_err(|e| PolicyError::EntityError(e.to_string()))?;
+
+        let request = Request::new(
+            entity_uid(principal.0, principal.1)?,
+            entity_uid("Action", action_name)?,
+            entity_uid(resource.0, resource.1)?,
+            Context::empty(),
+            None,
+        )
+        .map_err(|e| PolicyError::RequestError(e.to_string()))?;
+
+        let response = self.authorizer.is_authorized(&request, policies, &entities);
+
+        let decision = match response.decision() {
+            Decision::Allow => PolicyDecision::Allow,
+            Decision::Deny => PolicyDecision::Deny,
+        };
+
+        let reason_ids: HashSet<&PolicyId> = response.diagnostics().reason().collect();
+        let reasons = response.diagnostics().reason().map(|r| r.to_string()).collect();
+        let diagnostics = response.diagnostics().errors().map(|e| e.to_string()).collect();
+
+        let deciding_policy = if decision == PolicyDecision::Deny {
+            policies
+                .policies()
+                .find(|p| reason_ids.contains(p.id()))
+                .map(|p| PolicyRef {
+                    id: p.id().to_string(),
+                    description: p.annotation("description").unwrap_or("").to_string(),
+                })
+        } else {
+            None
+        };
+
+        Ok(AuthorizationResult {
+            decision,
+            reasons,
+            diagnostics,
+            deciding_policy,
+        })
+    }
     pub fn policy_summaries(&self) -> Vec<PolicyRef> {
         self.policies
             .policies()
@@ -143,11 +251,12 @@ impl ScaffoldryPolicyEngine {
             @description("Members of a department can read and write that department's records.")
             permit (
                 principal,
-                action in [Action::"read", Action::"write"],
+                action in [Action::"read", Action::"write", Action::"run_automation"],
                 resource
             )
             when {
-                principal.department == resource.department
+                principal.department == resource.department ||
+                principal.scoped_affiliation == "central_admin"
             };
 
             // 2. Strict FERPA Policy: Forbid exporting records if sensitive,
@@ -452,49 +561,7 @@ impl ScaffoldryPolicyEngine {
         action_name: &str,
         resource: (&str, &str),
     ) -> Result<AuthorizationResult, PolicyError> {
-        let entities = Entities::from_json_value(serde_json::Value::Array(entity_values), Some(&self.schema))
-            .map_err(|e| PolicyError::EntityError(e.to_string()))?;
-
-        let request = Request::new(
-            entity_uid(principal.0, principal.1)?,
-            entity_uid("Action", action_name)?,
-            entity_uid(resource.0, resource.1)?,
-            Context::empty(),
-            None,
-        )
-        .map_err(|e| PolicyError::RequestError(e.to_string()))?;
-
-        let response = self.authorizer.is_authorized(&request, &self.policies, &entities);
-
-        let decision = match response.decision() {
-            Decision::Allow => PolicyDecision::Allow,
-            Decision::Deny => PolicyDecision::Deny,
-        };
-
-        let reason_ids: HashSet<&PolicyId> = response.diagnostics().reason().collect();
-        let reasons = response.diagnostics().reason().map(|r| r.to_string()).collect();
-        let diagnostics = response.diagnostics().errors().map(|e| e.to_string()).collect();
-
-        // On a deny, every reason is a matching `forbid`. Take the first in policy-set order
-        // so the answer does not depend on hash order.
-        let deciding_policy = if decision == PolicyDecision::Deny {
-            self.policies
-                .policies()
-                .find(|p| reason_ids.contains(p.id()))
-                .map(|p| PolicyRef {
-                    id: p.id().to_string(),
-                    description: p.annotation("description").unwrap_or("").to_string(),
-                })
-        } else {
-            None
-        };
-
-        Ok(AuthorizationResult {
-            decision,
-            reasons,
-            diagnostics,
-            deciding_policy,
-        })
+        self.evaluate_with_policy_set(&self.policies, entity_values, principal, action_name, resource)
     }
 
     pub fn authorize_record_action(

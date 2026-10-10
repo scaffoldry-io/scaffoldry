@@ -183,6 +183,24 @@ impl Resource {
     }
 }
 
+
+/// Builds the entities for one request and evaluates it against an explicit policy set.
+pub fn authorize_with_policy_set(
+    engine: &ScaffoldryPolicyEngine,
+    policies: &cedar_policy::PolicySet,
+    principal: &PrincipalCtx,
+    action: &str,
+    resource: &Resource,
+) -> Result<AuthorizationResult, PolicyError> {
+    engine.evaluate_with_policy_set(
+        policies,
+        vec![principal.entity(), resource.entity()],
+        ("User", &principal.eppn),
+        action,
+        (resource.type_name(), &resource.id()),
+    )
+}
+
 /// Builds the entities for one request and evaluates it. Every decision goes through here.
 pub fn authorize(
     engine: &ScaffoldryPolicyEngine,

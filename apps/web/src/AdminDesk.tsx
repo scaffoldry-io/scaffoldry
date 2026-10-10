@@ -155,7 +155,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     visibility: "restricted",
     allowed_affiliations: ["faculty", "staff", "student"],
     data_classification: "Level 4 Restricted",
-    cedar_policy_guard: 'forbid (principal, action == Action::"access_workspace", resource) when { resource.visibility == "restricted" && resource.is_member == false };',
     collaborators: [
       { id: "collab-bio-1", eppn: "prof.curie@science.state.edu", name: "Dr. Marie Curie", role: "owner", department: "biology", scoped_affiliation: "faculty" },
       { id: "collab-bio-2", eppn: "student.smith@science.state.edu", name: "Alex Smith", role: "editor", department: "biology", scoped_affiliation: "student" },
@@ -175,7 +174,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     visibility: "restricted",
     allowed_affiliations: ["faculty", "student"],
     data_classification: "Level 3 Internal",
-    cedar_policy_guard: 'permit (principal, action, resource) when { resource.is_member || principal.department == resource.department || principal.scoped_affiliation == "central_admin" };',
     collaborators: [
       { id: "collab-phys-1", eppn: "einstein@physics.state.edu", name: "Albert Einstein", role: "owner", department: "physics", scoped_affiliation: "student" },
     ],
@@ -193,7 +191,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     visibility: "departmental",
     allowed_affiliations: ["staff", "compliance"],
     data_classification: "Level 4 Restricted",
-    cedar_policy_guard: 'permit (principal, action, resource) when { resource.is_member || principal.department == resource.department || principal.scoped_affiliation == "central_admin" };',
     collaborators: [
       { id: "collab-comp-1", eppn: "dr.watson@science.state.edu", name: "Dr. Arthur Watson", role: "owner", department: "compliance", scoped_affiliation: "staff" },
       { id: "collab-comp-2", eppn: "elena.rodriguez@state.edu", name: "Elena Rodriguez", role: "admin", department: "Institutional Review Board", scoped_affiliation: "compliance" },
@@ -212,7 +209,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     visibility: "restricted",
     allowed_affiliations: ["faculty", "staff"],
     data_classification: "Level 2 Campus-Wide",
-    cedar_policy_guard: 'permit (principal, action, resource) when { resource.is_member || principal.scoped_affiliation == "central_admin" };',
     collaborators: [
       { id: "collab-cs-1", eppn: "sarah.connor@state.edu", name: "Dr. Sarah Connor", role: "owner", department: "Computer Science", scoped_affiliation: "faculty" },
     ],

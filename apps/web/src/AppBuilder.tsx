@@ -736,7 +736,6 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
       description: "Trigger alert and ledger entry when grant status advances to Approved",
       enabled: true,
       trigger: { type: "StatusChanged", to_status: "Approved" },
-      cedar_policy_guard: "permit(principal, action == Action::\"approve\", resource);",
       predicates: [{ field_name: "budget", operator: "GreaterThan", expected_value: "500000" }],
       actions: [
         { type: "NotifyCollaborator", role: "Dean of Research", message_template: "Major grant approved over threshold" },

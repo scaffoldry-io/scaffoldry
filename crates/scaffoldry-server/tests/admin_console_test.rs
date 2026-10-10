@@ -307,7 +307,6 @@ async fn test_overview_counts_match_fixture() {
                 visibility: "restricted".to_string(),
                 allowed_affiliations: vec![],
                 data_classification: "Internal".to_string(),
-                cedar_policy_guard: None,
                 created_at: "2026-10-10T00:00:00Z".to_string(),
                 organization_id: Some(dept_id),
             },

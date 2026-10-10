@@ -1,5 +1,7 @@
 //! Sovereign Tabular Record Service Layer with Cedar Policy Enforcement
 
+use scaffoldry_engine::HostRouter;
+
 use crate::service::ServiceError;
 use crate::service::access::{authorize_app, AppAction};
 use crate::state::{AuthUser, DatasetRecord, SharedState};
@@ -257,7 +259,7 @@ pub fn run_automations(
         automations.get(app_slug).cloned().unwrap_or_default()
     };
 
-    let auto_engine = AutomationEngine::new(state.policy_engine.clone());
+    let auto_engine = AutomationEngine;
     let mut modified = record.clone();
     let mut all_effects = Vec::new();
 
@@ -268,6 +270,36 @@ pub fn run_automations(
 
         let res = auto_engine.evaluate_rule(rule, &event, &modified, actor.identity, actor.department, depth);
         if res.trigger_matched && res.conditions_met && res.cedar_authorized {
+            let ws_id = {
+                let eng = state.engine.read().ok();
+                eng.and_then(|e| e.resolve_by_slug(app_slug).and_then(|a| a.workspace_id.clone()))
+                    .unwrap_or_default()
+            };
+            let aff_str = actor.identity.affiliations.first().map(|a| match a {
+                scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty => "faculty",
+                scaffoldry_core::standards::eduperson::EduPersonAffiliation::Student => "student",
+                scaffoldry_core::standards::eduperson::EduPersonAffiliation::Staff => "staff",
+                scaffoldry_core::standards::eduperson::EduPersonAffiliation::Employee => "employee",
+                _ => "member",
+            }).unwrap_or("member");
+
+            let caller_auth = crate::state::AuthUser {
+                eppn: actor.identity.eppn.clone(),
+                name: actor.identity.eppn.clone(),
+                role_title: String::new(),
+                affiliation: aff_str.to_string(),
+                department: actor.department.to_string(),
+            };
+            let resource = scaffoldry_policy::entities::Resource::Record(scaffoldry_policy::entities::RecordCtx {
+                app_slug: app_slug.to_string(),
+                department: actor.department.to_string(),
+                workspace_id: ws_id,
+                is_ferpa_sensitive: false,
+            });
+            let auto_dec = crate::service::access::decide(state, &caller_auth, "run_automation", &resource);
+            if !auto_dec.allowed {
+                continue;
+            }
             applied_rule_ids.push(rule.id.clone());
             if !res.effects.is_empty() {
                 scaffoldry_core::workflow::apply_field_effects(&mut modified, &res.effects);

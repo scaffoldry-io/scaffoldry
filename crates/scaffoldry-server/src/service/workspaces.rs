@@ -17,6 +17,8 @@ pub struct WorkspaceResponse {
     pub workspace: WorkspaceRecord,
     pub collaborators: Vec<CollaboratorRecord>,
     pub user_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guards: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +44,6 @@ pub struct UpdateWorkspacePayload {
     pub allowed_affiliations: Option<Vec<String>>,
     pub data_classification: Option<String>,
     pub icon: Option<String>,
-    pub cedar_policy_guard: Option<String>,
     pub organization_id: Option<uuid::Uuid>,
     pub reason: Option<String>,
 }
@@ -101,6 +102,7 @@ pub fn list_workspaces(
                 workspace: ws.clone(),
                 collaborators: collabs,
                 user_role: Some("admin".to_string()),
+                guards: Vec::new(),
             });
             continue;
         }
@@ -127,6 +129,7 @@ pub fn list_workspaces(
                     workspace: ws.clone(),
                     collaborators: collabs,
                     user_role: member_role,
+                    guards: Vec::new(),
                 });
             }
         }
@@ -191,10 +194,35 @@ pub fn get_workspace(
         });
     }
 
+
+    let guard_sentences: Vec<String> = {
+        let g_guard = state.guards.read().ok();
+        if let Some(ref g_map) = g_guard {
+            if let Some(history) = g_map.get(id) {
+                if let Some(current) = history.last() {
+                    let org_names = state.organizations.read().map(|orgs| {
+                        orgs.iter().map(|(id, node)| (id.to_string(), node.name.clone())).collect()
+                    }).unwrap_or_default();
+                    if let Ok(rules) = serde_json::from_value::<Vec<scaffoldry_core::GuardRule>>(current.rules.clone()) {
+                        rules.iter().map(|r| r.sentence(&org_names)).collect()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    };
     Ok(WorkspaceResponse {
         workspace: ws,
         collaborators: collabs,
         user_role: member_role,
+        guards: guard_sentences,
     })
 }
 
@@ -252,7 +280,6 @@ pub fn create_workspace(
         data_classification: payload
             .data_classification
             .unwrap_or_else(|| "Internal".to_string()),
-        cedar_policy_guard: None,
         created_at: now.clone(),
         organization_id: payload.organization_id.or_else(|| {
             uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").ok()
@@ -434,9 +461,7 @@ pub fn update_workspace(
     if let Some(icon) = payload.icon {
         ws.icon = icon;
     }
-    if let Some(guard) = payload.cedar_policy_guard {
-        ws.cedar_policy_guard = Some(guard);
-    }
+
     if let Some(org_id) = payload.organization_id {
         ws.organization_id = Some(org_id);
     }
