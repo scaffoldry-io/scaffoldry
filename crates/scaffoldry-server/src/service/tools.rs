@@ -11,6 +11,7 @@ use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::DecisionType;
 use scaffoldry_policy::PolicyDecision;
+use scaffoldry_engine::HostRouter;
 use serde_json::{json, Map, Value};
 
 /// What a caller must be allowed to do before a tool runs.
@@ -124,6 +125,54 @@ pub static TOOLS: &[Tool] = &[
         scope: Scope::SignedIn,
         read_only: true,
         run: run_get_framework_spec,
+    },
+    Tool {
+        name: "list_apps",
+        description: "List the apps in a workspace: slug, title, and table names.",
+        input_schema: schema_list_apps,
+        scope: Scope::Workspace("access_workspace"),
+        read_only: true,
+        run: run_list_apps,
+    },
+    Tool {
+        name: "describe_app",
+        description: "The stored manifest of an app and its version.",
+        input_schema: schema_describe_app,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_describe_app,
+    },
+    Tool {
+        name: "list_records",
+        description: "One page of a table's records, up to 200. Pass next_cursor back as cursor for the next page. A filter or sort works on a table of 10,000 rows or fewer.",
+        input_schema: schema_list_records,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_list_records,
+    },
+    Tool {
+        name: "get_record",
+        description: "One record, with its version.",
+        input_schema: schema_get_record,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_get_record,
+    },
+    Tool {
+        name: "update_record",
+        description: "Change fields of a record. Send the version you read. Fields you do not name keep their value. A stale version is an error that names the current one.",
+        input_schema: schema_update_record,
+        scope: Scope::App(AppAction::WriteRecords),
+        read_only: false,
+        run: run_update_record,
+    },
+    Tool {
+        name: "delete_record",
+        description: "Delete a record. Send the version you read.",
+        input_schema: schema_delete_record,
+        scope: Scope::App(AppAction::WriteRecords),
+        read_only: false,
+        run: run_delete_record,
     },
     Tool {
         name: "get_job",
@@ -565,4 +614,222 @@ fn run_cancel_job(caller: &AuthUser, args: Value, state: &SharedState) -> Result
     } else {
         Err(ServiceError::NotFound("Job not found".to_string()))
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Data tools
+// ---------------------------------------------------------------------------------------------
+
+/// No tool returns more than this many rows or this many bytes of rows.
+const MAX_ROWS: usize = 200;
+const MAX_BYTES: usize = 256 * 1024;
+
+/// Reads the arguments into a struct. An unknown or ill-typed argument names itself.
+fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ServiceError> {
+    serde_json::from_value(args).map_err(|e| ServiceError::BadRequest(e.to_string()))
+}
+
+fn stale_as_text(err: ServiceError) -> ServiceError {
+    match err {
+        ServiceError::StaleVersion { message, version } => {
+            ServiceError::BadRequest(format!("{message} The current version is {version}."))
+        }
+        other => other,
+    }
+}
+
+fn schema_list_apps() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "workspace_id": { "type": "string", "description": "Unique workspace identifier" } },
+        "required": ["workspace_id"]
+    })
+}
+
+fn schema_describe_app() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "app_slug": { "type": "string", "description": "Application slug identifier" } },
+        "required": ["app_slug"]
+    })
+}
+
+fn schema_list_records() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "table_id": { "type": "string", "description": "Table id or slug from describe_app" },
+            "filter": { "type": "object", "description": "{ conjunction: And|Or, clauses: [{ id, field_name, operator, value }] }. Operators: Equals, NotEquals, Contains, NotContains, GreaterThan, LessThan, IsEmpty, IsNotEmpty" },
+            "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
+            "limit": { "type": "integer", "description": "Rows per page, 1 to 200. Default 50" },
+            "cursor": { "type": "string", "description": "The next_cursor of the previous page" }
+        },
+        "required": ["app_slug", "table_id"]
+    })
+}
+
+fn schema_get_record() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "record_id": { "type": "string", "description": "Record id" }
+        },
+        "required": ["app_slug", "record_id"]
+    })
+}
+
+fn schema_update_record() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "record_id": { "type": "string", "description": "Record id" },
+            "version": { "type": "integer", "description": "The version you read" },
+            "data": { "type": "object", "description": "Fields to change. Set a field to null to clear it" }
+        },
+        "required": ["app_slug", "record_id", "version", "data"]
+    })
+}
+
+fn schema_delete_record() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "record_id": { "type": "string", "description": "Record id" },
+            "version": { "type": "integer", "description": "The version you read" }
+        },
+        "required": ["app_slug", "record_id", "version"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListAppsArgs {
+    workspace_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DescribeAppArgs {
+    app_slug: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SortArg {
+    field_name: String,
+    direction: scaffoldry_engine::SortDirection,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListRecordsArgs {
+    app_slug: String,
+    table_id: String,
+    filter: Option<scaffoldry_engine::CompoundFilter>,
+    sort: Option<SortArg>,
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GetRecordArgs {
+    app_slug: String,
+    record_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateRecordArgs {
+    app_slug: String,
+    record_id: String,
+    version: i32,
+    data: Map<String, Value>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteRecordArgs {
+    app_slug: String,
+    record_id: String,
+    version: i32,
+}
+
+fn run_list_apps(_caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: ListAppsArgs = parse(args)?;
+    let engine = state.engine.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let mut apps: Vec<Value> = engine
+        .list_manifests()
+        .into_iter()
+        .filter(|m| m.workspace_id.as_deref() == Some(args.workspace_id.as_str()))
+        .map(|m| json!({ "slug": m.slug, "title": m.title, "tables": m.tables.iter().map(|t| t.name.clone()).collect::<Vec<_>>() }))
+        .collect();
+    apps.sort_by(|a, b| a["slug"].as_str().cmp(&b["slug"].as_str()));
+    Ok(Value::Array(apps))
+}
+
+fn run_describe_app(_caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: DescribeAppArgs = parse(args)?;
+    let manifest = state
+        .engine
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .resolve_by_slug(&args.app_slug)
+        .cloned()
+        .ok_or_else(|| ServiceError::NotFound(format!("App '{}' not found", args.app_slug)))?;
+    Ok(crate::routes::apps::with_version(state, &manifest))
+}
+
+fn run_list_records(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: ListRecordsArgs = parse(args)?;
+    let limit = args.limit.unwrap_or(50);
+    if limit == 0 || limit > MAX_ROWS {
+        return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
+    }
+    let page = records::list_page(
+        caller,
+        &args.app_slug,
+        records::PageQuery {
+            table_id: args.table_id,
+            filter: args.filter,
+            sort: args.sort.map(|s| records::SortSpec {
+                field_name: s.field_name,
+                descending: s.direction == scaffoldry_engine::SortDirection::Desc,
+            }),
+            limit,
+            cursor: args.cursor,
+            max_bytes: Some(MAX_BYTES),
+            must_exist: true,
+        },
+        state,
+    )?;
+    Ok(json!({ "records": page.records, "next_cursor": page.next_cursor }))
+}
+
+fn run_get_record(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: GetRecordArgs = parse(args)?;
+    to_value(&records::get_record(caller, &args.app_slug, &args.record_id, state)?)
+}
+
+fn run_update_record(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: UpdateRecordArgs = parse(args)?;
+    // The agent names the fields to change. The rest of the row stays as it is.
+    let current = records::get_record(caller, &args.app_slug, &args.record_id, state)?;
+    let mut data = current.data.as_object().cloned().unwrap_or_default();
+    for (name, value) in args.data {
+        data.insert(name, value);
+    }
+    let payload = json!({ "data": data, "version": args.version });
+    let saved = records::update_record(caller, &args.app_slug, &args.record_id, &payload, state).map_err(stale_as_text)?;
+    to_value(&saved)
+}
+
+fn run_delete_record(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: DeleteRecordArgs = parse(args)?;
+    records::delete_record_checked(caller, &args.app_slug, &args.record_id, args.version, state).map_err(stale_as_text)?;
+    Ok(json!({ "deleted": true }))
 }

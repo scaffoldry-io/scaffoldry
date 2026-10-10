@@ -136,7 +136,7 @@ async fn get_app(
 }
 
 /// The manifest as JSON, with the version a save must name.
-fn with_version(state: &SharedState, manifest: &AppManifest) -> Value {
+pub(crate) fn with_version(state: &SharedState, manifest: &AppManifest) -> Value {
     let version = state
         .repository
         .as_ref()
