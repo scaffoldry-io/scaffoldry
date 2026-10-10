@@ -69,6 +69,120 @@ pub const FIRST_PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_fe
      WHERE app_slug = $1 AND table_id = $2 \
      ORDER BY created_at, id LIMIT $3";
 
+/// Where a page after a cursor starts. `key` is the sort value of the last row, when sorted.
+#[derive(Debug, Clone)]
+pub struct RecordCursor {
+    pub created_at: String,
+    pub id: String,
+    pub key: Option<Value>,
+}
+
+/// A page that filters or sorts. The caller has checked every field name against the manifest.
+/// Even so, a name or a value enters the statement only as a bound parameter.
+#[derive(Debug, Clone)]
+pub struct RecordQuery {
+    pub table_id: String,
+    /// True joins the clauses with OR. False joins them with AND.
+    pub any: bool,
+    pub clauses: Vec<(String, scaffoldry_engine::FilterOperator, String)>,
+    /// The sort field, and true for descending.
+    pub sort: Option<(String, bool)>,
+    pub after: Option<RecordCursor>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SqlParam {
+    Text(String),
+    Float(f64),
+    Int(i64),
+}
+
+/// The statement for a `RecordQuery`, and its parameters in order. Pure, so it can be tested
+/// without a database.
+pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlParam>) {
+    use scaffoldry_engine::FilterOperator as Op;
+    fn push(params: &mut Vec<SqlParam>, p: SqlParam) -> usize {
+        params.push(p);
+        params.len()
+    }
+    let mut params = vec![SqlParam::Text(app_slug.to_string()), SqlParam::Text(q.table_id.clone())];
+    let mut preds: Vec<String> = Vec::new();
+    for (field, op, value) in &q.clauses {
+        // The older evaluator treats a clause with no value as no clause. So does this.
+        if value.trim().is_empty() && !matches!(op, Op::IsEmpty | Op::IsNotEmpty) {
+            continue;
+        }
+        let pred = match op {
+            Op::IsEmpty | Op::IsNotEmpty => {
+                let f = push(&mut params, SqlParam::Text(field.clone()));
+                let empty = format!(
+                    "((data -> ${f}::text) IS NULL OR (data -> ${f}::text) = 'null'::jsonb OR data ->> ${f}::text = '')"
+                );
+                if matches!(op, Op::IsEmpty) { empty } else { format!("NOT {empty}") }
+            }
+            Op::Equals | Op::NotEquals | Op::Contains | Op::NotContains => {
+                let f = push(&mut params, SqlParam::Text(field.clone()));
+                let v = push(&mut params, SqlParam::Text(value.clone()));
+                let cell = format!("lower(COALESCE(data ->> ${f}::text, ''))");
+                let want = format!("lower(${v}::text)");
+                match op {
+                    Op::Equals => format!("{cell} = {want}"),
+                    Op::NotEquals => format!("{cell} <> {want}"),
+                    Op::Contains => format!("strpos({cell}, {want}) > 0"),
+                    _ => format!("strpos({cell}, {want}) = 0"),
+                }
+            }
+            Op::GreaterThan | Op::LessThan => match value.parse::<f64>() {
+                Ok(n) if n.is_finite() => {
+                    let f = push(&mut params, SqlParam::Text(field.clone()));
+                    let v = push(&mut params, SqlParam::Float(n));
+                    let sign = if matches!(op, Op::GreaterThan) { ">" } else { "<" };
+                    format!(
+                        "CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 {sign} ${v}::float8 ELSE FALSE END"
+                    )
+                }
+                _ => "FALSE".to_string(),
+            },
+        };
+        preds.push(pred);
+    }
+    let joined = if preds.is_empty() { "TRUE".to_string() } else { preds.join(if q.any { " OR " } else { " AND " }) };
+
+    let key = q.sort.as_ref().map(|(field, _)| {
+        let f = push(&mut params, SqlParam::Text(field.clone()));
+        format!("COALESCE(data -> ${f}::text, 'null'::jsonb)")
+    });
+    let desc = q.sort.as_ref().is_some_and(|(_, d)| *d);
+    let dir = if desc { "DESC" } else { "ASC" };
+    let order = match &key {
+        Some(k) => format!("{k} {dir}, created_at {dir}, id {dir}"),
+        None => "created_at, id".to_string(),
+    };
+    let after = match &q.after {
+        None => String::new(),
+        Some(c) => {
+            let at = push(&mut params, SqlParam::Text(c.created_at.clone()));
+            let id = push(&mut params, SqlParam::Text(c.id.clone()));
+            let cmp = if desc { "<" } else { ">" };
+            match &key {
+                Some(k) => {
+                    let v = push(&mut params, SqlParam::Text(c.key.clone().unwrap_or(Value::Null).to_string()));
+                    format!(" AND ({k}, created_at, id) {cmp} (${v}::text::jsonb, ${at}::text::timestamptz, ${id}::text)")
+                }
+                None => format!(" AND (created_at, id) {cmp} (${at}::text::timestamptz, ${id}::text)"),
+            }
+        }
+    };
+    let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
+    let sql = format!(
+        "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
+         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND ({joined}){after} \
+         ORDER BY {order} LIMIT ${limit}::bigint"
+    );
+    (sql, params)
+}
+
 /// The table a record belongs to, as the column holds it. The key also stays in the JSON.
 fn table_id_of(data: &Value) -> String {
     data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string()
@@ -751,6 +865,59 @@ impl PostgresRepository {
                 None => client.query(FIRST_PAGE_SQL, &[&slug, &table, &limit])?,
             };
             Ok(rows.iter().map(record_from_row).collect())
+        })
+    }
+
+    /// One page that filters or sorts. Use `list_records_page` when there is neither.
+    pub fn query_records(&self, app_slug: &str, query: &RecordQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
+        let (sql, params) = build_record_query(app_slug, query);
+        self.with_client(move |client| {
+            let boxed: Vec<Box<dyn postgres::types::ToSql + Sync>> = params
+                .into_iter()
+                .map(|p| -> Box<dyn postgres::types::ToSql + Sync> {
+                    match p {
+                        SqlParam::Text(t) => Box::new(t),
+                        SqlParam::Float(f) => Box::new(f),
+                        SqlParam::Int(i) => Box::new(i),
+                    }
+                })
+                .collect();
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+            let rows = client.query(&sql, &refs)?;
+            Ok(rows.iter().map(record_from_row).collect())
+        })
+    }
+
+    /// True when the table holds more than `limit` rows. It reads at most `limit + 1` index entries.
+    pub fn table_has_more_than(&self, app_slug: &str, table_id: &str, limit: i64) -> Result<bool, RepositoryError> {
+        let (slug, table) = (app_slug.to_string(), table_id.to_string());
+        self.with_client(move |client| {
+            let n: i64 = client
+                .query_one(
+                    "SELECT count(*) FROM (SELECT 1 FROM dataset_records WHERE app_slug = $1 AND table_id = $2 LIMIT $3) t",
+                    &[&slug, &table, &(limit + 1)],
+                )?
+                .get(0);
+            Ok(n > limit)
+        })
+    }
+
+    /// Deletes a record only if it is still at `expected_version`.
+    pub fn delete_record_checked(&self, app_slug: &str, id: &str, expected_version: i32) -> Result<RecordWrite, RepositoryError> {
+        let (slug, id) = (app_slug.to_string(), id.to_string());
+        self.with_client(move |client| {
+            let deleted = client.query_opt(
+                "DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 AND version = $3 RETURNING version",
+                &[&slug, &id, &expected_version],
+            )?;
+            if let Some(row) = deleted {
+                return Ok(RecordWrite::Saved(row.get(0)));
+            }
+            let current = client.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2", &[&slug, &id])?;
+            Ok(match current {
+                Some(row) => RecordWrite::Conflict(row.get(0)),
+                None => RecordWrite::Missing,
+            })
         })
     }
 

@@ -549,6 +549,46 @@ impl ServerState {
         }
     }
 
+    /// One page that filters or sorts.
+    pub fn query_records(&self, app_slug: &str, query: &crate::repository::RecordQuery) -> Result<Vec<DatasetRecord>, String> {
+        match self.repository {
+            Some(ref repo) => repo.query_records(app_slug, query).map_err(|e| e.to_string()),
+            None => Err("Filtering and sorting need PostgreSQL".to_string()),
+        }
+    }
+
+    /// True when a table holds more than `limit` rows.
+    pub fn table_has_more_than(&self, app_slug: &str, table_id: &str, limit: i64) -> Result<bool, String> {
+        match self.repository {
+            Some(ref repo) => repo.table_has_more_than(app_slug, table_id, limit).map_err(|e| e.to_string()),
+            None => Ok(self
+                .memory()
+                .get(app_slug)
+                .map(|rows| rows.iter().filter(|r| r.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("") == table_id).count() as i64 > limit)
+                .unwrap_or(false)),
+        }
+    }
+
+    /// Deletes a record only if it is still at `expected_version`.
+    pub fn remove_record_checked(&self, app_slug: &str, id: &str, expected_version: i32) -> Result<crate::repository::RecordWrite, String> {
+        use crate::repository::RecordWrite;
+        match self.repository {
+            Some(ref repo) => repo.delete_record_checked(app_slug, id, expected_version).map_err(|e| e.to_string()),
+            None => {
+                let mut map = self.memory();
+                let Some(list) = map.get_mut(app_slug) else { return Ok(RecordWrite::Missing) };
+                match list.iter().position(|r| r.id == id) {
+                    None => Ok(RecordWrite::Missing),
+                    Some(i) if list[i].version != expected_version => Ok(RecordWrite::Conflict(list[i].version)),
+                    Some(i) => {
+                        list.remove(i);
+                        Ok(RecordWrite::Saved(expected_version))
+                    }
+                }
+            }
+        }
+    }
+
     pub fn count_app_records(&self, app_slug: &str) -> Result<usize, String> {
         Ok(self.list_app_records(app_slug)?.len())
     }
