@@ -185,6 +185,9 @@ async fn get_overview(
                 "waiting_instance_count": waiting_instance_count,
                 "waiting": waiting_instance_count,
             },
+            "proposals": {
+                "pending": state.repository.as_ref().and_then(|r| r.count_pending_proposals().ok()).unwrap_or(0),
+            },
             "ledger": {
                 "entry_count": ledger_count,
                 "head_hash": head_hash,

@@ -21,6 +21,9 @@ export interface AdminOverviewData {
   processes: {
     waiting_instance_count: number;
   };
+  proposals?: {
+    pending: number;
+  };
   ledger: {
     entry_count: number;
     head_hash: string;
@@ -31,6 +34,31 @@ export interface AdminOverviewData {
     failed_last_24h: number;
   };
 }
+
+export interface ProposalCheck {
+  name: string;
+  outcome: "pass" | "warn" | "fail";
+  messages: string[];
+}
+
+export interface ProposalRow {
+  id: string;
+  proposal_id: string;
+  workspace_id: string;
+  app_slug: string;
+  base_version: number | null;
+  status: "Pending" | "Approved" | "Rejected" | "Superseded";
+  summary: string;
+  proposed_by: string;
+  decided_by: string | null;
+  created_at: string;
+  decided_at: string | null;
+  checks: ProposalCheck[];
+  changes: string[];
+}
+
+/** What a direct save came to: live at once, or waiting for a person to decide. */
+export type SaveOutcome = { status: "live" } | { status: "pending"; proposalId: string };
 
 export interface AdminJobRow {
   id: string;
@@ -267,7 +295,7 @@ const getBaseUrl = (): string => {
   return envUrl || "/api/v1";
 };
 
-const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => {
+const requestFull = async <T>(path: string, options: RequestInit = {}): Promise<{ status: number; data: T }> => {
   const baseUrl = getBaseUrl();
   const token = getAuthToken();
 
@@ -308,11 +336,13 @@ const request = async <T>(path: string, options: RequestInit = {}): Promise<T> =
   }
 
   if (response.status === 204) {
-    return null as T;
+    return { status: 204, data: null as T };
   }
 
-  return response.json();
+  return { status: response.status, data: await response.json() };
 };
+
+const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => (await requestFull<T>(path, options)).data;
 
 export const apiClient = {
   // Authentication & Sessions
@@ -478,6 +508,30 @@ export const apiClient = {
       `/orgs/${encodeURIComponent(unit)}/positions/${encodeURIComponent(key)}/holders/${encodeURIComponent(eppn)}`,
       { method: "DELETE", body: JSON.stringify({ reason }) }
     );
+  },
+
+  listProposals: async (workspaceId: string) => {
+    return request<ProposalRow[]>(`/workspaces/${workspaceId}/proposals`);
+  },
+
+  getProposal: async (id: string) => {
+    return request<ProposalRow>(`/proposals/${id}`);
+  },
+
+  decideProposal: async (id: string, decision: "approve" | "reject", rationale: string) => {
+    return request<ProposalRow>(`/proposals/${id}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision, rationale }),
+    });
+  },
+
+  /** Saves a rule. A 202 means a person must approve it first, and nothing is live. */
+  submitRule: async (appSlug: string, rule: unknown): Promise<SaveOutcome> => {
+    const res = await requestFull<{ proposal_id?: string }>(`/apps/${appSlug}/automations`, {
+      method: "POST",
+      body: JSON.stringify(rule),
+    });
+    return res.status === 202 ? { status: "pending", proposalId: res.data.proposal_id ?? "" } : { status: "live" };
   },
 
   getAdminOverview: async () => {

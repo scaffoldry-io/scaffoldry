@@ -159,6 +159,7 @@ impl AutomationEngine {
                             }
                             Some(rec_id) => {
                                 waiting_instance = Some(scaffoldry_core::ProcessInstance {
+                                    rule_version: rule.version,
                                     id: format!("{}:{}", rule.id, rec_id),
                                     rule_id: rule.id.clone(),
                                     app_slug: rule.app_slug.clone(),

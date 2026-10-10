@@ -108,8 +108,7 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
 /// The approver spec of the user task an instance waits on.
 pub fn spec_of(state: &SharedState, inst: &ProcessInstance) -> Option<ApproverSpec> {
     let step_id = inst.waiting_step_id.as_deref()?;
-    let automations = state.automations.read().ok()?;
-    let rule = automations.get(&inst.app_slug)?.iter().find(|r| r.id == inst.rule_id)?;
+    let rule = crate::service::processes::rule_for(state, inst)?;
     let step = rule.steps.iter().find(|s| s.id == step_id)?;
     match &step.kind {
         StepKind::UserTask { role, approver, .. } => Some(effective_approver(role, approver)),

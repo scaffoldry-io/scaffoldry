@@ -212,7 +212,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
 
     // 3. Persist Automation Rule
     let test_rule_id = format!("rule-persist-{}", uuid::Uuid::new_v4().simple());
-    let rule = scaffoldry_core::AutomationRule {
+    let rule = scaffoldry_core::AutomationRule { version: 0,
         id: test_rule_id.clone(),
         app_slug: test_slug.clone(),
         name: "Auto Material Alert".to_string(),

@@ -195,6 +195,18 @@ export function Overview() {
           </p>
         </div>
 
+        {/* PROPOSALS CARD */}
+        <div
+          data-testid="admin-overview-proposals-card"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+        >
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            Pending proposals
+          </span>
+          <div className="mt-3 text-3xl font-bold text-slate-900 dark:text-white">{data.proposals?.pending ?? 0}</div>
+          <p className="text-[11px] text-slate-500 mt-2">App and rule changes waiting for a person to approve them.</p>
+        </div>
+
         {/* LEDGER CARD */}
         <div
           data-testid="admin-overview-ledger-card"

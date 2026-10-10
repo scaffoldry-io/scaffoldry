@@ -87,7 +87,7 @@ impl World {
     }
 
     fn rule(&self, id: &str, spec: Option<ApproverSpec>, role: &str) -> AutomationRule {
-        AutomationRule {
+        AutomationRule { version: 0,
             id: id.to_string(),
             app_slug: APP.to_string(),
             name: id.to_string(),
@@ -125,7 +125,7 @@ impl World {
             version: 1,
         }, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
         let id = format!("{rule_id}:{record_id}");
-        self.state.process_instances.write().unwrap().insert(id.clone(), ProcessInstance {
+        self.state.process_instances.write().unwrap().insert(id.clone(), ProcessInstance { rule_version: 0,
             id: id.clone(),
             rule_id,
             app_slug: APP.to_string(),

@@ -36,7 +36,7 @@ async fn create_app_in_workspace(
     headers: HeaderMap,
     Path(ws_id): Path<String>,
     Json(payload): Json<Value>,
-) -> Result<(StatusCode, Json<AppManifest>), (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
@@ -95,25 +95,55 @@ async fn create_app_in_workspace(
         return Err(ServiceError::forbidden("Forbidden: Cedar policy denied app creation in workspace").into_pair());
     }
 
-    let mut manifest: AppManifest = serde_json::from_value(payload)
-        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
-
-    manifest.workspace_id = Some(ws_id.clone());
-    // Nothing verifies a domain yet, so a new app cannot start verified.
-    manifest.custom_domain_verified = false;
-    check_manifest(&manifest)?;
-
-    let mut engine = state.engine.write().map_err(|_| lock_err())?;
-    engine
-        .register_manifest(manifest.clone())
-        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
-
-    if let Some(ref repo) = state.repository {
-        repo.upsert_app_manifest(&manifest)
-            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
+    let slug = payload.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if crate::service::proposals::live_app_exists(&slug, &state) {
+        return Err(ServiceError::conflict(format!("An app with the slug '{slug}' already exists")).into_pair());
     }
+    let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or(&slug).to_string();
+    let input = crate::service::proposals::ProposeInput {
+        workspace_id: ws_id.clone(),
+        app_slug: None,
+        manifest: Some(payload),
+        rules: vec![],
+        summary: format!("Create the app \"{title}\""),
+        page_sources: vec![],
+    };
+    match direct(&user, input, &state).await? {
+        crate::service::proposals::Direct::Applied => {
+            let manifest = live_manifest_of(&state, &slug)?;
+            Ok((StatusCode::CREATED, Json(serde_json::to_value(manifest).unwrap_or(Value::Null))))
+        }
+        crate::service::proposals::Direct::Pending(p) => Ok((StatusCode::ACCEPTED, Json(pending_body(&p)))),
+    }
+}
 
-    Ok((StatusCode::CREATED, Json(manifest)))
+/// Runs a direct change as a proposal, off the async threads.
+async fn direct(
+    user: &crate::state::AuthUser,
+    input: crate::service::proposals::ProposeInput,
+    state: &SharedState,
+) -> Result<crate::service::proposals::Direct, (StatusCode, Json<Value>)> {
+    let (user, state) = (user.clone(), state.clone());
+    tokio::task::spawn_blocking(move || crate::service::proposals::submit_direct(&user, input, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The change stopped before it finished").into_pair())?
+        .map_err(ServiceError::into_pair)
+}
+
+/// The `202` body: the proposal, and nothing live.
+fn pending_body(p: &Value) -> Value {
+    json!({ "proposal_id": p["proposal_id"], "status": "Pending", "checks": p["checks"], "changes": p["changes"] })
+}
+
+fn live_manifest_of(state: &SharedState, slug: &str) -> Result<AppManifest, (StatusCode, Json<Value>)> {
+    use scaffoldry_engine::HostRouter;
+    state
+        .engine
+        .read()
+        .map_err(|_| lock_err())?
+        .resolve_by_slug(slug)
+        .cloned()
+        .ok_or_else(|| ServiceError::not_found("App not found").into_pair())
 }
 
 async fn get_app(
@@ -138,13 +168,6 @@ async fn get_app(
     Ok(Json(with_version(&state, &manifest)))
 }
 
-/// Every path that stores a manifest checks it first, and reports every problem.
-fn check_manifest(manifest: &AppManifest) -> Result<(), (StatusCode, Json<Value>)> {
-    scaffoldry_engine::validate_manifest(manifest).map_err(|problems| {
-        ServiceError::bad_request(format!("The manifest has {} problem(s): {}", problems.len(), problems.join("; "))).into_pair()
-    })
-}
-
 /// The manifest as JSON, with the version a save must name.
 pub(crate) fn with_version(state: &SharedState, manifest: &AppManifest) -> Value {
     let version = state
@@ -164,7 +187,7 @@ async fn update_app(
     headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
@@ -193,43 +216,45 @@ async fn update_app(
             .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?
     };
 
-    let mut manifest: AppManifest = serde_json::from_value(payload)
-        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
-
-    manifest.slug = slug.clone();
-    manifest.workspace_id = existing.workspace_id;
-    manifest.department = existing.department;
-    manifest.custom_domain = existing.custom_domain;
-    manifest.custom_domain_verified = existing.custom_domain_verified;
-    check_manifest(&manifest)?;
-
-    // The conditional update comes first. Only a save that wins reaches the running engine.
+    // The save names the version it read. A newer one is a conflict before anything is proposed.
     if let Some(ref repo) = state.repository {
-        match repo
-            .update_app_manifest_checked(&manifest, expected_version)
-            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?
-        {
-            crate::repository::RecordWrite::Saved(_) => {}
-            crate::repository::RecordWrite::Conflict(version) => {
+        match repo.app_manifest_version(&slug).map_err(|e| ServiceError::internal(e.to_string()).into_pair())? {
+            Some(live) if live != expected_version => {
                 return Err(ServiceError::StaleVersion {
                     message: "Someone else saved this app first. Reload it and try again.".to_string(),
-                    version,
+                    version: live,
                 }
                 .into_pair());
             }
-            crate::repository::RecordWrite::Missing => {
-                return Err(ServiceError::not_found("App not found").into_pair());
-            }
+            None => return Err(ServiceError::not_found("App not found").into_pair()),
+            _ => {}
         }
     }
 
-    let mut engine = state.engine.write().map_err(|_| lock_err())?;
-    engine
-        .register_manifest(manifest.clone())
-        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
-    drop(engine);
-
-    Ok(Json(with_version(&state, &manifest)))
+    // What the platform owns stays as it is. A save cannot change them.
+    let mut body = payload;
+    if let Some(map) = body.as_object_mut() {
+        map.insert("slug".to_string(), json!(slug));
+        map.insert("department".to_string(), json!(existing.department));
+        map.insert("custom_domain".to_string(), json!(existing.custom_domain));
+        map.remove("workspace_id");
+    }
+    let ws_id = existing.workspace_id.clone().ok_or_else(|| ServiceError::bad_request("The app has no workspace").into_pair())?;
+    let input = crate::service::proposals::ProposeInput {
+        workspace_id: ws_id,
+        app_slug: Some(slug.clone()),
+        manifest: Some(body),
+        rules: vec![],
+        summary: format!("Update the app \"{}\"", existing.title),
+        page_sources: vec![],
+    };
+    match direct(&user, input, &state).await? {
+        crate::service::proposals::Direct::Applied => {
+            let manifest = live_manifest_of(&state, &slug)?;
+            Ok((StatusCode::OK, Json(with_version(&state, &manifest))))
+        }
+        crate::service::proposals::Direct::Pending(p) => Ok((StatusCode::ACCEPTED, Json(pending_body(&p)))),
+    }
 }
 
 async fn publish_app(
@@ -237,7 +262,7 @@ async fn publish_app(
     headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
-) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
@@ -249,26 +274,25 @@ async fn publish_app(
         .ok_or_else(|| ServiceError::bad_request("custom_domain is required").into_pair())?
         .to_string();
 
-    use scaffoldry_engine::HostRouter;
-    let mut engine = state.engine.write().map_err(|_| lock_err())?;
-    let mut manifest = engine
-        .resolve_by_slug(&slug)
-        .cloned()
-        .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?;
-
-    manifest.custom_domain = Some(domain);
-    manifest.custom_domain_verified = false;
-
-    engine
-        .register_manifest(manifest.clone())
-        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-
-    if let Some(ref repo) = state.repository {
-        repo.upsert_app_manifest(&manifest)
-            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
+    // A manifest proposal that sets the domain. It cannot set the domain as verified.
+    let mut manifest = live_manifest_of(&state, &slug)?;
+    let ws_id = manifest.workspace_id.clone().ok_or_else(|| ServiceError::bad_request("The app has no workspace").into_pair())?;
+    manifest.custom_domain = Some(domain.clone());
+    let input = crate::service::proposals::ProposeInput {
+        workspace_id: ws_id,
+        app_slug: Some(slug.clone()),
+        manifest: Some(serde_json::to_value(&manifest).unwrap_or(Value::Null)),
+        rules: vec![],
+        summary: format!("Publish the app \"{slug}\" at {domain}"),
+        page_sources: vec![],
+    };
+    match direct(&user, input, &state).await? {
+        crate::service::proposals::Direct::Applied => {
+            let manifest = live_manifest_of(&state, &slug)?;
+            Ok((StatusCode::OK, Json(serde_json::to_value(manifest).unwrap_or(Value::Null))))
+        }
+        crate::service::proposals::Direct::Pending(p) => Ok((StatusCode::ACCEPTED, Json(pending_body(&p)))),
     }
-
-    Ok(Json(manifest))
 }
 
 async fn list_app_automations(
@@ -291,32 +315,38 @@ async fn create_app_automation(
     headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
-) -> Result<(StatusCode, Json<AutomationRule>), (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     authorize_app(&user, &slug, AppAction::Manage, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let mut rule: AutomationRule = serde_json::from_value(payload)
-        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
-    rule.app_slug = slug.clone();
-    crate::service::approvers::validate_rule(&state, &rule).map_err(ServiceError::into_pair)?;
-
-    let mut automations = state.automations.write().map_err(|_| lock_err())?;
-    let rules = automations.entry(slug).or_default();
-    if let Some(pos) = rules.iter().position(|r| r.id == rule.id) {
-        rules[pos] = rule.clone();
-    } else {
-        rules.push(rule.clone());
+    // A rules proposal for one rule.
+    let rule: AutomationRule = serde_json::from_value(payload.clone())
+        .map_err(|e| ServiceError::bad_request(format!("rule_schema: {e}")).into_pair())?;
+    let manifest = live_manifest_of(&state, &slug)?;
+    let ws_id = manifest.workspace_id.clone().ok_or_else(|| ServiceError::bad_request("The app has no workspace").into_pair())?;
+    let input = crate::service::proposals::ProposeInput {
+        workspace_id: ws_id,
+        app_slug: Some(slug.clone()),
+        manifest: None,
+        rules: vec![payload],
+        summary: format!("Save the rule \"{}\"", rule.name),
+        page_sources: vec![],
+    };
+    match direct(&user, input, &state).await? {
+        crate::service::proposals::Direct::Applied => {
+            let live = state
+                .automations
+                .read()
+                .map_err(|_| lock_err())?
+                .get(&slug)
+                .and_then(|rules| rules.iter().find(|r| r.id == rule.id).cloned())
+                .ok_or_else(|| ServiceError::internal("The rule was not saved").into_pair())?;
+            Ok((StatusCode::CREATED, Json(serde_json::to_value(live).unwrap_or(Value::Null))))
+        }
+        crate::service::proposals::Direct::Pending(p) => Ok((StatusCode::ACCEPTED, Json(pending_body(&p)))),
     }
-
-    if let Some(repo) = state.repository.as_ref() {
-        repo.upsert_workflow_automation(&rule).map_err(|e| {
-            ServiceError::internal(e.to_string()).into_pair()
-        })?;
-    }
-
-    Ok((StatusCode::CREATED, Json(rule)))
 }
 
 async fn simulate_app_automation(
@@ -461,31 +491,27 @@ async fn decide_app_process(
     let mut required_role: Option<String> = None;
     let mut field_effects = Vec::new();
 
-    {
-        let automations = state.automations.read().map_err(|_| lock_err())?;
-        if let Some(rules) = automations.get(&slug) {
-            if let Some(rule) = rules.iter().find(|r| r.id == instance.rule_id) {
-                if let Some(step) = rule.steps.iter().find(|s| s.id == waiting_step_id) {
-                    if let StepKind::UserTask { ref role, ref approve, ref reject, .. } = step.kind {
-                        required_role = Some(role.clone());
-                        let actions = if decision == "approve" { approve } else { reject };
-                        for act in actions {
-                            match act {
-                                ActionType::UpdateRecordStatus { new_status } => {
-                                    field_effects.push(ActionEffect::SetFields {
-                                        fields: vec![("status".into(), new_status.clone())],
-                                    });
-                                }
-                                ActionType::NotifyCollaborator { role, message_template } => {
-                                    instance.log.push(format!("Notified role '{role}': {message_template}"));
-                                }
-                                ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
-                                    instance.log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
-                                }
-                                ActionType::WebhookDispatch { target_url } => {
-                                    instance.log.push(format!("Webhook not sent: {target_url}"));
-                                }
-                            }
+    // The step is read from the version of the rule the instance started under.
+    if let Some(rule) = crate::service::processes::rule_for(&state, &instance) {
+        if let Some(step) = rule.steps.iter().find(|s| s.id == waiting_step_id) {
+            if let StepKind::UserTask { ref role, ref approve, ref reject, .. } = step.kind {
+                required_role = Some(role.clone());
+                let actions = if decision == "approve" { approve } else { reject };
+                for act in actions {
+                    match act {
+                        ActionType::UpdateRecordStatus { new_status } => {
+                            field_effects.push(ActionEffect::SetFields {
+                                fields: vec![("status".into(), new_status.clone())],
+                            });
+                        }
+                        ActionType::NotifyCollaborator { role, message_template } => {
+                            instance.log.push(format!("Notified role '{role}': {message_template}"));
+                        }
+                        ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
+                            instance.log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
+                        }
+                        ActionType::WebhookDispatch { target_url } => {
+                            instance.log.push(format!("Webhook not sent: {target_url}"));
                         }
                     }
                 }

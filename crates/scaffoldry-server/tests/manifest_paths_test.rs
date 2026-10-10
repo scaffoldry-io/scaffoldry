@@ -60,12 +60,16 @@ async fn creating_an_app_with_an_invalid_manifest_lists_every_problem() {
 }
 
 #[tokio::test]
-async fn a_valid_manifest_is_created_and_cannot_start_with_a_verified_domain() {
+async fn a_valid_manifest_is_created_and_a_new_app_cannot_claim_a_verified_domain() {
     let (app, token) = setup().await;
     let slug = format!("ok-{}", &Uuid::new_v4().to_string()[..6]);
     let mut m = manifest(&slug);
     m["custom_domain_verified"] = json!(true);
     let (s, body) = send(&app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), &token, Some(m)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("custom_domain_verified"));
+
+    let (s, body) = send(&app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), &token, Some(manifest(&slug))).await;
     assert_eq!(s, StatusCode::CREATED, "{body}");
     assert_eq!(body["custom_domain_verified"], false);
 }

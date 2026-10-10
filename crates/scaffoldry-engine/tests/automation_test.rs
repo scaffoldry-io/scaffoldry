@@ -12,7 +12,7 @@ fn test_workflow_automation_evaluation_and_actions() {
         .expect("Failed to initialize policy engine");
     let automation_engine = AutomationEngine::new(policy_engine);
 
-    let rule = AutomationRule {
+    let rule = AutomationRule { version: 0,
         id: "rule-admissions-auto-approve".to_string(),
         app_slug: "physics-admissions-review".to_string(),
         name: "Honors Fellowship Notification & Ledger".to_string(),
@@ -107,7 +107,7 @@ fn webhook_is_not_a_success() {
         .expect("Failed to initialize policy engine");
     let automation_engine = AutomationEngine::new(policy_engine);
 
-    let rule = AutomationRule {
+    let rule = AutomationRule { version: 0,
         id: "rule-webhook-test".to_string(),
         app_slug: "test-app".to_string(),
         name: "Webhook Test Rule".to_string(),
@@ -157,7 +157,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
     let automation_engine = AutomationEngine::new(policy_engine);
 
     // Documented pair: Action::"record_decision" with is_ferpa_sensitive distinguishes faculty (permit) and student (forbid) under default Cedar policies
-    let rule_ferpa = AutomationRule {
+    let rule_ferpa = AutomationRule { version: 0,
         id: "rule-ferpa".to_string(),
         app_slug: "physics-review".to_string(),
         name: "FERPA Protected Rule".to_string(),
@@ -210,7 +210,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
     assert!(student_res.cedar_authorized);
 
     // 3. Rule still runs for a faculty identity.
-    let rule_no_guard = AutomationRule {
+    let rule_no_guard = AutomationRule { version: 0,
         id: "rule-no-guard".to_string(),
         app_slug: "physics-review".to_string(),
         name: "Unguarded Rule".to_string(),
@@ -241,7 +241,7 @@ fn test_steps_evaluation_order_and_when_predicate() {
         .expect("Failed to initialize policy engine");
     let automation_engine = AutomationEngine::new(policy_engine);
 
-    let rule = AutomationRule {
+    let rule = AutomationRule { version: 0,
         id: "rule-multi-step".to_string(),
         app_slug: "physics-review".to_string(),
         name: "Two Step Evaluation".to_string(),
@@ -313,7 +313,7 @@ fn test_depth_backstop_stops_at_depth_3() {
         .expect("Failed to initialize policy engine");
     let automation_engine = AutomationEngine::new(policy_engine);
 
-    let rule = AutomationRule {
+    let rule = AutomationRule { version: 0,
         id: "rule-depth-test".to_string(),
         app_slug: "physics-review".to_string(),
         name: "Depth Test Rule".to_string(),
@@ -357,7 +357,7 @@ fn test_user_task_stops_run_and_subsequent_steps_ignored() {
         .expect("Failed to initialize policy engine");
     let automation_engine = AutomationEngine::new(policy_engine);
 
-    let rule = AutomationRule {
+    let rule = AutomationRule { version: 0,
         id: "rule-approval-flow".to_string(),
         app_slug: "physics-review".to_string(),
         name: "Approval Flow".to_string(),

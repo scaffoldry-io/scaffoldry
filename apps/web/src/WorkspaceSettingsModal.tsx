@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Collaborator, LedgerEntryItem, Persona, Workspace } from "./types";
 import { apiClient, computeSha256 } from "./api";
 import { WorkspaceRulesTab } from "./WorkspaceRulesTab";
+import { Proposals } from "./Proposals";
 
 interface WorkspaceSettingsModalProps {
   workspace: Workspace;
@@ -22,7 +23,7 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
   onSave,
   ledgerEntries,
 }) => {
-  const [tab, setTab] = useState<"general" | "access" | "members" | "audit" | "rules">("general");
+  const [tab, setTab] = useState<"general" | "access" | "members" | "audit" | "rules" | "proposals">("general");
 
   // Form states
   const [name, setName] = useState(workspace.name);
@@ -39,6 +40,11 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
   const [newMemberRole, setNewMemberRole] = useState<"owner" | "admin" | "editor" | "viewer">("editor");
 
   if (!isOpen) return null;
+
+  // Only an owner or admin of the workspace, or a Platform Admin, decides proposals.
+  const canSeeProposals =
+    activePersona.affiliation === "central_admin" ||
+    collaborators.some((c) => c.eppn === activePersona.eppn && (c.role === "owner" || c.role === "admin"));
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -417,10 +423,25 @@ when {
           >
             Rules
           </button>
+          {canSeeProposals && (
+            <button
+              type="button"
+              data-testid="ws-settings-tab-proposals"
+              onClick={() => setTab("proposals")}
+              className={`py-3 px-3.5 font-medium border-b-2 transition-colors cursor-pointer ${
+                tab === "proposals"
+                  ? "border-blue-600 text-blue-600 dark:text-blue-400 font-semibold"
+                  : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+            >
+              Proposals
+            </button>
+          )}
         </div>
 
         {/* Tab Body */}
         <div className="flex-1 overflow-y-auto p-6 text-xs space-y-4">
+          {tab === "proposals" && canSeeProposals && <Proposals workspaceId={workspace.id} viewerEppn={activePersona.eppn} />}
           {tab === "rules" && (
             <WorkspaceRulesTab
               workspace={workspace}
