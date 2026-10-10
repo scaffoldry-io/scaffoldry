@@ -385,6 +385,7 @@ async fn test_05_deny_access_outside_units() {
             is_primary: true,
             source: "scim".to_string(),
             eppn: "faculty.curie@state.edu".to_string(),
+            position_key: None,
         });
         roles.push(RoleRow {
             id: Uuid::new_v4(),
@@ -395,6 +396,7 @@ async fn test_05_deny_access_outside_units() {
             is_primary: true,
             source: "scim".to_string(),
             eppn: "albert.einstein@state.edu".to_string(),
+            position_key: None,
         });
     }
 
