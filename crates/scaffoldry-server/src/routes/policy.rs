@@ -78,6 +78,11 @@ async fn simulate_policy(
         .as_str()
         .unwrap_or("physics");
 
+    // The simulated person's stored department. Defaults to the resource department.
+    let principal_department = payload["principal_department"]
+        .as_str()
+        .unwrap_or(department);
+
     let is_ferpa_sensitive = payload["is_ferpa_sensitive"]
         .as_bool()
         .unwrap_or(false);
@@ -102,6 +107,7 @@ async fn simulate_policy(
         .policy_engine
         .authorize_record_action(
             &caller,
+            principal_department,
             action,
             app_slug,
             department,
@@ -118,6 +124,7 @@ async fn simulate_policy(
         "decision": decision_str,
         "reasons": result.reasons,
         "diagnostics": result.diagnostics,
+        "deciding_policy": result.deciding_policy,
         "principal": {
             "eppn": eppn,
             "affiliation": affiliation_str,

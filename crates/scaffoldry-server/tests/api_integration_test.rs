@@ -1770,7 +1770,7 @@ async fn test_automation_retrigger_loop_guard() {
         "test-slug",
         scaffoldry_core::TriggerEvent::RecordUpdated,
         &initial_rec,
-        &identity,
+        &scaffoldry_server::service::records::Actor { identity: &identity, department: "biology" },
         0,
         &mut applied_ids,
     );
@@ -2000,7 +2000,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
         app_slug,
         scaffoldry_core::TriggerEvent::RecordCreated,
         &record_val,
-        &identity,
+        &scaffoldry_server::service::records::Actor { identity: &identity, department: "biology" },
         0,
         &mut applied_ids,
     );
@@ -2015,7 +2015,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
         app_slug,
         scaffoldry_core::TriggerEvent::RecordCreated,
         &record_val,
-        &identity,
+        &scaffoldry_server::service::records::Actor { identity: &identity, department: "biology" },
         0,
         &mut applied_ids_2,
     );

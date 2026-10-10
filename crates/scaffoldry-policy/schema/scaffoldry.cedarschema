@@ -1,0 +1,64 @@
+// Scaffoldry Cedar schema.
+// Every attribute is required. A non-member has member_role set to the empty string.
+// Workspace.workspace_id equals the workspace's id.
+
+entity User = {
+  eppn: String,
+  name: String,
+  scoped_affiliation: String,
+  department: String,
+  unit_ids: Set<String>,
+  is_platform_admin: Bool,
+};
+
+entity Workspace = {
+  workspace_id: String,
+  department: String,
+  visibility: String,
+  data_classification: String,
+  member_role: String,
+  unit_id: String,
+  is_member: Bool,
+};
+
+entity App = {
+  slug: String,
+  department: String,
+  workspace_id: String,
+};
+
+entity Record = {
+  app_slug: String,
+  department: String,
+  workspace_id: String,
+  is_ferpa_sensitive: Bool,
+};
+
+entity System = {
+  department: String,
+  is_ferpa_sensitive: Bool,
+};
+
+action access_workspace, manage_workspace, delete_workspace
+  appliesTo { principal: [User], resource: [Workspace] };
+
+action read_app, manage_app
+  appliesTo { principal: [User], resource: [Workspace, App] };
+
+action write_record
+  appliesTo { principal: [User], resource: [Workspace, Record] };
+
+action create_app, update_app, publish_app
+  appliesTo { principal: [User], resource: [App, System] };
+
+action read, write, export, run_automation
+  appliesTo { principal: [User], resource: [Record] };
+
+action approve
+  appliesTo { principal: [User], resource: [Record, Workspace, System] };
+
+action record_decision
+  appliesTo { principal: [User], resource: [System, Record] };
+
+action access_admin, impersonate, publish_dataset
+  appliesTo { principal: [User], resource: [System] };

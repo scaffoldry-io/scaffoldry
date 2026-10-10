@@ -56,6 +56,7 @@ fn test_workflow_automation_evaluation_and_actions() {
             realm: "science.state.edu".to_string(),
             affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
         },
+        "biology",
         0,
     );
 
@@ -82,6 +83,7 @@ fn test_workflow_automation_evaluation_and_actions() {
             realm: "science.state.edu".to_string(),
             affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
         },
+        "biology",
         0,
     );
 
@@ -133,6 +135,7 @@ fn webhook_is_not_a_success() {
             realm: "university.edu".to_string(),
             affiliations: vec![scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty],
         },
+        "biology",
         0,
     );
 
@@ -192,6 +195,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         &TriggerEvent::RecordCreated,
         &record,
         &faculty_identity,
+        "biology",
         0,
     );
     assert!(faculty_res.cedar_authorized);
@@ -203,6 +207,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         &TriggerEvent::RecordCreated,
         &record,
         &student_identity,
+        "biology",
         0,
     );
     assert!(!student_res.cedar_authorized);
@@ -228,6 +233,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         &TriggerEvent::RecordCreated,
         &record,
         &faculty_identity,
+        "biology",
         0,
     );
     assert!(unguard_res.cedar_authorized);
@@ -297,6 +303,7 @@ fn test_steps_evaluation_order_and_when_predicate() {
         &TriggerEvent::RecordCreated,
         &record,
         &faculty_identity,
+        "biology",
         0,
     );
 
@@ -340,6 +347,7 @@ fn test_depth_backstop_stops_at_depth_3() {
         &TriggerEvent::RecordCreated,
         &record,
         &faculty_identity,
+        "biology",
         3,
     );
 
@@ -418,6 +426,7 @@ fn test_user_task_stops_run_and_subsequent_steps_ignored() {
         &TriggerEvent::RecordCreated,
         &record,
         &faculty_identity,
+        "biology",
         0,
     );
 
