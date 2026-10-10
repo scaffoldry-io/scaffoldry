@@ -282,6 +282,7 @@ async fn create_user(
         user_name: user_name.clone(),
         name: name.clone(),
         active,
+        admin_hold: false,
         emails: emails.clone(),
         roles: roles.clone(),
         enterprise_extension: enterprise.clone(),

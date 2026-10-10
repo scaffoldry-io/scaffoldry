@@ -1,3 +1,32 @@
+export interface AdminOverviewData {
+  server: {
+    version: string;
+    applied_migrations: string[];
+    database_worker_count: number;
+  };
+  people: {
+    active: number;
+    on_hold: number;
+    inactive: number;
+    platform_admins: number;
+    active_tokens: Record<string, number>;
+  };
+  organization: {
+    unit_count: number;
+  };
+  workspaces: {
+    workspace_count: number;
+    app_count: number;
+  };
+  processes: {
+    waiting_instance_count: number;
+  };
+  ledger: {
+    entry_count: number;
+    head_hash: string;
+  };
+}
+
 import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, Workspace } from "./types";
 
 export class ApiError extends Error {
@@ -114,7 +143,12 @@ export const apiClient = {
       user: any;
       is_impersonating: boolean;
       original_admin: any;
+      is_platform_admin: boolean;
     }>("/auth/me");
+  },
+
+  getAdminOverview: async () => {
+    return request<AdminOverviewData>("/admin/overview");
   },
 
   impersonateUser: async (target_eppn: string) => {

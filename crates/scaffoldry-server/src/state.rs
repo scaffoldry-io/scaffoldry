@@ -37,6 +37,8 @@ pub struct ScimUser {
     pub name: Value,
     pub active: bool,
     #[serde(default)]
+    pub admin_hold: bool,
+    #[serde(default)]
     pub emails: Vec<Value>,
     #[serde(default)]
     pub roles: Vec<Value>,

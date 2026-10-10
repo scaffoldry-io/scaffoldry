@@ -51,6 +51,7 @@ type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
 #[derive(Clone)]
 pub struct PostgresRepository {
     worker_tx: Sender<WorkerJob>,
+    worker_count: usize,
 }
 
 impl std::fmt::Debug for PostgresRepository {
@@ -204,8 +205,19 @@ impl PostgresRepository {
                 .map_err(|e| RepositoryError::NotFound(format!("Failed to spawn db worker thread {w_idx}: {e}")))?;
         }
 
-        let repo = Self { worker_tx };
+        let repo = Self { worker_tx, worker_count: num_workers };
         Ok(repo)
+    }
+
+    pub fn worker_count(&self) -> usize {
+        self.worker_count
+    }
+
+    pub fn get_applied_migrations(&self) -> Result<Vec<String>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query("SELECT filename FROM schema_migrations ORDER BY filename ASC", &[])?;
+            Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
+        })
     }
 
     pub fn with_client<R: Send + 'static>(
@@ -1434,23 +1446,7 @@ impl PostgresRepository {
 }
 
 fn parse_decision_type(s: &str) -> Result<DecisionType, RepositoryError> {
-    match s {
-        "AppPublished" => Ok(DecisionType::AppPublished),
-        "VanityDnsBound" => Ok(DecisionType::VanityDnsBound),
-        "PolicyRevision" => Ok(DecisionType::PolicyRevision),
-        "WorkflowRuleApproved" => Ok(DecisionType::WorkflowRuleApproved),
-        "AccessRoleGranted" => Ok(DecisionType::AccessRoleGranted),
-        "DatasetAccessShared" => Ok(DecisionType::DatasetAccessShared),
-        "StatutoryAttestation" => Ok(DecisionType::StatutoryAttestation),
-        "ImpersonationSessionStarted" => Ok(DecisionType::ImpersonationSessionStarted),
-        "ImpersonationSessionEnded" => Ok(DecisionType::ImpersonationSessionEnded),
-        "WorkspaceCreated" => Ok(DecisionType::WorkspaceCreated),
-        "WorkspaceUpdated" => Ok(DecisionType::WorkspaceUpdated),
-        "WorkspaceMemberAdded" => Ok(DecisionType::WorkspaceMemberAdded),
-        "WorkspaceMemberRemoved" => Ok(DecisionType::WorkspaceMemberRemoved),
-        "WorkspaceMemberRoleUpdated" => Ok(DecisionType::WorkspaceMemberRoleUpdated),
-        _ => Err(RepositoryError::TamperDetected(format!("Unknown decision type: {s}"))),
-    }
+    DecisionType::parse(s).ok_or_else(|| RepositoryError::TamperDetected(format!("Unknown decision type: {s}")))
 }
 
 impl PostgresRepository {

@@ -43,7 +43,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     };
 
     if let Some(ref u) = scim_user {
-        if !u.active {
+        if !u.active || u.admin_hold {
             return None;
         }
     }

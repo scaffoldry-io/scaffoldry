@@ -1,5 +1,6 @@
 //! Route Tree Aggregation
 
+pub mod admin;
 pub mod apps;
 pub mod auth;
 pub mod datasets;
@@ -25,6 +26,7 @@ use serde_json::json;
 pub fn api_router(state: SharedState) -> Router {
     let api_v1 = Router::new()
         .merge(auth::router())
+        .merge(admin::router())
         .merge(workspaces::router())
         .merge(organizations::router())
         .merge(apps::router())

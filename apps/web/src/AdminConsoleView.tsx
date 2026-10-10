@@ -9,7 +9,7 @@ export interface AdminConsoleViewProps {
   realAdmin: Persona | null;
   handleStopImpersonation: () => void;
   navigateTo: (path: string) => void;
-  adminTab: "org" | "policy" | "ledger" | "infra" | "impersonation" | "settings";
+  adminTab: "org" | "policy" | "ledger" | "impersonation" | "settings";
   apps: RegisteredApp[];
   sourceRules: SourceRule[];
   simAction: "read" | "write" | "export";
@@ -580,25 +580,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
         </div>
       )}
 
-      {/* ADMIN TAB 3: INFRASTRUCTURE TOPOLOGY */}
-      {adminTab === "infra" && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 shadow-xs">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Live Endpoint</span>
-            <span className="font-mono text-xs text-blue-600 dark:text-blue-400 break-all">
-              https://scaffoldry-desk-ljbhpnq7oa-uc.a.run.app
-            </span>
-          </div>
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 shadow-xs">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">GCP Region</span>
-            <span className="text-sm font-semibold text-slate-900 dark:text-white">us-central1 (scaffoldry-io)</span>
-          </div>
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 shadow-xs">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Auth Lattice</span>
-            <span className="text-sm font-semibold text-slate-900 dark:text-white">Workload Identity Federation</span>
-          </div>
-        </div>
-      )}
+
 
       {/* ADMIN TAB 4: CRYPTOGRAPHIC DECISION AUDIT LEDGER */}
       {adminTab === "ledger" && (
