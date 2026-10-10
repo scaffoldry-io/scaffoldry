@@ -46,8 +46,9 @@ pub fn create_record(
             .engine
             .read()
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        let labels = state.labels.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
         engine
-            .submit_record(&identity, app_slug, data_payload)
+            .submit_record_labelled(&identity, app_slug, data_payload, &labels)
             .map_err(|e| match e {
                 EngineError::AccessDenied(msg) => ServiceError::Forbidden {
                     message: format!("403 Forbidden: Cedar Policy denies record mutation: {msg}"),

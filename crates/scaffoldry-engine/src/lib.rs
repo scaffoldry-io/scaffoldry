@@ -153,6 +153,25 @@ pub struct FieldSpec {
     pub precision: Option<u8>,
 }
 
+/// An overlay on one field that can only add protection. It is how a compliance officer raises a
+/// field's sensitivity at once, without a structural change to the manifest.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DataLabel {
+    pub ferpa_sensitive: bool,
+    pub note: String,
+    pub set_by: String,
+}
+
+/// Labels by `(app_slug, table_id, field)`. The table id is `""` for an untabled view. The set
+/// holds exceptions only, so it stays small. It is empty until the label table exists.
+pub type LabelSet = HashMap<(String, String, String), DataLabel>;
+
+/// Whether a field is sensitive: the manifest flag, or a label that raises it. A label of
+/// `false` never lowers a manifest flag. Every read of a field's sensitivity calls this.
+pub fn effective_ferpa_sensitive(field: &FieldSpec, label: Option<&DataLabel>) -> bool {
+    field.ferpa_sensitive || label.is_some_and(|l| l.ferpa_sensitive)
+}
+
 impl FieldSpec {
     pub fn simple(
         name: impl Into<String>,
@@ -1116,6 +1135,17 @@ impl ManifestEngine {
         app_slug: &str,
         payload: &Value,
     ) -> Result<SubmittedRecord, EngineError> {
+        self.submit_record_labelled(caller, app_slug, payload, &LabelSet::new())
+    }
+
+    /// Submits a record, deciding sensitivity with the given labels.
+    pub fn submit_record_labelled(
+        &self,
+        caller: &EduPersonIdentity,
+        app_slug: &str,
+        payload: &Value,
+        labels: &LabelSet,
+    ) -> Result<SubmittedRecord, EngineError> {
         let manifest = self
             .manifests_by_slug
             .get(app_slug)
@@ -1143,7 +1173,12 @@ impl ManifestEngine {
                     )));
                 }
 
-                if val.is_some() && field.ferpa_sensitive {
+                let key = (
+                    app_slug.to_string(),
+                    view.table_id.clone().unwrap_or_default(),
+                    field.name.clone(),
+                );
+                if val.is_some() && effective_ferpa_sensitive(field, labels.get(&key)) {
                     is_ferpa_sensitive = true;
                 }
 
