@@ -427,6 +427,14 @@ impl ServerState {
         Ok(())
     }
 
+    pub fn delete_role(&self, id: uuid::Uuid) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.roles.write().unwrap().retain(|r| r.id != id);
+        if let Some(ref repo) = self.repository {
+            repo.delete_role(id)?;
+        }
+        Ok(())
+    }
+
     pub fn persist_role(&self, role: &RoleRow) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut guard = self.roles.write().unwrap();
         if let Some(pos) = guard.iter().position(|r| r.id == role.id) {
@@ -1288,6 +1296,20 @@ impl ServerState {
 
         Ok(())
     }
+    /// Every token the user holds, of every kind and state, newest first.
+    pub fn list_all_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
+        if let Some(ref repo) = self.repository {
+            if let Ok(list) = repo.list_all_api_tokens_for_eppn(eppn) {
+                return list;
+            }
+        }
+        self.api_tokens.read().map(|tokens| {
+            let mut list: Vec<ApiToken> = tokens.values().filter(|t| t.eppn == eppn).cloned().collect();
+            list.sort_by_key(|t| std::cmp::Reverse(t.created_at));
+            list
+        }).unwrap_or_default()
+    }
+
     pub fn list_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
         if let Some(ref repo) = self.repository {
             if let Ok(list) = repo.list_api_tokens_for_eppn(eppn) {

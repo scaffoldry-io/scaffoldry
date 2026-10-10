@@ -17,6 +17,7 @@ pub fn router() -> Router<SharedState> {
         .route("/orgs", get(list_orgs).post(create_org))
         .route("/orgs/{id}", patch(patch_org))
         .route("/orgs/{id}/appointments", post(create_appointment))
+        .route("/orgs/{id}/appointments/{eppn}/{affiliation}", axum::routing::delete(revoke_appointment))
         .route("/orgs/{id}/members", get(list_members))
 }
 
@@ -234,6 +235,11 @@ async fn patch_org(
 pub struct AppointmentPayload {
     pub eppn: String,
     pub scoped_affiliation: String,
+    pub reason: Option<String>,
+}
+
+fn unit_is_root(orgs: &[OrganizationNode], id: Uuid) -> bool {
+    orgs.iter().any(|o| o.id == id && o.parent_id.is_none())
 }
 
 async fn create_appointment(
@@ -264,26 +270,98 @@ async fn create_appointment(
 
     if payload.scoped_affiliation != "unit_admin" && payload.scoped_affiliation != "platform_admin" {
         return Err(ServiceError::BadRequest(
-            "scoped_affiliation must be 'unit_admin'".to_string(),
+            "scoped_affiliation must be 'unit_admin' or 'platform_admin'".to_string(),
         ));
+    }
+    if payload.scoped_affiliation == "platform_admin" {
+        if !unit_is_root(&all_orgs, id) {
+            return Err(ServiceError::BadRequest(
+                "A platform_admin appointment belongs on the root unit".to_string(),
+            ));
+        }
+        if !is_platform_admin(&caller, &state) {
+            return Err(ServiceError::forbidden("Only a Platform Admin may appoint a Platform Admin"));
+        }
     }
 
     let role = RoleRow {
         id: Uuid::new_v4(),
         person_id: Uuid::new_v4(),
-        eppn: payload.eppn,
+        eppn: payload.eppn.clone(),
         organization_id: id,
-        role_title: "Org Unit Admin".to_string(),
-        scoped_affiliation: payload.scoped_affiliation,
+        role_title: if payload.scoped_affiliation == "platform_admin" { "Platform Admin" } else { "Org Unit Admin" }.to_string(),
+        scoped_affiliation: payload.scoped_affiliation.clone(),
         is_primary: true,
         source: "api".to_string(),
     };
 
-    state
-        .persist_role(&role)
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let reason = payload.reason.filter(|r| !r.trim().is_empty()).unwrap_or_else(|| "Appointment through the API".to_string());
+    let record = serde_json::json!({
+        "action": "appoint", "organization_id": id, "eppn": payload.eppn, "scoped_affiliation": payload.scoped_affiliation,
+    });
+    crate::service::admin::admin_write(
+        &state,
+        &caller,
+        scaffoldry_core::ledger::DecisionType::AccessRoleGranted,
+        "AC-02",
+        &reason,
+        &record,
+        || state.persist_role(&role).map_err(|e| ServiceError::Internal(e.to_string())),
+    )?;
 
     Ok((StatusCode::CREATED, Json(role)))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RevokeBody {
+    pub reason: Option<String>,
+}
+
+async fn revoke_appointment(
+    State(state): State<SharedState>,
+    Path((id, eppn, affiliation)): Path<(Uuid, String, String)>,
+    user: Option<Extension<AuthUser>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ServiceError> {
+    let caller = resolve_caller(user, &headers, &state)?;
+    let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
+    let roles = state.roles.read().unwrap().clone();
+
+    if !all_orgs.iter().any(|o| o.id == id) {
+        return Err(ServiceError::NotFound(format!("Organization '{id}' not found")));
+    }
+    if !crate::service::people::may_manage_appointment(&caller, id, &affiliation, &all_orgs, &roles) {
+        return Err(ServiceError::forbidden("Caller may not revoke this appointment"));
+    }
+    let role = roles
+        .iter()
+        .find(|r| r.organization_id == id && r.eppn.eq_ignore_ascii_case(&eppn) && r.scoped_affiliation == affiliation)
+        .cloned()
+        .ok_or_else(|| ServiceError::NotFound("No such appointment".to_string()))?;
+    let root = all_orgs.iter().find(|o| o.parent_id.is_none()).map(|o| o.id).unwrap_or(id);
+    crate::service::people::revoke_check(&role, &roles, root)
+        .map_err(|refusal| ServiceError::conflict(refusal.message()))?;
+
+    let reason = serde_json::from_slice::<RevokeBody>(&body)
+        .ok()
+        .and_then(|b| b.reason)
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or_else(|| "Revoked through the API".to_string());
+    let record = serde_json::json!({
+        "action": "revoke_appointment", "organization_id": id, "eppn": eppn, "scoped_affiliation": affiliation,
+    });
+    crate::service::admin::admin_write(
+        &state,
+        &caller,
+        scaffoldry_core::ledger::DecisionType::AccessRoleRevoked,
+        "AC-02",
+        &reason,
+        &record,
+        || state.delete_role(role.id).map_err(|e| ServiceError::Internal(e.to_string())),
+    )?;
+
+    Ok(Json(serde_json::json!({ "revoked": true })))
 }
 
 #[derive(Debug, Serialize)]

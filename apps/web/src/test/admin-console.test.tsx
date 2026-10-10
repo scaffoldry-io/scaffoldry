@@ -179,3 +179,90 @@ describe("Admin Console Shell & Overview", () => {
     expect(screen.queryByRole("button", { name: /Load more/i })).not.toBeInTheDocument();
   });
 });
+
+describe("Admin People", () => {
+  const row = {
+    id: "u-1",
+    user_name: "pat@state.edu",
+    display_name: "Pat Doe",
+    email: "pat@state.edu",
+    affiliation: "faculty",
+    units: [{ id: "o-1", name: "Biology" }],
+    active: true,
+    hold: false,
+    platform_admin: false,
+    unit_admin_of: [],
+    active_agent_tokens: 1,
+    latest_token_use: null,
+  };
+  const detail = {
+    user: row,
+    appointments: [
+      { organization_id: "o-1", unit: "Biology", scoped_affiliation: "unit_admin", role_title: "Org Unit Admin", source: "api" },
+    ],
+    workspace_memberships: [],
+    tokens: [
+      { id: "t-1", kind: "agent", label: "Lab notebook agent", created_at: "2026-10-01T00:00:00Z", expires_at: "2026-12-01T00:00:00Z", last_used_at: null, revoked: false },
+    ],
+    ledger: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(apiClient, "getCurrentUser").mockResolvedValue({
+      user: { affiliation: "central_admin" },
+      is_impersonating: false,
+      original_admin: null,
+      is_platform_admin: true,
+    });
+    vi.spyOn(apiClient, "adminListUsers").mockResolvedValue({ users: [row], next_cursor: null });
+    vi.spyOn(apiClient, "adminGetUser").mockResolvedValue(detail);
+    vi.spyOn(apiClient, "listOrganizations").mockResolvedValue([
+      { id: "o-0", parent_id: null, name: "Institution", code: "INST", org_type: "Institution" },
+      { id: "o-1", parent_id: "o-0", name: "Biology", code: "BIO", org_type: "Department" },
+    ]);
+  });
+
+  const openDrawer = async () => {
+    render(<AdminConsole activePersona={mockPlatformAdmin} adminTab="people" />);
+    fireEvent.click(await screen.findByText("pat@state.edu"));
+    return screen.findByTestId("admin-user-detail");
+  };
+
+  it("the detail drawer shows tokens and appointments", async () => {
+    await openDrawer();
+    expect(screen.getByTestId("admin-user-tokens")).toHaveTextContent("Lab notebook agent");
+    expect(screen.getByTestId("admin-user-appointments")).toHaveTextContent("unit_admin in Biology");
+  });
+
+  it("Hold without a reason is not sent", async () => {
+    const hold = vi.spyOn(apiClient, "adminHoldUser").mockResolvedValue({ user: { ...row, hold: true } });
+    await openDrawer();
+    fireEvent.click(screen.getByTestId("admin-user-action-hold"));
+    const confirm = await screen.findByRole("button", { name: /confirm hold/i });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(hold).not.toHaveBeenCalled();
+  });
+
+  it("Confirm sends the hold with the reason", async () => {
+    const hold = vi.spyOn(apiClient, "adminHoldUser").mockResolvedValue({ user: { ...row, hold: true } });
+    await openDrawer();
+    fireEvent.click(screen.getByTestId("admin-user-action-hold"));
+    fireEvent.change(await screen.findByLabelText(/reason for decision/i), { target: { value: "Pending review" } });
+    fireEvent.click(screen.getByRole("button", { name: /confirm hold/i }));
+    await waitFor(() => expect(hold).toHaveBeenCalledWith("u-1", true, "Pending review"));
+  });
+
+  it("the create form posts the new user", async () => {
+    const create = vi.spyOn(apiClient, "adminCreateUser").mockResolvedValue({ user: row });
+    render(<AdminConsole activePersona={mockPlatformAdmin} adminTab="people" />);
+    fireEvent.click(await screen.findByTestId("admin-user-create-open"));
+    const form = await screen.findByTestId("admin-user-create");
+    fireEvent.change(form.querySelector("#create-userName")!, { target: { value: "new@state.edu" } });
+    fireEvent.change(form.querySelector("#create-reason")!, { target: { value: "New hire" } });
+    fireEvent.click(screen.getByRole("button", { name: /create user/i }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][0]).toMatchObject({ userName: "new@state.edu", reason: "New hire" });
+  });
+});

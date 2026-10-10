@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Overview } from "./Overview";
+import { People } from "./People";
 import { AdminConsoleView } from "../AdminConsoleView";
 import { apiClient } from "../api";
 import { Persona, RegisteredApp, SourceRule, LedgerEntryItem } from "../types";
@@ -10,8 +11,8 @@ export interface AdminConsoleProps {
   realAdmin?: Persona | null;
   handleStopImpersonation?: () => void;
   navigateTo?: (path: string) => void;
-  adminTab?: "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings" | "people";
+  setAdminTab?: (tab: "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings" | "people") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -48,7 +49,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings" | "people"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -111,6 +112,19 @@ export function AdminConsole({
     <div className="space-y-6" data-testid="admin-console-shell">
       {currentTab === "overview" ? (
         <Overview />
+      ) : currentTab === "people" ? (
+        <People
+          onImpersonate={(row) =>
+            handleStartImpersonation({
+              eppn: row.user_name,
+              name: row.display_name,
+              affiliation: (["faculty", "staff", "student", "compliance", "central_admin"] as const).find((a) => a === row.affiliation) ?? "staff",
+              department: "",
+              roleTitle: "",
+              isAdmin: row.platform_admin,
+            })
+          }
+        />
       ) : (
         <AdminConsoleView
           activePersona={activePersona ?? { eppn: "admin@state.edu", name: "Admin", affiliation: "central_admin", department: "IT", roleTitle: "Admin", isAdmin: true }}
