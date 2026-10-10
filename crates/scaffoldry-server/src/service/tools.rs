@@ -219,6 +219,22 @@ pub static TOOLS: &[Tool] = &[
         run: run_decide_proposal,
     },
     Tool {
+        name: "list_waiting_decisions",
+        description: "The process steps waiting for you to decide, in apps you can read. Up to 200.",
+        input_schema: schema_empty,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_list_waiting_decisions,
+    },
+    Tool {
+        name: "decide_process",
+        description: "Approve or reject a waiting process step. Only the person the step names may decide. The submitter never may.",
+        input_schema: schema_decide_process,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_decide_process,
+    },
+    Tool {
         name: "get_job",
         description: "Get status, progress, result, error, and logs of a job (only creator or Platform Admin).",
         input_schema: schema_get_job,
@@ -1020,4 +1036,33 @@ fn run_get_proposal(_caller: &AuthUser, _origin: &Origin, args: Value, state: &S
 fn run_decide_proposal(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: DecideArgs = parse(args)?;
     crate::service::proposals::decide(caller, &a.proposal_id, &a.decision, &a.rationale, state)
+}
+
+fn schema_decide_process() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "instance_id": { "type": "string", "description": "The id of the waiting process instance" },
+            "decision": { "type": "string", "description": "approve or reject" }
+        },
+        "required": ["app_slug", "instance_id", "decision"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecideProcessArgs {
+    app_slug: String,
+    instance_id: String,
+    decision: String,
+}
+
+fn run_list_waiting_decisions(caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    Ok(Value::Array(crate::service::processes::list_waiting_decisions(caller, state)?))
+}
+
+fn run_decide_process(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: DecideProcessArgs = parse(args)?;
+    to_value(&crate::service::processes::decide_process(caller, origin, &a.app_slug, &a.instance_id, &a.decision, state)?)
 }
