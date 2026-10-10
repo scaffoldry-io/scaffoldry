@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { FieldSpec, WorkflowAutomationRule, WorkflowTriggerEvent, WorkflowActionItem, ProcessStepItem } from "./types";
+import { FieldSpec, WorkflowAutomationRule, WorkflowTriggerEvent, WorkflowActionItem } from "./types";
 
 interface Props {
   appSlug: string;

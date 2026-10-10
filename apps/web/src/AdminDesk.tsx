@@ -6,7 +6,7 @@ import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient, getAuthToken, setAuthToken } from "./api";
-import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem } from "./types";
+import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
 const PublishedAppView = lazy(() => import("./PublishedAppView").then((m) => ({ default: m.PublishedAppView })));

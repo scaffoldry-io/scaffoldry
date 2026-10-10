@@ -18,7 +18,7 @@ export interface ApiTokenItem {
 
 export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, onClose, eppn }) => {
   const [tokens, setTokens] = useState<ApiTokenItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agentEnabled, setAgentEnabled] = useState(true);
   const [maxDays, setMaxDays] = useState(90);

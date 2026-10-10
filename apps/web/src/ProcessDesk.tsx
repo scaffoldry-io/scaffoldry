@@ -25,7 +25,7 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({
   callerWorkspaceRole,
 }) => {
   const [instances, setInstances] = useState<ProcessInstance[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [, setLoading] = useState<boolean>(true);
   const [errorMap, setErrorMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -61,9 +61,7 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({
 
   const isPlatformAdmin =
     callerPersona.affiliation === "central_admin" || Boolean(callerPersona.isAdmin);
-  const isOrgUnitAdmin =
-    callerPersona.affiliation === "unit_admin" ||
-    callerWorkspaceRole === "unit_admin";
+  const isOrgUnitAdmin = callerWorkspaceRole === "unit_admin";
 
   const canSeeInstance = (inst: ProcessInstance): boolean => {
     if (isPlatformAdmin) return true;
