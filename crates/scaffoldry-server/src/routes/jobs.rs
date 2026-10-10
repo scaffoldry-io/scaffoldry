@@ -2,7 +2,6 @@
 //! Anyone else gets 404, so a stranger cannot learn that a job exists.
 
 use crate::jobs::{self, Job};
-use crate::routes::organizations::is_platform_admin;
 use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use axum::{
@@ -59,7 +58,8 @@ fn visible_job(state: &SharedState, caller: &AuthUser, raw_id: &str) -> Result<J
         .as_deref()
         .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
     let job = jobs::get_job(repo, id).map_err(internal)?.ok_or_else(not_found)?;
-    if job.created_by.eq_ignore_ascii_case(&caller.eppn) || is_platform_admin(caller, state) {
+    if job.created_by.eq_ignore_ascii_case(&caller.eppn)
+        || crate::service::admin::require_platform_admin(caller, state).is_ok() {
         Ok(job)
     } else {
         Err(not_found())

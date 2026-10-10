@@ -4,6 +4,7 @@
 use crate::guard::session_user;
 use crate::service::admin::require_platform_admin_or_compliance;
 use crate::service::organizations::{is_platform_admin, OrgCaller};
+use crate::service::ServiceError;
 use crate::state::SharedState;
 use axum::{
     extract::State,
@@ -27,11 +28,7 @@ async fn get_overview(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     let Some(caller) = session_user(&state, &headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Unauthorized"})),
-        )
-            .into_response();
+        return ServiceError::unauthorized("Unauthorized").into_response();
     };
 
     if let Err(e) = require_platform_admin_or_compliance(&caller, &state) {

@@ -1,7 +1,6 @@
 import { UserSettingsModal } from "./UserSettingsModal";
 import React, { useState, useEffect, useRef, Suspense, lazy, useMemo } from "react";
 import { DatasetExplorer } from "./DatasetExplorer";
-import { AIAssistantDrawer } from "./AIAssistantDrawer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
@@ -941,7 +940,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   const [sourceRules] = useState<SourceRule[]>(INITIAL_SOURCE_RULES);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
   const [activeWorkspaceApp, setActiveWorkspaceApp] = useState<RegisteredApp | null>(null);
 
   // Navigation View State ("workspaces" | "datasets")
@@ -1406,46 +1404,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     showToast(`Configured new application linked to ${dataset.name}`);
   };
 
-  // Install proposed application from AI Co-Builder (MCP)
-  const handleApplyAppProposal = (manifest: AppManifest) => {
-    const existing = apps.find((a) => a.slug === manifest.slug);
-    if (existing) {
-      showToast(`Application "${manifest.title}" is already installed.`);
-      setActiveWorkspaceApp(existing);
-      setActiveStudioApp(existing);
-      setIsAiAssistantOpen(false);
-      return;
-    }
-    const newApp: RegisteredApp = {
-      slug: manifest.slug,
-      title: manifest.title,
-      orgCode: manifest.organization_code || "UNIV",
-      department: manifest.department.toLowerCase(),
-      customDomain: `${manifest.slug}.scaffoldry.internal`,
-      verified: false,
-      hermCapability: manifest.herm_capability_id || "ACA-01-APP",
-      cedsDomain: "Higher Education / Academic Affairs",
-      status: "Published",
-      updatedAt: "Just now",
-      recordsCount: 0,
-      workspaceId: activeWorkspaceId === "all" ? "ws-bio-lab" : activeWorkspaceId,
-      collaborators: [
-        {
-          eppn: activePersona.eppn,
-          name: activePersona.name,
-          role: "owner",
-          department: activePersona.department,
-        },
-      ],
-      manifest,
-    };
-    setApps((prev) => [newApp, ...prev]);
-    setActiveWorkspaceApp(newApp);
-    setActiveStudioApp(newApp);
-    setIsAiAssistantOpen(false);
-    showToast(`Installed AI-proposed application "${manifest.title}" with CEDS & FERPA governance.`);
-  };
-
   // Dedicated Full-Page App Builder Route (/builder/:slug)
   if (isBuilderPath) {
     const slug = currentPath.replace("/builder/", "").replace("/builder", "").split("/")[0] || apps[0]?.slug;
@@ -1494,7 +1452,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
           onBack={() => navigateTo("/")}
           onOpenPublishedApp={(s) => navigateTo(`/app/${s}`)}
           onOpenIntakeForm={(tId) => navigateTo(tId ? `/form/${targetApp.slug}/${tId}` : `/form/${targetApp.slug}`)}
-          onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
           onSaveApp={(updated) => {
             setApps((prev) => prev.map((a) => (a.slug === updated.slug ? updated : a)));
             setActiveStudioApp(updated);
@@ -1776,17 +1733,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
         {/* Right: Actions, Theme & User Badge */}
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setIsAiAssistantOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-xs cursor-pointer transition-all"
-            title="Open Sovereign AI Co-Builder & MCP Inspector"
-          >
-            <span>✨ AI Assistant</span>
-            <span className="hidden md:inline-block px-1.5 py-0.2 rounded text-[10px] bg-white/20 font-mono">
-              MCP
-            </span>
-          </button>
 
           {!isAdminPath && (
             <button
@@ -2750,13 +2696,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         isOpen={userSettingsOpen}
         onClose={() => setUserSettingsOpen(false)}
         eppn={activePersona.eppn}
-      />
-
-      {/* AI Assistant Drawer (MCP Native) */}
-      <AIAssistantDrawer
-        isOpen={isAiAssistantOpen}
-        onClose={() => setIsAiAssistantOpen(false)}
-        onApplyAppProposal={handleApplyAppProposal}
       />
 
       {/* LOGIN / IDENTITY AUTHENTICATION MODAL */}
