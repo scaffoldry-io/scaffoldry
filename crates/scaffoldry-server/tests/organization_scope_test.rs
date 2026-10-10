@@ -50,6 +50,7 @@ fn test_organization_scope_rules() {
             scoped_affiliation: "unit_admin".to_string(),
             is_primary: true,
             source: "api".to_string(),
+            position_key: None,
         },
         RoleRow {
             id: Uuid::new_v4(),
@@ -60,6 +61,7 @@ fn test_organization_scope_rules() {
             scoped_affiliation: "unit_admin".to_string(),
             is_primary: true,
             source: "api".to_string(),
+            position_key: None,
         },
     ];
 

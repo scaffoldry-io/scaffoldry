@@ -252,6 +252,8 @@ function UserDetail({
   const u = data.user;
   const rootId = (units.data ?? []).find((o) => !o.parent_id)?.id ?? "";
   const unitAdminAppointments = data.appointments.filter((a) => a.scoped_affiliation === "unit_admin");
+  const positionHoldings = data.appointments.filter((a) => a.scoped_affiliation === "position");
+  const appointments = data.appointments.filter((a) => a.scoped_affiliation !== "position");
 
   const done = () => {
     setAction(null);
@@ -370,13 +372,28 @@ function UserDetail({
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Appointments</h3>
-        {data.appointments.length === 0 ? (
+        {appointments.length === 0 ? (
           <p className="text-sm text-gray-500">No appointments.</p>
         ) : (
           <ul className="text-sm space-y-1" data-testid="admin-user-appointments">
-            {data.appointments.map((a) => (
+            {appointments.map((a) => (
               <li key={`${a.organization_id}-${a.scoped_affiliation}`}>
                 {a.scoped_affiliation} in {a.unit} <span className="text-xs text-gray-500">({a.source})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Positions</h3>
+        {positionHoldings.length === 0 ? (
+          <p className="text-sm text-gray-500">Holds no positions.</p>
+        ) : (
+          <ul className="text-sm space-y-1" data-testid="admin-user-positions">
+            {positionHoldings.map((a) => (
+              <li key={`${a.organization_id}-${a.role_title}`}>
+                {a.role_title} of {a.unit} <span className="text-xs text-gray-500">({a.source})</span>
               </li>
             ))}
           </ul>

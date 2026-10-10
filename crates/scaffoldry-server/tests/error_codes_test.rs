@@ -36,6 +36,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             StatusCode::BAD_REQUEST,
         ),
         (ServiceError::Conflict("Changed".into()), "version_conflict", StatusCode::CONFLICT),
+        (ServiceError::PositionFull("Full".into()), "position_full", StatusCode::CONFLICT),
         (ServiceError::TooLarge("Big".into()), "too_large", StatusCode::PAYLOAD_TOO_LARGE),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];
@@ -47,6 +48,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::BadRequest(_)
             | ServiceError::Invalid { .. }
             | ServiceError::Conflict(_)
+            | ServiceError::PositionFull(_)
             | ServiceError::TooLarge(_)
             | ServiceError::Internal(_) => {}
         }

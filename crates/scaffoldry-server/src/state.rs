@@ -116,6 +116,22 @@ pub struct RoleRow {
     pub is_primary: bool,
     #[serde(default = "default_role_source")]
     pub source: String,
+    /// Set when this row is a position holding. `None` for an affiliation or an admin appointment.
+    #[serde(default)]
+    pub position_key: Option<String>,
+}
+
+/// A kind of post an organization unit can have, such as a department chair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositionType {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub org_types: Vec<String>,
+    pub max_holders: i32,
+    pub retired_at: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
 }
 
 fn default_role_source() -> String {
@@ -185,6 +201,7 @@ pub struct ServerState {
     pub repository: Option<Arc<crate::repository::PostgresRepository>>,
     pub organizations: RwLock<HashMap<uuid::Uuid, OrganizationNode>>,
     pub roles: RwLock<Vec<RoleRow>>,
+    pub position_types: RwLock<HashMap<String, PositionType>>,
     pub settings: RwLock<HashMap<String, serde_json::Value>>,
 }
 
@@ -208,6 +225,7 @@ impl ServerState {
         let mut organizations = HashMap::new();
         organizations.insert(default_root_id, default_root_org);
         let mut roles: Vec<RoleRow> = Vec::new();
+        let mut position_types: HashMap<String, PositionType> = HashMap::new();
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
         let mut process_instances = HashMap::new();
@@ -338,6 +356,11 @@ impl ServerState {
             if let Ok(persisted_roles) = repo.list_roles() {
                 roles = persisted_roles;
             }
+            if let Ok(persisted_positions) = repo.list_position_types() {
+                for pt in persisted_positions {
+                    position_types.insert(pt.key.clone(), pt);
+                }
+            }
 
             // Load persisted SCIM users and groups
             if let Ok(persisted_users) = repo.list_scim_users() {
@@ -396,6 +419,7 @@ impl ServerState {
             repository,
             organizations: RwLock::new(organizations),
             roles: RwLock::new(roles),
+            position_types: RwLock::new(position_types),
             settings: RwLock::new(settings_map),
         })
     }
@@ -427,6 +451,14 @@ impl ServerState {
         if let Some(ref repo) = self.repository {
             repo.delete_scim_roles_for_user(eppn)?;
         }
+        Ok(())
+    }
+
+    pub fn persist_position_type(&self, pt: &PositionType) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref repo) = self.repository {
+            repo.upsert_position_type(pt)?;
+        }
+        self.position_types.write().unwrap().insert(pt.key.clone(), pt.clone());
         Ok(())
     }
 
@@ -756,6 +788,7 @@ impl ServerState {
         let mut organizations = HashMap::new();
         organizations.insert(default_root_id, default_root_org);
         let roles: Vec<RoleRow> = Vec::new();
+        let position_types: HashMap<String, PositionType> = HashMap::new();
         let datasets = HashMap::new();
         let relationships = HashMap::new();
         let process_instances = HashMap::new();
@@ -821,6 +854,7 @@ impl ServerState {
             repository: None,
             organizations: RwLock::new(organizations),
             roles: RwLock::new(roles),
+            position_types: RwLock::new(position_types),
             settings: RwLock::new(settings_map),
         }
     }

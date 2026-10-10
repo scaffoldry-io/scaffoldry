@@ -117,6 +117,39 @@ export interface NewAdminUser {
   reason: string;
 }
 
+export interface PositionTypeRow {
+  key: string;
+  name: string;
+  description: string;
+  org_types: string[];
+  max_holders: number;
+  retired: boolean;
+  holder_count: number;
+}
+
+export interface NewPositionType {
+  key: string;
+  name: string;
+  description: string;
+  org_types: string[];
+  max_holders: number;
+  reason: string;
+}
+
+export interface VacancyRow {
+  unit: { id: string; name: string };
+  org_type: string;
+  position: { key: string; name: string };
+}
+
+export interface UnitPositionRow {
+  key: string;
+  name: string;
+  description: string;
+  max_holders: number;
+  holders: { eppn: string; display_name: string; source: string }[];
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
@@ -300,6 +333,46 @@ export const apiClient = {
   revokeAppointment: async (unit: string, eppn: string, affiliation: string, reason: string) => {
     return request<{ revoked: boolean }>(
       `/orgs/${encodeURIComponent(unit)}/appointments/${encodeURIComponent(eppn)}/${encodeURIComponent(affiliation)}`,
+      { method: "DELETE", body: JSON.stringify({ reason }) }
+    );
+  },
+
+  adminListPositions: async () => {
+    return request<{ positions: PositionTypeRow[] }>("/admin/positions");
+  },
+
+  adminCreatePosition: async (body: NewPositionType) => {
+    return request<{ position: PositionTypeRow }>("/admin/positions", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  adminPatchPosition: async (key: string, body: Record<string, unknown>) => {
+    return request<{ position: PositionTypeRow }>(`/admin/positions/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+
+  adminPositionVacancies: async () => {
+    return request<{ vacancies: VacancyRow[] }>("/admin/positions/vacancies");
+  },
+
+  listUnitPositions: async (unit: string) => {
+    return request<{ positions: UnitPositionRow[] }>(`/orgs/${encodeURIComponent(unit)}/positions`);
+  },
+
+  assignPositionHolder: async (unit: string, key: string, body: { eppn: string; replace: boolean; reason: string }) => {
+    return request<unknown>(`/orgs/${encodeURIComponent(unit)}/positions/${encodeURIComponent(key)}/holders`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  vacatePositionHolder: async (unit: string, key: string, eppn: string, reason: string) => {
+    return request<unknown>(
+      `/orgs/${encodeURIComponent(unit)}/positions/${encodeURIComponent(key)}/holders/${encodeURIComponent(eppn)}`,
       { method: "DELETE", body: JSON.stringify({ reason }) }
     );
   },

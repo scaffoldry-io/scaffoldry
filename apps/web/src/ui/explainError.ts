@@ -48,6 +48,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "Someone else changed this first.", next: "Your view has been refreshed. Review it and try again." };
     case "no_approver":
       return { message: "No one is assigned to decide this step.", next: "Ask an administrator to assign a position holder." };
+    case "position_full":
+      return { message: "This position already has its holders.", next: "Replace a current holder, or raise the limit on the position type." };
     case "too_large":
       return { message: e.message, next: "Narrow the filter." };
     default:

@@ -293,6 +293,7 @@ async fn create_appointment(
         scoped_affiliation: payload.scoped_affiliation.clone(),
         is_primary: true,
         source: "api".to_string(),
+        position_key: None,
     };
 
     let reason = payload.reason.filter(|r| !r.trim().is_empty()).unwrap_or_else(|| "Appointment through the API".to_string());

@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod admin_people;
+pub mod positions;
 pub mod apps;
 pub mod auth;
 pub mod datasets;
@@ -30,6 +31,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(auth::router())
         .merge(admin::router())
         .merge(admin_people::router())
+        .merge(positions::router())
         .merge(workspaces::router())
         .merge(organizations::router())
         .merge(apps::router())

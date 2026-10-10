@@ -1270,7 +1270,7 @@ impl PostgresRepository {
         self.with_client(|client| {
             let rows = client.query(
                 "SELECT r.id, r.person_id, p.eppn, r.organization_id, r.role_title, \
-                        r.scoped_affiliation, r.is_primary, COALESCE(r.source, 'api') \
+                        r.scoped_affiliation, r.is_primary, COALESCE(r.source, 'api'), r.position_key \
                  FROM roles r \
                  JOIN persons p ON r.person_id = p.id",
                 &[],
@@ -1286,6 +1286,7 @@ impl PostgresRepository {
                     scoped_affiliation: r.get(5),
                     is_primary: r.get(6),
                     source: r.get(7),
+                    position_key: r.get(8),
                 });
             }
             Ok(roles)
@@ -1311,14 +1312,15 @@ impl PostgresRepository {
             };
 
             client.execute(
-                "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source, position_key) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
                  ON CONFLICT (id) DO UPDATE SET \
                     organization_id = EXCLUDED.organization_id, \
                     role_title = EXCLUDED.role_title, \
                     scoped_affiliation = EXCLUDED.scoped_affiliation, \
                     is_primary = EXCLUDED.is_primary, \
-                    source = EXCLUDED.source",
+                    source = EXCLUDED.source, \
+                    position_key = EXCLUDED.position_key",
                 &[
                     &role.id,
                     &person_id,
@@ -1327,7 +1329,51 @@ impl PostgresRepository {
                     &role.scoped_affiliation,
                     &role.is_primary,
                     &role.source,
+                    &role.position_key,
                 ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_position_types(&self) -> Result<Vec<crate::state::PositionType>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT key, name, description, org_types, max_holders, retired_at::text, created_by, created_at::text \
+                 FROM position_types ORDER BY key",
+                &[],
+            )?;
+            Ok(rows
+                .iter()
+                .map(|r| crate::state::PositionType {
+                    key: r.get(0),
+                    name: r.get(1),
+                    description: r.get(2),
+                    org_types: serde_json::from_value(r.get::<_, serde_json::Value>(3)).unwrap_or_default(),
+                    max_holders: r.get(4),
+                    retired_at: r.get(5),
+                    created_by: r.get(6),
+                    created_at: r.get(7),
+                })
+                .collect())
+        })
+    }
+
+    pub fn upsert_position_type(&self, pt: &crate::state::PositionType) -> Result<(), RepositoryError> {
+        let pt = pt.clone();
+        self.with_client(move |client| {
+            let org_types = serde_json::to_value(&pt.org_types).unwrap_or(serde_json::Value::Null);
+            let retired = pt.retired_at.is_some();
+            client.execute(
+                "INSERT INTO position_types (key, name, description, org_types, max_holders, retired_at, created_by) \
+                 VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::bool THEN NOW() END, $7) \
+                 ON CONFLICT (key) DO UPDATE SET \
+                    name = EXCLUDED.name, \
+                    description = EXCLUDED.description, \
+                    org_types = EXCLUDED.org_types, \
+                    max_holders = EXCLUDED.max_holders, \
+                    retired_at = CASE WHEN $6::bool THEN COALESCE(position_types.retired_at, NOW()) END",
+                &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &retired, &pt.created_by],
             )?;
             Ok(())
         })
