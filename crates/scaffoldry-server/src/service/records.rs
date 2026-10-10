@@ -64,6 +64,7 @@ pub fn create_record(
         ceds_mapping: submitted.ceds_mapping,
         is_ferpa_sensitive: submitted.is_ferpa_sensitive,
         created_at: Utc::now().to_rfc3339(),
+        created_by: Some(caller.eppn.clone()),
     };
 
     {
@@ -281,6 +282,9 @@ pub fn run_automations(
                     Err(_) => false,
                 };
                 if should_upsert {
+                    let mut inst = inst;
+                    inst.started_by = Some(actor.identity.eppn.clone());
+                    inst.started_at = Utc::now().to_rfc3339();
                     let _ = state.persist_process_instance(inst);
                 }
             }

@@ -31,6 +31,8 @@ const SCHEMA_0009: &str = include_str!("../../scaffoldry-core/migrations/0009_le
 const SCHEMA_0010: &str = include_str!("../../scaffoldry-core/migrations/0010_app_workspace.sql");
 const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_api_tokens.sql");
 const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
+const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
+const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 
 #[derive(Debug, thiserror::Error)]
@@ -105,7 +107,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 12] = [
+                        let migrations: [(&str, &str); 14] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -117,6 +119,8 @@ impl PostgresRepository {
                             ("0010_app_workspace.sql", SCHEMA_0010),
                             ("0012_api_tokens.sql", SCHEMA_0012),
                             ("0013_platform_settings.sql", SCHEMA_0013),
+                            ("0021_positions.sql", SCHEMA_0021),
+                            ("0022_record_created_by.sql", SCHEMA_0022),
                             ("0026_jobs.sql", SCHEMA_0026),
                         ];
 
@@ -678,7 +682,7 @@ impl PostgresRepository {
         let slug = app_slug.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text \
+                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text, created_by \
                  FROM dataset_records WHERE app_slug = $1 ORDER BY created_at ASC",
                 &[&slug],
             )?;
@@ -690,6 +694,7 @@ impl PostgresRepository {
                 ceds_mapping: r.get(3),
                 is_ferpa_sensitive: r.get(4),
                 created_at: r.get(5),
+                created_by: r.get(6),
             }).collect())
         })
     }
@@ -698,13 +703,13 @@ impl PostgresRepository {
         let rec = rec.clone();
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive) \
-                 VALUES ($1, $2, $3, $4, $5) \
+                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
                  ON CONFLICT (id) DO UPDATE SET \
                     data = EXCLUDED.data, \
                     ceds_mapping = EXCLUDED.ceds_mapping, \
                     is_ferpa_sensitive = EXCLUDED.is_ferpa_sensitive",
-                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive],
+                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by],
             )?;
             Ok(())
         })

@@ -1743,6 +1743,7 @@ async fn test_automation_retrigger_loop_guard() {
             ceds_mapping: Default::default(),
             is_ferpa_sensitive: false,
             created_at: "".to_string(),
+            created_by: None,
         }],
     );
 
@@ -1842,6 +1843,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
                     reject: vec![scaffoldry_core::ActionType::UpdateRecordStatus {
                         new_status: "Rejected".to_string(),
                     }],
+                    approver: None,
                 },
             },
         ],
@@ -1861,6 +1863,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
             ceds_mapping: Default::default(),
             is_ferpa_sensitive: false,
             created_at: "".to_string(),
+            created_by: None,
         }],
     );
 
@@ -1875,6 +1878,10 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         role: Some("faculty".to_string()),
         prompt: Some("Review candidate admission".to_string()),
         log: vec![],
+        started_by: None,
+        started_at: String::new(),
+        assigned_to: None,
+        no_approver: None,
     };
     state.process_instances.write().unwrap().insert(instance_id.clone(), initial_instance);
 
@@ -1966,6 +1973,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
                     prompt: "Sign off".to_string(),
                     approve: vec![],
                     reject: vec![],
+                    approver: None,
                 },
             },
         ],

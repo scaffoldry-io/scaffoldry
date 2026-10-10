@@ -1,0 +1,1 @@
+ALTER TABLE dataset_records ADD COLUMN IF NOT EXISTS created_by VARCHAR(255);
