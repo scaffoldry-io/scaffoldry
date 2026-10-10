@@ -50,7 +50,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 27 | [live-data.md](live-data.md) | 1–2 | Records live in PostgreSQL only. A save carries a version and conflicts return 409 | **COMPLETED** |
 | 28 | [row-scale.md](row-scale.md) | 1 | A record has a `table_id`. A list is one indexed page | **COMPLETED** |
 | 29 | [mcp-apps.md](mcp-apps.md) | 1 | One tool registry with one gate. The fake tools are gone | **COMPLETED** |
-| 30 | [agent-coverage.md](agent-coverage.md) | 1 | A scenario runner and twenty scripted faculty requests run against the real server |
+| 30 | [agent-coverage.md](agent-coverage.md) | 1 | A scenario runner and twenty scripted faculty requests run against the real server | **COMPLETED** |
 | 31 | [ux-standards.md](ux-standards.md) | 2 | Every error has a code and a next step | **COMPLETED** |
 | 32 | [admin-console.md](admin-console.md) | 4 | First part only: `effective_ferpa_sensitive` with an empty label set, and every read of sensitivity goes through it | **COMPLETED** |
 | 33 | [sensitive-content.md](sensitive-content.md) | 1 | Sensitivity categories are settings, with presets for FERPA, PHI, PCI, and PII. Detectors find SSNs and card numbers. A field can carry several categories | **COMPLETED** |

@@ -1,0 +1,26 @@
+{
+  "id": "a-policy-denial-with-its-reason",
+  "ask": "Can a student record a governance decision?",
+  "persona": "student",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "record_governance_decision",
+      "args": {
+        "organization_code": "PHYS",
+        "decision_type": "PolicyRevision",
+        "oscal_control_id": "AC-03",
+        "rationale": "Trying"
+      },
+      "error": {
+        "code": "forbidden",
+        "contains": "Cedar"
+      }
+    }
+  ],
+  "after": [
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+{
+  "id": "approval-process",
+  "ask": "When an application comes in over $5,000, my chair should approve it before anything else happens.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "rules": [
+          {
+            "id": "r-$suffix",
+            "name": "Chair review",
+            "enabled": true,
+            "trigger": "RecordCreated",
+            "predicates": [
+              {
+                "field_name": "amount",
+                "operator": "GreaterThan",
+                "expected_value": "5000"
+              }
+            ],
+            "steps": [
+              {
+                "id": "decide",
+                "when": [],
+                "kind": {
+                  "UserTask": {
+                    "role": "owner",
+                    "prompt": "Approve this award",
+                    "approve": [
+                      {
+                        "UpdateRecordStatus": {
+                          "new_status": "Admitted"
+                        }
+                      }
+                    ],
+                    "reject": [
+                      {
+                        "UpdateRecordStatus": {
+                          "new_status": "Denied"
+                        }
+                      }
+                    ],
+                    "approver": {
+                      "Role": {
+                        "name": "owner"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "app_slug": "$app"
+      },
+      "save": {
+        "rp": "$.proposal_id"
+      },
+      "expect": {
+        "checks.rule_schema": "pass",
+        "changes": {
+          "contains": "wait for a decision"
+        }
+      }
+    },
+    {
+      "tool": "get_proposal",
+      "args": {
+        "proposal_id": "$rp"
+      },
+      "expect": {
+        "status": "Pending",
+        "changes.0": {
+          "contains": "is added"
+        }
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$rp",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "get_proposal",
+      "args": {
+        "proposal_id": "$rp"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    }
+  ],
+  "after": [
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

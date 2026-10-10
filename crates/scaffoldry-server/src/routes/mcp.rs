@@ -60,6 +60,15 @@ fn tool_error(message: impl Into<String>) -> Value {
     json!({ "isError": true, "content": [{ "type": "text", "text": message.into() }] })
 }
 
+/// A tool error that carries the error's `code` for an agent to branch on, and the same text.
+fn coded_tool_error(code: &str, message: &str) -> Value {
+    json!({
+        "isError": true,
+        "content": [{ "type": "text", "text": message }],
+        "structuredContent": { "code": code, "message": message }
+    })
+}
+
 /// POST /api/v1/mcp - JSON-RPC 2.0 MCP Request Handler
 async fn handle_mcp_request(
     State(state): State<SharedState>,
@@ -183,7 +192,7 @@ async fn handle_mcp_request(
                     "structuredContent": value,
                     "content": [{ "type": "text", "text": serde_json::to_string(&value).unwrap_or_default() }]
                 }),
-                Ok(Err(err)) => tool_error(err.message()),
+                Ok(Err(err)) => coded_tool_error(err.code(), err.message()),
                 Err(_) => tool_error("The tool stopped before it answered"),
             };
             rpc(JsonRpcResponse {

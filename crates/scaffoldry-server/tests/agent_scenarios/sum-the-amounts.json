@@ -1,0 +1,8 @@
+{
+  "id": "sum-the-amounts",
+  "ask": "What is the total of every amount?",
+  "persona": "faculty-owner",
+  "status": "unsupported",
+  "unsupported_reason": "There is no aggregate tool. An agent would page through every row and add the values itself.",
+  "steps": []
+}

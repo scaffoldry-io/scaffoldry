@@ -1,0 +1,140 @@
+{
+  "id": "a-sensitive-field-rule",
+  "ask": "Set the status automatically when an application comes in.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p1": "$.proposal_id"
+      },
+      "expect": {
+        "checks.sensitivity": "fail"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p1",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      },
+      "as": "platform-admin"
+    },
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "rules": [
+          {
+            "id": "r-$suffix",
+            "name": "Auto status",
+            "enabled": true,
+            "trigger": "RecordCreated",
+            "steps": [
+              {
+                "id": "s1",
+                "when": [],
+                "kind": {
+                  "Service": {
+                    "action": {
+                      "UpdateRecordStatus": {
+                        "new_status": "Received"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "app_slug": "$app"
+      },
+      "save": {
+        "rp": "$.proposal_id"
+      },
+      "expect": {
+        "checks.rule_effects": "fail"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$rp",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "error": {
+        "code": "forbidden",
+        "contains": "second person"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$rp",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      },
+      "as": "platform-admin"
+    }
+  ],
+  "after": [
+    {
+      "ledger_has": "ProcessDefinitionChanged"
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

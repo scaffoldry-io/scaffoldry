@@ -1,0 +1,8 @@
+{
+  "id": "a-record-that-fails-validation",
+  "ask": "Add an application with no applicant name, and tell me what is wrong.",
+  "persona": "faculty-owner",
+  "status": "unsupported",
+  "unsupported_reason": "create_record does not check required fields or types: a record with no applicant is stored. Field validation arrives with field-types.md.",
+  "steps": []
+}

@@ -1,0 +1,151 @@
+{
+  "id": "a-viewer-never-sees-a-sensitive-field",
+  "ask": "Let a viewer read the applications without seeing social security numbers.",
+  "persona": "viewer",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "ssn",
+                  "label": "Ssn",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id"
+      },
+      "expect": {
+        "checks.sensitivity": "fail"
+      },
+      "as": "faculty-owner"
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed"
+      },
+      "expect": {
+        "status": "Approved"
+      },
+      "as": "platform-admin"
+    },
+    {
+      "tool": "create_record",
+      "args": {
+        "app_slug": "$app",
+        "data": {
+          "_table_id": "applications",
+          "applicant": "Sensitive Sam",
+          "amount": 1,
+          "ssn": "123-45-6789"
+        }
+      },
+      "save": {
+        "id": "$.id"
+      },
+      "as": "faculty-owner"
+    },
+    {
+      "tool": "list_records",
+      "args": {
+        "app_slug": "$app",
+        "table_id": "applications"
+      },
+      "expect": {
+        "records": {
+          "len": 1
+        },
+        "records.0.data.applicant": "Sensitive Sam",
+        "records.0.data.ssn": {
+          "absent": true
+        }
+      },
+      "as": "viewer"
+    },
+    {
+      "tool": "get_record",
+      "args": {
+        "app_slug": "$app",
+        "record_id": "$id"
+      },
+      "as": "viewer",
+      "expect": {
+        "data.applicant": "Sensitive Sam",
+        "data.ssn": {
+          "absent": true
+        }
+      }
+    },
+    {
+      "tool": "list_records",
+      "args": {
+        "app_slug": "$app",
+        "table_id": "applications"
+      },
+      "expect": {
+        "records.0.data.ssn": "123-45-6789"
+      },
+      "as": "faculty-owner"
+    }
+  ],
+  "after": [
+    {
+      "never_seen_by": {
+        "persona": "viewer",
+        "text": "123-45-6789"
+      }
+    },
+    {
+      "ledger_has": "AppPublished"
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}
