@@ -1,6 +1,9 @@
 //! Scaffoldry Dynamic Engine and Manifest Renderer (Layer 3)
 
 pub mod automation;
+pub mod detect;
+pub mod sensitivity;
+
 pub use automation::*;
 
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
@@ -125,6 +128,10 @@ pub struct FieldSpec {
     pub field_type: FieldType,
     pub required: bool,
     pub ferpa_sensitive: bool,
+    /// The sensitivity categories this field carries, by id. The legacy flag above is the
+    /// category named by `LEGACY_FLAG_CATEGORY`.
+    #[serde(default)]
+    pub categories: Vec<String>,
     #[serde(default)]
     pub linked_dataset_id: Option<String>,
     #[serde(default)]
@@ -166,10 +173,26 @@ pub struct DataLabel {
 /// holds exceptions only, so it stays small. It is empty until the label table exists.
 pub type LabelSet = HashMap<(String, String, String), DataLabel>;
 
-/// Whether a field is sensitive: the manifest flag, or a label that raises it. A label of
-/// `false` never lowers a manifest flag. Every read of a field's sensitivity calls this.
-pub fn effective_ferpa_sensitive(field: &FieldSpec, label: Option<&DataLabel>) -> bool {
-    field.ferpa_sensitive || label.is_some_and(|l| l.ferpa_sensitive)
+/// The category a legacy `ferpa_sensitive: true` stands for. This is the one place the code
+/// names it. Everything else reads categories from settings.
+pub const LEGACY_FLAG_CATEGORY: &str = "ferpa";
+
+/// What a field is sensitive for. The legacy flag or a raising label puts the field in the legacy
+/// category and protects it. Otherwise a field is protected when any category it carries is marked
+/// protected in settings. A label of `false` never lowers anything. Every read of a field's
+/// sensitivity calls this.
+pub fn effective_ferpa_sensitive(
+    field: &FieldSpec,
+    label: Option<&DataLabel>,
+    categories: &[sensitivity::Category],
+) -> sensitivity::Sensitivity {
+    let legacy = field.ferpa_sensitive || label.is_some_and(|l| l.ferpa_sensitive);
+    let mut carried: std::collections::BTreeSet<String> = field.categories.iter().cloned().collect();
+    if legacy {
+        carried.insert(LEGACY_FLAG_CATEGORY.to_string());
+    }
+    let protected = legacy || carried.iter().any(|id| categories.iter().any(|c| &c.id == id && c.protected));
+    sensitivity::Sensitivity { protected, categories: carried }
 }
 
 impl FieldSpec {
@@ -186,6 +209,7 @@ impl FieldSpec {
             field_type,
             required,
             ferpa_sensitive,
+            categories: Vec::new(),
             linked_dataset_id: None,
             linked_field: None,
             target_table_id: None,
@@ -1135,7 +1159,7 @@ impl ManifestEngine {
         app_slug: &str,
         payload: &Value,
     ) -> Result<SubmittedRecord, EngineError> {
-        self.submit_record_labelled(caller, app_slug, payload, &LabelSet::new())
+        self.submit_record_labelled(caller, app_slug, payload, &LabelSet::new(), &[])
     }
 
     /// Submits a record, deciding sensitivity with the given labels.
@@ -1145,6 +1169,7 @@ impl ManifestEngine {
         app_slug: &str,
         payload: &Value,
         labels: &LabelSet,
+        categories: &[sensitivity::Category],
     ) -> Result<SubmittedRecord, EngineError> {
         let manifest = self
             .manifests_by_slug
@@ -1178,7 +1203,7 @@ impl ManifestEngine {
                     view.table_id.clone().unwrap_or_default(),
                     field.name.clone(),
                 );
-                if val.is_some() && effective_ferpa_sensitive(field, labels.get(&key)) {
+                if val.is_some() && effective_ferpa_sensitive(field, labels.get(&key), categories).is_protected() {
                     is_ferpa_sensitive = true;
                 }
 

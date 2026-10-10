@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/sensitivity-settings.schema.json",
+  "title": "SensitivitySettings",
+  "description": "The settings sensitivity.categories and sensitivity.detectors, and the preset files that hold one category with its detectors. A category names detector ids that must exist. Ids are unique within their list.",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]{1,64}$"
+    },
+    "detector": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["us_ssn", "payment_card", "email", "shape"] },
+        "action": { "enum": ["flag", "warn", "block"], "default": "flag" },
+        "enabled": { "type": "boolean", "default": true },
+        "shape": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Only for kind shape. # is a digit, A is a letter, ? is a letter or digit, anything else is literal."
+        },
+        "checksum": { "enum": ["luhn"], "description": "Only for kind shape." },
+        "allow_unseparated": { "type": "boolean", "description": "Only for kind us_ssn." }
+      },
+      "if": { "properties": { "kind": { "const": "shape" } } },
+      "then": { "required": ["shape"] }
+    },
+    "category": {
+      "type": "object",
+      "required": ["id", "name", "protected", "detectors"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source": { "type": "string", "maxLength": 128 },
+        "protected": { "type": "boolean" },
+        "detectors": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "sensitivity.categories",
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/category" }
+    },
+    {
+      "title": "sensitivity.detectors",
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/detector" }
+    },
+    {
+      "title": "A preset file",
+      "type": "object",
+      "required": ["category", "detectors"],
+      "additionalProperties": false,
+      "properties": {
+        "category": { "$ref": "#/$defs/category" },
+        "detectors": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/detector" } }
+      }
+    }
+  ]
+}

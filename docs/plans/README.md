@@ -53,7 +53,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 30 | [agent-coverage.md](agent-coverage.md) | 1 | A scenario runner and twenty scripted faculty requests run against the real server |
 | 31 | [ux-standards.md](ux-standards.md) | 2 | Every error has a code and a next step | **COMPLETED** |
 | 32 | [admin-console.md](admin-console.md) | 4 | First part only: `effective_ferpa_sensitive` with an empty label set, and every read of sensitivity goes through it | **COMPLETED** |
-| 33 | [sensitive-content.md](sensitive-content.md) | 1 | Sensitivity categories are settings, with presets for FERPA, PHI, PCI, and PII. Detectors find SSNs and card numbers. A field can carry several categories |
+| 33 | [sensitive-content.md](sensitive-content.md) | 1 | Sensitivity categories are settings, with presets for FERPA, PHI, PCI, and PII. Detectors find SSNs and card numbers. A field can carry several categories | **COMPLETED** |
 | 34 | [mcp-apps.md](mcp-apps.md) | 2 | An agent reads and writes records, a page at a time |
 | 35 | [record-history.md](record-history.md) | 1 | Every record change is recorded in the same transaction, with the actor |
 | 36 | [row-scale.md](row-scale.md) | 2 | Sort and filter on an indexed field use the pivot index. Multi-valued fields index one row per value |

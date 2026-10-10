@@ -32,6 +32,7 @@ entity Record = {
   department: String,
   workspace_id: String,
   is_ferpa_sensitive: Bool,
+  categories: Set<String>,
 };
 
 entity System = {

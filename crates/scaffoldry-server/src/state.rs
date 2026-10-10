@@ -287,6 +287,7 @@ impl ServerState {
         settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
+        add_sensitivity_defaults(&mut settings_map);
 
         let repository = match crate::repository::PostgresRepository::connect(None) {
             Ok(repo) => Some(Arc::new(repo)),
@@ -1035,6 +1036,7 @@ impl ServerState {
         settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
+        add_sensitivity_defaults(&mut settings_map);
 
         Self {
             users: RwLock::new(users),
@@ -1609,6 +1611,26 @@ impl ServerState {
         self.api_tokens.read().map(|tokens| {
             tokens.values().filter(|t| t.eppn == eppn && t.kind == "agent" && t.revoked_at.is_none()).cloned().collect()
         }).unwrap_or_default()
+    }
+}
+
+/// A new installation has the `pii` and `pci` presets on. A stored setting replaces these, so a
+/// later release never changes what an organization has.
+fn add_sensitivity_defaults(settings: &mut HashMap<String, serde_json::Value>) {
+    let (categories, detectors) = scaffoldry_engine::sensitivity::default_settings();
+    settings.insert("sensitivity.categories".to_string(), serde_json::json!(categories));
+    settings.insert("sensitivity.detectors".to_string(), serde_json::json!(detectors));
+}
+
+impl ServerState {
+    /// The organization's sensitivity categories, as settings hold them now.
+    pub fn sensitivity_categories(&self) -> Vec<scaffoldry_engine::sensitivity::Category> {
+        self.settings
+            .read()
+            .ok()
+            .and_then(|s| s.get("sensitivity.categories").cloned())
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
     }
 }
 

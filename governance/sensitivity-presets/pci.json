@@ -1,0 +1,12 @@
+{
+  "category": {
+    "id": "pci",
+    "name": "Payment card data",
+    "source": "PCI DSS",
+    "protected": true,
+    "detectors": ["payment_card"]
+  },
+  "detectors": [
+    { "id": "payment_card", "kind": "payment_card", "action": "flag", "enabled": true }
+  ]
+}

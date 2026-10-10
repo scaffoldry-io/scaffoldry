@@ -190,6 +190,7 @@ async fn test_01_deny_export_unless_affiliation() {
         department: "biology".to_string(),
         workspace_id: "ws-guard-1".to_string(),
         is_ferpa_sensitive: false,
+        categories: Default::default(),
     });
 
     let faculty_dec = decide(&c.state, &faculty_user, "export", &resource);
@@ -261,12 +262,14 @@ async fn test_03_guard_on_workspace_a_no_effect_on_workspace_b() {
         department: "biology".to_string(),
         workspace_id: "ws-a".to_string(),
         is_ferpa_sensitive: false,
+        categories: Default::default(),
     });
     let res_b = Resource::Record(RecordCtx {
         app_slug: "bio-app".to_string(),
         department: "biology".to_string(),
         workspace_id: "ws-b".to_string(),
         is_ferpa_sensitive: false,
+        categories: Default::default(),
     });
 
     let dec_a = decide(&c.state, &faculty_user, "export", &res_a);
@@ -670,6 +673,7 @@ async fn test_10_automation_forbidden_by_guard_applies_no_effects() {
         department: "biology".to_string(),
         workspace_id: "ws-auto".to_string(),
         is_ferpa_sensitive: false,
+        categories: Default::default(),
     });
 
     let dec = decide(&c.state, &student_user, "write_record", &res);

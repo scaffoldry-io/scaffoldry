@@ -47,8 +47,9 @@ pub fn create_record(
             .read()
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
         let labels = state.labels.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
+        let categories = state.sensitivity_categories();
         engine
-            .submit_record_labelled(&identity, app_slug, data_payload, &labels)
+            .submit_record_labelled(&identity, app_slug, data_payload, &labels, &categories)
             .map_err(|e| match e {
                 EngineError::AccessDenied(msg) => ServiceError::Forbidden {
                     message: format!("403 Forbidden: Cedar Policy denies record mutation: {msg}"),
@@ -284,6 +285,7 @@ pub fn run_automations(
                 department: actor.department.to_string(),
                 workspace_id: ws_id,
                 is_ferpa_sensitive: false,
+                categories: Default::default(),
             });
             let auto_dec = crate::service::access::decide(state, &caller_auth, "run_automation", &resource);
             if !auto_dec.allowed {
