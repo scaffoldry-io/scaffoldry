@@ -1272,7 +1272,9 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let list_res: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(list_res["total"], 3);
+    // A plain list is a page and carries no total (row-scale phase 1).
+    assert!(list_res.get("total").is_none());
+    assert_eq!(list_res["records"].as_array().unwrap().len(), 3);
     assert_eq!(list_res["records"].as_array().unwrap().len(), 3);
 
     // 7. GET with filter_by_formula: {amount} > 200000

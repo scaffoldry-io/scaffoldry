@@ -512,6 +512,38 @@ impl ServerState {
         }
     }
 
+    /// One page of a table in `(created_at, id)` order, after `cursor` when given.
+    pub fn list_records_page(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        limit: usize,
+        cursor: Option<(String, String)>,
+    ) -> Result<Vec<DatasetRecord>, String> {
+        match self.repository {
+            Some(ref repo) => repo.list_records_page(app_slug, table_id, limit, cursor).map_err(|e| e.to_string()),
+            None => {
+                let mut rows: Vec<DatasetRecord> = self
+                    .memory()
+                    .get(app_slug)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|r| r.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("") == table_id)
+                    .collect();
+                rows.sort_by(|a, b| (a.created_at.as_str(), a.id.as_str()).cmp(&(b.created_at.as_str(), b.id.as_str())));
+                Ok(rows
+                    .into_iter()
+                    .filter(|r| match &cursor {
+                        Some((at, id)) => (r.created_at.as_str(), r.id.as_str()) > (at.as_str(), id.as_str()),
+                        None => true,
+                    })
+                    .take(limit)
+                    .collect())
+            }
+        }
+    }
+
     pub fn count_app_records(&self, app_slug: &str) -> Result<usize, String> {
         Ok(self.list_app_records(app_slug)?.len())
     }

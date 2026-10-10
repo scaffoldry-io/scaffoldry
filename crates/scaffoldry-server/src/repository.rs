@@ -32,6 +32,7 @@ const SCHEMA_0009: &str = include_str!("../../scaffoldry-core/migrations/0009_le
 const SCHEMA_0010: &str = include_str!("../../scaffoldry-core/migrations/0010_app_workspace.sql");
 const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_api_tokens.sql");
 const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
+const SCHEMA_0014: &str = include_str!("../../scaffoldry-core/migrations/0014_record_table_id.sql");
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
@@ -55,6 +56,23 @@ pub enum RepositoryError {
 }
 
 type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
+
+/// The next page of a table after a cursor. The row comparison walks the paging index.
+pub const PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
+     FROM dataset_records \
+     WHERE app_slug = $1 AND table_id = $2 AND (created_at, id) > ($3::text::timestamptz, $4::text) \
+     ORDER BY created_at, id LIMIT $5";
+
+/// The first page of a table.
+pub const FIRST_PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
+     FROM dataset_records \
+     WHERE app_slug = $1 AND table_id = $2 \
+     ORDER BY created_at, id LIMIT $3";
+
+/// The table a record belongs to, as the column holds it. The key also stays in the JSON.
+fn table_id_of(data: &Value) -> String {
+    data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
 
 /// The result of a conditional write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +153,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 17] = [
+                        let migrations: [(&str, &str); 18] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -147,6 +165,7 @@ impl PostgresRepository {
                             ("0010_app_workspace.sql", SCHEMA_0010),
                             ("0012_api_tokens.sql", SCHEMA_0012),
                             ("0013_platform_settings.sql", SCHEMA_0013),
+                            ("0014_record_table_id.sql", SCHEMA_0014),
                             ("0021_positions.sql", SCHEMA_0021),
                             ("0022_record_created_by.sql", SCHEMA_0022),
                             ("0007_record_version.sql", SCHEMA_0007),
@@ -707,10 +726,30 @@ impl PostgresRepository {
         let slug = app_slug.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text, created_by, version \
+                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
                  FROM dataset_records WHERE app_slug = $1 ORDER BY created_at ASC, id ASC",
                 &[&slug],
             )?;
+            Ok(rows.iter().map(record_from_row).collect())
+        })
+    }
+
+    /// One page of a table, in `(created_at, id)` order. `cursor` is the last row of the previous
+    /// page. There is no `OFFSET`, so the cost does not grow with how far a reader has paged.
+    pub fn list_records_page(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        limit: usize,
+        cursor: Option<(String, String)>,
+    ) -> Result<Vec<DatasetRecord>, RepositoryError> {
+        let (slug, table) = (app_slug.to_string(), table_id.to_string());
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.with_client(move |client| {
+            let rows = match cursor {
+                Some((created_at, id)) => client.query(PAGE_SQL, &[&slug, &table, &created_at, &id, &limit])?,
+                None => client.query(FIRST_PAGE_SQL, &[&slug, &table, &limit])?,
+            };
             Ok(rows.iter().map(record_from_row).collect())
         })
     }
@@ -719,7 +758,7 @@ impl PostgresRepository {
         let (slug, id) = (app_slug.to_string(), id.to_string());
         self.with_client(move |client| {
             let row = client.query_opt(
-                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text, created_by, version \
+                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
                  FROM dataset_records WHERE app_slug = $1 AND id = $2",
                 &[&slug, &id],
             )?;
@@ -732,9 +771,9 @@ impl PostgresRepository {
         let rec = rec.clone();
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by) \
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by],
+                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table_id_of(&rec.data)],
             )?;
             Ok(())
         })
@@ -751,7 +790,7 @@ impl PostgresRepository {
         let (slug, id, data) = (app_slug.to_string(), id.to_string(), data.clone());
         self.with_client(move |client| {
             let updated = client.query_opt(
-                "UPDATE dataset_records SET data = $1, version = version + 1 \
+                "UPDATE dataset_records SET data = $1, table_id = COALESCE(($1::jsonb)->>'_table_id', ''), version = version + 1 \
                  WHERE app_slug = $2 AND id = $3 AND version = $4 RETURNING version",
                 &[&data, &slug, &id, &expected_version],
             )?;
@@ -774,7 +813,7 @@ impl PostgresRepository {
         let (slug, id, data) = (app_slug.to_string(), id.to_string(), data.clone());
         self.with_client(move |client| {
             let row = client.query_opt(
-                "UPDATE dataset_records SET data = $1, version = version + 1 \
+                "UPDATE dataset_records SET data = $1, table_id = COALESCE(($1::jsonb)->>'_table_id', ''), version = version + 1 \
                  WHERE app_slug = $2 AND id = $3 RETURNING version",
                 &[&data, &slug, &id],
             )?;
@@ -794,14 +833,15 @@ impl PostgresRepository {
         let rec = rec.clone();
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by) \
-                 VALUES ($1, $2, $3, $4, $5, $6) \
+                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) \
                  ON CONFLICT (id) DO UPDATE SET \
                     data = EXCLUDED.data, \
                     ceds_mapping = EXCLUDED.ceds_mapping, \
                     is_ferpa_sensitive = EXCLUDED.is_ferpa_sensitive, \
+                    table_id = EXCLUDED.table_id, \
                     version = dataset_records.version + 1",
-                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by],
+                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table_id_of(&rec.data)],
             )?;
             Ok(())
         })
