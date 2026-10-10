@@ -28,8 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let state = Arc::new(ServerState::new()?);
     if service::identity::boot_setup_token_needed(&state) {
-        if let Ok(token) = service::identity::create_setup_token(&state) {
-            println!("Setup token: {token}");
+        if service::identity::create_setup_token(&state).is_ok() {
+            println!("Boot setup token created.");
         }
     }
 
