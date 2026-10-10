@@ -21,6 +21,35 @@ pub fn hash_token(raw_token: &str) -> String {
     s
 }
 
+/// The eduPerson affiliation a SCIM user record names, or "member" when it names none.
+/// The People list and `resolve_user` both read it here, so they cannot disagree.
+pub fn scim_affiliation(u: &crate::state::ScimUser) -> String {
+    for r in &u.roles {
+        let typ = r.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if !typ.eq_ignore_ascii_case("eduPersonScopedAffiliation") {
+            continue;
+        }
+        let Some(val) = r.get("value").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let word = val.split('@').next().unwrap_or(val);
+        if let Ok(parsed) = scaffoldry_core::standards::eduperson::EduPersonAffiliation::from_str(word) {
+            use scaffoldry_core::standards::eduperson::EduPersonAffiliation as A;
+            return match parsed {
+                A::Faculty => "faculty",
+                A::Student => "student",
+                A::Staff => "staff",
+                A::Employee => "employee",
+                A::Member => "member",
+                A::Affiliate => "affiliate",
+                A::Alum => "alum",
+            }
+            .to_string();
+        }
+    }
+    "member".to_string()
+}
+
 /// Resolves an AuthUser from stored rows for the given eppn.
 /// A token carries no name, no affiliation, and no department.
 pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
@@ -97,28 +126,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     let affiliation = if is_platform_admin {
         "central_admin".to_string()
     } else if let Some(ref u) = scim_user {
-        let mut aff = "member".to_string();
-        for r in &u.roles {
-            let typ = r.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if typ.eq_ignore_ascii_case("eduPersonScopedAffiliation") {
-                if let Some(val) = r.get("value").and_then(|v| v.as_str()) {
-                    let aff_str = val.split('@').next().unwrap_or(val);
-                    if let Ok(parsed) = scaffoldry_core::standards::eduperson::EduPersonAffiliation::from_str(aff_str) {
-                        aff = match parsed {
-                            scaffoldry_core::standards::eduperson::EduPersonAffiliation::Faculty => "faculty",
-                            scaffoldry_core::standards::eduperson::EduPersonAffiliation::Student => "student",
-                            scaffoldry_core::standards::eduperson::EduPersonAffiliation::Staff => "staff",
-                            scaffoldry_core::standards::eduperson::EduPersonAffiliation::Employee => "employee",
-                            scaffoldry_core::standards::eduperson::EduPersonAffiliation::Member => "member",
-                            scaffoldry_core::standards::eduperson::EduPersonAffiliation::Affiliate => "affiliate",
-                            scaffoldry_core::standards::eduperson::EduPersonAffiliation::Alum => "alum",
-                        }.to_string();
-                        break;
-                    }
-                }
-            }
-        }
-        aff
+        scim_affiliation(u)
     } else {
         if def_aff == "central_admin" { "member".to_string() } else { def_aff }
     };

@@ -1328,6 +1328,13 @@ impl PostgresRepository {
         })
     }
 
+    pub fn delete_role(&self, id: uuid::Uuid) -> Result<(), RepositoryError> {
+        self.with_client(move |client| {
+            client.execute("DELETE FROM roles WHERE id = $1", &[&id])?;
+            Ok(())
+        })
+    }
+
     pub fn delete_scim_roles_for_user(&self, eppn: &str) -> Result<(), RepositoryError> {
         let eppn_str = eppn.to_string();
         self.with_client(move |client| {
@@ -1563,6 +1570,43 @@ impl PostgresRepository {
             )?;
             let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
                 chrono::DateTime::parse_from_rfc3339(s)
+                    .or_else(|_| chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%#z"))
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now())
+            };
+            let mut list = Vec::new();
+            for r in rows {
+                let created_str: String = r.get(6);
+                let expires_str: String = r.get(7);
+                let last_used_str: Option<String> = r.get(8);
+                let revoked_str: Option<String> = r.get(9);
+                list.push(crate::state::ApiToken {
+                    token_hash: r.get(0),
+                    id: r.get(1),
+                    kind: r.get(2),
+                    eppn: r.get(3),
+                    label: r.get(4),
+                    original_admin: r.get(5),
+                    created_at: parse_time(&created_str),
+                    expires_at: parse_time(&expires_str),
+                    last_used_at: last_used_str.map(|s| parse_time(&s)),
+                    revoked_at: revoked_str.map(|s| parse_time(&s)),
+                });
+            }
+            Ok(list)
+        })
+    }
+
+    pub fn list_all_api_tokens_for_eppn(&self, eppn: &str) -> Result<Vec<crate::state::ApiToken>, RepositoryError> {
+        let eppn = eppn.to_string();
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text                  FROM api_tokens WHERE eppn = $1  ORDER BY created_at DESC",
+                &[&eppn],
+            )?;
+            let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .or_else(|_| chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%#z"))
                     .map(|d| d.with_timezone(&chrono::Utc))
                     .unwrap_or_else(|_| chrono::Utc::now())
             };

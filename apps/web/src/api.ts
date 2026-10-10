@@ -70,6 +70,53 @@ export interface PolicyRef {
   description: string;
 }
 
+export interface AdminUserRow {
+  id: string;
+  user_name: string;
+  display_name: string;
+  email: string;
+  affiliation: string;
+  units: { id: string; name: string }[];
+  active: boolean;
+  hold: boolean;
+  platform_admin: boolean;
+  unit_admin_of: { id: string; name: string }[];
+  active_agent_tokens: number;
+  latest_token_use: string | null;
+}
+
+export interface AdminUserDetail {
+  user: AdminUserRow;
+  appointments: {
+    organization_id: string;
+    unit: string;
+    scoped_affiliation: string;
+    role_title: string;
+    source: string;
+  }[];
+  workspace_memberships: { workspace_id: string; role: string }[];
+  tokens: {
+    id: string;
+    kind: string;
+    label: string;
+    created_at: string;
+    expires_at: string;
+    last_used_at: string | null;
+    revoked: boolean;
+  }[];
+  ledger: { timestamp?: string; decision_type: string; rationale: string }[];
+}
+
+export interface NewAdminUser {
+  userName: string;
+  name: string;
+  email: string;
+  affiliation: string;
+  department: string;
+  title: string;
+  reason: string;
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
@@ -210,6 +257,53 @@ export const apiClient = {
     }>("/auth/me");
   },
 
+  adminListUsers: async (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== "") q.set(k, v);
+    }
+    const qs = q.toString();
+    return request<{ users: AdminUserRow[]; next_cursor: string | null }>(
+      `/admin/users${qs ? `?${qs}` : ""}`
+    );
+  },
+
+  adminGetUser: async (id: string) => {
+    return request<AdminUserDetail>(`/admin/users/${encodeURIComponent(id)}`);
+  },
+
+  adminCreateUser: async (body: NewAdminUser) => {
+    return request<{ user: AdminUserRow }>("/admin/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  adminHoldUser: async (id: string, hold: boolean, reason: string) => {
+    return request<{ user: AdminUserRow }>(`/admin/users/${encodeURIComponent(id)}/hold`, {
+      method: "POST",
+      body: JSON.stringify({ hold, reason }),
+    });
+  },
+
+  adminRevokeTokens: async (id: string, reason: string) => {
+    return request<{ revoked: number }>(`/admin/users/${encodeURIComponent(id)}/revoke-tokens`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  adminListGroups: async () => {
+    return request<{ groups: { id: string; name: string; member_count: number }[] }>("/admin/groups");
+  },
+
+  revokeAppointment: async (unit: string, eppn: string, affiliation: string, reason: string) => {
+    return request<{ revoked: boolean }>(
+      `/orgs/${encodeURIComponent(unit)}/appointments/${encodeURIComponent(eppn)}/${encodeURIComponent(affiliation)}`,
+      { method: "DELETE", body: JSON.stringify({ reason }) }
+    );
+  },
+
   getAdminOverview: async () => {
     return request<AdminOverviewData>("/admin/overview");
   },
@@ -306,7 +400,7 @@ export const apiClient = {
 
   appointOrgAdmin: async (
     id: string,
-    payload: { eppn: string; scoped_affiliation: string }
+    payload: { eppn: string; scoped_affiliation: string; reason?: string }
   ): Promise<OrgRole> => {
     return request<OrgRole>(`/orgs/${encodeURIComponent(id)}/appointments`, {
       method: "POST",

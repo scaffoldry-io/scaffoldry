@@ -166,6 +166,7 @@ async fn test_admin_routes_enforce_platform_admin_and_auth() {
     let faculty_token = scaffoldry_server::service::identity::issue_test_token_and_user("faculty.curie@state.edu");
 
     for &(method, path) in ADMIN_ROUTES {
+        let path = path.replace("{id}", "00000000-0000-0000-0000-0000000000aa");
         let uri = if path.starts_with("/api/v1") {
             path.to_string()
         } else {

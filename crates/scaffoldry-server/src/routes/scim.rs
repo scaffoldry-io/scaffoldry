@@ -270,38 +270,19 @@ async fn create_user(
         .ok_or_else(|| ServiceError::bad_request("userName is required").into_pair())?
         .to_string();
 
-    let id = Uuid::new_v4().to_string();
-    let name = payload.get("name").cloned().unwrap_or(json!({}));
-    let active = payload.get("active").and_then(|v| v.as_bool()).unwrap_or(true);
-    let emails = payload.get("emails").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let roles = payload.get("roles").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let enterprise = payload.get("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User").cloned();
-    let title = payload.get("title").and_then(|v| v.as_str()).map(str::to_string);
-
-    let scim_user = ScimUser {
-        id: id.clone(),
-        user_name: user_name.clone(),
-        name: name.clone(),
-        active,
-        admin_hold: false,
-        emails: emails.clone(),
-        roles: roles.clone(),
-        enterprise_extension: enterprise.clone(),
-        title,
+    let fields = crate::service::people::UserFields {
+        user_name,
+        name: payload.get("name").cloned(),
+        active: payload.get("active").and_then(|v| v.as_bool()),
+        emails: payload.get("emails").and_then(|v| v.as_array()).cloned(),
+        roles: payload.get("roles").and_then(|v| v.as_array()).cloned(),
+        enterprise: payload.get("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User").cloned(),
+        title: payload.get("title").and_then(|v| v.as_str()).map(str::to_string),
     };
-
-    state.users.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), scim_user.clone());
-    if let Some(ref repo) = state.repository {
-        repo.upsert_scim_user(&scim_user)
-            .map_err(|_| ServiceError::internal("Failed to persist SCIM user").into_pair())?;
-    }
-
-    let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
-    let new_roles = sync_org_roles(&scim_user, &all_orgs);
-    let _ = state.delete_scim_roles(&scim_user.user_name);
-    for r in new_roles {
-        let _ = state.persist_role(&r);
-    }
+    let (scim_user, created) = crate::service::people::upsert_user(&state, fields).map_err(|e| e.into_pair())?;
+    crate::service::people::sync_roles(&state, &scim_user);
+    let (id, user_name, name, active) = (scim_user.id.clone(), scim_user.user_name.clone(), scim_user.name.clone(), scim_user.active);
+    let (emails, roles, enterprise) = (scim_user.emails.clone(), scim_user.roles.clone(), scim_user.enterprise_extension.clone());
 
     let resp = json!({
         "schemas": [
@@ -317,7 +298,7 @@ async fn create_user(
         "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": enterprise
     });
 
-    Ok((StatusCode::CREATED, Json(resp)))
+    Ok((if created { StatusCode::CREATED } else { StatusCode::OK }, Json(resp)))
 }
 
 async fn get_user(
