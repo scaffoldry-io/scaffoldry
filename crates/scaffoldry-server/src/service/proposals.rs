@@ -433,7 +433,7 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
         }
         "approve" => match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| ServiceError::Internal(format!("The approval was not kept: {e}")))? {
             Approval::Approved { entry, .. } => {
-                state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(entry);
+                state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(*entry);
                 let manifest: AppManifest = serde_json::from_value(row.manifest.clone()).map_err(internal)?;
                 state.engine.write().map_err(internal)?.register_manifest(manifest).map_err(internal)?;
             }

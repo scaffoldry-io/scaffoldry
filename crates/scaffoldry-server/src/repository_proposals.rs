@@ -29,7 +29,7 @@ pub struct ProposalRow {
 
 #[derive(Debug)]
 pub enum Approval {
-    Approved { version: i32, entry: LedgerEntry },
+    Approved { version: i32, entry: Box<LedgerEntry> },
     /// The proposal was already decided. Carries its status.
     NotPending(String),
     /// The live app is no longer at the proposal's base version. The row is now `Superseded`.
@@ -251,7 +251,7 @@ impl PostgresRepository {
                 &[&id, &decider],
             )?;
             tx.commit()?;
-            Ok(Approval::Approved { version, entry })
+            Ok(Approval::Approved { version, entry: Box::new(entry) })
         })
     }
 }
