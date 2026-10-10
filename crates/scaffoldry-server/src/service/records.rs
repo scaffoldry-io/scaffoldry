@@ -51,6 +51,7 @@ pub fn create_record(
                     message: format!("403 Forbidden: Cedar Policy denies record mutation: {msg}"),
                     reasons: vec![msg],
                     diagnostics: Vec::new(),
+                    policy: None,
                 },
                 other => ServiceError::BadRequest(other.to_string()),
             })?

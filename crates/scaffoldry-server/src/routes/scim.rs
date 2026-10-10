@@ -12,6 +12,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
+use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -266,7 +267,7 @@ async fn create_user(
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user_name = payload["userName"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "userName is required"}))))?
+        .ok_or_else(|| ServiceError::bad_request("userName is required").into_pair())?
         .to_string();
 
     let id = Uuid::new_v4().to_string();
@@ -291,7 +292,7 @@ async fn create_user(
     state.users.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), scim_user.clone());
     if let Some(ref repo) = state.repository {
         repo.upsert_scim_user(&scim_user)
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to persist SCIM user"}))))?;
+            .map_err(|_| ServiceError::internal("Failed to persist SCIM user").into_pair())?;
     }
 
     let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
@@ -447,7 +448,7 @@ async fn create_group(
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let display_name = payload["displayName"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "displayName is required"}))))?
+        .ok_or_else(|| ServiceError::bad_request("displayName is required").into_pair())?
         .to_string();
 
     let id = Uuid::new_v4().to_string();
@@ -462,7 +463,7 @@ async fn create_group(
     state.groups.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), group.clone());
     if let Some(ref repo) = state.repository {
         repo.upsert_scim_group(&group)
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to persist SCIM group"}))))?;
+            .map_err(|_| ServiceError::internal("Failed to persist SCIM group").into_pair())?;
     }
 
     let resp = json!({

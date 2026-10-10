@@ -9,6 +9,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use crate::service::ServiceError;
 
 pub const ALLOWED_KEYS: &[&str] = &[
     "oidc.issuer",
@@ -53,19 +54,13 @@ async fn get_settings(
     let user = match session_user(&state, &headers) {
         Some(u) => u,
         None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": "401 Unauthorized" })),
-            )
+            return ServiceError::unauthorized("401 Unauthorized").into_pair()
                 .into_response();
         }
     };
 
     if user.affiliation != "central_admin" {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Forbidden: Platform Admin only" })),
-        )
+        return ServiceError::forbidden("Forbidden: Platform Admin only").into_pair()
             .into_response();
     }
 
@@ -82,28 +77,19 @@ async fn put_setting(
     let user = match session_user(&state, &headers) {
         Some(u) => u,
         None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": "401 Unauthorized" })),
-            )
+            return ServiceError::unauthorized("401 Unauthorized").into_pair()
                 .into_response();
         }
     };
 
     if user.affiliation != "central_admin" {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Forbidden: Platform Admin only" })),
-        )
+        return ServiceError::forbidden("Forbidden: Platform Admin only").into_pair()
             .into_response();
     }
 
     // Closed list. Reject any other key with 400. Validate value type.
     if !ALLOWED_KEYS.contains(&key.as_str()) || !validate_setting(&key, &payload) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("Invalid setting key or value: '{}'", key) })),
-        )
+        return ServiceError::bad_request(format!("Invalid setting key or value: '{}'", key)).into_pair()
             .into_response();
     }
 
@@ -131,20 +117,14 @@ async fn put_setting(
         rationale: format!("Platform setting '{}' updated by {}", key, user.eppn),
         payload: &ledger_payload,
     }) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Ledger append failed: {e}") })),
-        )
+        return ServiceError::internal(format!("Ledger append failed: {e}")).into_pair()
             .into_response();
     }
 
     // Write row to platform_settings
     if let Some(ref repo) = state.repository {
         if let Err(e) = repo.put_platform_setting(&key, &payload, &user.eppn) {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Database write failed: {e}") })),
-            )
+            return ServiceError::internal(format!("Database write failed: {e}")).into_pair()
                 .into_response();
         }
     }

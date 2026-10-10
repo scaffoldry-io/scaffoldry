@@ -1,14 +1,35 @@
 import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, Workspace } from "./types";
 
+export interface PolicyRef {
+  id: string;
+  description: string;
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
+  /** One of the server's closed list of error codes. Absent from an older server. */
+  public code?: string;
+  /** The policy that decided, on a denial. */
+  public policy?: PolicyRef;
+  /** The bad inputs, on a bad request. */
+  public fields?: Record<string, string>;
+  /** What to do about it, when the server knows. */
+  public remedy?: string;
+  public reason?: string;
 
   constructor(status: number, message: string, details?: any) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.details = details;
+    if (details && typeof details === "object") {
+      if (typeof details.code === "string") this.code = details.code;
+      if (details.policy && typeof details.policy.description === "string") this.policy = details.policy;
+      if (details.fields && typeof details.fields === "object") this.fields = details.fields;
+      if (typeof details.remedy === "string") this.remedy = details.remedy;
+      if (typeof details.reason === "string") this.reason = details.reason;
+    }
   }
 }
 
@@ -52,10 +73,16 @@ const request = async <T>(path: string, options: RequestInit = {}): Promise<T> =
   }
 
   const url = `${baseUrl}${path}`;
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (e) {
+    // The request never reached a server. Status 0 means "not reachable".
+    throw new ApiError(0, e instanceof Error ? e.message : "The server is not reachable.");
+  }
 
   if (!response.ok) {
     let errorMessage = `HTTP ${response.status} ${response.statusText}`;

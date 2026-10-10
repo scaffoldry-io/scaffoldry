@@ -4,6 +4,7 @@ export * from "./Drawer";
 export * from "./ConfirmAction";
 export * from "./EmptyState";
 export * from "./ErrorState";
+export * from "./explainError";
 export * from "./Skeleton";
 export * from "./Banner";
 export * from "./StatusBadge";

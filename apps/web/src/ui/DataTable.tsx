@@ -160,7 +160,7 @@ export function DataTable<TData>({
 
       {/* Main Table / States */}
       {error ? (
-        <ErrorState message={error.message} onRetry={fetchInitial} />
+        <ErrorState error={error} onRetry={fetchInitial} />
       ) : loading ? (
         <div className="p-4 space-y-3 border border-gray-200 dark:border-gray-800 rounded-lg">
           <Skeleton rows={6} className="h-8 w-full" />

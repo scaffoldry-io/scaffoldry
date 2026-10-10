@@ -5,12 +5,11 @@ use crate::service::identity::{hash_token, resolve_user};
 use crate::state::{AuthUser, SharedState};
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
-use serde_json::json;
+use crate::service::ServiceError;
 
 /// Paths that stay reachable without an authenticated session.
 const PUBLIC_PATHS: [&str; 5] = [
@@ -62,10 +61,7 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
 }
 
 pub fn unauthorized() -> Response {
-    let mut resp = (
-        StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": "401 Unauthorized: a valid bearer token or session is required" })),
-    )
+    let mut resp = ServiceError::unauthorized("401 Unauthorized: a valid bearer token or session is required").into_pair()
         .into_response();
     resp.headers_mut().insert(
         header::WWW_AUTHENTICATE,

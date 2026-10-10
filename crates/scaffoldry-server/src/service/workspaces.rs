@@ -185,6 +185,7 @@ pub fn get_workspace(
             message: "403 Forbidden: Cedar Policy restricts access to this workspace".to_string(),
             reasons: decision.reasons,
             diagnostics: decision.diagnostics,
+            policy: decision.deciding_policy,
         });
     }
 
@@ -361,6 +362,7 @@ pub fn update_workspace(
             message: "403 Forbidden: Cedar Policy restricts managing this workspace to Owners and Admins".to_string(),
             reasons: decision.reasons,
             diagnostics: decision.diagnostics,
+            policy: decision.deciding_policy,
         });
     }
 
@@ -482,6 +484,7 @@ pub fn add_collaborator(
             message: "403 Forbidden: Cedar Policy restricts managing members to Owners and Admins".to_string(),
             reasons: decision.reasons,
             diagnostics: decision.diagnostics,
+            policy: decision.deciding_policy,
         });
     }
 
@@ -599,6 +602,7 @@ pub fn update_collaborator_role(
             message: "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins".to_string(),
             reasons: decision.reasons,
             diagnostics: decision.diagnostics,
+            policy: decision.deciding_policy,
         });
     }
 
@@ -693,6 +697,7 @@ pub fn remove_collaborator(
             message: "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins".to_string(),
             reasons: decision.reasons,
             diagnostics: decision.diagnostics,
+            policy: decision.deciding_policy,
         });
     }
 

@@ -123,5 +123,6 @@ pub fn authorize_app(
         message: "403 Forbidden: Cedar Policy restricts access to this app".to_string(),
         reasons: decision.reasons,
         diagnostics: decision.diagnostics,
+        policy: decision.deciding_policy,
     })
 }
