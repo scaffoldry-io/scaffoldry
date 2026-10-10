@@ -2,6 +2,9 @@
 """Tests for next-phase.py. Run with: python3 -m unittest discover -s governance/scripts -p "test_*.py"."""
 
 import importlib.util
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -100,6 +103,107 @@ class RealReadmeTests(unittest.TestCase):
         self.assertGreater(len(parsed), 100)
         self.assertEqual([r.n for r in parsed], list(range(1, len(parsed) + 1)))
 
+
+
+PARALLEL = """| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 1 | [guards.md](guards.md) | 1 | One schema | **COMPLETED** |
+| 2 | [ux-standards.md](ux-standards.md) | 1 | One component kit | Open |
+| 3 | [jobs.md](jobs.md) | 1 | A job queue | Open |
+| 4 | [jobs.md](jobs.md) | 2 | A scheduler | Open |
+| 5 | [links.md](links.md) | 1 | Links by id | Open |
+| 6 | [oscal-catalog.md](oscal-catalog.md) | 1 | Catalogs. Needs files from Johann | Open |
+| 7 | [views.md](views.md) | 1 | Views | Open |
+"""
+
+
+def prows():
+    return np.parse_rows(PARALLEL)
+
+
+class ClaimParseTests(unittest.TestCase):
+    def test_branches_become_claims_for_both_prefixes(self):
+        refs = [
+            "refs/heads/feat/jobs-phase-1",
+            "refs/heads/agent/ux-standards-phase-1",
+            "refs/heads/feat/links-phase-1-2",
+            "refs/heads/main",
+            "refs/heads/feat/not-a-claim",
+        ]
+        self.assertEqual(
+            np.claims_from_refs(refs),
+            {("jobs", "1"), ("ux-standards", "1"), ("links", "1-2")},
+        )
+
+    def test_a_claim_name_is_the_branch_name(self):
+        self.assertEqual(np.claim_branch("jobs", "1"), "feat/jobs-phase-1")
+
+
+class AvailabilityTests(unittest.TestCase):
+    def test_with_no_claims_the_first_open_row_is_available(self):
+        self.assertEqual(np.next_available(prows(), set()).n, 2)
+
+    def test_a_claimed_row_is_skipped(self):
+        self.assertEqual(np.next_available(prows(), {("ux-standards", "1")}).n, 3)
+
+    def test_a_brief_with_work_in_flight_is_skipped_entirely(self):
+        claims = {("ux-standards", "1"), ("jobs", "1")}
+        self.assertEqual(np.next_available(prows(), claims).n, 5)
+
+    def test_a_later_phase_waits_for_the_earlier_phase_of_its_brief(self):
+        row4 = {r.n: r for r in prows()}[4]
+        self.assertIn("jobs", np.claim_blocker(prows(), row4, set()))
+        self.assertIn("phase 1", np.claim_blocker(prows(), row4, set()))
+
+    def test_the_scan_stops_at_a_row_that_needs_a_person(self):
+        claims = {("ux-standards", "1"), ("jobs", "1"), ("links", "1")}
+        self.assertIsNone(np.next_available(prows(), claims, window=10))
+
+    def test_the_scan_looks_at_only_three_open_rows(self):
+        claims = {("ux-standards", "1"), ("jobs", "1")}
+        # Rows 2, 3 and 4 are the first three open rows. Row 5 is the fourth, so it is out of reach.
+        self.assertIsNone(np.next_available(prows(), claims, window=3))
+
+    def test_claiming_a_claimed_row_is_refused(self):
+        row2 = {r.n: r for r in prows()}[2]
+        self.assertIn("already claimed", np.claim_blocker(prows(), row2, {("ux-standards", "1")}))
+
+    def test_claiming_a_completed_row_is_refused(self):
+        row1 = {r.n: r for r in prows()}[1]
+        self.assertIn("COMPLETED", np.claim_blocker(prows(), row1, set()))
+
+    def test_claims_on_completed_rows_are_ignored(self):
+        # A leftover branch for a finished row must not block anything.
+        self.assertEqual(np.live_claims(prows(), {("guards", "1"), ("jobs", "1")}), {("jobs", "1")})
+
+
+class ClaimPushTests(unittest.TestCase):
+    """The lock is the remote. Prove that a second creator is refused, against a real bare repo."""
+
+    def git(self, *args, cwd):
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    def test_only_the_first_push_creates_the_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            remote = Path(tmp, "remote.git")
+            subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+            first = Path(tmp, "a")
+            subprocess.run(["git", "clone", "-q", str(remote), str(first)], check=True, capture_output=True)
+            self.git("config", "user.email", "a@example.test", cwd=first)
+            self.git("config", "user.name", "A", cwd=first)
+            Path(first, "f").write_text("x")
+            self.git("add", "f", cwd=first)
+            self.git("commit", "-q", "-m", "init", cwd=first)
+            sha = self.git("rev-parse", "HEAD", cwd=first)
+            old = Path.cwd()
+            try:
+                os.chdir(first)
+                self.assertTrue(np.push_claim("origin", "feat/jobs-phase-1", sha))
+                self.assertFalse(np.push_claim("origin", "feat/jobs-phase-1", sha))
+                refs = np.remote_refs("origin")
+            finally:
+                os.chdir(old)
+            self.assertEqual(np.claims_from_refs(refs), {("jobs", "1")})
 
 if __name__ == "__main__":
     unittest.main()
