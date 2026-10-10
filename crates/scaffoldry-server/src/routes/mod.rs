@@ -6,6 +6,7 @@ pub mod datasets;
 pub mod discovery;
 pub mod framework;
 pub mod governance;
+pub mod jobs;
 pub mod mcp;
 pub mod policy;
 pub mod records;
@@ -33,6 +34,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(framework::router())
         .merge(policy::router())
         .merge(governance::router())
+        .merge(jobs::router())
         .merge(settings::router())
         .merge(mcp::router())
         .with_state(state.clone());
