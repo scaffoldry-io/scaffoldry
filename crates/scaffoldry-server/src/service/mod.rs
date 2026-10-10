@@ -10,6 +10,7 @@ pub mod records;
 pub mod access;
 pub mod workspaces;
 pub mod identity;
+pub mod tools;
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

@@ -587,7 +587,7 @@ async fn test_published_datasets_and_relationships_api() {
 async fn test_mcp_server_protocol_tools_and_resources() {
     let app = build_app().expect("Failed to build router");
 
-    // 1. GET /api/mcp overview
+    // 1. GET /api/mcp is not an endpoint. The protocol is POST only.
     let resp = app
         .clone()
         .oneshot(
@@ -598,11 +598,7 @@ async fn test_mcp_server_protocol_tools_and_resources() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let overview: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(overview["protocol"], "Model Context Protocol (MCP)");
-    assert_eq!(overview["protocol_version"], "2024-11-05");
+    assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
 
     // 2. Initialize
     let init_payload = json!({
@@ -651,21 +647,15 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     let tools_res: Value = serde_json::from_slice(&body).unwrap();
     let tools = tools_res["result"]["tools"].as_array().unwrap();
     assert!(tools.iter().any(|t| t["name"] == "list_datasets"));
-    assert!(tools.iter().any(|t| t["name"] == "calculate_formula"));
+    assert!(!tools.iter().any(|t| t["name"] == "calculate_formula"), "the fake formula tool is gone");
     assert!(tools.iter().any(|t| t["name"] == "simulate_cedar_policy"));
 
-    // 4. Tools Call - calculate_formula
-    let calc_payload = json!({
+    // 4. Tools Call - list_datasets
+    let call_payload = json!({
         "jsonrpc": "2.0",
         "id": 3,
         "method": "tools/call",
-        "params": {
-            "name": "calculate_formula",
-            "arguments": {
-                "formula": "SUM",
-                "values": [12.5, 27.5, 60.0]
-            }
-        }
+        "params": { "name": "list_datasets", "arguments": {} }
     });
     let resp = app
         .clone()
@@ -674,17 +664,15 @@ async fn test_mcp_server_protocol_tools_and_resources() {
                 .method("POST")
                 .uri("/api/mcp")
                 .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&calc_payload).unwrap()))
+                .body(Body::from(serde_json::to_vec(&call_payload).unwrap()))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let calc_res: Value = serde_json::from_slice(&body).unwrap();
-    let text = calc_res["result"]["content"][0]["text"].as_str().unwrap();
-    let parsed_calc: Value = serde_json::from_str(text).unwrap();
-    assert_eq!(parsed_calc["result"], 100.0);
+    let call_res: Value = serde_json::from_slice(&body).unwrap();
+    assert!(call_res["result"]["structuredContent"].is_array());
 
     // 5. Resources List
     let res_payload = json!({
