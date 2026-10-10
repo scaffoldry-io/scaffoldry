@@ -17,6 +17,7 @@ use scaffoldry_policy::PolicyDecision;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
+use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -123,10 +124,7 @@ async fn create_token(
 
     // Agent tokens cannot mint tokens
     if caller_row.kind == "agent" {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Agent tokens cannot mint tokens" })),
-        )
+        return ServiceError::forbidden("Agent tokens cannot mint tokens").into_pair()
             .into_response();
     }
 
@@ -137,18 +135,12 @@ async fn create_token(
 
     let requested_kind = payload.kind.as_deref().unwrap_or("agent");
     if requested_kind != "agent" && requested_kind != "scim" {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Invalid token kind: must be agent or scim" })),
-        )
+        return ServiceError::bad_request("Invalid token kind: must be agent or scim").into_pair()
             .into_response();
     }
 
     if requested_kind == "scim" && caller_user.affiliation != "central_admin" {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Only Platform Admins can mint SCIM tokens" })),
-        )
+        return ServiceError::forbidden("Only Platform Admins can mint SCIM tokens").into_pair()
             .into_response();
     }
 
@@ -156,10 +148,7 @@ async fn create_token(
         if let Ok(settings) = state.settings.read() {
             if let Some(enabled) = settings.get("tokens.agent_enabled").and_then(|v| v.as_bool()) {
                 if !enabled {
-                    return (
-                        StatusCode::FORBIDDEN,
-                        Json(json!({ "error": "Agent token creation is disabled by platform policy" })),
-                    ).into_response();
+                    return ServiceError::forbidden("Agent token creation is disabled by platform policy").into_pair().into_response();
                 }
             }
         }
@@ -190,10 +179,7 @@ async fn create_token(
     };
 
     if let Err(e) = state.persist_api_token(&new_token) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to persist token: {e}") })),
-        )
+        return ServiceError::internal(format!("Failed to persist token: {e}")).into_pair()
             .into_response();
     }
 
@@ -224,11 +210,8 @@ async fn revoke_token(
 
     match state.revoke_api_token(id, &caller.eppn, is_platform_admin) {
         Ok(true) => (StatusCode::OK, Json(json!({ "status": "revoked" }))).into_response(),
-        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "Token not found" }))).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to revoke token: {e}") })),
-        )
+        Ok(false) => ServiceError::not_found("Token not found").into_pair().into_response(),
+        Err(e) => ServiceError::internal(format!("Failed to revoke token: {e}")).into_pair()
             .into_response(),
     }
 }
@@ -291,22 +274,17 @@ async fn impersonate_user(
     match auth_check {
         Ok(result) => {
             if result.decision != PolicyDecision::Allow {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(json!({
-                        "error": "Forbidden: Cedar policy denies Action::impersonate to non-central_admin principals",
-                        "diagnostics": result.diagnostics,
-                        "reasons": result.reasons,
-                    })),
-                )
-                    .into_response();
+                return ServiceError::Forbidden {
+                    message: "Forbidden: Cedar policy denies Action::impersonate to non-central_admin principals".to_string(),
+                    reasons: result.reasons,
+                    diagnostics: result.diagnostics,
+                    policy: result.deciding_policy,
+                }
+                .into_response();
             }
         }
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Policy evaluation error: {e}") })),
-            )
+            return ServiceError::internal(format!("Policy evaluation error: {e}")).into_pair()
                 .into_response();
         }
     }
@@ -314,10 +292,7 @@ async fn impersonate_user(
     let target_user = match resolve_user(&payload.target_eppn, &state) {
         Some(u) => u,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": format!("Target user not found: {}", payload.target_eppn) })),
-            )
+            return ServiceError::not_found(format!("Target user not found: {}", payload.target_eppn)).into_pair()
                 .into_response();
         }
     };
@@ -362,18 +337,12 @@ async fn impersonate_user(
         ),
         payload: &audit_payload,
     }) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to record audit ledger entry: {e}") })),
-        )
+        return ServiceError::internal(format!("Failed to record audit ledger entry: {e}")).into_pair()
             .into_response();
     }
 
     if let Err(e) = state.persist_api_token(&imp_token) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to persist impersonation token: {e}") })),
-        )
+        return ServiceError::internal(format!("Failed to persist impersonation token: {e}")).into_pair()
             .into_response();
     }
 
@@ -404,10 +373,7 @@ async fn stop_impersonation(
     };
 
     if row.kind != "impersonation" || row.original_admin.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Current session is not an impersonation session" })),
-        )
+        return ServiceError::bad_request("Current session is not an impersonation session").into_pair()
             .into_response();
     }
 
@@ -442,10 +408,7 @@ async fn stop_impersonation(
         ),
         payload: &audit_payload,
     }) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to record audit ledger entry: {e}") })),
-        )
+        return ServiceError::internal(format!("Failed to record audit ledger entry: {e}")).into_pair()
             .into_response();
     }
 

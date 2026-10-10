@@ -18,6 +18,7 @@ use scaffoldry_policy::{PolicyDecision, WorkspaceActionInput};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::str::FromStr;
+use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -37,15 +38,12 @@ async fn create_app_in_workspace(
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<AppManifest>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     let ws = {
         let ws_guard = state.workspaces.read().map_err(|_| lock_err())?;
         ws_guard.get(&ws_id).cloned().ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": format!("Workspace '{ws_id}' not found")})),
-            )
+            ServiceError::not_found(format!("Workspace '{ws_id}' not found")).into_pair()
         })?
     };
 
@@ -72,7 +70,7 @@ async fn create_app_in_workspace(
             is_member,
             member_role: norm_role.as_deref(),
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
 
     let mut allowed = decision.decision == PolicyDecision::Allow;
     if !allowed {
@@ -94,25 +92,22 @@ async fn create_app_in_workspace(
     }
 
     if !allowed {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "Forbidden: Cedar policy denied app creation in workspace"})),
-        ));
+        return Err(ServiceError::forbidden("Forbidden: Cedar policy denied app creation in workspace").into_pair());
     }
 
     let mut manifest: AppManifest = serde_json::from_value(payload)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
 
     manifest.workspace_id = Some(ws_id.clone());
 
     let mut engine = state.engine.write().map_err(|_| lock_err())?;
     engine
         .register_manifest(manifest.clone())
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
 
     if let Some(ref repo) = state.repository {
         repo.upsert_app_manifest(&manifest)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     }
 
     Ok((StatusCode::CREATED, Json(manifest)))
@@ -124,16 +119,16 @@ async fn get_app(
     Path(slug): Path<String>,
 ) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     authorize_app(&user, &slug, AppAction::Read, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     use scaffoldry_engine::HostRouter;
     let engine = state.engine.read().map_err(|_| lock_err())?;
     let manifest = engine
         .resolve_by_slug(&slug)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "App not found"}))))?;
+        .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?;
     Ok(Json(manifest.clone()))
 }
 
@@ -144,10 +139,10 @@ async fn update_app(
     Json(payload): Json<Value>,
 ) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     authorize_app(&user, &slug, AppAction::Manage, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     use scaffoldry_engine::HostRouter;
     let existing = {
@@ -155,11 +150,11 @@ async fn update_app(
         engine
             .resolve_by_slug(&slug)
             .cloned()
-            .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "App not found"}))))?
+            .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?
     };
 
     let mut manifest: AppManifest = serde_json::from_value(payload)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
 
     manifest.slug = slug.clone();
     manifest.workspace_id = existing.workspace_id;
@@ -170,11 +165,11 @@ async fn update_app(
     let mut engine = state.engine.write().map_err(|_| lock_err())?;
     engine
         .register_manifest(manifest.clone())
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
 
     if let Some(ref repo) = state.repository {
         repo.upsert_app_manifest(&manifest)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     }
 
     Ok(Json(manifest))
@@ -187,14 +182,14 @@ async fn publish_app(
     Json(payload): Json<Value>,
 ) -> Result<Json<AppManifest>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     authorize_app(&user, &slug, AppAction::Manage, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     let domain = payload["custom_domain"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "custom_domain is required"}))))?
+        .ok_or_else(|| ServiceError::bad_request("custom_domain is required").into_pair())?
         .to_string();
 
     use scaffoldry_engine::HostRouter;
@@ -202,18 +197,18 @@ async fn publish_app(
     let mut manifest = engine
         .resolve_by_slug(&slug)
         .cloned()
-        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "App not found"}))))?;
+        .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?;
 
     manifest.custom_domain = Some(domain);
     manifest.custom_domain_verified = false;
 
     engine
         .register_manifest(manifest.clone())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
 
     if let Some(ref repo) = state.repository {
         repo.upsert_app_manifest(&manifest)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     }
 
     Ok(Json(manifest))
@@ -225,9 +220,9 @@ async fn list_app_automations(
     Path(slug): Path<String>,
 ) -> Result<Json<Vec<AutomationRule>>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     authorize_app(&user, &slug, AppAction::Read, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     let automations = state.automations.read().map_err(|_| lock_err())?;
     let rules = automations.get(&slug).cloned().unwrap_or_default();
@@ -241,12 +236,12 @@ async fn create_app_automation(
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<AutomationRule>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     authorize_app(&user, &slug, AppAction::Manage, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     let mut rule: AutomationRule = serde_json::from_value(payload)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::bad_request(e.to_string()).into_pair())?;
     rule.app_slug = slug.clone();
 
     let mut automations = state.automations.write().map_err(|_| lock_err())?;
@@ -259,10 +254,7 @@ async fn create_app_automation(
 
     if let Some(repo) = state.repository.as_ref() {
         repo.upsert_workflow_automation(&rule).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
+            ServiceError::internal(e.to_string()).into_pair()
         })?;
     }
 
@@ -276,12 +268,12 @@ async fn simulate_app_automation(
     Json(payload): Json<Value>,
 ) -> Result<Json<Vec<WorkflowExecutionResult>>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     authorize_app(&user, &slug, AppAction::Manage, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     let event: TriggerEvent = serde_json::from_value(payload["event"].clone())
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({"error": format!("Invalid trigger event: {e}")}))))?;
+        .map_err(|e| ServiceError::bad_request(format!("Invalid trigger event: {e}")).into_pair())?;
     let record = payload.get("record").cloned().unwrap_or(json!({}));
 
     let affiliation = EduPersonAffiliation::from_str(&user.affiliation)
@@ -322,9 +314,9 @@ async fn list_app_processes(
     Query(query): Query<ProcessListQuery>,
 ) -> Result<Json<Vec<ProcessInstance>>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     authorize_app(&user, &slug, AppAction::Read, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     let instances = state.process_instances.read().map_err(|_| lock_err())?;
     let filtered: Vec<ProcessInstance> = instances
@@ -358,33 +350,33 @@ async fn decide_app_process(
     Json(payload): Json<ProcessDecisionPayload>,
 ) -> Result<Json<ProcessInstance>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     authorize_app(&user, &slug, AppAction::Read, &state)
-        .map_err(|err| (err.status_code(), Json(json!({"error": err.message()}))))?;
+        .map_err(ServiceError::into_pair)?;
 
     let decision = payload.decision.to_lowercase();
     if decision != "approve" && decision != "reject" {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "Decision must be 'approve' or 'reject'"}))));
+        return Err(ServiceError::bad_request("Decision must be 'approve' or 'reject'").into_pair());
     }
 
     // Unknown affiliation is 403. Delete unwrap_or(EduPersonAffiliation::Faculty).
     let _ = EduPersonAffiliation::from_str(&user.affiliation)
-        .map_err(|_| (StatusCode::FORBIDDEN, Json(json!({"error": "Unknown affiliation"}))))?;
+        .map_err(|_| ServiceError::forbidden("Unknown affiliation").into_pair())?;
 
     let mut instance = {
         let instances = state.process_instances.read().map_err(|_| lock_err())?;
         instances.get(&id).cloned().ok_or_else(|| {
-            (StatusCode::NOT_FOUND, Json(json!({"error": "Process instance not found"})))
+            ServiceError::not_found("Process instance not found").into_pair()
         })?
     };
 
     if instance.app_slug != slug {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Process instance not found in this app"}))));
+        return Err(ServiceError::not_found("Process instance not found in this app").into_pair());
     }
 
     if instance.status != ProcessStatus::Waiting {
-        return Err((StatusCode::CONFLICT, Json(json!({"error": "Process instance is not in Waiting status"}))));
+        return Err(ServiceError::conflict("Process instance is not in Waiting status").into_pair());
     }
 
     let waiting_step_id = instance.waiting_step_id.clone().unwrap_or_default();
@@ -424,7 +416,7 @@ async fn decide_app_process(
     }
 
     let req_role = required_role.ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(json!({"error": "Waiting step not found in automations"})))
+        ServiceError::bad_request("Waiting step not found in automations").into_pair()
     })?;
 
     // Check caller's collaborator role or affiliation equals the waiting step's role.
@@ -433,11 +425,11 @@ async fn decide_app_process(
     let app_manifest = {
         let engine = state.engine.read().map_err(|_| lock_err())?;
         engine.resolve_by_slug(&slug).cloned().ok_or_else(|| {
-            (StatusCode::NOT_FOUND, Json(json!({"error": "App not found"})))
+            ServiceError::not_found("App not found").into_pair()
         })?
     };
     let ws_id = app_manifest.workspace_id.ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(json!({"error": "App has no workspace"})))
+        ServiceError::bad_request("App has no workspace").into_pair()
     })?;
     let collabs = {
         let collabs_guard = state.collaborators.read().map_err(|_| lock_err())?;
@@ -448,7 +440,7 @@ async fn decide_app_process(
         || user.affiliation.eq_ignore_ascii_case(&req_role);
 
     if !role_matches {
-        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden: Caller does not match waiting step role"}))));
+        return Err(ServiceError::forbidden("Forbidden: Caller does not match waiting step role").into_pair());
     }
 
     // Apply field effects and write record
@@ -468,7 +460,7 @@ async fn decide_app_process(
     if let Some(ref rec) = updated_record {
         if let Some(ref repo) = state.repository {
             repo.upsert_record(rec).map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
+                ServiceError::internal(e.to_string()).into_pair()
             })?;
         }
     }
@@ -486,7 +478,7 @@ async fn decide_app_process(
         oscal_control_id: "AC-03".to_string(),
         rationale: format!("{decision} by {} on {}", user.eppn, instance.id),
         payload: &decision_payload,
-    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    }).map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
 
     // Update instance status and clear waiting_step_id
     if decision == "approve" {
@@ -497,7 +489,7 @@ async fn decide_app_process(
     instance.waiting_step_id = None;
 
     state.persist_process_instance(instance.clone()).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()})))
+        ServiceError::internal(e.to_string()).into_pair()
     })?;
 
     Ok(Json(instance))

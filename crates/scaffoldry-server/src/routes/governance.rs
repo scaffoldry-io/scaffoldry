@@ -11,6 +11,7 @@ use scaffoldry_core::{DecisionType, GENESIS_PREVIOUS_HASH};
 use scaffoldry_policy::PolicyDecision;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -39,10 +40,10 @@ async fn get_governance_ledger(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     if user.affiliation != "central_admin" && user.affiliation != "compliance" {
-        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden: Requires Platform Admin or compliance affiliation"}))));
+        return Err(ServiceError::forbidden("Forbidden: Requires Platform Admin or compliance affiliation").into_pair());
     }
 
     let entries = if let Some(ref repo) = state.repository {
@@ -70,7 +71,7 @@ async fn append_ledger_decision(
     Json(payload): Json<AppendDecisionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     let auth = state
         .policy_engine
@@ -81,13 +82,16 @@ async fn append_ledger_decision(
             "record_decision",
             "governance-ledger",
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
 
     if auth.decision == PolicyDecision::Deny {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "Forbidden: Cedar policy denied ledger append", "success": false})),
-        ));
+        return Err(ServiceError::Forbidden {
+            message: "Forbidden: Cedar policy denied ledger append".to_string(),
+            reasons: auth.reasons,
+            diagnostics: auth.diagnostics,
+            policy: auth.deciding_policy,
+        }
+        .into_pair());
     }
 
     match state.append_ledger_entry(RecordDecisionInput {
@@ -100,10 +104,7 @@ async fn append_ledger_decision(
         payload: &payload.payload,
     }) {
         Ok(entry) => Ok((StatusCode::CREATED, Json(json!({ "entry": entry, "success": true })))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to append to ledger: {e}"), "success": false })),
-        )),
+        Err(e) => Err(ServiceError::internal(format!("Failed to append to ledger: {e}")).into_pair()),
     }
 }
 
@@ -135,10 +136,10 @@ async fn export_oscal_component_definition(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     if user.affiliation != "central_admin" && user.affiliation != "compliance" {
-        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden: Requires Platform Admin or compliance affiliation"}))));
+        return Err(ServiceError::forbidden("Forbidden: Requires Platform Admin or compliance affiliation").into_pair());
     }
 
     let doc = state.export_oscal_component_definition();

@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { explainError } from "./explainError";
 
 export interface ErrorStateProps {
-  message: string;
+  /** Give an error and the message, next step, code, and status come from it. */
+  error?: unknown;
+  message?: string;
   next?: string;
   code?: string;
   status?: number;
@@ -10,14 +13,21 @@ export interface ErrorStateProps {
 }
 
 export function ErrorState({
-  message,
-  next,
-  code,
-  status,
+  error,
+  message: givenMessage,
+  next: givenNext,
+  code: givenCode,
+  status: givenStatus,
   onRetry,
   details,
 }: ErrorStateProps) {
   const [showDetails, setShowDetails] = useState(false);
+  const explained = error !== undefined ? explainError(error) : undefined;
+  const message = givenMessage ?? explained?.message ?? "Something went wrong.";
+  const next = givenNext ?? explained?.next;
+  const failure = error as { code?: string; status?: number } | undefined;
+  const code = givenCode ?? failure?.code;
+  const status = givenStatus ?? failure?.status;
 
   return (
     <div

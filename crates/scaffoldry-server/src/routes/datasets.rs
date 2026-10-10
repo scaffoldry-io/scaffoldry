@@ -11,6 +11,7 @@ use chrono::Utc;
 use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
 use scaffoldry_policy::PolicyDecision;
 use serde_json::{json, Value};
+use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -79,7 +80,7 @@ async fn get_dataset(
     let is_admin = user.as_ref().map(|u| u.affiliation == "central_admin").unwrap_or(false);
 
     let datasets = state.datasets.read().map_err(|_| lock_err())?;
-    let ds = datasets.get(&id).ok_or((StatusCode::NOT_FOUND, Json(json!({"error": "Dataset not found"}))))?;
+    let ds = datasets.get(&id).ok_or(ServiceError::not_found("Dataset not found").into_pair())?;
     let rels = state.relationships.read().map_err(|_| lock_err())?;
 
     let related_rels: Vec<DatasetRelationship> = rels
@@ -119,11 +120,11 @@ async fn publish_dataset(
     Json(payload): Json<Value>,
 ) -> Result<(StatusCode, Json<PublishedDataset>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     let name = payload["name"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "name is required"}))))?
+        .ok_or_else(|| ServiceError::bad_request("name is required").into_pair())?
         .to_string();
 
     let id = payload
@@ -154,13 +155,16 @@ async fn publish_dataset(
             &id,
             &department,
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
 
     if auth.decision == PolicyDecision::Deny {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "Forbidden: Cedar policy denied dataset publishing"})),
-        ));
+        return Err(ServiceError::Forbidden {
+            message: "Forbidden: Cedar policy denied dataset publishing".to_string(),
+            reasons: auth.reasons,
+            diagnostics: auth.diagnostics,
+            policy: auth.deciding_policy,
+        }
+        .into_pair());
     }
 
     let organization = payload
@@ -214,7 +218,7 @@ async fn publish_dataset(
     state.datasets.write().map_err(|_| lock_err())?.insert(id, dataset.clone());
     if let Some(ref repo) = state.repository {
         repo.upsert_published_dataset(&dataset)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     }
     Ok((StatusCode::CREATED, Json(dataset)))
 }
@@ -244,17 +248,17 @@ async fn create_relationship(
 ) -> Result<(StatusCode, Json<DatasetRelationship>), (StatusCode, Json<Value>)> {
     let target_dataset_id = payload["target_dataset_id"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "target_dataset_id is required"}))))?
+        .ok_or_else(|| ServiceError::bad_request("target_dataset_id is required").into_pair())?
         .to_string();
 
     let source_field = payload["source_field"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "source_field is required"}))))?
+        .ok_or_else(|| ServiceError::bad_request("source_field is required").into_pair())?
         .to_string();
 
     let target_field = payload["target_field"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({"error": "target_field is required"}))))?
+        .ok_or_else(|| ServiceError::bad_request("target_field is required").into_pair())?
         .to_string();
 
     let name = payload
@@ -299,7 +303,7 @@ async fn create_relationship(
     state.relationships.write().map_err(|_| lock_err())?.insert(id, rel.clone());
     if let Some(ref repo) = state.repository {
         repo.upsert_dataset_relationship(&rel)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     }
     Ok((StatusCode::CREATED, Json(rel)))
 }

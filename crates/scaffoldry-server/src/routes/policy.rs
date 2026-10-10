@@ -12,6 +12,7 @@ use axum::{
 };
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use serde_json::{json, Value};
+use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -53,10 +54,10 @@ async fn simulate_policy(
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))))?;
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     if user.affiliation != "central_admin" && user.affiliation != "compliance" {
-        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Forbidden: Requires Platform Admin or compliance affiliation"}))));
+        return Err(ServiceError::forbidden("Forbidden: Requires Platform Admin or compliance affiliation").into_pair());
     }
     let eppn = payload["eppn"]
         .as_str()
@@ -113,7 +114,7 @@ async fn simulate_policy(
             department,
             is_ferpa_sensitive,
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
 
     let decision_str = match result.decision {
         scaffoldry_policy::PolicyDecision::Allow => "Allow",

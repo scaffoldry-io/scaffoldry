@@ -1,20 +1,26 @@
 import { useEffect } from "react";
+import { explainError } from "./explainError";
 
 export type ToastTone = "success" | "error";
 
 export interface ToastProps {
   tone: ToastTone;
-  message: string;
+  /** For a failure, give the error instead and the message and next step come from it. */
+  error?: unknown;
+  message?: string;
   onClose: () => void;
   autoDismissMs?: number;
 }
 
 export function Toast({
   tone,
-  message,
+  error,
+  message: givenMessage,
   onClose,
   autoDismissMs = 4000,
 }: ToastProps) {
+  const explained = error !== undefined ? explainError(error) : undefined;
+  const message = givenMessage ?? [explained?.message, explained?.next].filter(Boolean).join(" ");
   useEffect(() => {
     if (tone === "success" && autoDismissMs) {
       const timer = setTimeout(onClose, autoDismissMs);
