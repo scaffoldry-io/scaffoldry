@@ -94,6 +94,14 @@ describe("UX standards phase 2: errors that explain", () => {
         },
       ],
       [
+        "position_full",
+        new ApiError(409, "Full", { code: "position_full" }),
+        {
+          message: "This position already has its holders.",
+          next: "Replace a current holder, or raise the limit on the position type.",
+        },
+      ],
+      [
         "too_large",
         new ApiError(413, "The result has more than 10,000 rows", { code: "too_large" }),
         { message: "The result has more than 10,000 rows", next: "Narrow the filter." },

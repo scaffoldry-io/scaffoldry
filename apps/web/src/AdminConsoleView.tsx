@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { DecisionLedgerView } from "./DecisionLedgerView";
+import { UnitPositions } from "./admin/UnitPositions";
 import { LedgerEntryItem, OrganizationNode, OrgRole, Persona, RegisteredApp, SourceRule, Workspace } from "./types";
 import { apiClient } from "./api";
 
@@ -346,6 +347,14 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
                       ))}
                     </div>
                   )}
+                </div>
+
+                {/* Positions in this unit */}
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-2">
+                    Positions
+                  </h4>
+                  <UnitPositions unitId={selectedOrg.id} />
                 </div>
 
                 {/* Form: Create child unit */}

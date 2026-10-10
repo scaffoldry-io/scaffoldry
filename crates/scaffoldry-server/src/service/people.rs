@@ -109,7 +109,8 @@ pub fn upsert_user(state: &SharedState, fields: UserFields) -> Result<(ScimUser,
 /// Replaces the organization roles that come from this user's SCIM record.
 pub fn sync_roles(state: &SharedState, user: &ScimUser) {
     let orgs: Vec<OrganizationNode> = state.organizations.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
-    let roles = crate::routes::scim::sync_org_roles(user, &orgs);
+    let positions: Vec<crate::state::PositionType> = state.position_types.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
+    let roles = crate::routes::scim::sync_org_roles(user, &orgs, &positions);
     let _ = state.delete_scim_roles(&user.user_name);
     for r in roles {
         let _ = state.persist_role(&r);
@@ -133,7 +134,7 @@ fn set_hold(state: &SharedState, id: &str, hold: bool) -> Result<ScimUser, Servi
 // Rows
 // ---------------------------------------------------------------------------------------------
 
-fn display_name(u: &ScimUser) -> String {
+pub fn display_name(u: &ScimUser) -> String {
     if let Some(f) = u.name.get("formatted").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
         return f.to_string();
     }

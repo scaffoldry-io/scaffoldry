@@ -402,6 +402,7 @@ fn the_last_platform_admin_appointment_cannot_be_revoked() {
         scoped_affiliation: aff.to_string(),
         is_primary: true,
         source: source.to_string(),
+        position_key: None,
     };
     let only = role("a@x.edu", "platform_admin", "api");
     assert_eq!(revoke_check(&only, std::slice::from_ref(&only), root), Err(RevokeRefusal::LastPlatformAdmin));
@@ -435,7 +436,7 @@ async fn every_people_route_is_in_admin_routes_and_refuses_a_faculty_caller() {
     let faculty = issue_test_token_and_user("faculty.curie@state.edu");
     let fixed_id = Uuid::new_v4().to_string();
     for &(method, path) in ADMIN_ROUTES {
-        let uri = format!("/api/v1{}", path.replace("{id}", &fixed_id));
+        let uri = format!("/api/v1{}", path.replace("{id}", &fixed_id).replace("{key}", "chair"));
         assert_eq!(send(&c.app, method, &uri, None, None).await.0, StatusCode::UNAUTHORIZED, "{method} {uri} with no token");
         assert_eq!(send(&c.app, method, &uri, Some(&faculty), None).await.0, StatusCode::FORBIDDEN, "{method} {uri} as faculty");
     }

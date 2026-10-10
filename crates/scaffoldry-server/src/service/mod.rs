@@ -12,6 +12,7 @@ pub mod workspaces;
 pub mod identity;
 pub mod admin;
 pub mod people;
+pub mod positions;
 pub mod tools;
 
 use axum::http::StatusCode;
@@ -30,6 +31,7 @@ pub const ERROR_CODES: &[&str] = &[
     "bad_request",
     "version_conflict",
     "no_approver",
+    "position_full",
     "too_large",
     "internal",
     "job_failed",
@@ -71,6 +73,8 @@ pub enum ServiceError {
     },
     /// Someone else changed the thing first.
     Conflict(String),
+    /// The position already has as many holders as it allows.
+    PositionFull(String),
     TooLarge(String),
     Internal(String),
 }
@@ -111,7 +115,7 @@ impl ServiceError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::PositionFull(_) => StatusCode::CONFLICT,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -125,6 +129,7 @@ impl ServiceError {
             Self::NotFound(_) => "not_found",
             Self::BadRequest(_) | Self::Invalid { .. } => "bad_request",
             Self::Conflict(_) => "version_conflict",
+            Self::PositionFull(_) => "position_full",
             Self::TooLarge(_) => "too_large",
             Self::Internal(_) => "internal",
         }
@@ -136,6 +141,7 @@ impl ServiceError {
             | Self::NotFound(msg)
             | Self::BadRequest(msg)
             | Self::Conflict(msg)
+            | Self::PositionFull(msg)
             | Self::TooLarge(msg)
             | Self::Internal(msg) => msg,
             Self::Forbidden { message, .. } | Self::Invalid { message, .. } => message,
