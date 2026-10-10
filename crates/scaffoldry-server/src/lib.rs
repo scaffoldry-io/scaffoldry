@@ -4,6 +4,7 @@ pub mod guard;
 pub mod jobs;
 pub mod jwt;
 pub mod repository;
+pub mod repository_proposals;
 pub mod routes;
 pub mod service;
 pub mod state;

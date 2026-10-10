@@ -36,6 +36,7 @@ const SCHEMA_0014: &str = include_str!("../../scaffoldry-core/migrations/0014_re
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
+const SCHEMA_0011: &str = include_str!("../../scaffoldry-core/migrations/0011_app_proposals.sql");
 const SCHEMA_0027: &str = include_str!("../../scaffoldry-core/migrations/0027_record_history.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_job_schedules.sql");
@@ -423,7 +424,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 19] = [
+                        let migrations: [(&str, &str); 20] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -443,6 +444,7 @@ impl PostgresRepository {
                             ("0026_jobs.sql", SCHEMA_0026),
                             ("0044_job_schedules.sql", SCHEMA_0044),
                             ("0027_record_history.sql", SCHEMA_0027),
+                            ("0011_app_proposals.sql", SCHEMA_0011),
                         ];
 
                         let mut fresh_install = false;
@@ -2090,62 +2092,71 @@ impl PostgresRepository {
     ) -> Result<LedgerEntry, RepositoryError> {
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            tx.execute("LOCK TABLE governance_ledger IN EXCLUSIVE MODE", &[])?;
-
-            let row = tx.query_opt(
-                "SELECT sequence, entry_hash FROM governance_ledger ORDER BY sequence DESC LIMIT 1",
-                &[],
-            )?;
-            let (sequence, previous_hash) = match row {
-                Some(r) => {
-                    let last_seq: i64 = r.get(0);
-                    let last_hash: String = r.get(1);
-                    ((last_seq + 1) as u64, last_hash)
-                }
-                None => (0, GENESIS_PREVIOUS_HASH.to_string()),
-            };
-
-            let now = Utc::now().to_rfc3339();
-            let entry = LedgerEntry::new(scaffoldry_core::NewLedgerEntryParams {
-                sequence,
-                timestamp_iso: now,
-                previous_hash,
-                principal: params.principal,
-                organization_code: params.organization_code,
-                app_slug: params.app_slug,
-                decision_type: params.decision_type,
-                oscal_control_id: params.oscal_control_id,
-                rationale: params.rationale,
-                payload: &params.payload,
-            });
-
-            let seq = entry.sequence as i64;
-            let dec_str = format!("{:?}", entry.decision_type);
-            tx.execute(
-                "INSERT INTO governance_ledger (sequence, entry_hash, previous_hash, timestamp_iso, \
-                        principal, organization_code, app_slug, decision_type, oscal_control_id, \
-                        rationale, payload_hash, payload) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
-                &[
-                    &seq,
-                    &entry.entry_hash,
-                    &entry.previous_hash,
-                    &entry.timestamp_iso,
-                    &entry.principal,
-                    &entry.organization_code,
-                    &entry.app_slug,
-                    &dec_str,
-                    &entry.oscal_control_id,
-                    &entry.rationale,
-                    &entry.payload_hash,
-                    &params.payload,
-                ],
-            )?;
-
+            let entry = append_ledger_in_tx(&mut tx, params)?;
             tx.commit()?;
             Ok(entry)
         })
     }
+}
+
+/// Appends one ledger entry inside the caller's transaction, so a caller can keep it or lose it
+/// together with its own writes.
+pub(crate) fn append_ledger_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    params: AppendDecisionParams,
+) -> Result<LedgerEntry, RepositoryError> {
+    tx.execute("LOCK TABLE governance_ledger IN EXCLUSIVE MODE", &[])?;
+
+    let row = tx.query_opt(
+        "SELECT sequence, entry_hash FROM governance_ledger ORDER BY sequence DESC LIMIT 1",
+        &[],
+    )?;
+    let (sequence, previous_hash) = match row {
+        Some(r) => {
+            let last_seq: i64 = r.get(0);
+            let last_hash: String = r.get(1);
+            ((last_seq + 1) as u64, last_hash)
+        }
+        None => (0, GENESIS_PREVIOUS_HASH.to_string()),
+    };
+
+    let now = Utc::now().to_rfc3339();
+    let entry = LedgerEntry::new(scaffoldry_core::NewLedgerEntryParams {
+        sequence,
+        timestamp_iso: now,
+        previous_hash,
+        principal: params.principal,
+        organization_code: params.organization_code,
+        app_slug: params.app_slug,
+        decision_type: params.decision_type,
+        oscal_control_id: params.oscal_control_id,
+        rationale: params.rationale,
+        payload: &params.payload,
+    });
+
+    let seq = entry.sequence as i64;
+    let dec_str = format!("{:?}", entry.decision_type);
+    tx.execute(
+        "INSERT INTO governance_ledger (sequence, entry_hash, previous_hash, timestamp_iso, \
+                principal, organization_code, app_slug, decision_type, oscal_control_id, \
+                rationale, payload_hash, payload) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        &[
+            &seq,
+            &entry.entry_hash,
+            &entry.previous_hash,
+            &entry.timestamp_iso,
+            &entry.principal,
+            &entry.organization_code,
+            &entry.app_slug,
+            &dec_str,
+            &entry.oscal_control_id,
+            &entry.rationale,
+            &entry.payload_hash,
+            &params.payload,
+        ],
+    )?;
+    Ok(entry)
 }
 
 fn parse_decision_type(s: &str) -> Result<DecisionType, RepositoryError> {
