@@ -260,6 +260,29 @@ pub fn resolve_approvers(spec: &ApproverSpec, ctx: &ResolveCtx) -> Resolution {
     }
 }
 
+/// Whether `user` may decide the waiting step. The submitter and the starter never may. When an
+/// administrator assigned the instance, only the assignee may. Otherwise the user must be among
+/// the resolved approvers. A rule written with only a role also accepts a caller whose own
+/// affiliation equals the role name, as it always did.
+pub fn can_decide(
+    user: &str,
+    user_affiliation: &str,
+    assigned_to: Option<&str>,
+    spec: &ApproverSpec,
+    ctx: &ResolveCtx,
+) -> bool {
+    if ctx.excluded(user) {
+        return false;
+    }
+    if let Some(assignee) = assigned_to {
+        return assignee.eq_ignore_ascii_case(user);
+    }
+    if resolve_approvers(spec, ctx).approvers.iter().any(|a| a.eppn.eq_ignore_ascii_case(user)) {
+        return true;
+    }
+    matches!(spec, ApproverSpec::Role { name } if user_affiliation.eq_ignore_ascii_case(name))
+}
+
 /// What the platform knows, for checking a spec when a rule is saved.
 #[derive(Debug, Clone, Default)]
 pub struct KnownSets {
