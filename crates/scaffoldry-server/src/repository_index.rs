@@ -280,6 +280,7 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
         (None, Some(i)) => (q.clauses[i].field.clone(), q.clauses[i].column, false, false),
         (None, None) => (String::new(), IndexColumn::Num, false, false),
     };
+    let field_name = field.clone();
     let f = push(&mut params, SqlParam::Text(field));
     let col = column_name(column);
     let mut wheres = vec![format!("i.app_slug = $1 AND i.table_id = $2 AND i.field = ${f}")];
@@ -328,7 +329,9 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
         }
     };
     for (i, c) in q.clauses.iter().enumerate() {
-        if Some(i) == drive {
+        // A clause on the field being walked reads the walked row itself.
+        let on_walked = single && !c.multi && c.field == field_name;
+        if Some(i) == drive || on_walked {
             wheres.push(predicate(&mut params, "i", c));
         } else {
             let cf = push(&mut params, SqlParam::Text(c.field.clone()));
