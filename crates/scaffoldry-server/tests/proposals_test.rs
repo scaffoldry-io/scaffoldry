@@ -39,6 +39,11 @@ fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'st
     .expect("database thread")
 }
 
+fn proposal_rows(slug: &str) -> i64 {
+    let slug = slug.to_string();
+    db(move |c| c.query_one("SELECT count(*) FROM app_proposals WHERE app_slug = $1", &[&slug]).unwrap().get(0))
+}
+
 fn sha(text: &str) -> String {
     Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -120,6 +125,13 @@ async fn tool(app: &Router, token: &str, name: &str, args: Value) -> (bool, Valu
 /// A live app, made by the owner through the existing route.
 async fn live_app(w: &World, fields: Vec<Value>) {
     let (s, body) = rest(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), &w.owner, Some(manifest(&w.slug, fields))).await;
+    if s == StatusCode::ACCEPTED {
+        // A sensitive field in an Internal workspace needs a second person.
+        let id = body["proposal_id"].as_str().unwrap().to_string();
+        let (err, done) = decide(w, &w.admin, &id, "approve").await;
+        assert!(!err, "{done}");
+        return;
+    }
     assert_eq!(s, StatusCode::CREATED, "{body}");
 }
 
@@ -304,14 +316,13 @@ async fn a_page_whose_source_was_not_sent_is_refused_and_stores_no_row() {
     let _turn = LOCK.lock().await;
     let w = world().await;
     live_app(&w, base_fields()).await;
+    let base_rows = proposal_rows(&w.slug);
     let mut m = manifest(&w.slug, base_fields());
     m["pages"] = json!([page(&sha("never sent"), &["title"], &[])]);
     let (err, msg) = propose(&w, &w.owner, m, vec![]).await;
     assert!(err, "{msg}");
     assert!(msg.as_str().unwrap().contains("page_source"), "{msg}");
-    let slug = w.slug.clone();
-    let rows: i64 = db(move |c| c.query_one("SELECT count(*) FROM app_proposals WHERE app_slug = $1", &[&slug]).unwrap().get(0));
-    assert_eq!(rows, 0);
+    assert_eq!(proposal_rows(&w.slug), base_rows, "no proposal row was stored");
 }
 
 #[tokio::test]
@@ -319,6 +330,7 @@ async fn a_source_with_a_closing_script_tag_or_over_256_kb_is_refused() {
     let _turn = LOCK.lock().await;
     let w = world().await;
     live_app(&w, base_fields()).await;
+    let base_rows = proposal_rows(&w.slug);
     for bad in ["export default () => '</ScRiPt><script>alert(1)</script>'".to_string(), "x".repeat(256 * 1024 + 1)] {
         let mut m = manifest(&w.slug, base_fields());
         m["pages"] = json!([page(&sha(&bad), &["title"], &[])]);
@@ -326,9 +338,7 @@ async fn a_source_with_a_closing_script_tag_or_over_256_kb_is_refused() {
         assert!(err, "{msg}");
         assert!(msg.as_str().unwrap().contains("page_source"), "{msg}");
     }
-    let slug = w.slug.clone();
-    let rows: i64 = db(move |c| c.query_one("SELECT count(*) FROM app_proposals WHERE app_slug = $1", &[&slug]).unwrap().get(0));
-    assert_eq!(rows, 0);
+    assert_eq!(proposal_rows(&w.slug), base_rows, "no proposal row was stored");
 }
 
 // 8. A page granted read on a sensitive field fails page_sensitivity.
@@ -385,6 +395,7 @@ async fn a_schema_failure_stores_no_row_and_returns_every_error() {
     let _turn = LOCK.lock().await;
     let w = world().await;
     live_app(&w, base_fields()).await;
+    let base_rows = proposal_rows(&w.slug);
     let mut fields = base_fields();
     fields.push(field("Bad Name", "Bad", "Text", false));
     fields.push(json!({ "name": "total", "label": "Total", "field_type": "Formula", "required": false, "ferpa_sensitive": false, "formula_expression": "{ghost}" }));
@@ -392,9 +403,7 @@ async fn a_schema_failure_stores_no_row_and_returns_every_error() {
     assert!(err, "{msg}");
     let text = msg.as_str().unwrap();
     assert!(text.contains("schema") && text.contains("Bad Name") && text.contains("ghost"), "{text}");
-    let slug = w.slug.clone();
-    let rows: i64 = db(move |c| c.query_one("SELECT count(*) FROM app_proposals WHERE app_slug = $1", &[&slug]).unwrap().get(0));
-    assert_eq!(rows, 0);
+    assert_eq!(proposal_rows(&w.slug), base_rows, "no proposal row was stored");
 }
 
 #[tokio::test]
@@ -432,7 +441,8 @@ async fn list_shows_pending_first_and_a_rejection_changes_nothing() {
 
     let (err, listed) = tool(&w.app, &w.owner, "list_proposals", json!({ "workspace_id": WORKSPACE })).await;
     assert!(!err, "{listed}");
-    let rows: Vec<&Value> = listed.as_array().unwrap().iter().filter(|r| r["app_slug"] == w.slug.as_str()).collect();
+    // The proposal that made the app is in the list too. It is approved, so it sorts last.
+    let rows: Vec<&Value> = listed.as_array().unwrap().iter().filter(|r| r["app_slug"] == w.slug.as_str() && r["status"] != "Approved").collect();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["id"], b.as_str(), "pending first");
     assert_eq!(rows[1]["status"], "Rejected");

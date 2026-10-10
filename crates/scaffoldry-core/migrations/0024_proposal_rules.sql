@@ -1,0 +1,2 @@
+ALTER TABLE app_proposals ALTER COLUMN manifest DROP NOT NULL;
+ALTER TABLE app_proposals ADD COLUMN IF NOT EXISTS rules JSONB;

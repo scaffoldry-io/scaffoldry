@@ -2,13 +2,13 @@
 //! the ledger entry, the manifest write, and the proposal's status all commit together or not at all.
 
 use crate::repository::{append_ledger_in_tx, AppendDecisionParams, PostgresRepository, RepositoryError};
-use scaffoldry_core::{DecisionType, LedgerEntry};
+use scaffoldry_core::{AutomationRule, DecisionType, LedgerEntry};
 use scaffoldry_engine::AppManifest;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 /// The checks that need a second person to approve when they fail.
-pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity"];
+pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity", "rule_effects"];
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProposalRow {
@@ -16,7 +16,8 @@ pub struct ProposalRow {
     pub workspace_id: String,
     pub app_slug: String,
     pub base_version: Option<i32>,
-    pub manifest: Value,
+    /// `None` for a proposal that changes rules only.
+    pub manifest: Option<Value>,
     /// `{ "checks": [...], "changes": [...] }`
     pub checks: Value,
     pub summary: String,
@@ -25,11 +26,21 @@ pub struct ProposalRow {
     pub decided_by: Option<String>,
     pub created_at: String,
     pub decided_at: Option<String>,
+    /// `[{ "rule": <AutomationRule>, "base_version": <number> }]`. `base_version` is the rule's
+    /// live version when it was proposed, and 0 for a new rule.
+    pub rules: Option<Value>,
+}
+
+/// What an approval kept.
+#[derive(Debug)]
+pub struct Approved {
+    pub entries: Vec<LedgerEntry>,
+    pub rules: Vec<AutomationRule>,
 }
 
 #[derive(Debug)]
 pub enum Approval {
-    Approved { version: i32, entry: Box<LedgerEntry> },
+    Approved(Box<Approved>),
     /// The proposal was already decided. Carries its status.
     NotPending(String),
     /// The live app is no longer at the proposal's base version. The row is now `Superseded`.
@@ -40,7 +51,7 @@ pub enum Approval {
 
 const COLUMNS: &str = "id, workspace_id, app_slug, base_version, manifest, checks, summary, status, proposed_by, decided_by, \
      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-     to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
+     to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), rules";
 
 fn row_of(r: &postgres::Row) -> ProposalRow {
     ProposalRow {
@@ -56,6 +67,7 @@ fn row_of(r: &postgres::Row) -> ProposalRow {
         decided_by: r.get(9),
         created_at: r.get(10),
         decided_at: r.get(11),
+        rules: r.get(12),
     }
 }
 
@@ -64,6 +76,22 @@ pub fn has_flagged_failure(checks: &Value) -> bool {
     checks["checks"].as_array().is_some_and(|list| {
         list.iter().any(|c| c["outcome"] == "fail" && c["name"].as_str().is_some_and(|n| FLAGGED_CHECKS.contains(&n)))
     })
+}
+
+/// The proposed rules as `(rule, base_version)` pairs.
+pub fn rule_changes(rules: &Option<Value>) -> Vec<(AutomationRule, u32)> {
+    rules
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    let rule: AutomationRule = serde_json::from_value(entry["rule"].clone()).ok()?;
+                    Some((rule, entry["base_version"].as_u64().unwrap_or(0) as u32))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn manifest_sha256(manifest: &Value) -> String {
@@ -102,9 +130,9 @@ impl PostgresRepository {
                 )?;
             }
             tx.execute(
-                "INSERT INTO app_proposals (id, workspace_id, app_slug, base_version, manifest, checks, summary, proposed_by) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                &[&p.id, &p.workspace_id, &p.app_slug, &p.base_version, &p.manifest, &p.checks, &p.summary, &p.proposed_by],
+                "INSERT INTO app_proposals (id, workspace_id, app_slug, base_version, manifest, checks, summary, proposed_by, rules) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                &[&p.id, &p.workspace_id, &p.app_slug, &p.base_version, &p.manifest, &p.checks, &p.summary, &p.proposed_by, &p.rules],
             )?;
             tx.commit()?;
             Ok(())
@@ -167,11 +195,26 @@ impl PostgresRepository {
                 return Ok(Approval::NotPending(p.status));
             }
 
-            // 2. The live app must still be at the version the proposal was made against.
-            let live: Option<i32> = tx
-                .query_opt("SELECT version FROM app_manifests WHERE slug = $1 FOR UPDATE", &[&p.app_slug])?
-                .map(|r| r.get(0));
-            if live != p.base_version {
+            // 2. The live app and each live rule must still be at the version the proposal was made against.
+            let manifest: Option<AppManifest> = match &p.manifest {
+                Some(m) => Some(serde_json::from_value(m.clone())?),
+                None => None,
+            };
+            let mut stale = false;
+            let mut live: Option<i32> = None;
+            if manifest.is_some() {
+                live = tx
+                    .query_opt("SELECT version FROM app_manifests WHERE slug = $1 FOR UPDATE", &[&p.app_slug])?
+                    .map(|r| r.get(0));
+                stale = live != p.base_version;
+            }
+            let changes = rule_changes(&p.rules);
+            for (rule, base) in &changes {
+                if rule_live_version_in_tx(&mut tx, &rule.id)? != *base {
+                    stale = true;
+                }
+            }
+            if stale {
                 tx.execute("UPDATE app_proposals SET status = 'Superseded' WHERE id = $1", &[&id])?;
                 tx.commit()?;
                 return Ok(Approval::Superseded { live });
@@ -182,68 +225,36 @@ impl PostgresRepository {
                 return Ok(Approval::SecondPersonRequired);
             }
 
-            // 4. The ledger entry.
-            let manifest: AppManifest = serde_json::from_value(p.manifest.clone())?;
-            let entry = append_ledger_in_tx(
-                &mut tx,
-                AppendDecisionParams {
-                    principal: decider.clone(),
-                    organization_code: manifest.organization_code.clone(),
-                    app_slug: Some(p.app_slug.clone()),
-                    decision_type: DecisionType::AppPublished,
-                    oscal_control_id: "CM-03".to_string(),
-                    rationale,
-                    payload: json!({
-                        "proposal_id": p.id.to_string(),
-                        "manifest_sha256": manifest_sha256(&p.manifest),
-                        "base_version": p.base_version,
-                    }),
-                },
-            )?;
+            let mut entries = Vec::new();
 
-            // 5. The manifest, one version up.
-            let version: i32 = match p.base_version {
-                Some(base) => tx
-                    .query_one(
-                        "UPDATE app_manifests SET title = $2, description = $3, organization_code = $4, department = $5, \
-                                herm_capability_id = $6, custom_domain = $7, custom_domain_verified = $8, workspace_id = $9, \
-                                manifest = $10, version = version + 1, updated_at = NOW() \
-                         WHERE slug = $1 AND version = $11 RETURNING version",
-                        &[
-                            &manifest.slug,
-                            &manifest.title,
-                            &manifest.description,
-                            &manifest.organization_code,
-                            &manifest.department,
-                            &manifest.herm_capability_id,
-                            &manifest.custom_domain,
-                            &manifest.custom_domain_verified,
-                            &manifest.workspace_id,
-                            &p.manifest,
-                            &base,
-                        ],
-                    )?
-                    .get(0),
-                None => tx
-                    .query_one(
-                        "INSERT INTO app_manifests (slug, title, description, organization_code, department, \
-                                herm_capability_id, custom_domain, custom_domain_verified, workspace_id, manifest, updated_at) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING version",
-                        &[
-                            &manifest.slug,
-                            &manifest.title,
-                            &manifest.description,
-                            &manifest.organization_code,
-                            &manifest.department,
-                            &manifest.herm_capability_id,
-                            &manifest.custom_domain,
-                            &manifest.custom_domain_verified,
-                            &manifest.workspace_id,
-                            &p.manifest,
-                        ],
-                    )?
-                    .get(0),
-            };
+            // 4 and 5. The manifest: its ledger entry, then the write at one version up.
+            if let (Some(manifest), Some(raw)) = (&manifest, &p.manifest) {
+                entries.push(append_ledger_in_tx(
+                    &mut tx,
+                    AppendDecisionParams {
+                        principal: decider.clone(),
+                        organization_code: manifest.organization_code.clone(),
+                        app_slug: Some(p.app_slug.clone()),
+                        decision_type: DecisionType::AppPublished,
+                        oscal_control_id: "CM-03".to_string(),
+                        rationale: rationale.clone(),
+                        payload: json!({
+                            "proposal_id": p.id.to_string(),
+                            "manifest_sha256": manifest_sha256(raw),
+                            "base_version": p.base_version,
+                        }),
+                    },
+                )?);
+                write_manifest_in_tx(&mut tx, manifest, raw, p.base_version)?;
+            }
+
+            // Each rule: its own ledger entry, a version row, and the live row.
+            let mut saved_rules = Vec::new();
+            for (rule, _) in changes {
+                let (saved, entry) = save_rule_in_tx(&mut tx, rule, &p.summary, Some(p.id), &decider, "institutional")?;
+                entries.push(entry);
+                saved_rules.push(saved);
+            }
 
             // 6. The decision.
             tx.execute(
@@ -251,7 +262,162 @@ impl PostgresRepository {
                 &[&id, &decider],
             )?;
             tx.commit()?;
-            Ok(Approval::Approved { version, entry: Box::new(entry) })
+            Ok(Approval::Approved(Box::new(Approved { entries, rules: saved_rules })))
         })
+    }
+}
+
+fn write_manifest_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    manifest: &AppManifest,
+    raw: &Value,
+    base_version: Option<i32>,
+) -> Result<i32, RepositoryError> {
+    let version = match base_version {
+        Some(base) => tx
+            .query_one(
+                "UPDATE app_manifests SET title = $2, description = $3, organization_code = $4, department = $5, \
+                        herm_capability_id = $6, custom_domain = $7, custom_domain_verified = $8, workspace_id = $9, \
+                        manifest = $10, version = version + 1, updated_at = NOW() \
+                 WHERE slug = $1 AND version = $11 RETURNING version",
+                &[
+                    &manifest.slug,
+                    &manifest.title,
+                    &manifest.description,
+                    &manifest.organization_code,
+                    &manifest.department,
+                    &manifest.herm_capability_id,
+                    &manifest.custom_domain,
+                    &manifest.custom_domain_verified,
+                    &manifest.workspace_id,
+                    raw,
+                    &base,
+                ],
+            )?
+            .get(0),
+        None => tx
+            .query_one(
+                "INSERT INTO app_manifests (slug, title, description, organization_code, department, \
+                        herm_capability_id, custom_domain, custom_domain_verified, workspace_id, manifest, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING version",
+                &[
+                    &manifest.slug,
+                    &manifest.title,
+                    &manifest.description,
+                    &manifest.organization_code,
+                    &manifest.department,
+                    &manifest.herm_capability_id,
+                    &manifest.custom_domain,
+                    &manifest.custom_domain_verified,
+                    &manifest.workspace_id,
+                    raw,
+                ],
+            )?
+            .get(0),
+    };
+    Ok(version)
+}
+
+fn rule_live_version_in_tx(tx: &mut postgres::Transaction<'_>, rule_id: &str) -> Result<u32, RepositoryError> {
+    let v: i32 = tx
+        .query_one("SELECT COALESCE(MAX(version), 0) FROM workflow_rule_versions WHERE rule_id = $1", &[&rule_id])?
+        .get(0);
+    Ok(v as u32)
+}
+
+/// Saves one version of a rule inside the caller's transaction: the ledger entry, the version row,
+/// and the live row. The ledger entry names the rule, the new version, the SHA-256 of the rule, and
+/// the proposal. Returns the rule as saved, with its version.
+pub(crate) fn save_rule_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    mut rule: AutomationRule,
+    summary: &str,
+    proposal_id: Option<uuid::Uuid>,
+    changed_by: &str,
+    organization_code: &str,
+) -> Result<(AutomationRule, LedgerEntry), RepositoryError> {
+    rule.version = rule_live_version_in_tx(tx, &rule.id)? + 1;
+    let rule_json = serde_json::to_value(&rule)?;
+    let entry = append_ledger_in_tx(
+        tx,
+        AppendDecisionParams {
+            principal: changed_by.to_string(),
+            organization_code: organization_code.to_string(),
+            app_slug: Some(rule.app_slug.clone()),
+            decision_type: DecisionType::ProcessDefinitionChanged,
+            oscal_control_id: "CM-03".to_string(),
+            rationale: summary.to_string(),
+            payload: json!({
+                "rule_id": rule.id,
+                "version": rule.version,
+                "rule_sha256": manifest_sha256(&rule_json),
+                "proposal_id": proposal_id.map(|p| p.to_string()),
+            }),
+        },
+    )?;
+    let version = rule.version as i32;
+    tx.execute(
+        "INSERT INTO workflow_rule_versions (rule_id, version, app_slug, rule_json, summary, proposal_id, changed_by) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        &[&rule.id, &version, &rule.app_slug, &rule_json, &summary, &proposal_id, &changed_by],
+    )?;
+    tx.execute(
+        "INSERT INTO workflow_automations (id, app_slug, name, rule_json, enabled, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, NOW()) \
+         ON CONFLICT (id) DO UPDATE SET app_slug = EXCLUDED.app_slug, name = EXCLUDED.name, \
+            rule_json = EXCLUDED.rule_json, enabled = EXCLUDED.enabled, updated_at = NOW()",
+        &[&rule.id, &rule.app_slug, &rule.name, &rule_json, &rule.enabled],
+    )?;
+    Ok((rule, entry))
+}
+
+impl PostgresRepository {
+    /// The live version of a rule: 0 when no version was ever saved.
+    pub fn rule_live_version(&self, rule_id: &str) -> Result<u32, RepositoryError> {
+        let id = rule_id.to_string();
+        self.with_client(move |client| {
+            let v: i32 = client
+                .query_one("SELECT COALESCE(MAX(version), 0) FROM workflow_rule_versions WHERE rule_id = $1", &[&id])?
+                .get(0);
+            Ok(v as u32)
+        })
+    }
+
+    /// A saved version of a rule, as it was.
+    pub fn get_rule_version(&self, rule_id: &str, version: u32) -> Result<Option<AutomationRule>, RepositoryError> {
+        let (id, version) = (rule_id.to_string(), version as i32);
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "SELECT rule_json FROM workflow_rule_versions WHERE rule_id = $1 AND version = $2",
+                &[&id, &version],
+            )?;
+            match row {
+                Some(r) => Ok(Some(serde_json::from_value(r.get(0))?)),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// Saves one version of a rule in its own transaction. Called from approval, and from the
+    /// administrator's enable and disable.
+    pub fn save_rule(
+        &self,
+        rule: &AutomationRule,
+        summary: &str,
+        proposal_id: Option<uuid::Uuid>,
+        changed_by: &str,
+        organization_code: &str,
+    ) -> Result<(AutomationRule, LedgerEntry), RepositoryError> {
+        let (rule, summary, by, org) = (rule.clone(), summary.to_string(), changed_by.to_string(), organization_code.to_string());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let saved = save_rule_in_tx(&mut tx, rule, &summary, proposal_id, &by, &org)?;
+            tx.commit()?;
+            Ok(saved)
+        })
+    }
+
+    pub fn count_pending_proposals(&self) -> Result<i64, RepositoryError> {
+        self.with_client(|client| Ok(client.query_one("SELECT count(*) FROM app_proposals WHERE status = 'Pending'", &[])?.get(0)))
     }
 }

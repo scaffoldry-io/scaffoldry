@@ -1280,7 +1280,7 @@ impl ServerState {
         let mut automations = HashMap::new();
         automations.insert(
             "physics-admissions-review".to_string(),
-            vec![AutomationRule {
+            vec![AutomationRule { version: 0,
                 id: "rule-admissions-auto-approve".to_string(),
                 app_slug: "physics-admissions-review".to_string(),
                 name: "Honors Fellowship Notification".to_string(),

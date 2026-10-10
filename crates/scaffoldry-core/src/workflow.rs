@@ -118,6 +118,9 @@ pub struct ProcessInstance {
     /// Why nobody can decide the waiting step. Set by the engine.
     #[serde(default)]
     pub no_approver: Option<String>,
+    /// The version of the rule this instance started under. 0 means read the live rule.
+    #[serde(default)]
+    pub rule_version: u32,
 }
 
 pub fn effects_retrigger(effects: &[ActionEffect]) -> Option<TriggerEvent> {
@@ -152,6 +155,9 @@ pub struct AutomationRule {
     pub actions: Vec<ActionType>,
     #[serde(default)]
     pub steps: Vec<ProcessStep>,
+    /// Assigned by the server when a version is saved. 0 until then.
+    #[serde(default)]
+    pub version: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,4 +173,109 @@ pub struct WorkflowExecutionResult {
     #[serde(default)]
     pub waiting_instance: Option<ProcessInstance>,
     pub execution_timestamp: String,
+}
+
+fn operator_words(op: &ConditionOperator) -> &'static str {
+    match op {
+        ConditionOperator::Equals => "is",
+        ConditionOperator::NotEquals => "is not",
+        ConditionOperator::GreaterThan => "is greater than",
+        ConditionOperator::LessThan => "is less than",
+        ConditionOperator::Contains => "contains",
+    }
+}
+
+fn predicate_words(p: &FieldPredicate) -> String {
+    format!("{} {} {}", p.field_name, operator_words(&p.operator), p.expected_value)
+}
+
+/// The condition of a step as a lead-in, or nothing when it always runs.
+fn condition_words(when: &[FieldPredicate]) -> Option<String> {
+    if when.is_empty() {
+        None
+    } else {
+        Some(when.iter().map(predicate_words).collect::<Vec<_>>().join(" and "))
+    }
+}
+
+/// An action as words, or `None` for one a rule may not hold. A webhook is refused, so it has no sentence.
+fn action_words(action: &ActionType) -> Option<String> {
+    match action {
+        ActionType::UpdateRecordStatus { new_status } => Some(format!("set status to {new_status}")),
+        ActionType::NotifyCollaborator { role, message_template } => Some(format!("notify {role}: {message_template}")),
+        ActionType::CreateLedgerAuditEntry { summary, .. } => Some(format!("record in the audit ledger: {summary}")),
+        ActionType::WebhookDispatch { .. } => None,
+    }
+}
+
+fn actions_words(actions: &[ActionType]) -> String {
+    let words: Vec<String> = actions.iter().filter_map(action_words).collect();
+    if words.is_empty() {
+        "do nothing".to_string()
+    } else {
+        words.join(", then ")
+    }
+}
+
+fn approver_words(spec: &crate::approver::ApproverSpec) -> String {
+    use crate::approver::{ApproverSpec, Origin};
+    match spec {
+        ApproverSpec::Position { key, from, .. } => {
+            let unit = match from {
+                Origin::Submitter => "the submitter's unit",
+                Origin::Workspace => "the workspace's unit",
+            };
+            format!("the {key} of {unit}")
+        }
+        ApproverSpec::Person { eppn } => eppn.clone(),
+        ApproverSpec::Role { name } => format!("anyone with the role {name}"),
+    }
+}
+
+/// A rule in plain sentences, so a reviewer approves what it does and not its JSON.
+pub fn describe_rule(rule: &AutomationRule) -> Vec<String> {
+    use crate::approver::{effective_approver, ApproverSpec};
+    let mut out = Vec::new();
+    out.push(match &rule.trigger {
+        TriggerEvent::RecordCreated => "When a record is created in this app.".to_string(),
+        TriggerEvent::RecordUpdated => "When a record is updated in this app.".to_string(),
+        TriggerEvent::FieldChanged { field_name } => format!("When the field {field_name} changes."),
+        TriggerEvent::StatusChanged { to_status } => format!("When the status changes to {to_status}."),
+    });
+    for (i, p) in rule.predicates.iter().enumerate() {
+        out.push(format!("{} {}.", if i == 0 { "If" } else { "And if" }, predicate_words(p)));
+    }
+    for action in rule.actions.iter().filter_map(action_words) {
+        out.push(format!("Then {action}."));
+    }
+    for step in &rule.steps {
+        let lead = condition_words(&step.when);
+        match &step.kind {
+            StepKind::Service { action } => {
+                let Some(words) = action_words(action) else { continue };
+                out.push(match lead {
+                    Some(c) => format!("If {c}, then {words}."),
+                    None => format!("Then {words}."),
+                });
+            }
+            StepKind::UserTask { role, approve, reject, approver, .. } => {
+                let spec = effective_approver(role, approver);
+                let mut sentence = format!("Then wait for a decision by {}.", approver_words(&spec));
+                if let ApproverSpec::Position { walk_up: true, .. } = &spec {
+                    sentence.push_str(" If that position is vacant, ask the next unit up.");
+                }
+                if !approve.is_empty() {
+                    sentence.push_str(&format!(" If approved: {}.", actions_words(approve)));
+                }
+                if !reject.is_empty() {
+                    sentence.push_str(&format!(" If rejected: {}.", actions_words(reject)));
+                }
+                if let Some(c) = lead {
+                    out.push(format!("If {c}:"));
+                }
+                out.push(sentence);
+            }
+        }
+    }
+    out
 }

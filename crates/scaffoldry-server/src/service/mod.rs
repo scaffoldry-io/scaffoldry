@@ -15,6 +15,7 @@ pub mod admin;
 pub mod approvers;
 pub mod people;
 pub mod positions;
+pub mod processes;
 pub mod proposals;
 pub mod tools;
 

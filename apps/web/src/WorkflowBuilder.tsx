@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { FieldSpec, WorkflowAutomationRule, WorkflowTriggerEvent, WorkflowActionItem } from "./types";
+import { Banner } from "./ui";
+import type { SaveOutcome } from "./api";
 
 interface Props {
   appSlug: string;
@@ -9,6 +11,12 @@ interface Props {
   onSaveRule: (rule: WorkflowAutomationRule) => void;
   onDeleteRule: (ruleId: string) => void;
   onToggleRule: (ruleId: string) => void;
+  /**
+   * Sends a rule to the server. When given, a rule goes live only if the server says so. A rule
+   * that needs approval is not saved here: the builder says it was submitted.
+   */
+  submitRule?: (rule: WorkflowAutomationRule) => Promise<SaveOutcome>;
+  onViewProposal?: (proposalId: string) => void;
 }
 
 export const WorkflowBuilder: React.FC<Props> = ({
@@ -19,6 +27,8 @@ export const WorkflowBuilder: React.FC<Props> = ({
   onSaveRule,
   onDeleteRule,
   onToggleRule,
+  submitRule,
+  onViewProposal,
 }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [ruleName, setRuleName] = useState("");
@@ -31,11 +41,33 @@ export const WorkflowBuilder: React.FC<Props> = ({
   const [actionParam, setActionParam] = useState("Candidate approved with honors fellowship eligibility");
   const [addAsServiceStep, setAddAsServiceStep] = useState(false);
   const [simulationResult, setSimulationResult] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Every save goes through here. Without `submitRule` the rule is saved as it always was.
+  const saveRule = async (rule: WorkflowAutomationRule) => {
+    setSaveError(null);
+    setSubmitted(null);
+    if (!submitRule) {
+      onSaveRule(rule);
+      return;
+    }
+    try {
+      const outcome = await submitRule(rule);
+      if (outcome.status === "pending") {
+        setSubmitted(outcome.proposalId);
+      } else {
+        onSaveRule(rule);
+      }
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : "The rule could not be saved.");
+    }
+  };
 
   // Template Quick-Starters
   const handleApplyTemplate = (type: "ferpa" | "threshold" | "approval") => {
     if (type === "approval") {
-      onSaveRule({
+      saveRule({
         id: `rule-${Date.now()}`,
         app_slug: appSlug,
         name: "Honors Fellowship Notification & Ledger",
@@ -49,7 +81,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
         ],
       });
     } else if (type === "ferpa") {
-      onSaveRule({
+      saveRule({
         id: `rule-${Date.now()}`,
         app_slug: appSlug,
         name: "FERPA Audit Guardrail Dispatch",
@@ -63,7 +95,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
         ],
       });
     } else {
-      onSaveRule({
+      saveRule({
         id: `rule-${Date.now()}`,
         app_slug: appSlug,
         name: "High Priority Value Escalation",
@@ -144,7 +176,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
       ];
     }
 
-    onSaveRule(newRule);
+    saveRule(newRule);
     setIsCreating(false);
     setRuleName("");
     setRuleDesc("");
@@ -206,6 +238,20 @@ export const WorkflowBuilder: React.FC<Props> = ({
         </div>
       </div>
 
+      {submitted !== null && (
+        <div data-testid="rule-submitted">
+          <Banner kind="info">
+            <span>Submitted for approval.</span>{" "}
+            {onViewProposal && (
+              <button type="button" onClick={() => onViewProposal(submitted)} className="underline font-medium cursor-pointer">
+                View proposal
+              </button>
+            )}
+          </Banner>
+        </div>
+      )}
+      {saveError !== null && <Banner kind="error">{saveError}</Banner>}
+
       {/* Preset Starter Templates */}
       <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 space-y-3">
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
@@ -214,6 +260,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <button
             type="button"
+            data-testid="apply-template-approval"
             onClick={() => handleApplyTemplate("approval")}
             className="p-3 text-left rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600 transition-all cursor-pointer shadow-xs group"
           >
@@ -227,6 +274,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
 
           <button
             type="button"
+            data-testid="apply-template-ferpa"
             onClick={() => handleApplyTemplate("ferpa")}
             className="p-3 text-left rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600 transition-all cursor-pointer shadow-xs group"
           >
@@ -240,6 +288,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
 
           <button
             type="button"
+            data-testid="apply-template-threshold"
             onClick={() => handleApplyTemplate("threshold")}
             className="p-3 text-left rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600 transition-all cursor-pointer shadow-xs group"
           >

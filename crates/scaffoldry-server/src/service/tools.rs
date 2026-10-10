@@ -926,11 +926,13 @@ fn schema_propose_app_change() -> Value {
         "type": "object",
         "properties": {
             "workspace_id": { "type": "string", "description": "Unique workspace identifier" },
+            "app_slug": { "type": "string", "description": "The app. Required when there is no manifest" },
             "manifest": { "type": "object", "description": "The whole app manifest. Read scaffoldry://schema/app-manifest" },
+            "rules": { "type": "array", "items": { "type": "object" }, "description": "Automation rules to add or change. A rule is saved as a new version when approved. No webhook steps" },
             "summary": { "type": "string", "description": "What changes and why, in a sentence or two" },
             "page_sources": { "type": "array", "items": { "type": "string" }, "description": "The source of every new or changed custom page. Each is stored under its SHA-256, which the manifest names" }
         },
-        "required": ["workspace_id", "manifest", "summary"]
+        "required": ["workspace_id", "summary"]
     })
 }
 
@@ -966,7 +968,10 @@ fn schema_decide_proposal() -> Value {
 #[serde(deny_unknown_fields)]
 struct ProposeArgs {
     workspace_id: String,
-    manifest: Value,
+    app_slug: Option<String>,
+    manifest: Option<Value>,
+    #[serde(default)]
+    rules: Vec<Value>,
     summary: String,
     #[serde(default)]
     page_sources: Vec<String>,
@@ -990,7 +995,14 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
     let a: ProposeArgs = parse(args)?;
     crate::service::proposals::propose(
         caller,
-        crate::service::proposals::ProposeInput { workspace_id: a.workspace_id, manifest: a.manifest, summary: a.summary, page_sources: a.page_sources },
+        crate::service::proposals::ProposeInput {
+            workspace_id: a.workspace_id,
+            app_slug: a.app_slug,
+            manifest: a.manifest,
+            rules: a.rules,
+            summary: a.summary,
+            page_sources: a.page_sources,
+        },
         state,
     )
 }

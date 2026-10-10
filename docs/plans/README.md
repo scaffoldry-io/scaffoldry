@@ -66,7 +66,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 43 | [row-scale.md](row-scale.md) | 3 | Computed values are written, not recomputed, using links |
 | 44 | [calc-graph.md](calc-graph.md) | 1 | One formula evaluator, in Rust, with a preview route |
 | 45 | [calc-graph.md](calc-graph.md) | 2 | A dependency graph with cycle detection and ordered recalculation |
-| 46 | [mcp-apps.md](mcp-apps.md) | 4a | Process definitions and every direct app change are proposals. A Proposals screen exists |
+| 46 | [mcp-apps.md](mcp-apps.md) | 4a | Process definitions and every direct app change are proposals. A Proposals screen exists | **COMPLETED** |
 | 47 | [mcp-apps.md](mcp-apps.md) | 5 | An agent lists and decides waiting process steps |
 | 48 | [record-history.md](record-history.md) | 2 | Undo and restore |
 | 49 | [record-history.md](record-history.md) | 3 | Comments, mentions, and the commenter role |

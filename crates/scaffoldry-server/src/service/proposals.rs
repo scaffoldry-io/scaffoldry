@@ -2,11 +2,13 @@
 //! a person with authority approves it. Checks are computed from the proposal and the live app.
 //! They are never constants.
 
-use crate::repository_proposals::{Approval, ProposalRow};
+use crate::repository_proposals::{rule_changes, Approval, ProposalRow};
 use crate::service::access::authorize_workspace;
 use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::standards::ceds::CedsElement;
+use scaffoldry_core::workflow::describe_rule;
+use scaffoldry_core::{AutomationRule, StepKind};
 use scaffoldry_engine::{effective_ferpa_sensitive, validate_manifest, AppManifest, FieldSpec, HostRouter, PageKind};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -16,7 +18,10 @@ const MAX_SOURCE_BYTES: usize = 256 * 1024;
 
 pub struct ProposeInput {
     pub workspace_id: String,
-    pub manifest: Value,
+    /// Required when there is no manifest.
+    pub app_slug: Option<String>,
+    pub manifest: Option<Value>,
+    pub rules: Vec<Value>,
     pub summary: String,
     pub page_sources: Vec<String>,
 }
@@ -49,6 +54,11 @@ pub fn workspace_of(proposal_id: &str, state: &SharedState) -> Result<String, Se
 
 fn check(name: &str, problems: Vec<String>) -> Value {
     json!({ "name": name, "outcome": if problems.is_empty() { "pass" } else { "fail" }, "messages": problems })
+}
+
+/// A check that warns and never blocks.
+fn warn(name: &str, messages: Vec<String>) -> Value {
+    json!({ "name": name, "outcome": if messages.is_empty() { "pass" } else { "warn" }, "messages": messages })
 }
 
 /// Fields that are protected under the effective rule, or whose CEDS code is FERPA sensitive.
@@ -196,6 +206,10 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
     out
 }
 
+pub fn live_app_exists(slug: &str, state: &SharedState) -> bool {
+    live_manifest(slug, state).is_some()
+}
+
 fn live_manifest(slug: &str, state: &SharedState) -> Option<AppManifest> {
     state.engine.read().ok().and_then(|e| e.resolve_by_slug(slug).cloned())
 }
@@ -223,34 +237,35 @@ fn role_in(caller: &AuthUser, ws_id: &str, state: &SharedState) -> Option<String
         .and_then(|c| c.get(ws_id).and_then(|l| l.iter().find(|m| m.eppn == caller.eppn).map(|m| m.role.to_lowercase())))
 }
 
-pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
-    let repo = repo(state)?;
-    let ws = state
-        .workspaces
-        .read()
-        .map_err(internal)?
-        .get(&input.workspace_id)
-        .cloned()
-        .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{}' not found", input.workspace_id)))?;
-    if !matches!(role_in(caller, &ws.id, state).as_deref(), Some("owner" | "admin" | "editor")) {
-        return Err(ServiceError::forbidden("Forbidden: proposing a change needs the owner, admin, or editor role"));
-    }
-    if input.summary.trim().is_empty() {
-        return Err(ServiceError::BadRequest("Argument 'summary' must say what changes".to_string()));
-    }
+/// The checks on a manifest part, and what it changed.
+struct ManifestPart {
+    manifest: AppManifest,
+    checks: Vec<Value>,
+    sources: Vec<(String, String)>,
+}
 
-    let mut manifest: AppManifest =
-        serde_json::from_value(input.manifest).map_err(|e| ServiceError::BadRequest(format!("schema: the manifest is not an app manifest: {e}")))?;
-    let live = live_manifest(&manifest.slug, state);
-    if let Some(l) = &live {
+fn check_manifest_part(
+    input_manifest: Value,
+    page_sources: Vec<String>,
+    ws: &crate::state::WorkspaceRecord,
+    live: Option<&AppManifest>,
+    state: &SharedState,
+) -> Result<ManifestPart, ServiceError> {
+    let repo = repo(state)?;
+    let mut manifest: AppManifest = serde_json::from_value(input_manifest)
+        .map_err(|e| ServiceError::BadRequest(format!("schema: the manifest is not an app manifest: {e}")))?;
+    if let Some(l) = live {
         if l.workspace_id.as_deref() != Some(ws.id.as_str()) {
             return Err(ServiceError::BadRequest(format!("The app '{}' belongs to another workspace", manifest.slug)));
         }
     }
     manifest.workspace_id = Some(ws.id.clone());
-    // A proposal can never verify a domain.
-    manifest.custom_domain = live.as_ref().and_then(|l| l.custom_domain.clone());
-    manifest.custom_domain_verified = live.as_ref().is_some_and(|l| l.custom_domain_verified);
+    // A proposal can never verify a domain. Nothing in the platform verifies one.
+    let live_verified = live.is_some_and(|l| l.custom_domain_verified);
+    if manifest.custom_domain_verified && !live_verified {
+        return Err(ServiceError::BadRequest("schema: custom_domain_verified cannot be set by a proposal".to_string()));
+    }
+    manifest.custom_domain_verified = live_verified;
 
     // schema: a failure stores no row.
     if let Err(problems) = validate_manifest(&manifest) {
@@ -260,7 +275,7 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
     // page_source: a failure stores no row.
     let mut source_problems = Vec::new();
     let mut provided: BTreeMap<String, String> = BTreeMap::new();
-    for source in input.page_sources {
+    for source in page_sources {
         if source.len() > MAX_SOURCE_BYTES {
             source_problems.push(format!("a page source is {} bytes, the limit is {MAX_SOURCE_BYTES}", source.len()));
             continue;
@@ -292,9 +307,8 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
         return Err(ServiceError::BadRequest(format!("page_source: {}", source_problems.join("; "))));
     }
 
-    let base_version = live_version(&manifest.slug, state)?;
     let proposed_sensitive = sensitive_fields(&manifest, state);
-    let live_sensitive = live.as_ref().map(|l| sensitive_fields(l, state)).unwrap_or_default();
+    let live_sensitive = live.map(|l| sensitive_fields(l, state)).unwrap_or_default();
 
     // sensitivity: a sensitive field the live app did not have, in an Internal or Public workspace.
     let classification = ws.data_classification.as_str();
@@ -309,7 +323,7 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
 
     // data_loss: something in the live app is gone, and records exist.
     let mut loss = Vec::new();
-    if let Some(l) = &live {
+    if let Some(l) = live {
         for lt in &l.tables {
             match manifest.tables.iter().find(|t| t.id == lt.id) {
                 None => loss.push(format!("table '{}' is removed", lt.name)),
@@ -328,7 +342,7 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
     // page_sensitivity: a new or changed custom page reads a sensitive field.
     let mut page_problems = Vec::new();
     for page in &manifest.pages {
-        let changed = live.as_ref().and_then(|l| l.pages.iter().find(|x| x.id == page.id)).is_none_or(|x| x != page);
+        let changed = live.and_then(|l| l.pages.iter().find(|x| x.id == page.id)).is_none_or(|x| x != page);
         if !changed {
             continue;
         }
@@ -343,48 +357,238 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
         }
     }
 
-    let changes = change_list(&manifest, live.as_ref(), state);
-    let checks = json!({
-        "checks": [
-            check("schema", vec![]),
-            check("sensitivity", sensitivity_problems),
-            check("data_loss", loss),
-            check("stale", vec![]),
-            check("page_source", vec![]),
-            check("page_sensitivity", page_problems),
-        ],
-        "changes": changes,
-    });
+    let checks = vec![
+        check("schema", vec![]),
+        check("sensitivity", sensitivity_problems),
+        check("data_loss", loss),
+        check("page_source", vec![]),
+        check("page_sensitivity", page_problems),
+    ];
+    Ok(ManifestPart { manifest, checks, sources: provided.into_iter().collect() })
+}
 
+/// The checks on a rules part. A rule that fails `rule_schema` stores no proposal.
+struct RulesPart {
+    rules: Vec<(AutomationRule, u32)>,
+    checks: Vec<Value>,
+}
+
+fn check_rules_part(
+    caller: &AuthUser,
+    raw: Vec<Value>,
+    slug: &str,
+    effective: &AppManifest,
+    state: &SharedState,
+) -> Result<RulesPart, ServiceError> {
+    let repo = repo(state)?;
+    let sensitive = sensitive_fields(effective, state);
+    let mut schema_problems = Vec::new();
+    let mut rules = Vec::new();
+    for value in raw {
+        let mut rule: AutomationRule = serde_json::from_value(value)
+            .map_err(|e| ServiceError::BadRequest(format!("rule_schema: a rule is not a rule: {e}")))?;
+        rule.app_slug = slug.to_string();
+        rule.version = 0;
+        for p in crate::service::processes::validate_rule(state, effective, &rule) {
+            schema_problems.push(format!("rule '{}': {p}", rule.id));
+        }
+        let owner_app = state
+            .automations
+            .read()
+            .ok()
+            .and_then(|a| a.iter().find(|(_, list)| list.iter().any(|r| r.id == rule.id)).map(|(k, _)| k.clone()));
+        if owner_app.is_some_and(|a| a != slug) {
+            schema_problems.push(format!("rule id '{}' belongs to another app", rule.id));
+        }
+        let base = repo.rule_live_version(&rule.id).map_err(internal)?;
+        rules.push((rule, base));
+    }
+    if !schema_problems.is_empty() {
+        return Err(ServiceError::BadRequest(format!("rule_schema: {}", schema_problems.join("; "))));
+    }
+
+    let mut effects = Vec::new();
+    let mut loops = Vec::new();
+    let mut approvers = Vec::new();
+    for (rule, _) in &rules {
+        let set = crate::service::processes::fields_set(rule);
+        for name in &set {
+            let flagged = effective.tables.iter().any(|t| sensitive.contains(&(t.id.clone(), name.clone())));
+            if flagged {
+                effects.push(format!("rule '{}' sets the sensitive field '{name}'", rule.name));
+            }
+        }
+        if matches!(rule.trigger, scaffoldry_core::workflow::TriggerEvent::RecordUpdated) {
+            let read = crate::service::processes::fields_read(rule);
+            for name in set.intersection(&read) {
+                loops.push(format!("rule '{}' runs on every update and sets '{name}', which its own condition reads", rule.name));
+            }
+        }
+        for step in &rule.steps {
+            if let StepKind::UserTask { role, approver, .. } = &step.kind {
+                let spec = scaffoldry_core::approver::effective_approver(role, approver);
+                let ctx = crate::service::approvers::context(state, slug, "", Some(&caller.eppn));
+                let resolution = scaffoldry_core::approver::resolve_approvers(&spec, &ctx);
+                if resolution.approvers.is_empty() {
+                    approvers.push(format!("rule '{}', step '{}': nobody can decide this today", rule.name, step.id));
+                } else if resolution.approvers.iter().all(|a| a.eppn.eq_ignore_ascii_case(&caller.eppn)) {
+                    approvers.push(format!("rule '{}', step '{}': only the proposer can decide this today", rule.name, step.id));
+                }
+            }
+        }
+    }
+    let checks = vec![check("rule_schema", vec![]), check("rule_effects", effects), warn("rule_loop", loops), warn("rule_approver", approvers)];
+    Ok(RulesPart { rules, checks })
+}
+
+fn rule_sentences(proposed: &AutomationRule, state: &SharedState) -> Vec<String> {
+    let live = state
+        .automations
+        .read()
+        .ok()
+        .and_then(|a| a.get(&proposed.app_slug).and_then(|l| l.iter().find(|r| r.id == proposed.id).cloned()));
+    let mut out = Vec::new();
+    match live {
+        None => {
+            out.push(format!("Rule \"{}\" is added.", proposed.name));
+            out.extend(describe_rule(proposed));
+        }
+        Some(old) => {
+            // Compare the rule without its version and its switch, which have their own sentences.
+            let (mut a, mut b) = (old.clone(), proposed.clone());
+            (a.version, b.version) = (0, 0);
+            (a.enabled, b.enabled) = (true, true);
+            if a != b {
+                out.push(format!("Rule \"{}\" is changed.", proposed.name));
+                out.extend(describe_rule(proposed));
+            }
+            if old.enabled != proposed.enabled {
+                out.push(format!("Rule \"{}\" is {}.", proposed.name, if proposed.enabled { "enabled" } else { "disabled" }));
+            }
+            if out.is_empty() {
+                out.push(format!("Rule \"{}\" does not change.", proposed.name));
+            }
+        }
+    }
+    out
+}
+
+pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
+    let repo = repo(state)?;
+    let ws = state
+        .workspaces
+        .read()
+        .map_err(internal)?
+        .get(&input.workspace_id)
+        .cloned()
+        .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{}' not found", input.workspace_id)))?;
+    if !matches!(role_in(caller, &ws.id, state).as_deref(), Some("owner" | "admin" | "editor")) {
+        return Err(ServiceError::forbidden("Forbidden: proposing a change needs the owner, admin, or editor role"));
+    }
+    if input.summary.trim().is_empty() {
+        return Err(ServiceError::BadRequest("Argument 'summary' must say what changes".to_string()));
+    }
+    if input.manifest.is_none() && input.rules.is_empty() {
+        return Err(ServiceError::BadRequest("A proposal needs a manifest, rules, or both".to_string()));
+    }
+
+    // The app this proposal is about.
+    let slug = match (&input.manifest, &input.app_slug) {
+        (Some(m), given) => {
+            let from_manifest = m.get("slug").and_then(|s| s.as_str()).unwrap_or("").to_string();
+            if let Some(g) = given {
+                if *g != from_manifest {
+                    return Err(ServiceError::BadRequest("Argument 'app_slug' does not match the manifest's slug".to_string()));
+                }
+            }
+            from_manifest
+        }
+        (None, Some(g)) => g.clone(),
+        (None, None) => return Err(ServiceError::BadRequest("Argument 'app_slug' is required when there is no manifest".to_string())),
+    };
+    let live = live_manifest(&slug, state);
+    if input.manifest.is_none() {
+        match &live {
+            None => return Err(ServiceError::NotFound(format!("App '{slug}' not found"))),
+            Some(l) if l.workspace_id.as_deref() != Some(ws.id.as_str()) => {
+                return Err(ServiceError::BadRequest(format!("The app '{slug}' belongs to another workspace")));
+            }
+            _ => {}
+        }
+    }
+
+    let mut checks: Vec<Value> = Vec::new();
+    let mut changes: Vec<String> = Vec::new();
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut manifest_json: Option<Value> = None;
+    let mut effective: Option<AppManifest> = live.clone();
+
+    if let Some(raw) = input.manifest {
+        let part = check_manifest_part(raw, input.page_sources, &ws, live.as_ref(), state)?;
+        changes.extend(change_list(&part.manifest, live.as_ref(), state));
+        checks.extend(part.checks);
+        sources = part.sources;
+        manifest_json = Some(serde_json::to_value(&part.manifest).map_err(internal)?);
+        effective = Some(part.manifest);
+    }
+
+    let mut rules_json: Option<Value> = None;
+    if !input.rules.is_empty() {
+        let effective = effective.as_ref().ok_or_else(|| ServiceError::NotFound(format!("App '{slug}' not found")))?;
+        let part = check_rules_part(caller, input.rules, &slug, effective, state)?;
+        for (rule, _) in &part.rules {
+            changes.extend(rule_sentences(rule, state));
+        }
+        checks.extend(part.checks);
+        rules_json = Some(Value::Array(
+            part.rules.iter().map(|(r, base)| json!({ "rule": r, "base_version": base })).collect(),
+        ));
+    }
+    checks.push(check("stale", vec![]));
+
+    let base_version = if manifest_json.is_some() { live_version(&slug, state)? } else { None };
     let row = ProposalRow {
         id: uuid::Uuid::new_v4(),
         workspace_id: ws.id.clone(),
-        app_slug: manifest.slug.clone(),
+        app_slug: slug.clone(),
         base_version,
-        manifest: serde_json::to_value(&manifest).map_err(internal)?,
-        checks,
+        manifest: manifest_json,
+        checks: json!({ "checks": checks, "changes": changes }),
         summary: input.summary,
         status: "Pending".to_string(),
         proposed_by: caller.eppn.clone(),
         decided_by: None,
         created_at: String::new(),
         decided_at: None,
+        rules: rules_json,
     };
-    let sources: Vec<(String, String)> = provided.into_iter().collect();
     repo.insert_proposal(&row, &sources).map_err(internal)?;
     let stored = repo.get_proposal(row.id).map_err(internal)?.ok_or_else(|| ServiceError::Internal("The proposal was not stored".to_string()))?;
     view(&stored, state)
 }
 
-/// The proposal as a caller sees it. `stale` is worked out now, against the live app.
+/// The proposal as a caller sees it. `stale` is worked out now, against the live app and rules.
 fn view(p: &ProposalRow, state: &SharedState) -> Result<Value, ServiceError> {
     let mut checks = p.checks["checks"].clone();
     if let Some(list) = checks.as_array_mut() {
-        let live = if p.status == "Pending" { live_version(&p.app_slug, state)? } else { p.base_version };
-        let stale = live != p.base_version;
+        let mut messages = Vec::new();
+        if p.status == "Pending" {
+            if p.manifest.is_some() {
+                let live = live_version(&p.app_slug, state)?;
+                if live != p.base_version {
+                    messages.push(format!("the app is at version {live:?}, this proposal was made against {:?}", p.base_version));
+                }
+            }
+            for (rule, base) in rule_changes(&p.rules) {
+                let live = repo(state)?.rule_live_version(&rule.id).map_err(internal)?;
+                if live != base {
+                    messages.push(format!("rule '{}' is at version {live}, this proposal was made against {base}", rule.name));
+                }
+            }
+        }
         for c in list.iter_mut() {
             if c["name"] == "stale" {
-                *c = check("stale", if stale { vec![format!("the app is at version {live:?}, this proposal was made against {:?}", p.base_version)] } else { vec![] });
+                *c = check("stale", messages.clone());
             }
         }
     }
@@ -431,24 +635,70 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                 .map_err(internal)?
                 .map_err(|status| ServiceError::Conflict(format!("This proposal is already {status}")))?;
         }
-        "approve" => match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| ServiceError::Internal(format!("The approval was not kept: {e}")))? {
-            Approval::Approved { entry, .. } => {
-                state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(*entry);
-                let manifest: AppManifest = serde_json::from_value(row.manifest.clone()).map_err(internal)?;
-                state.engine.write().map_err(internal)?.register_manifest(manifest).map_err(internal)?;
+        "approve" => {
+            // The rules are checked again against the app as it is now. A manifest approved since
+            // the proposal was made may have removed a field a rule reads.
+            let effective: Option<AppManifest> = match &row.manifest {
+                Some(m) => serde_json::from_value(m.clone()).ok(),
+                None => live_manifest(&row.app_slug, state),
+            };
+            if let Some(effective) = &effective {
+                let mut problems = Vec::new();
+                for (rule, _) in rule_changes(&row.rules) {
+                    problems.extend(crate::service::processes::validate_rule(state, effective, &rule).into_iter().map(|p| format!("rule '{}': {p}", rule.id)));
+                }
+                if !problems.is_empty() {
+                    return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
+                }
             }
-            Approval::NotPending(status) => return Err(ServiceError::Conflict(format!("This proposal is already {status}"))),
-            Approval::Superseded { live } => {
-                return Err(ServiceError::Conflict(format!(
-                    "The app changed since this was proposed: it is at version {live:?}, the proposal was made against {:?}. The proposal is now superseded",
-                    row.base_version
-                )))
+            match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| ServiceError::Internal(format!("The approval was not kept: {e}")))? {
+                Approval::Approved(done) => {
+                    state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
+                    if let Some(m) = &row.manifest {
+                        let manifest: AppManifest = serde_json::from_value(m.clone()).map_err(internal)?;
+                        state.engine.write().map_err(internal)?.register_manifest(manifest).map_err(internal)?;
+                    }
+                    if !done.rules.is_empty() {
+                        crate::service::processes::reload_rules(state, &row.app_slug);
+                    }
+                }
+                Approval::NotPending(status) => return Err(ServiceError::Conflict(format!("This proposal is already {status}"))),
+                Approval::Superseded { live } => {
+                    return Err(ServiceError::Conflict(format!(
+                        "The app or a rule changed since this was proposed: the app is at version {live:?}, the proposal was made against {:?}. The proposal is now superseded",
+                        row.base_version
+                    )))
+                }
+                Approval::SecondPersonRequired => {
+                    return Err(ServiceError::forbidden("A change with a flagged check needs a second person to approve it. The proposer cannot"));
+                }
             }
-            Approval::SecondPersonRequired => {
-                return Err(ServiceError::forbidden("A change with a flagged check needs a second person to approve it. The proposer cannot"));
-            }
-        },
+        }
         _ => return Err(ServiceError::BadRequest("Argument 'decision' must be 'approve' or 'reject'".to_string())),
     }
     get(proposal_id, state)
+}
+
+/// What a direct route got from the proposal it made.
+pub enum Direct {
+    /// The caller is an owner or admin, nothing failed, and nothing was flagged. It is live.
+    Applied,
+    /// A person must decide. The change is not live.
+    Pending(Value),
+}
+
+/// A direct route is a wrapper: it makes a proposal with the same checks, and approves it in the
+/// same request when its caller owns or administers the workspace and no check is raised.
+/// A `fail` that stores no proposal comes back as the error `propose` returns.
+pub fn submit_direct(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Direct, ServiceError> {
+    let ws_id = input.workspace_id.clone();
+    let proposed = propose(caller, input, state)?;
+    let any_fail = proposed["checks"].as_array().is_some_and(|l| l.iter().any(|c| c["outcome"] == "fail"));
+    let owner_or_admin = matches!(role_in(caller, &ws_id, state).as_deref(), Some("owner" | "admin"));
+    if any_fail || !owner_or_admin {
+        return Ok(Direct::Pending(proposed));
+    }
+    let id = proposed["proposal_id"].as_str().unwrap_or_default().to_string();
+    decide(caller, &id, "approve", "Applied directly by an owner or admin: no check was raised", state)?;
+    Ok(Direct::Applied)
 }
