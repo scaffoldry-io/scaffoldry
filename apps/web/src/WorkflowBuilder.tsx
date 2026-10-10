@@ -42,7 +42,6 @@ export const WorkflowBuilder: React.FC<Props> = ({
         description: "Notifies dean and records ledger entry when candidate GPA >= 3.85",
         enabled: true,
         trigger: { type: "StatusChanged", to_status: "Approved" },
-        cedar_policy_guard: "policy-ferpa-34cfr99",
         predicates: [{ field_name: "gpa", operator: "GreaterThan", expected_value: "3.85" }],
         actions: [
           { type: "NotifyCollaborator", role: "dean", message_template: "Candidate approved for fellowship funding." },
@@ -57,7 +56,6 @@ export const WorkflowBuilder: React.FC<Props> = ({
         description: "Appends to cryptographic ledger whenever protected student records are updated",
         enabled: true,
         trigger: { type: "RecordUpdated" },
-        cedar_policy_guard: "policy-ferpa-34cfr99",
         predicates: [],
         actions: [
           { type: "CreateLedgerAuditEntry", summary: "Protected FERPA record modified", oscal_control: "MP-04" },
@@ -72,7 +70,6 @@ export const WorkflowBuilder: React.FC<Props> = ({
         description: "Alerts department lead when field exceeds critical operating limits",
         enabled: true,
         trigger: { type: "RecordCreated" },
-        cedar_policy_guard: "policy-campus-l4",
         predicates: [{ field_name: fields[0]?.name || "id", operator: "NotEquals", expected_value: "" }],
         actions: [
           { type: "NotifyCollaborator", role: "chair", message_template: "New high-priority intake submitted." },
@@ -110,7 +107,6 @@ export const WorkflowBuilder: React.FC<Props> = ({
       description: ruleDesc || "Custom institutional automation rule",
       enabled: true,
       trigger,
-      cedar_policy_guard: "policy-ferpa-34cfr99",
       predicates: [
         {
           field_name: selectedField,
@@ -443,7 +439,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
                 </h4>
 
                 <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
-                  {rule.cedar_policy_guard || "Cedar Gated"}
+                  "Automated"
                 </span>
               </div>
 

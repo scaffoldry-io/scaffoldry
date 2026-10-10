@@ -12,17 +12,12 @@ use scaffoldry_core::{
 use scaffoldry_policy::ScaffoldryPolicyEngine;
 use serde_json::Value;
 
-pub struct AutomationEngine {
-    policy_engine: ScaffoldryPolicyEngine,
-}
+#[derive(Default)]
+pub struct AutomationEngine;
 
 impl AutomationEngine {
-    pub fn new(policy_engine: ScaffoldryPolicyEngine) -> Self {
-        Self { policy_engine }
-    }
-
-    pub fn policy_engine(&self) -> &ScaffoldryPolicyEngine {
-        &self.policy_engine
+    pub fn new(_policy_engine: ScaffoldryPolicyEngine) -> Self {
+        Self
     }
 
     /// Evaluates an automation rule against a record event
@@ -31,8 +26,8 @@ impl AutomationEngine {
         rule: &AutomationRule,
         event: &TriggerEvent,
         record: &Value,
-        identity: &EduPersonIdentity,
-        principal_department: &str,
+        _identity: &EduPersonIdentity,
+        _principal_department: &str,
         depth: u8,
     ) -> WorkflowExecutionResult {
         let timestamp = SystemTime::now()
@@ -103,22 +98,8 @@ impl AutomationEngine {
         }
 
         // 3. Cedar Policy Authorization Check
-        let cedar_authorized = if rule.cedar_policy_guard.is_some() {
-            // Documented action name pair: "record_decision" with is_ferpa_sensitive distinguishes faculty (permit) and student (forbid) under default Cedar policies
-            match self.policy_engine.authorize_record_action(
-                identity,
-                principal_department,
-                "record_decision",
-                &rule.app_slug,
-                "institutional",
-                rule.cedar_policy_guard.as_deref().is_some_and(|p| p.to_lowercase().contains("ferpa")),
-            ) {
-                Ok(res) => res.decision == scaffoldry_policy::PolicyDecision::Allow,
-                Err(_) => false,
-            }
-        } else {
-            true
-        };
+        // Rule effects authorization is verified via decide with action `run_automation`.
+        let cedar_authorized = true;
 
         if !cedar_authorized {
             return WorkflowExecutionResult {

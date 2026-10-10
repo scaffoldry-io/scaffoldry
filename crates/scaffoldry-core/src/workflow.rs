@@ -147,8 +147,6 @@ pub struct AutomationRule {
     pub enabled: bool,
     pub trigger: TriggerEvent,
     #[serde(default)]
-    pub cedar_policy_guard: Option<String>,
-    #[serde(default)]
     pub predicates: Vec<FieldPredicate>,
     #[serde(default)]
     pub actions: Vec<ActionType>,

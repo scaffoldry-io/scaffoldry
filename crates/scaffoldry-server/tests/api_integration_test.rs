@@ -769,7 +769,6 @@ async fn test_app_workflow_automations_and_simulation() {
         "description": "Rule upsert testing",
         "enabled": true,
         "trigger": "RecordCreated",
-        "cedar_policy_guard": null,
         "predicates": [],
         "actions": []
     });
@@ -1720,7 +1719,6 @@ async fn test_automation_retrigger_loop_guard() {
         description: "Rule watching update and updating status".to_string(),
         enabled: true,
         trigger: scaffoldry_core::TriggerEvent::RecordUpdated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![scaffoldry_core::ActionType::UpdateRecordStatus {
             new_status: "Processed".to_string(),
@@ -1827,7 +1825,6 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         description: "Review flow".to_string(),
         enabled: true,
         trigger: scaffoldry_core::TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![],
         steps: vec![
@@ -1961,7 +1958,6 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
         description: "User task flow".to_string(),
         enabled: true,
         trigger: scaffoldry_core::TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![],
         steps: vec![

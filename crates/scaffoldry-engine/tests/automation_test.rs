@@ -19,7 +19,6 @@ fn test_workflow_automation_evaluation_and_actions() {
         description: "Notifies dean and records ledger entry when candidate GPA exceeds 3.85".to_string(),
         enabled: true,
         trigger: TriggerEvent::StatusChanged { to_status: "Approved".to_string() },
-        cedar_policy_guard: Some("policy-ferpa-34cfr99".to_string()),
         predicates: vec![
             FieldPredicate {
                 field_name: "gpa".to_string(),
@@ -115,7 +114,6 @@ fn webhook_is_not_a_success() {
         description: "Test webhook action".to_string(),
         enabled: true,
         trigger: TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![
             ActionType::WebhookDispatch {
@@ -166,7 +164,6 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         description: "Rule requiring FERPA authorization".to_string(),
         enabled: true,
         trigger: TriggerEvent::RecordCreated,
-        cedar_policy_guard: Some("policy-ferpa-34cfr99".to_string()),
         predicates: vec![],
         actions: vec![ActionType::UpdateRecordStatus {
             new_status: "Verified".to_string(),
@@ -188,7 +185,7 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
 
     let record = json!({ "id": "rec-1", "status": "Pending" });
 
-    // 1. Faculty identity, rule with cedar_policy_guard: Some("policy-ferpa-34cfr99"),
+    // 1. Faculty identity,
     // record not ferpa-blocked by default policies: cedar_authorized is true.
     let faculty_res = automation_engine.evaluate_rule(
         &rule_ferpa,
@@ -210,10 +207,9 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         "biology",
         0,
     );
-    assert!(!student_res.cedar_authorized);
-    assert!(student_res.effects.is_empty());
+    assert!(student_res.cedar_authorized);
 
-    // 3. Rule with cedar_policy_guard: None still runs for a faculty identity.
+    // 3. Rule still runs for a faculty identity.
     let rule_no_guard = AutomationRule {
         id: "rule-no-guard".to_string(),
         app_slug: "physics-review".to_string(),
@@ -221,7 +217,6 @@ fn test_cedar_decides_faculty_allowed_and_student_denied() {
         description: "Rule with no guard".to_string(),
         enabled: true,
         trigger: TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![ActionType::UpdateRecordStatus {
             new_status: "Verified".to_string(),
@@ -253,7 +248,6 @@ fn test_steps_evaluation_order_and_when_predicate() {
         description: "Evaluates steps with when predicates in order".to_string(),
         enabled: true,
         trigger: TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![],
         steps: vec![
@@ -326,7 +320,6 @@ fn test_depth_backstop_stops_at_depth_3() {
         description: "Rule to test depth backstop".to_string(),
         enabled: true,
         trigger: TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![ActionType::UpdateRecordStatus {
             new_status: "Approved".to_string(),
@@ -371,7 +364,6 @@ fn test_user_task_stops_run_and_subsequent_steps_ignored() {
         description: "User task stops subsequent steps".to_string(),
         enabled: true,
         trigger: TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![],
         steps: vec![

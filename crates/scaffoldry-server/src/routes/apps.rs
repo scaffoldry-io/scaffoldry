@@ -285,7 +285,7 @@ async fn simulate_app_automation(
         affiliations: vec![affiliation],
     };
 
-    let auto_engine = AutomationEngine::new(state.policy_engine.clone());
+    let auto_engine = AutomationEngine;
     let automations = state.automations.read().map_err(|_| lock_err())?;
     let rules = automations.get(&slug).cloned().unwrap_or_default();
 

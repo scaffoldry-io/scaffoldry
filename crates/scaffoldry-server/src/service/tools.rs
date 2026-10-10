@@ -257,8 +257,7 @@ fn schema_update_workspace() -> Value {
             "visibility": { "type": "string", "description": "restricted, departmental, or institutional" },
             "allowed_affiliations": { "type": "array", "items": { "type": "string" } },
             "data_classification": { "type": "string" },
-            "icon": { "type": "string" },
-            "cedar_policy_guard": { "type": "string" }
+            "icon": { "type": "string" }
         },
         "required": ["workspace_id"]
     })
@@ -363,7 +362,6 @@ fn run_update_workspace(caller: &AuthUser, args: Value, state: &SharedState) -> 
             .map(|arr| arr.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()),
         data_classification: text(&args, "data_classification"),
         icon: text(&args, "icon"),
-        cedar_policy_guard: text(&args, "cedar_policy_guard"),
         organization_id: text(&args, "organization_id").and_then(|s| uuid::Uuid::parse_str(&s).ok()),
         reason: text(&args, "reason"),
     };

@@ -89,8 +89,6 @@ pub struct WorkspaceRecord {
     #[serde(default = "default_classification")]
     pub data_classification: String,
     #[serde(default)]
-    pub cedar_policy_guard: Option<String>,
-    #[serde(default)]
     pub created_at: String,
     #[serde(default)]
     pub organization_id: Option<uuid::Uuid>,
@@ -172,6 +170,8 @@ pub struct ServerState {
     pub groups: RwLock<HashMap<String, ScimGroup>>,
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
     pub collaborators: RwLock<HashMap<String, Vec<CollaboratorRecord>>>,
+    pub guards: RwLock<HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>>>,
+    pub guard_policy_cache: RwLock<HashMap<(String, i32), scaffoldry_policy::PolicySet>>,
     pub records: RwLock<HashMap<String, Vec<DatasetRecord>>>,
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
@@ -212,6 +212,7 @@ impl ServerState {
         let mut relationships = HashMap::new();
         let mut process_instances = HashMap::new();
         let mut automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
+        let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> = HashMap::new();
 
         let now = Utc::now().to_rfc3339();
 
@@ -351,6 +352,37 @@ impl ServerState {
                 }
             }
 
+            if let Ok(persisted_guards) = repo.list_all_workspace_guards() {
+                for g in persisted_guards {
+                    guards.entry(g.workspace_id.clone()).or_default().push(g);
+                }
+            }
+
+            if let Ok(archived_count) = repo.count_legacy_workspace_guards() {
+                if archived_count > 0 {
+                    let already_recorded = ledger.iter().any(|e| {
+                        e.decision_type == scaffoldry_core::ledger::DecisionType::PolicyRevision
+                            && (e.rationale.contains("workspace_guards_legacy") || e.rationale.contains("Archived legacy workspace guards"))
+                    });
+                    if !already_recorded {
+                        let payload = serde_json::json!({
+                            "archived_rows": archived_count,
+                            "table": "workspace_guards_legacy"
+                        });
+                        if let Ok(entry) = repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                            principal: "system@scaffoldry.local".to_string(),
+                            organization_code: "INST".to_string(),
+                            app_slug: None,
+                            decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
+                            oscal_control_id: "AC-03".to_string(),
+                            rationale: format!("Archived legacy workspace guards ({} rows)", archived_count),
+                            payload,
+                        }) {
+                            ledger.push(entry);
+                        }
+                    }
+                }
+            }
             if let Ok(persisted_ws) = repo.list_workspaces() {
                 for ws in persisted_ws {
                     if let Ok(collabs) = repo.get_collaborators(&ws.id) {
@@ -383,6 +415,8 @@ impl ServerState {
             groups: RwLock::new(groups),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
+            guards: RwLock::new(guards),
+            guard_policy_cache: RwLock::new(HashMap::new()),
             records: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
@@ -808,6 +842,8 @@ impl ServerState {
             groups: RwLock::new(groups),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
+            guards: RwLock::new(HashMap::new()),
+            guard_policy_cache: RwLock::new(HashMap::new()),
             records: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
@@ -1006,7 +1042,6 @@ impl ServerState {
                 description: "Notifies dean and records ledger entry when candidate GPA exceeds 3.85".to_string(),
                 enabled: true,
                 trigger: TriggerEvent::StatusChanged { to_status: "Approved".to_string() },
-                cedar_policy_guard: Some("policy-ferpa-34cfr99".to_string()),
                 predicates: vec![FieldPredicate {
                     field_name: "gpa".to_string(),
                     operator: ConditionOperator::GreaterThan,
@@ -1098,7 +1133,6 @@ impl ServerState {
             visibility: "restricted".to_string(),
             allowed_affiliations: vec!["faculty".to_string(), "staff".to_string(), "student".to_string()],
             data_classification: "Restricted".to_string(),
-            cedar_policy_guard: Some(r#"forbid (principal, action == Action::"access_workspace", resource) when { resource.visibility == "restricted" && resource.is_member == false };"#.to_string()),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
         };
@@ -1152,7 +1186,6 @@ impl ServerState {
             visibility: "restricted".to_string(),
             allowed_affiliations: vec!["faculty".to_string(), "student".to_string()],
             data_classification: "Internal".to_string(),
-            cedar_policy_guard: None,
             created_at: now.clone(),
             organization_id: Some(default_root_id),
         };
@@ -1186,7 +1219,6 @@ impl ServerState {
             visibility: "departmental".to_string(),
             allowed_affiliations: vec!["staff".to_string(), "compliance".to_string()],
             data_classification: "FERPA Sensitive".to_string(),
-            cedar_policy_guard: None,
             created_at: now.clone(),
             organization_id: Some(default_root_id),
         };
@@ -1230,7 +1262,6 @@ impl ServerState {
             visibility: "restricted".to_string(),
             allowed_affiliations: vec!["faculty".to_string(), "staff".to_string()],
             data_classification: "Internal".to_string(),
-            cedar_policy_guard: None,
             created_at: now.clone(),
             organization_id: Some(default_root_id),
         };

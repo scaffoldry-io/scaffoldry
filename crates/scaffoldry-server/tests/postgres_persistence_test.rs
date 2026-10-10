@@ -107,7 +107,6 @@ fn test_postgres_persistence_lifecycle() {
         visibility: "restricted".to_string(),
         allowed_affiliations: vec!["faculty".to_string()],
         data_classification: "Restricted".to_string(),
-        cedar_policy_guard: None,
         created_at: chrono::Utc::now().to_rfc3339(),
         organization_id: Some(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
     };
@@ -150,8 +149,7 @@ fn test_institutional_scale_workspaces() {
             visibility: "departmental".to_string(),
             allowed_affiliations: vec!["faculty".to_string(), "staff".to_string()],
             data_classification: "Internal".to_string(),
-            cedar_policy_guard: None,
-            created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: chrono::Utc::now().to_rfc3339(),
             organization_id: Some(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
         });
     }
@@ -220,7 +218,6 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         description: "Trigger alert on material limit".to_string(),
         enabled: true,
         trigger: scaffoldry_core::TriggerEvent::RecordCreated,
-        cedar_policy_guard: None,
         predicates: vec![],
         actions: vec![],
         steps: vec![],
