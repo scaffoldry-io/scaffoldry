@@ -341,8 +341,7 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
     }
 
     // The cursor and the order.
-    let order;
-    match (descending, phase) {
+    let order = match (descending, phase) {
         (false, _) | (_, IndexPhase::All) => {
             if let Some((v, id)) = &q.after {
                 let idp = push(&mut params, SqlParam::Text(id.clone()));
@@ -351,7 +350,7 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
                     None => wheres.push(format!("(i.{col} IS NULL AND i.record_id > ${idp})")),
                 }
             }
-            order = format!("i.{col} ASC NULLS LAST, i.record_id ASC");
+            format!("i.{col} ASC NULLS LAST, i.record_id ASC")
         }
         (true, IndexPhase::NonBlank) => {
             wheres.push(format!("i.{col} IS NOT NULL"));
@@ -361,7 +360,7 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
                     wheres.push(format!("(i.{col} < {vp} OR (i.{col} = {vp} AND i.record_id < ${idp}))"));
                 }
             }
-            order = format!("i.{col} DESC, i.record_id DESC");
+            format!("i.{col} DESC, i.record_id DESC")
         }
         (true, IndexPhase::Blank) => {
             wheres.push(format!("i.{col} IS NULL"));
@@ -369,9 +368,9 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
                 let idp = push(&mut params, SqlParam::Text(id.clone()));
                 wheres.push(format!("i.record_id > ${idp}"));
             }
-            order = "i.record_id ASC".to_string();
+            "i.record_id ASC".to_string()
         }
-    }
+    };
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT r.id, r.app_slug, r.data, r.ceds_mapping, r.is_ferpa_sensitive, r.created_at::text AS created_at_text, r.created_by, r.version \

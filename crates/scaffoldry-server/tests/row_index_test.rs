@@ -185,6 +185,8 @@ async fn create(w: &World, data: Value) -> Value {
     body
 }
 
+type IndexSnapshotRow = (String, String, i16, Option<String>, Option<String>, Option<String>);
+
 // 1. A write maintains the index: one row, and an update leaves one row with the new value.
 #[tokio::test]
 async fn a_write_keeps_one_index_row_per_indexed_field_and_an_update_replaces_it() {
@@ -238,7 +240,7 @@ async fn rebuild_index_gives_back_exactly_the_rows_the_writes_made() {
     create(&w, json!({ "plain_text": "no indexed values" })).await;
     create(&w, json!({ "amount": null, "tags": ["Green"] })).await;
 
-    let snapshot = |slug: String| -> Vec<(String, String, i16, Option<String>, Option<String>, Option<String>)> {
+    let snapshot = |slug: String| -> Vec<IndexSnapshotRow> {
         db(move |c| {
             let mut rows: Vec<_> = c
                 .query(
