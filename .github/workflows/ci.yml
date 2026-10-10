@@ -59,6 +59,10 @@ jobs:
       - name: Hard Gate - Governance Script Tests
         run: |
           python3 -m unittest discover -s governance/scripts -p "test_*.py"
+      - name: Hard Gate - Web Server Path Safety Test
+        run: |
+          node --test deploy/server.test.mjs
+
 
       - name: Hard Gate - Build Agent Changes Stay In Bounds
         if: startsWith(github.head_ref || github.ref_name, 'agent/')

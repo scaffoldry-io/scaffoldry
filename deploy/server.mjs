@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DIST_DIR = path.join(__dirname, "dist");
+const DIST_DIR = path.resolve(process.env.DIST_DIR || path.join(__dirname, "dist"));
 const PORT = process.env.PORT || 8080;
 
 const MIME_TYPES = {
@@ -22,10 +22,12 @@ const MIME_TYPES = {
 
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split("?")[0];
-  let filePath = path.join(DIST_DIR, urlPath === "/" ? "index.html" : urlPath);
+  const indexPath = path.join(DIST_DIR, "index.html");
+  // Resolve first, then refuse anything outside the web root (for example "/../x").
+  let filePath = path.resolve(DIST_DIR, "." + (urlPath === "/" ? "/index.html" : urlPath));
 
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-    filePath = path.join(DIST_DIR, "index.html");
+  if (!filePath.startsWith(DIST_DIR + path.sep) || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    filePath = indexPath;
   }
 
   const ext = path.extname(filePath).toLowerCase();
