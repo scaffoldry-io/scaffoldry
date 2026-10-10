@@ -14,6 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -71,7 +72,7 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
         },
         "capabilities": {
             "tools": {
-                "count": 15,
+                "count": 17,
                 "items": [
                     "list_workspaces",
                     "get_workspace",
@@ -87,7 +88,9 @@ async fn get_mcp_overview(State(state): State<SharedState>) -> impl IntoResponse
                     "record_governance_decision",
                     "verify_decision_ledger",
                     "export_oscal_compliance",
-                    "get_framework_spec"
+                    "get_framework_spec",
+                    "get_job",
+                    "cancel_job"
                 ]
             },
             "resources": {
@@ -387,6 +390,28 @@ async fn handle_mcp_request(
                         "inputSchema": {
                             "type": "object",
                             "properties": {}
+                        }
+                    },
+                    {
+                        "name": "get_job",
+                        "description": "Get status, progress, result, error, and logs of a job (only creator or Platform Admin).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "job_id": { "type": "string", "description": "UUID of the job" }
+                            },
+                            "required": ["job_id"]
+                        }
+                    },
+                    {
+                        "name": "cancel_job",
+                        "description": "Cancel a running or queued job (only creator or Platform Admin).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "job_id": { "type": "string", "description": "UUID of the job" }
+                            },
+                            "required": ["job_id"]
                         }
                     }
                 ]
@@ -859,6 +884,82 @@ async fn handle_mcp_request(
                             }
                         ]
                     })
+                }
+
+                "get_job" => {
+                    let job_id_str = args.get("job_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if let Ok(u) = Uuid::parse_str(job_id_str) {
+                        if let Some(repo) = &state.repository {
+                            match crate::jobs::get_job(repo, u) {
+                                Ok(Some(job)) if job.created_by.eq_ignore_ascii_case(&caller.eppn)
+                                    || crate::service::admin::require_platform_admin(&caller, &state).is_ok() => {
+                                    json!({
+                                        "content": [{
+                                            "type": "text",
+                                            "text": serde_json::to_string_pretty(&job).unwrap_or_default()
+                                        }]
+                                    })
+                                }
+                                _ => json!({
+                                    "isError": true,
+                                    "content": [{ "type": "text", "text": "Job not found" }]
+                                }),
+                            }
+                        } else {
+                            json!({
+                                "isError": true,
+                                "content": [{ "type": "text", "text": "Jobs need PostgreSQL" }]
+                            })
+                        }
+                    } else {
+                        json!({
+                            "isError": true,
+                            "content": [{ "type": "text", "text": "Job not found" }]
+                        })
+                    }
+                }
+
+                "cancel_job" => {
+                    let job_id_str = args.get("job_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if let Ok(u) = Uuid::parse_str(job_id_str) {
+                        if let Some(repo) = &state.repository {
+                            match crate::jobs::get_job(repo, u) {
+                                Ok(Some(job)) if job.created_by.eq_ignore_ascii_case(&caller.eppn)
+                                    || crate::service::admin::require_platform_admin(&caller, &state).is_ok() => {
+                                    match crate::jobs::cancel_job(repo, u) {
+                                        Ok(Some(updated)) => json!({
+                                            "content": [{
+                                                "type": "text",
+                                                "text": serde_json::to_string_pretty(&updated).unwrap_or_default()
+                                            }]
+                                        }),
+                                        Ok(None) => json!({
+                                            "isError": true,
+                                            "content": [{ "type": "text", "text": "Job not found" }]
+                                        }),
+                                        Err(e) => json!({
+                                            "isError": true,
+                                            "content": [{ "type": "text", "text": e.to_string() }]
+                                        }),
+                                    }
+                                }
+                                _ => json!({
+                                    "isError": true,
+                                    "content": [{ "type": "text", "text": "Job not found" }]
+                                }),
+                            }
+                        } else {
+                            json!({
+                                "isError": true,
+                                "content": [{ "type": "text", "text": "Jobs need PostgreSQL" }]
+                            })
+                        }
+                    } else {
+                        json!({
+                            "isError": true,
+                            "content": [{ "type": "text", "text": "Job not found" }]
+                        })
+                    }
                 }
 
                 _ => json!({

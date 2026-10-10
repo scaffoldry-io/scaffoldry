@@ -217,6 +217,41 @@ export function Overview() {
             </span>
           </div>
         </div>
+
+        {/* JOBS TELEMETRY CARD */}
+        {data.jobs && (
+          <div
+            data-testid="admin-overview-jobs-card"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Jobs &amp; Async Queue
+              </span>
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20" />
+            </div>
+            <div className="space-y-2 mt-4 text-xs">
+              <div className="flex justify-between items-center py-1 border-b border-slate-100 dark:border-slate-800/60">
+                <span className="text-slate-600 dark:text-slate-400">Queue Depth</span>
+                <span className="font-mono font-semibold text-slate-900 dark:text-slate-100" data-testid="overview-queue-depth">
+                  {data.jobs.queue_depth}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-slate-100 dark:border-slate-800/60">
+                <span className="text-slate-600 dark:text-slate-400">Oldest Queued Age</span>
+                <span className="font-mono font-medium text-slate-900 dark:text-slate-100" data-testid="overview-oldest-queued-age">
+                  {data.jobs.oldest_queued_age_secs !== null ? `${data.jobs.oldest_queued_age_secs}s` : "None"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <span className="text-slate-600 dark:text-slate-400">Failed (Last 24h)</span>
+                <span className={`font-mono font-semibold ${data.jobs.failed_last_24h > 0 ? "text-rose-600 dark:text-rose-400" : "text-slate-900 dark:text-slate-100"}`} data-testid="overview-failed-24h">
+                  {data.jobs.failed_last_24h}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

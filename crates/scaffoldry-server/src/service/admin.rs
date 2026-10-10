@@ -7,6 +7,10 @@ use scaffoldry_core::ledger::DecisionType;
 
 pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/admin/overview"),
+    ("GET", "/admin/jobs"),
+    ("GET", "/admin/jobs/{id}"),
+    ("POST", "/admin/jobs/{id}/cancel"),
+    ("POST", "/admin/jobs/{id}/retry"),
 ];
 
 pub fn require_platform_admin(caller: &AuthUser, state: &SharedState) -> Result<(), ServiceError> {

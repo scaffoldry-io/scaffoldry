@@ -48,11 +48,13 @@ pub fn api_router(state: SharedState) -> Router {
             crate::guard::require_scim_credential,
         ));
     let mcp_root = mcp::router().with_state(state.clone());
-    let discovery_routes = discovery::router().with_state(state);
+    let discovery_routes = discovery::router().with_state(state.clone());
+    let admin_root = admin::router().with_state(state);
 
     Router::new()
         .route("/healthz", get(health_check))
         .merge(discovery_routes)
+        .merge(admin_root)
         .nest("/api/v1", api_v1)
         .nest("/api", mcp_root)
         .nest("/scim/v2", scim_v2)

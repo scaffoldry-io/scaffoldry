@@ -659,9 +659,10 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"overview" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
+  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
     if (typeof window !== "undefined") {
       const p = window.location.pathname;
+      if (p === "/admin/jobs") return "jobs";
       if (p === "/admin/org") return "org";
       if (p === "/admin/policy") return "policy";
       if (p === "/admin/ledger") return "ledger";
@@ -2052,6 +2053,25 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                     </svg>
                     {navRailExpanded && <span>Overview</span>}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminTab("jobs");
+                      navigateTo("/admin/jobs");
+                    }}
+                    data-testid="admin-jobs-tab-btn"
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "jobs"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                    {navRailExpanded && <span>Jobs Queue</span>}
                   </button>
 
                   {activePersona.affiliation === "central_admin" && (

@@ -43,7 +43,7 @@ async fn send_req(
 
 #[test]
 fn test_decision_types_properties_and_pinned_hashes() {
-    assert_eq!(DecisionType::ALL.len(), 21);
+    assert_eq!(DecisionType::ALL.len(), 22);
 
     for &dt in DecisionType::ALL {
         let s = dt.as_str();

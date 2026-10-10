@@ -28,7 +28,7 @@ Nothing here adds a feature. It makes the server refuse what it cannot prove, st
 | 12 | [foundation.md](foundation.md) | 9 | A user mints an agent token in the settings pane. A Platform Admin edits settings in `/admin` | **COMPLETED** |
 | 13 | [ux-standards.md](ux-standards.md) | 1 | One component kit and a review checklist | **COMPLETED** |
 | 14 | [jobs.md](jobs.md) | 1 | A durable job queue on PostgreSQL | **COMPLETED** |
-| 15 | [jobs.md](jobs.md) | 2 | A scheduler, a Jobs panel, and job tools for agents | Open |
+| 15 | [jobs.md](jobs.md) | 2 | A scheduler, a Jobs panel, and job tools for agents | **COMPLETED** |
 
 ### Wave 1 — the governed core
 

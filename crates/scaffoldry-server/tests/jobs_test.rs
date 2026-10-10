@@ -314,3 +314,272 @@ fn a_payload_or_result_with_a_token_or_secret_key_is_refused() {
     assert_eq!(job.attempts, 1, "a refused result is permanent");
     assert!(job.error.unwrap().contains("token"));
 }
+
+
+// Phase 2 Tests
+use scaffoldry_core::ledger::DecisionType;
+use scaffoldry_server::service::admin::ADMIN_ROUTES;
+use scaffoldry_server::jobs::{register_schedule, scheduler_tick, retry_job};
+
+#[test]
+fn test_phase2_decision_type_job_cancelled() {
+    assert!(DecisionType::ALL.contains(&DecisionType::JobCancelled));
+    assert_eq!(DecisionType::JobCancelled.as_str(), "JobCancelled");
+    assert_eq!(DecisionType::parse("JobCancelled"), Some(DecisionType::JobCancelled));
+}
+
+#[test]
+fn test_phase2_admin_routes_listed_and_guarded() {
+    let routes = [
+        ("GET", "/admin/jobs"),
+        ("GET", "/admin/jobs/{id}"),
+        ("POST", "/admin/jobs/{id}/cancel"),
+        ("POST", "/admin/jobs/{id}/retry"),
+    ];
+
+    for (m, p) in routes {
+        assert!(
+            ADMIN_ROUTES.iter().any(|(rm, rp)| *rm == m && *rp == p),
+            "ADMIN_ROUTES must list {m} {p}"
+        );
+    }
+}
+
+#[test]
+fn test_phase2_schedule_two_simulated_threads_create_exactly_one_job() {
+    let repo = repo();
+    let kind = "t_p2_sched_1".to_string();
+    register_schedule(&repo, &kind, 60).expect("register schedule");
+
+    let k_clone = kind.clone();
+    repo.with_client(move |c| {
+        c.execute(
+            "UPDATE job_schedules SET next_run_at = NOW() - INTERVAL '1 second' WHERE kind = $1",
+            &[&k_clone],
+        )?;
+        c.execute("DELETE FROM jobs WHERE kind = $1", &[&k_clone])?;
+        Ok(())
+    }).unwrap();
+
+    let repo1 = repo.clone();
+    let repo2 = repo.clone();
+    let h1 = std::thread::spawn(move || scheduler_tick(&repo1, &[]));
+    let h2 = std::thread::spawn(move || scheduler_tick(&repo2, &[]));
+
+    let res1 = h1.join().unwrap().unwrap();
+    let res2 = h2.join().unwrap().unwrap();
+
+    assert_eq!(res1 + res2, 1, "only one job should be created across two threads");
+
+    let k_check = kind.clone();
+    let count: i64 = repo.with_client(move |c| {
+        Ok(c.query_one("SELECT COUNT(*) FROM jobs WHERE kind = $1", &[&k_check])?.get(0))
+    }).unwrap();
+    assert_eq!(count, 1, "exactly 1 job exists in database for this schedule");
+}
+
+#[test]
+fn test_phase2_tick_delayed_by_90_seconds_cadence_maintained() {
+    let repo = repo();
+    let kind = "t_p2_sched_2".to_string();
+    register_schedule(&repo, &kind, 60).expect("register schedule");
+
+    let k_clone = kind.clone();
+    repo.with_client(move |c| {
+        c.execute(
+            "UPDATE job_schedules SET next_run_at = NOW() - INTERVAL '90 seconds' WHERE kind = $1",
+            &[&k_clone],
+        )?;
+        c.execute("DELETE FROM jobs WHERE kind = $1", &[&k_clone])?;
+        Ok(())
+    }).unwrap();
+
+    let spawned = scheduler_tick(&repo, &[]).expect("scheduler tick");
+    assert_eq!(spawned, 1, "a tick delayed by 90 seconds creates one job, not two");
+
+    let k_check = kind.clone();
+    let secs_until_next: i64 = repo.with_client(move |c| {
+        Ok(c.query_one(
+            "SELECT EXTRACT(EPOCH FROM (next_run_at - NOW()))::bigint FROM job_schedules WHERE kind = $1",
+            &[&k_check],
+        )?.get(0))
+    }).unwrap();
+
+    assert!(
+        (25..=35).contains(&secs_until_next),
+        "next run must be ~30s in the future on original cadence, got {secs_until_next}s"
+    );
+
+    let second_spawned = scheduler_tick(&repo, &[]).expect("second tick");
+    assert_eq!(second_spawned, 0, "immediate subsequent tick should create 0 jobs");
+}
+
+#[test]
+fn test_phase2_schedules_disabled_stops_it() {
+    let repo = repo();
+    let kind = "t_p2_sched_3".to_string();
+    register_schedule(&repo, &kind, 60).expect("register schedule");
+
+    let k_clone = kind.clone();
+    repo.with_client(move |c| {
+        c.execute(
+            "UPDATE job_schedules SET next_run_at = NOW() - INTERVAL '10 seconds' WHERE kind = $1",
+            &[&k_clone],
+        )?;
+        c.execute("DELETE FROM jobs WHERE kind = $1", &[&k_clone])?;
+        Ok(())
+    }).unwrap();
+
+    let disabled = vec![kind.clone()];
+    let spawned = scheduler_tick(&repo, &disabled).expect("scheduler tick with disabled");
+    assert_eq!(spawned, 0, "disabled schedule must not spawn jobs");
+
+    let k_check = kind.clone();
+    let count: i64 = repo.with_client(move |c| {
+        Ok(c.query_one("SELECT COUNT(*) FROM jobs WHERE kind = $1", &[&k_check])?.get(0))
+    }).unwrap();
+    assert_eq!(count, 0, "no jobs created for disabled kind");
+}
+
+#[tokio::test]
+async fn test_phase2_admin_routes_faculty_is_403() {
+    let repo = repo();
+    let mut server_state = ServerState::new().expect("server state");
+    server_state.repository = Some(Arc::new(repo));
+    let state = Arc::new(server_state);
+
+    let faculty_token = scaffoldry_server::service::identity::issue_test_token_and_user("faculty.curie@state.edu");
+    let app = build_app_with_state(state).expect("app router");
+
+    let admin_paths = [
+        ("GET", "/api/v1/admin/jobs"),
+        ("GET", "/api/v1/admin/jobs/00000000-0000-0000-0000-000000000001"),
+        ("POST", "/api/v1/admin/jobs/00000000-0000-0000-0000-000000000001/cancel"),
+        ("POST", "/api/v1/admin/jobs/00000000-0000-0000-0000-000000000001/retry"),
+    ];
+
+    for (method, uri) in admin_paths {
+        let mut req_builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", format!("Bearer {faculty_token}"));
+        if method == "POST" {
+            req_builder = req_builder.header("content-type", "application/json");
+        }
+        let req = if method == "POST" {
+            req_builder.body(Body::from(r#"{"reason": "Faculty test attempt"}"#)).unwrap()
+        } else {
+            req_builder.body(Body::empty()).unwrap()
+        };
+
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "Faculty caller to {method} {uri} must receive 403 Forbidden"
+        );
+    }
+}
+
+static K_RETRY: &[JobKind] = &[JobKind {
+    name: "t_p2_retry",
+    max_attempts: 1,
+    max_concurrent: 10,
+    run: |_ctx, payload| {
+        if payload["fail"].as_bool().unwrap_or(false) {
+            Err(JobError::Permanent("boom".to_string()))
+        } else {
+            Ok(json!({"ok": true}))
+        }
+    },
+}];
+
+#[test]
+fn test_phase2_retry_failed_job_and_conflict_on_done() {
+    let repo = repo();
+    let runner = JobRunner::start(&repo, K_RETRY, fast(2)).unwrap();
+
+    let fail_id = enqueue(&repo, "t_p2_retry", json!({"fail": true}), "user@scaffoldry.internal", None).unwrap();
+    let fail_job = wait_for(&repo, fail_id, &["failed"]);
+    assert_eq!(fail_job.state, "failed");
+
+    let retried = retry_job(&repo, fail_id).expect("retry failed job");
+    assert_eq!(retried.state, "queued");
+    assert_eq!(retried.attempts, 0);
+
+    let done_id = enqueue(&repo, "t_p2_retry", json!({"fail": false}), "user@scaffoldry.internal", None).unwrap();
+    let done_job = wait_for(&repo, done_id, &["done"]);
+    assert_eq!(done_job.state, "done");
+
+    let conflict = retry_job(&repo, done_id);
+    assert!(
+        matches!(conflict, Err(scaffoldry_server::jobs::JobsError::Conflict(_))),
+        "retry on a done job must return Conflict, got {conflict:?}"
+    );
+
+    runner.stop();
+}
+
+#[tokio::test]
+async fn test_phase2_mcp_get_job_privacy() {
+    let repo = repo();
+    let mut server_state = ServerState::new().expect("server state");
+    server_state.repository = Some(Arc::new(repo.clone()));
+    let state = Arc::new(server_state);
+    let app = build_app_with_state(state).expect("app router");
+
+    let alice_token = scaffoldry_server::service::identity::issue_test_token_and_user("alice@scaffoldry.internal");
+    let bob_token = scaffoldry_server::service::identity::issue_test_token_and_user("bob@scaffoldry.internal");
+
+    let alice_job_id = enqueue(&repo, "t_p2_mcp", json!({}), "alice@scaffoldry.internal", None).unwrap();
+
+    let mcp_call = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_job",
+            "arguments": {
+                "job_id": alice_job_id.to_string()
+            }
+        }
+    });
+
+    let req_bob = Request::builder()
+        .method("POST")
+        .uri("/api/v1/mcp")
+        .header("authorization", format!("Bearer {bob_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&mcp_call).unwrap()))
+        .unwrap();
+
+    let resp_bob = app.clone().oneshot(req_bob).await.unwrap();
+    assert_eq!(resp_bob.status(), StatusCode::OK);
+    let bytes = resp_bob.into_body().collect().await.unwrap().to_bytes();
+    let body_bob: Value = serde_json::from_slice(&bytes).unwrap();
+    let result_bob = &body_bob["result"];
+    assert_eq!(result_bob["isError"], true, "Bob should receive error for Alice's job");
+    assert!(
+        result_bob["content"][0]["text"].as_str().unwrap().contains("not found"),
+        "Error message must state 'not found'"
+    );
+
+    let req_alice = Request::builder()
+        .method("POST")
+        .uri("/api/v1/mcp")
+        .header("authorization", format!("Bearer {alice_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&mcp_call).unwrap()))
+        .unwrap();
+
+    let resp_alice = app.clone().oneshot(req_alice).await.unwrap();
+    assert_eq!(resp_alice.status(), StatusCode::OK);
+    let bytes_alice = resp_alice.into_body().collect().await.unwrap().to_bytes();
+    let body_alice: Value = serde_json::from_slice(&bytes_alice).unwrap();
+    let result_alice = &body_alice["result"];
+    assert_eq!(result_alice["isError"], Value::Null, "Alice should successfully see her job");
+    assert!(
+        result_alice["content"][0]["text"].as_str().unwrap().contains(&alice_job_id.to_string()),
+        "Job details returned to creator"
+    );
+}
