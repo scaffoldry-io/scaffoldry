@@ -34,6 +34,7 @@ const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_pl
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
+const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_job_schedules.sql");
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
@@ -47,6 +48,8 @@ pub enum RepositoryError {
     Json(#[from] serde_json::Error),
     #[error("Not found: {0}")]
     NotFound(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
 
 type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
@@ -107,7 +110,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 14] = [
+                        let migrations: [(&str, &str); 15] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -122,6 +125,7 @@ impl PostgresRepository {
                             ("0021_positions.sql", SCHEMA_0021),
                             ("0022_record_created_by.sql", SCHEMA_0022),
                             ("0026_jobs.sql", SCHEMA_0026),
+                            ("0044_job_schedules.sql", SCHEMA_0044),
                         ];
 
                         let mut fresh_install = false;

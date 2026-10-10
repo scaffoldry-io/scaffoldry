@@ -25,6 +25,42 @@ export interface AdminOverviewData {
     entry_count: number;
     head_hash: string;
   };
+  jobs?: {
+    queue_depth: number;
+    oldest_queued_age_secs: number | null;
+    failed_last_24h: number;
+  };
+}
+
+export interface AdminJobRow {
+  id: string;
+  kind: string;
+  owner: string;
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  progress: number | null;
+  attempts: number;
+  created: string;
+  age: number;
+  last_log_line: string | null;
+  error?: string | null;
+}
+
+export interface AdminJobsResponse {
+  rows: AdminJobRow[];
+  next_cursor: string | null;
+}
+
+export interface AdminJobDetail extends AdminJobRow {
+  progress_done: number;
+  progress_total: number | null;
+  result?: any;
+  error?: string | null;
+  log: string[];
+  cancel_requested: boolean;
+  created_by: string;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, Workspace } from "./types";
@@ -270,6 +306,35 @@ export const apiClient = {
 
   getAdminOverview: async () => {
     return request<AdminOverviewData>("/admin/overview");
+  },
+
+  getAdminJobs: async (params?: { state?: string; kind?: string; owner?: string; cursor?: string; limit?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.state) sp.set("state", params.state);
+    if (params?.kind) sp.set("kind", params.kind);
+    if (params?.owner) sp.set("owner", params.owner);
+    if (params?.cursor) sp.set("cursor", params.cursor);
+    if (params?.limit) sp.set("limit", String(params.limit));
+    const qs = sp.toString() ? `?${sp.toString()}` : "";
+    return request<AdminJobsResponse>(`/admin/jobs${qs}`);
+  },
+
+  getAdminJob: async (id: string) => {
+    return request<AdminJobDetail>(`/admin/jobs/${id}`);
+  },
+
+  cancelAdminJob: async (id: string, reason: string) => {
+    return request<AdminJobDetail>(`/admin/jobs/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  retryAdminJob: async (id: string, reason: string) => {
+    return request<AdminJobDetail>(`/admin/jobs/${id}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
   },
 
   impersonateUser: async (target_eppn: string) => {

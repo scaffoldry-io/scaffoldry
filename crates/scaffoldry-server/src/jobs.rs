@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 /// Serializes claims, so a per-kind cap is exact when several workers claim at once.
 const CLAIM_LOCK: i64 = 742_200;
+pub const SCHEDULER_LOCK: i64 = 742_201;
 const LOG_LINES: usize = 200;
 /// A job never carries these. It stores ids and counts.
 const FORBIDDEN_KEYS: [&str; 3] = ["token", "secret", "password"];
@@ -35,6 +36,10 @@ pub enum JobsError {
     Repository(#[from] RepositoryError),
     #[error("Refused: {0}")]
     Refused(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
+    #[error("Not found: {0}")]
+    NotFound(String),
 }
 
 /// What a handler returns when it does not succeed.
@@ -73,6 +78,7 @@ pub struct JobConfig {
     pub poll_ms: u64,
     /// Delay before the first, second, and third retry.
     pub backoff_secs: [i64; 3],
+    pub scheduler_secs: u64,
 }
 
 impl Default for JobConfig {
@@ -88,6 +94,7 @@ impl Default for JobConfig {
             recovery_secs: 30,
             poll_ms: 500,
             backoff_secs: [30, 300, 1800],
+            scheduler_secs: 15,
         }
     }
 }
@@ -226,6 +233,232 @@ pub fn cancel_job(repo: &PostgresRepository, id: Uuid) -> Result<Option<Job>, Jo
             &[&id],
         )?;
         Ok(row.map(|r| job_from_row(&r)))
+    })?)
+}
+
+
+/// Registers a recurring schedule. Inserts at boot if missing, preserving next_run_at if already present.
+pub fn register_schedule(
+    repo: &PostgresRepository,
+    kind: &str,
+    every_seconds: i32,
+) -> Result<(), JobsError> {
+    let kind = kind.to_string();
+    repo.with_client(move |c| {
+        c.execute(
+            "INSERT INTO job_schedules (kind, every_seconds, next_run_at, enabled) \
+             VALUES ($1, $2, NOW(), TRUE) \
+             ON CONFLICT (kind) DO UPDATE SET every_seconds = EXCLUDED.every_seconds \
+             WHERE job_schedules.every_seconds != EXCLUDED.every_seconds",
+            &[&kind, &every_seconds],
+        )?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
+pub fn scheduler_tick_client(
+    client: &mut Client,
+    disabled_kinds: &[String],
+) -> Result<usize, JobsError> {
+    let mut tx = client.transaction()?;
+    let locked: bool = tx
+        .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&SCHEDULER_LOCK])?
+        .get(0);
+    if !locked {
+        tx.rollback()?;
+        return Ok(0);
+    }
+
+    let rows = tx.query(
+        "SELECT kind, every_seconds, next_run_at FROM job_schedules \
+         WHERE enabled = TRUE AND next_run_at <= NOW() \
+         ORDER BY next_run_at FOR UPDATE",
+        &[],
+    )?;
+
+    let now = chrono::Utc::now();
+    let mut spawned = 0;
+
+    for row in rows {
+        let kind: String = row.get(0);
+        let every_seconds: i32 = row.get(1);
+        let old_next_run: chrono::DateTime<chrono::Utc> = row.get(2);
+
+        let elapsed_secs = (now - old_next_run).num_seconds();
+        let every_secs = every_seconds as i64;
+        let steps = if elapsed_secs < 0 {
+            1
+        } else {
+            (elapsed_secs / every_secs) + 1
+        };
+        let new_next_run = old_next_run + chrono::Duration::seconds(steps * every_secs);
+
+        tx.execute(
+            "UPDATE job_schedules SET next_run_at = $1 WHERE kind = $2",
+            &[&new_next_run, &kind],
+        )?;
+
+        if disabled_kinds.contains(&kind) {
+            continue;
+        }
+
+        let job_id = Uuid::new_v4();
+        let inserted = tx.query_opt(
+            "INSERT INTO jobs (id, kind, payload, created_by, dedupe_key) \
+             VALUES ($1, $2, '{}'::jsonb, 'scheduler@scaffoldry.internal', $2) \
+             ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('queued', 'running') \
+             DO NOTHING RETURNING id",
+            &[&job_id, &kind],
+        )?;
+        if inserted.is_some() {
+            spawned += 1;
+        }
+    }
+
+    tx.commit()?;
+    Ok(spawned)
+}
+
+pub fn scheduler_tick(
+    repo: &PostgresRepository,
+    disabled_kinds: &[String],
+) -> Result<usize, JobsError> {
+    let mut client = repo.dedicated_client()?;
+    scheduler_tick_client(&mut client, disabled_kinds)
+}
+
+pub fn retry_job(repo: &PostgresRepository, id: Uuid) -> Result<Job, JobsError> {
+    repo.with_client(move |c| {
+        let existing = c.query_opt(
+            &format!("SELECT {JOB_COLUMNS} FROM jobs WHERE id = $1 FOR UPDATE"),
+            &[&id],
+        )?;
+        let Some(row) = existing else {
+            return Err(RepositoryError::NotFound(format!("Job {id} not found")));
+        };
+        let job = job_from_row(&row);
+        if job.state != "failed" {
+            return Err(RepositoryError::Conflict(format!(
+                "Job {id} is in state '{}' and cannot be retried",
+                job.state
+            )));
+        }
+        let updated = c.query_one(
+            &format!(
+                "UPDATE jobs SET state = 'queued', attempts = 0, error = NULL, \
+                        finished_at = NULL, run_after = NOW() \
+                 WHERE id = $1 RETURNING {JOB_COLUMNS}"
+            ),
+            &[&id],
+        )?;
+        Ok(job_from_row(&updated))
+    })
+    .map_err(|e| match e {
+        RepositoryError::Conflict(msg) => JobsError::Conflict(msg),
+        RepositoryError::NotFound(msg) => JobsError::NotFound(msg),
+        other => JobsError::Repository(other),
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminJobRow {
+    pub id: Uuid,
+    pub kind: String,
+    pub owner: String,
+    pub state: String,
+    pub progress: Option<f64>,
+    pub attempts: i32,
+    pub created: String,
+    pub age: i64,
+    pub last_log_line: Option<String>,
+}
+
+pub fn list_admin_jobs(
+    repo: &PostgresRepository,
+    state_filter: Option<&str>,
+    kind_filter: Option<&str>,
+    owner_filter: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<AdminJobRow>, JobsError> {
+    let state_filter = state_filter.map(str::to_string);
+    let kind_filter = kind_filter.map(str::to_string);
+    let owner_filter = owner_filter.map(str::to_string);
+    let limit = limit as i64;
+    let offset = offset as i64;
+
+    Ok(repo.with_client(move |c| {
+        let rows = c.query(
+            "SELECT id, kind, created_by, state, progress_done, progress_total, attempts, \
+                    created_at::text, EXTRACT(EPOCH FROM (NOW() - created_at))::bigint, log \
+             FROM jobs \
+             WHERE ($1::text IS NULL OR state = $1) \
+               AND ($2::text IS NULL OR kind = $2) \
+               AND ($3::text IS NULL OR created_by = $3) \
+             ORDER BY created_at DESC, id DESC \
+             LIMIT $4 OFFSET $5",
+            &[&state_filter, &kind_filter, &owner_filter, &limit, &offset],
+        )?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let done: i64 = r.get(4);
+            let total: Option<i64> = r.get(5);
+            let progress = total.filter(|&t| t > 0).map(|t| (done as f64 / t as f64) * 100.0);
+            let log_val: Value = r.get(9);
+            let last_log_line = log_val
+                .as_array()
+                .and_then(|arr| arr.last())
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            out.push(AdminJobRow {
+                id: r.get(0),
+                kind: r.get(1),
+                owner: r.get(2),
+                state: r.get(3),
+                progress,
+                attempts: r.get(6),
+                created: r.get(7),
+                age: r.get(8),
+                last_log_line,
+            });
+        }
+        Ok(out)
+    })?)
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct JobsOverview {
+    pub queue_depth: i64,
+    pub oldest_queued_age_secs: Option<i64>,
+    pub failed_last_24h: i64,
+}
+
+pub fn get_jobs_overview(repo: &PostgresRepository) -> Result<JobsOverview, JobsError> {
+    Ok(repo.with_client(|c| {
+        let q_row = c.query_one(
+            "SELECT COUNT(*)::bigint, \
+                    EXTRACT(EPOCH FROM (NOW() - MIN(created_at)))::bigint \
+             FROM jobs WHERE state = 'queued'",
+            &[],
+        )?;
+        let queue_depth: i64 = q_row.get(0);
+        let oldest_queued_age_secs: Option<i64> = q_row.get(1);
+
+        let f_row = c.query_one(
+            "SELECT COUNT(*)::bigint FROM jobs \
+             WHERE state = 'failed' AND finished_at >= NOW() - INTERVAL '24 hours'",
+            &[],
+        )?;
+        let failed_last_24h: i64 = f_row.get(0);
+
+        Ok(JobsOverview {
+            queue_depth,
+            oldest_queued_age_secs,
+            failed_last_24h,
+        })
     })?)
 }
 
@@ -518,6 +751,42 @@ impl JobRunner {
                 .map_err(|e| JobsError::Refused(format!("could not start a job worker: {e}")))?;
             threads.push(handle);
         }
+        let (s_repo, s_cfg, s_stop) = (repo.clone(), cfg.clone(), stop.clone());
+        let sched_handle = std::thread::Builder::new()
+            .name("scaffoldry-job-scheduler".to_string())
+            .spawn(move || {
+                let mut client = match s_repo.dedicated_client() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Warning: job scheduler could not connect: {e}");
+                        return;
+                    }
+                };
+                let poll = Duration::from_secs(s_cfg.scheduler_secs);
+                while !s_stop.load(Ordering::SeqCst) {
+                    let disabled: Vec<String> = s_repo
+                        .get_platform_settings()
+                        .ok()
+                        .and_then(|s| s.get("jobs.schedules_disabled").cloned())
+                        .and_then(|v| v.as_array().cloned())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if let Err(e) = scheduler_tick_client(&mut client, &disabled) {
+                        eprintln!("Warning: job scheduler tick failed: {e}");
+                    }
+                    let start = Instant::now();
+                    while !s_stop.load(Ordering::SeqCst) && Instant::now().duration_since(start) < poll {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                }
+            })
+            .map_err(|e| JobsError::Refused(format!("could not start job scheduler: {e}")))?;
+        threads.push(sched_handle);
         Ok(Self { stop, threads })
     }
 

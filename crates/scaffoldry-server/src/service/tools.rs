@@ -125,6 +125,22 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         run: run_get_framework_spec,
     },
+    Tool {
+        name: "get_job",
+        description: "Get status, progress, result, error, and logs of a job (only creator or Platform Admin).",
+        input_schema: schema_get_job,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_get_job,
+    },
+    Tool {
+        name: "cancel_job",
+        description: "Cancel a running or queued job (only creator or Platform Admin).",
+        input_schema: schema_cancel_job,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_cancel_job,
+    },
 ];
 
 /// The one gate. Finds the tool, checks its scope, checks the arguments, and runs it.
@@ -486,4 +502,67 @@ fn run_export_oscal_compliance(_caller: &AuthUser, _args: Value, state: &SharedS
 
 fn run_get_framework_spec(_caller: &AuthUser, _args: Value, _state: &SharedState) -> Result<Value, ServiceError> {
     Ok(crate::routes::framework::build_framework_spec_json())
+}
+
+fn schema_get_job() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "job_id": { "type": "string", "description": "UUID of the job" }
+        },
+        "required": ["job_id"]
+    })
+}
+
+fn schema_cancel_job() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "job_id": { "type": "string", "description": "UUID of the job" }
+        },
+        "required": ["job_id"]
+    })
+}
+
+fn run_get_job(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let job_id_str = required_str(&args, "job_id")?;
+    let uuid = uuid::Uuid::parse_str(job_id_str)
+        .map_err(|_| ServiceError::NotFound("Job not found".to_string()))?;
+    let repo = state
+        .repository
+        .as_deref()
+        .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
+    let job = crate::jobs::get_job(repo, uuid)
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .ok_or_else(|| ServiceError::NotFound("Job not found".to_string()))?;
+    if job.created_by.eq_ignore_ascii_case(&caller.eppn)
+        || crate::service::admin::require_platform_admin(caller, state).is_ok()
+    {
+        serde_json::to_value(&job).map_err(|e| ServiceError::Internal(e.to_string()))
+    } else {
+        Err(ServiceError::NotFound("Job not found".to_string()))
+    }
+}
+
+fn run_cancel_job(caller: &AuthUser, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let job_id_str = required_str(&args, "job_id")?;
+    let uuid = uuid::Uuid::parse_str(job_id_str)
+        .map_err(|_| ServiceError::NotFound("Job not found".to_string()))?;
+    let repo = state
+        .repository
+        .as_deref()
+        .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
+    let job = crate::jobs::get_job(repo, uuid)
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .ok_or_else(|| ServiceError::NotFound("Job not found".to_string()))?;
+    if job.created_by.eq_ignore_ascii_case(&caller.eppn)
+        || crate::service::admin::require_platform_admin(caller, state).is_ok()
+    {
+        let updated = crate::jobs::cancel_job(repo, uuid)
+            .map_err(|e| ServiceError::Internal(e.to_string()))?
+            .ok_or_else(|| ServiceError::NotFound("Job not found".to_string()))?;
+        serde_json::to_value(&updated).map_err(|e| ServiceError::Internal(e.to_string()))
+    } else {
+        Err(ServiceError::NotFound("Job not found".to_string()))
+    }
 }

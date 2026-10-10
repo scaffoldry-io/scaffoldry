@@ -21,6 +21,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "process.stale_days",
     "mcp.disabled_tools",
     "pages.disabled",
+    "jobs.schedules_disabled",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -40,7 +41,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
         "tokens.agent_enabled" => value.is_boolean(),
-        "mcp.disabled_tools" | "pages.disabled" => {
+        "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
         _ => false,

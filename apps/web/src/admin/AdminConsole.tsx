@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Overview } from "./Overview";
+import { Jobs } from "./Jobs";
 import { People } from "./People";
 import { AdminConsoleView } from "../AdminConsoleView";
 import { apiClient } from "../api";
@@ -11,8 +12,8 @@ export interface AdminConsoleProps {
   realAdmin?: Persona | null;
   handleStopImpersonation?: () => void;
   navigateTo?: (path: string) => void;
-  adminTab?: "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings" | "people";
-  setAdminTab?: (tab: "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings" | "people") => void;
+  adminTab?: "overview" | "jobs" | "people" | "org" | "policy" | "ledger" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -49,7 +50,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "org" | "policy" | "ledger" | "impersonation" | "settings" | "people"
+    "overview" | "jobs" | "people" | "org" | "policy" | "ledger" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -112,6 +113,8 @@ export function AdminConsole({
     <div className="space-y-6" data-testid="admin-console-shell">
       {currentTab === "overview" ? (
         <Overview />
+      ) : currentTab === "jobs" ? (
+        <Jobs />
       ) : currentTab === "people" ? (
         <People
           onImpersonate={(row) =>

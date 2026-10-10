@@ -61,6 +61,7 @@ pub enum DecisionType {
     ProcessDefinitionChanged,
     ProcessInstanceReassigned,
     ProcessInstanceCancelled,
+    JobCancelled,
 }
 
 impl DecisionType {
@@ -86,6 +87,7 @@ impl DecisionType {
         DecisionType::ProcessDefinitionChanged,
         DecisionType::ProcessInstanceReassigned,
         DecisionType::ProcessInstanceCancelled,
+        DecisionType::JobCancelled,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -111,6 +113,7 @@ impl DecisionType {
             DecisionType::ProcessDefinitionChanged => "ProcessDefinitionChanged",
             DecisionType::ProcessInstanceReassigned => "ProcessInstanceReassigned",
             DecisionType::ProcessInstanceCancelled => "ProcessInstanceCancelled",
+            DecisionType::JobCancelled => "JobCancelled",
         }
     }
 

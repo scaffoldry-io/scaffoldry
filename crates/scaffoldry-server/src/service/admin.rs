@@ -7,6 +7,10 @@ use scaffoldry_core::ledger::DecisionType;
 
 pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/admin/overview"),
+    ("GET", "/admin/jobs"),
+    ("GET", "/admin/jobs/{id}"),
+    ("POST", "/admin/jobs/{id}/cancel"),
+    ("POST", "/admin/jobs/{id}/retry"),
     ("GET", "/admin/users"),
     ("GET", "/admin/users/{id}"),
     ("POST", "/admin/users"),
