@@ -36,6 +36,7 @@ const SCHEMA_0014: &str = include_str!("../../scaffoldry-core/migrations/0014_re
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
+const SCHEMA_0027: &str = include_str!("../../scaffoldry-core/migrations/0027_record_history.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_job_schedules.sql");
 
@@ -68,6 +69,161 @@ pub const FIRST_PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_fe
      FROM dataset_records \
      WHERE app_slug = $1 AND table_id = $2 \
      ORDER BY created_at, id LIMIT $3";
+
+/// Who wrote a record, and how. Every write takes one, so a change cannot go unattributed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorKind {
+    User,
+    Agent,
+    Automation,
+    Import,
+    Sync,
+    System,
+    Guest,
+}
+
+impl ActorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Agent => "agent",
+            Self::Automation => "automation",
+            Self::Import => "import",
+            Self::Sync => "sync",
+            Self::System => "system",
+            Self::Guest => "guest",
+        }
+    }
+}
+
+/// The attribution of one record write. The history row is built from it, in the same
+/// transaction as the write.
+#[derive(Debug, Clone)]
+pub struct WriteCtx {
+    pub actor: String,
+    pub kind: ActorKind,
+    pub token_label: Option<String>,
+    /// Groups the records written by one action: a paste, an import batch, an automation run.
+    pub batch_id: uuid::Uuid,
+    /// Fields a person cannot write. A computed value follows from the others, so it is not recorded.
+    pub computed_fields: Vec<String>,
+    /// Set when this write undoes another batch.
+    pub reverts_batch: Option<uuid::Uuid>,
+}
+
+impl WriteCtx {
+    pub fn new(actor: impl Into<String>, kind: ActorKind) -> Self {
+        Self {
+            actor: actor.into(),
+            kind,
+            token_label: None,
+            batch_id: uuid::Uuid::new_v4(),
+            computed_fields: Vec::new(),
+            reverts_batch: None,
+        }
+    }
+
+    /// A write by the platform itself, such as a fixture or a repair.
+    pub fn system(actor: &str) -> Self {
+        Self::new(actor, ActorKind::System)
+    }
+}
+
+/// One row of `record_history`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HistoryEntry {
+    pub id: i64,
+    pub app_slug: String,
+    pub table_id: String,
+    pub record_id: String,
+    pub version: i32,
+    pub action: String,
+    pub changes: Value,
+    pub actor: String,
+    pub actor_kind: String,
+    pub token_label: Option<String>,
+    pub batch_id: String,
+    pub reverts_batch: Option<String>,
+    pub proposal_id: Option<String>,
+    pub at: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HistoryFilter {
+    pub record_id: Option<String>,
+    pub table_id: Option<String>,
+    pub actor: Option<String>,
+    pub kind: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// The fields that differ, as `{ field: { old, new } }`. A field missing on one side has no `old`
+/// or no `new`. Keys that start with `_` belong to the platform, and computed fields follow from
+/// the rest, so neither is recorded.
+pub fn diff_fields(old: Option<&Value>, new: Option<&Value>, computed: &[String]) -> serde_json::Map<String, Value> {
+    let empty = serde_json::Map::new();
+    let (is_create, is_delete) = (old.is_none(), new.is_none());
+    let old = old.and_then(|v| v.as_object()).unwrap_or(&empty);
+    let new = new.and_then(|v| v.as_object()).unwrap_or(&empty);
+    let mut keys: Vec<&String> = old.keys().chain(new.keys()).collect();
+    keys.sort();
+    keys.dedup();
+    let mut out = serde_json::Map::new();
+    for key in keys {
+        if key.starts_with('_') || computed.iter().any(|c| c == key) {
+            continue;
+        }
+        let (o, n) = (old.get(key), new.get(key));
+        if o == n {
+            continue;
+        }
+        let mut change = serde_json::Map::new();
+        if !is_create {
+            change.insert("old".to_string(), o.cloned().unwrap_or(Value::Null));
+        }
+        if !is_delete {
+            change.insert("new".to_string(), n.cloned().unwrap_or(Value::Null));
+        }
+        out.insert(key.clone(), Value::Object(change));
+    }
+    out
+}
+
+/// What a history row says about a record: where it is, which version, and what was done.
+struct Touched<'a> {
+    app_slug: &'a str,
+    table_id: &'a str,
+    record_id: &'a str,
+    version: i32,
+    action: &'a str,
+}
+
+fn write_history(
+    tx: &mut postgres::Transaction<'_>,
+    at: Touched<'_>,
+    changes: &serde_json::Map<String, Value>,
+    ctx: &WriteCtx,
+) -> Result<(), postgres::Error> {
+    tx.execute(
+        "INSERT INTO record_history (app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, batch_id, reverts_batch) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        &[
+            &at.app_slug,
+            &at.table_id,
+            &at.record_id,
+            &at.version,
+            &at.action,
+            &Value::Object(changes.clone()),
+            &ctx.actor,
+            &ctx.kind.as_str(),
+            &ctx.token_label,
+            &ctx.batch_id,
+            &ctx.reverts_batch,
+        ],
+    )?;
+    Ok(())
+}
 
 /// Where a page after a cursor starts. `key` is the sort value of the last row, when sorted.
 #[derive(Debug, Clone)]
@@ -267,7 +423,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 18] = [
+                        let migrations: [(&str, &str); 19] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -286,6 +442,7 @@ impl PostgresRepository {
                             ("0023_workspace_guards.sql", SCHEMA_0023),
                             ("0026_jobs.sql", SCHEMA_0026),
                             ("0044_job_schedules.sql", SCHEMA_0044),
+                            ("0027_record_history.sql", SCHEMA_0027),
                         ];
 
                         let mut fresh_install = false;
@@ -902,25 +1059,6 @@ impl PostgresRepository {
         })
     }
 
-    /// Deletes a record only if it is still at `expected_version`.
-    pub fn delete_record_checked(&self, app_slug: &str, id: &str, expected_version: i32) -> Result<RecordWrite, RepositoryError> {
-        let (slug, id) = (app_slug.to_string(), id.to_string());
-        self.with_client(move |client| {
-            let deleted = client.query_opt(
-                "DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 AND version = $3 RETURNING version",
-                &[&slug, &id, &expected_version],
-            )?;
-            if let Some(row) = deleted {
-                return Ok(RecordWrite::Saved(row.get(0)));
-            }
-            let current = client.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2", &[&slug, &id])?;
-            Ok(match current {
-                Some(row) => RecordWrite::Conflict(row.get(0)),
-                None => RecordWrite::Missing,
-            })
-        })
-    }
-
     pub fn get_record(&self, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, RepositoryError> {
         let (slug, id) = (app_slug.to_string(), id.to_string());
         self.with_client(move |client| {
@@ -933,41 +1071,131 @@ impl PostgresRepository {
         })
     }
 
-    /// A new record. The version starts at 1.
-    pub fn insert_record(&self, rec: &DatasetRecord) -> Result<(), RepositoryError> {
-        let rec = rec.clone();
+    /// A new record. The version starts at 1. The history row commits with it.
+    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
+        let (rec, ctx) = (rec.clone(), ctx.clone());
         self.with_client(move |client| {
-            client.execute(
+            let mut tx = client.transaction()?;
+            let table = table_id_of(&rec.data);
+            tx.execute(
                 "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table_id_of(&rec.data)],
+                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
             )?;
+            let changes = diff_fields(None, Some(&rec.data), &ctx.computed_fields);
+            write_history(&mut tx, Touched { app_slug: &rec.app_slug, table_id: &table, record_id: &rec.id, version: 1, action: "create" }, &changes, &ctx)?;
+            tx.commit()?;
             Ok(())
         })
     }
 
-    /// One conditional update. Zero rows means the version moved, or the record is gone.
+    /// One conditional update. A write that changes nothing is skipped. The history row commits
+    /// with the write, or neither does.
     pub fn update_record_checked(
         &self,
         app_slug: &str,
         id: &str,
         data: &Value,
         expected_version: i32,
+        ctx: &WriteCtx,
     ) -> Result<RecordWrite, RepositoryError> {
-        let (slug, id, data) = (app_slug.to_string(), id.to_string(), data.clone());
+        let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
         self.with_client(move |client| {
-            let updated = client.query_opt(
-                "UPDATE dataset_records SET data = $1, table_id = COALESCE(($1::jsonb)->>'_table_id', ''), version = version + 1 \
-                 WHERE app_slug = $2 AND id = $3 AND version = $4 RETURNING version",
-                &[&data, &slug, &id, &expected_version],
-            )?;
-            if let Some(row) = updated {
-                return Ok(RecordWrite::Saved(row.get(0)));
-            }
-            let current = client.query_opt(
-                "SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2",
+            let mut tx = client.transaction()?;
+            let Some(row) = tx.query_opt(
+                "SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 FOR UPDATE",
                 &[&slug, &id],
+            )? else {
+                return Ok(RecordWrite::Missing);
+            };
+            let (old, version): (Value, i32) = (row.get(0), row.get(1));
+            if version != expected_version {
+                return Ok(RecordWrite::Conflict(version));
+            }
+            let changes = diff_fields(Some(&old), Some(&data), &ctx.computed_fields);
+            if changes.is_empty() {
+                return Ok(RecordWrite::Saved(version));
+            }
+            let new_table = table_id_of(&data);
+            let next: i32 = tx
+                .query_one(
+                    "UPDATE dataset_records SET data = $1, table_id = $2, version = version + 1 \
+                     WHERE app_slug = $3 AND id = $4 RETURNING version",
+                    &[&data, &new_table, &slug, &id],
+                )?
+                .get(0);
+            write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
+            tx.commit()?;
+            Ok(RecordWrite::Saved(next))
+        })
+    }
+
+    /// A write by the system, such as an automation. It always applies and still bumps the version,
+    /// unless it changes nothing.
+    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value, ctx: &WriteCtx) -> Result<Option<i32>, RepositoryError> {
+        let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let Some(row) = tx.query_opt(
+                "SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 FOR UPDATE",
+                &[&slug, &id],
+            )? else {
+                return Ok(None);
+            };
+            let (old, version): (Value, i32) = (row.get(0), row.get(1));
+            let changes = diff_fields(Some(&old), Some(&data), &ctx.computed_fields);
+            if changes.is_empty() {
+                return Ok(Some(version));
+            }
+            let new_table = table_id_of(&data);
+            let next: i32 = tx
+                .query_one(
+                    "UPDATE dataset_records SET data = $1, table_id = $2, version = version + 1 \
+                     WHERE app_slug = $3 AND id = $4 RETURNING version",
+                    &[&data, &new_table, &slug, &id],
+                )?
+                .get(0);
+            write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
+            tx.commit()?;
+            Ok(Some(next))
+        })
+    }
+
+    pub fn delete_record(&self, app_slug: &str, id: &str, ctx: &WriteCtx) -> Result<bool, RepositoryError> {
+        let (slug, id, ctx) = (app_slug.to_string(), id.to_string(), ctx.clone());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let Some(row) = tx.query_opt(
+                "DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 RETURNING data, version, table_id",
+                &[&slug, &id],
+            )? else {
+                return Ok(false);
+            };
+            let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+            let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
+            write_history(&mut tx, Touched { app_slug: &slug, table_id: &table, record_id: &id, version, action: "delete" }, &changes, &ctx)?;
+            tx.commit()?;
+            Ok(true)
+        })
+    }
+
+    /// Deletes a record only if it is still at `expected_version`.
+    pub fn delete_record_checked(&self, app_slug: &str, id: &str, expected_version: i32, ctx: &WriteCtx) -> Result<RecordWrite, RepositoryError> {
+        let (slug, id, ctx) = (app_slug.to_string(), id.to_string(), ctx.clone());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let deleted = tx.query_opt(
+                "DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 AND version = $3 RETURNING data, version, table_id",
+                &[&slug, &id, &expected_version],
             )?;
+            if let Some(row) = deleted {
+                let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+                let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
+                write_history(&mut tx, Touched { app_slug: &slug, table_id: &table, record_id: &id, version, action: "delete" }, &changes, &ctx)?;
+                tx.commit()?;
+                return Ok(RecordWrite::Saved(version));
+            }
+            let current = tx.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2", &[&slug, &id])?;
             Ok(match current {
                 Some(row) => RecordWrite::Conflict(row.get(0)),
                 None => RecordWrite::Missing,
@@ -975,42 +1203,83 @@ impl PostgresRepository {
         })
     }
 
-    /// A write by the system, such as an automation. It always applies and still bumps the version.
-    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value) -> Result<Option<i32>, RepositoryError> {
-        let (slug, id, data) = (app_slug.to_string(), id.to_string(), data.clone());
+    /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
+    pub fn upsert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
+        let (rec, ctx) = (rec.clone(), ctx.clone());
         self.with_client(move |client| {
-            let row = client.query_opt(
-                "UPDATE dataset_records SET data = $1, table_id = COALESCE(($1::jsonb)->>'_table_id', ''), version = version + 1 \
-                 WHERE app_slug = $2 AND id = $3 RETURNING version",
-                &[&data, &slug, &id],
-            )?;
-            Ok(row.map(|r| r.get(0)))
-        })
-    }
-
-    pub fn delete_record(&self, app_slug: &str, id: &str) -> Result<bool, RepositoryError> {
-        let (slug, id) = (app_slug.to_string(), id.to_string());
-        self.with_client(move |client| {
-            let n = client.execute("DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2", &[&slug, &id])?;
-            Ok(n > 0)
-        })
-    }
-
-    pub fn upsert_record(&self, rec: &DatasetRecord) -> Result<(), RepositoryError> {
-        let rec = rec.clone();
-        self.with_client(move |client| {
-            client.execute(
-                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) \
-                 ON CONFLICT (id) DO UPDATE SET \
-                    data = EXCLUDED.data, \
-                    ceds_mapping = EXCLUDED.ceds_mapping, \
-                    is_ferpa_sensitive = EXCLUDED.is_ferpa_sensitive, \
-                    table_id = EXCLUDED.table_id, \
-                    version = dataset_records.version + 1",
-                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table_id_of(&rec.data)],
-            )?;
+            let mut tx = client.transaction()?;
+            let before = tx.query_opt("SELECT data FROM dataset_records WHERE id = $1 FOR UPDATE", &[&rec.id])?;
+            let old: Option<Value> = before.map(|r| r.get(0));
+            let table = table_id_of(&rec.data);
+            let version: i32 = tx
+                .query_one(
+                    "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                     ON CONFLICT (id) DO UPDATE SET \
+                        data = EXCLUDED.data, \
+                        ceds_mapping = EXCLUDED.ceds_mapping, \
+                        is_ferpa_sensitive = EXCLUDED.is_ferpa_sensitive, \
+                        table_id = EXCLUDED.table_id, \
+                        version = dataset_records.version + 1 \
+                     RETURNING version",
+                    &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
+                )?
+                .get(0);
+            let changes = diff_fields(old.as_ref(), Some(&rec.data), &ctx.computed_fields);
+            if old.is_none() || !changes.is_empty() {
+                let action = if old.is_none() { "create" } else { "update" };
+                write_history(&mut tx, Touched { app_slug: &rec.app_slug, table_id: &table, record_id: &rec.id, version, action }, &changes, &ctx)?;
+            }
+            tx.commit()?;
             Ok(())
+        })
+    }
+
+    /// History rows, newest first. `before` is the id of the last row of the previous page.
+    pub fn list_history(
+        &self,
+        app_slug: &str,
+        filter: &HistoryFilter,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<HistoryEntry>, RepositoryError> {
+        let (slug, f) = (app_slug.to_string(), filter.clone());
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT id, app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, \
+                        batch_id::text, reverts_batch::text, proposal_id::text, \
+                        to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
+                 FROM record_history WHERE app_slug = $1 \
+                   AND ($2::text IS NULL OR record_id = $2) \
+                   AND ($3::text IS NULL OR table_id = $3) \
+                   AND ($4::text IS NULL OR actor = $4) \
+                   AND ($5::text IS NULL OR actor_kind = $5) \
+                   AND ($6::text IS NULL OR at >= $6::text::timestamptz) \
+                   AND ($7::text IS NULL OR at <= $7::text::timestamptz) \
+                   AND ($8::bigint IS NULL OR id < $8) \
+                 ORDER BY id DESC LIMIT $9",
+                &[&slug, &f.record_id, &f.table_id, &f.actor, &f.kind, &f.from, &f.to, &before, &limit],
+            )?;
+            Ok(rows
+                .iter()
+                .map(|r| HistoryEntry {
+                    id: r.get(0),
+                    app_slug: r.get(1),
+                    table_id: r.get(2),
+                    record_id: r.get(3),
+                    version: r.get(4),
+                    action: r.get(5),
+                    changes: r.get(6),
+                    actor: r.get(7),
+                    actor_kind: r.get(8),
+                    token_label: r.get(9),
+                    batch_id: r.get(10),
+                    reverts_batch: r.get(11),
+                    proposal_id: r.get(12),
+                    at: r.get(13),
+                })
+                .collect())
         })
     }
 

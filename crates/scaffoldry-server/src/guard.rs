@@ -60,6 +60,28 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
     resolve_user(&row.eppn, state)
 }
 
+/// How this request reached the server: an agent token or a person, and the batch the caller
+/// named. A bad batch header is refused, not ignored, so a typo cannot split a paste in two.
+pub fn origin(state: &SharedState, headers: &HeaderMap) -> Result<crate::service::history::Origin, ServiceError> {
+    use crate::repository::ActorKind;
+    let mut origin = crate::service::history::Origin::user();
+    if let Some(row) = bearer_token(headers).and_then(|t| state.get_api_token(&hash_token(t))) {
+        if row.kind == "agent" {
+            origin.kind = ActorKind::Agent;
+            origin.token_label = Some(row.label);
+        }
+    }
+    if let Some(value) = headers.get("x-scaffoldry-batch") {
+        let batch = value
+            .to_str()
+            .ok()
+            .and_then(|v| uuid::Uuid::parse_str(v.trim()).ok())
+            .ok_or_else(|| ServiceError::BadRequest("x-scaffoldry-batch must be a UUID".to_string()))?;
+        origin.batch_id = Some(batch);
+    }
+    Ok(origin)
+}
+
 pub fn unauthorized() -> Response {
     let mut resp = ServiceError::unauthorized("401 Unauthorized: a valid bearer token or session is required").into_pair()
         .into_response();

@@ -55,7 +55,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 32 | [admin-console.md](admin-console.md) | 4 | First part only: `effective_ferpa_sensitive` with an empty label set, and every read of sensitivity goes through it | **COMPLETED** |
 | 33 | [sensitive-content.md](sensitive-content.md) | 1 | Sensitivity categories are settings, with presets for FERPA, PHI, PCI, and PII. Detectors find SSNs and card numbers. A field can carry several categories | **COMPLETED** |
 | 34 | [mcp-apps.md](mcp-apps.md) | 2 | An agent reads and writes records, a page at a time | **COMPLETED** |
-| 35 | [record-history.md](record-history.md) | 1 | Every record change is recorded in the same transaction, with the actor |
+| 35 | [record-history.md](record-history.md) | 1 | Every record change is recorded in the same transaction, with the actor | **COMPLETED** |
 | 36 | [row-scale.md](row-scale.md) | 2 | Sort and filter on an indexed field use the pivot index. Multi-valued fields index one row per value |
 | 37 | [jobs.md](jobs.md) | 3 | Index building and flag recomputation run as jobs, with a visible `building` state |
 | 38 | [mcp-apps.md](mcp-apps.md) | 3 | The app manifest has a published schema, pages, and size limits |

@@ -5,6 +5,7 @@
 //! to this service layer.
 
 pub mod governance;
+pub mod history;
 pub mod organizations;
 pub mod records;
 pub mod access;

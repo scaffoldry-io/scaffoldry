@@ -4,6 +4,7 @@ use scaffoldry_engine::HostRouter;
 
 use crate::service::ServiceError;
 use crate::service::access::{authorize_app, AppAction};
+use crate::service::history::{write_ctx, Origin};
 use crate::state::{AuthUser, DatasetRecord, SharedState};
 use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
@@ -13,6 +14,7 @@ use serde_json::Value;
 
 pub fn create_record(
     caller: &AuthUser,
+    origin: &Origin,
     app_slug: &str,
     data: &Value,
     state: &SharedState,
@@ -72,8 +74,9 @@ pub fn create_record(
         version: 1,
     };
 
+    let ctx = write_ctx(&caller.eppn, origin, app_slug, &record.data, state);
     state
-        .insert_record(&record)
+        .insert_record(&record, &ctx)
         .map_err(|e| ServiceError::Internal(format!("Failed to store the record: {e}")))?;
 
     let mut record_val = record.data.clone();
@@ -123,6 +126,7 @@ pub fn get_record(
 
 pub fn update_record(
     caller: &AuthUser,
+    origin: &Origin,
     app_slug: &str,
     id: &str,
     payload: &Value,
@@ -158,8 +162,9 @@ pub fn update_record(
         map.entry("_table_id".to_string()).or_insert(tid);
     }
 
+    let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
-        .save_record_checked(app_slug, id, &new_data, expected_version)
+        .save_record_checked(app_slug, id, &new_data, expected_version, &ctx)
         .map_err(ServiceError::Internal)?;
     let updated_rec = match (outcome, saved) {
         (crate::repository::RecordWrite::Saved(_), Some(rec)) => rec,
@@ -212,12 +217,18 @@ pub fn update_record(
 
 pub fn delete_record(
     caller: &AuthUser,
+    origin: &Origin,
     app_slug: &str,
     id: &str,
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
-    if state.remove_record(app_slug, id).map_err(ServiceError::Internal)? {
+    let current = state
+        .find_record(app_slug, id)
+        .map_err(ServiceError::Internal)?
+        .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
+    if state.remove_record(app_slug, id, &ctx).map_err(ServiceError::Internal)? {
         Ok(())
     } else {
         Err(ServiceError::NotFound(format!("Record '{id}' not found")))
@@ -227,6 +238,7 @@ pub fn delete_record(
 /// Deletes a record, but only at the version the caller read.
 pub fn delete_record_checked(
     caller: &AuthUser,
+    origin: &Origin,
     app_slug: &str,
     id: &str,
     version: i32,
@@ -234,7 +246,12 @@ pub fn delete_record_checked(
 ) -> Result<(), ServiceError> {
     use crate::repository::RecordWrite;
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
-    match state.remove_record_checked(app_slug, id, version).map_err(ServiceError::Internal)? {
+    let current = state
+        .find_record(app_slug, id)
+        .map_err(ServiceError::Internal)?
+        .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
+    match state.remove_record_checked(app_slug, id, version, &ctx).map_err(ServiceError::Internal)? {
         RecordWrite::Saved(_) => Ok(()),
         RecordWrite::Conflict(current) => Err(ServiceError::StaleVersion {
             message: "Someone else saved this record first. Reload it and try again.".to_string(),
@@ -340,6 +357,26 @@ fn is_viewer(caller: &AuthUser, app_slug: &str, state: &SharedState) -> bool {
 
 /// The fields a caller may not read in one table. Only a workspace viewer is held back, and the
 /// effective flag decides what is sensitive, so a label counts.
+pub(crate) fn hidden_fields_for(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
+    hidden_fields(caller, app_slug, table, fields, state)
+}
+
+/// The fields of a table, or none when the app or table is unknown. For readers that must not fail.
+pub(crate) fn table_fields_lenient(app_slug: &str, table_id: &str, state: &SharedState) -> (Vec<FieldSpec>, String) {
+    table_fields(app_slug, table_id, false, state).unwrap_or_else(|_| (Vec::new(), table_id.to_string()))
+}
+
+/// The fields of a table that follow from others. A history row does not record them.
+pub(crate) fn computed_fields(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
+    use scaffoldry_engine::FieldType::*;
+    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
+    fields
+        .into_iter()
+        .filter(|f| matches!(f.field_type, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime))
+        .map(|f| f.name)
+        .collect()
+}
+
 fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
     if !is_viewer(caller, app_slug, state) {
         return Vec::new();
@@ -461,6 +498,21 @@ pub fn run_automations(
     depth: u8,
     applied_rule_ids: &mut Vec<String>,
 ) {
+    // One run is one batch, including the runs its own writes set off.
+    run_automations_in(uuid::Uuid::new_v4(), state, app_slug, event, record, actor, depth, applied_rule_ids)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_automations_in(
+    batch: uuid::Uuid,
+    state: &SharedState,
+    app_slug: &str,
+    event: TriggerEvent,
+    record: &Value,
+    actor: &Actor<'_>,
+    depth: u8,
+    applied_rule_ids: &mut Vec<String>,
+) {
     if depth >= 3 {
         return;
     }
@@ -541,11 +593,14 @@ pub fn run_automations(
 
     if modified != *record {
         if let Some(record_id) = record.get("id").and_then(|v| v.as_str()) {
-            let _ = state.overwrite_record_data(app_slug, record_id, &modified);
+            let mut ctx = crate::service::history::ctx_for(&actor.identity.eppn, crate::repository::ActorKind::Automation, app_slug, &modified, state);
+            ctx.batch_id = batch;
+            let _ = state.overwrite_record_data(app_slug, record_id, &modified, &ctx);
         }
 
         if let Some(retrigger_event) = scaffoldry_core::workflow::effects_retrigger(&all_effects) {
-            run_automations(
+            run_automations_in(
+                batch,
                 state,
                 app_slug,
                 retrigger_event,

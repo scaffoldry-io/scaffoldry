@@ -160,7 +160,7 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             created_by: None,
             version: 1,
         };
-        c.state.put_record(&rec).unwrap();
+        c.state.put_record(&rec, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
     }
     for i in 0..2 {
         let rec = DatasetRecord {
@@ -173,7 +173,7 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             created_by: None,
             version: 1,
         };
-        c.state.put_record(&rec).unwrap();
+        c.state.put_record(&rec, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
     }
 
     let (status, body) = send(&c.app, "GET", &format!("/api/v1/admin/workspaces?search={ws_id}"), Some(&c.admin), None).await;

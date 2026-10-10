@@ -168,9 +168,15 @@ async fn handle_mcp_request(
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
             // A tool does database work, so it runs off the async threads.
+            let origin = match crate::guard::origin(&state, &headers) {
+                Ok(o) => o,
+                Err(err) => {
+                    return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(tool_error(err.message())), error: None });
+                }
+            };
             let worker_state = state.clone();
             let outcome =
-                tokio::task::spawn_blocking(move || tools::call(&caller, &tool_name, args, &worker_state)).await;
+                tokio::task::spawn_blocking(move || tools::call(&caller, &origin, &tool_name, args, &worker_state)).await;
 
             let result = match outcome {
                 Ok(Ok(value)) => json!({

@@ -1745,7 +1745,7 @@ async fn test_automation_retrigger_loop_guard() {
         created_at: "".to_string(),
         created_by: None,
         version: 1,
-    }).unwrap();
+    }, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
 
     let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
         eppn: "dr.smith@university.edu".to_string(),
@@ -1861,7 +1861,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         created_at: "".to_string(),
         created_by: None,
         version: 1,
-    }).unwrap();
+    }, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
 
     let instance_id = format!("{rule_id}:{rec_id}");
     let initial_instance = scaffoldry_core::ProcessInstance {

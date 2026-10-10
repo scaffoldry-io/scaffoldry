@@ -344,7 +344,8 @@ async fn create_record(
     authorize_app(&user, &slug, AppAction::WriteRecords, &state)
         .map_err(ServiceError::into_pair)?;
 
-    crate::service::records::create_record(&user, &slug, &payload, &state)
+    let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
+    crate::service::records::create_record(&user, &origin, &slug, &payload, &state)
         .map(|rec| (StatusCode::CREATED, Json(rec)))
         .map_err(ServiceError::into_pair)
 }
@@ -376,7 +377,8 @@ async fn update_record(
     authorize_app(&user, &slug, AppAction::WriteRecords, &state)
         .map_err(ServiceError::into_pair)?;
 
-    crate::service::records::update_record(&user, &slug, &id, &payload, &state)
+    let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
+    crate::service::records::update_record(&user, &origin, &slug, &id, &payload, &state)
         .map(Json)
         .map_err(ServiceError::into_pair)
 }
@@ -392,7 +394,8 @@ async fn delete_record(
     authorize_app(&user, &slug, AppAction::WriteRecords, &state)
         .map_err(ServiceError::into_pair)?;
 
-    crate::service::records::delete_record(&user, &slug, &id, &state)
+    let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
+    crate::service::records::delete_record(&user, &origin, &slug, &id, &state)
         .map(|_| StatusCode::NO_CONTENT)
         .map_err(ServiceError::into_pair)
 }

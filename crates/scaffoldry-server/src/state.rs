@@ -570,10 +570,10 @@ impl ServerState {
     }
 
     /// Deletes a record only if it is still at `expected_version`.
-    pub fn remove_record_checked(&self, app_slug: &str, id: &str, expected_version: i32) -> Result<crate::repository::RecordWrite, String> {
+    pub fn remove_record_checked(&self, app_slug: &str, id: &str, expected_version: i32, ctx: &crate::repository::WriteCtx) -> Result<crate::repository::RecordWrite, String> {
         use crate::repository::RecordWrite;
         match self.repository {
-            Some(ref repo) => repo.delete_record_checked(app_slug, id, expected_version).map_err(|e| e.to_string()),
+            Some(ref repo) => repo.delete_record_checked(app_slug, id, expected_version, ctx).map_err(|e| e.to_string()),
             None => {
                 let mut map = self.memory();
                 let Some(list) = map.get_mut(app_slug) else { return Ok(RecordWrite::Missing) };
@@ -601,9 +601,9 @@ impl ServerState {
     }
 
     /// A new record, at version 1.
-    pub fn insert_record(&self, rec: &DatasetRecord) -> Result<(), String> {
+    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), String> {
         match self.repository {
-            Some(ref repo) => repo.insert_record(rec).map_err(|e| e.to_string()),
+            Some(ref repo) => repo.insert_record(rec, ctx).map_err(|e| e.to_string()),
             None => {
                 self.memory().entry(rec.app_slug.clone()).or_default().push(rec.clone());
                 Ok(())
@@ -612,9 +612,9 @@ impl ServerState {
     }
 
     /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
-    pub fn put_record(&self, rec: &DatasetRecord) -> Result<(), String> {
+    pub fn put_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), String> {
         match self.repository {
-            Some(ref repo) => repo.upsert_record(rec).map_err(|e| e.to_string()),
+            Some(ref repo) => repo.upsert_record(rec, ctx).map_err(|e| e.to_string()),
             None => {
                 let mut map = self.memory();
                 let list = map.entry(rec.app_slug.clone()).or_default();
@@ -638,11 +638,12 @@ impl ServerState {
         id: &str,
         data: &Value,
         expected_version: i32,
+        ctx: &crate::repository::WriteCtx,
     ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), String> {
         use crate::repository::RecordWrite;
         let outcome = match self.repository {
             Some(ref repo) => repo
-                .update_record_checked(app_slug, id, data, expected_version)
+                .update_record_checked(app_slug, id, data, expected_version, ctx)
                 .map_err(|e| e.to_string())?,
             None => {
                 let mut map = self.memory();
@@ -662,10 +663,10 @@ impl ServerState {
     }
 
     /// A write by the system, such as an automation. It always applies and still bumps the version.
-    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value) -> Result<bool, String> {
+    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value, ctx: &crate::repository::WriteCtx) -> Result<bool, String> {
         match self.repository {
             Some(ref repo) => repo
-                .overwrite_record_data(app_slug, id, data)
+                .overwrite_record_data(app_slug, id, data, ctx)
                 .map(|v| v.is_some())
                 .map_err(|e| e.to_string()),
             None => {
@@ -682,9 +683,9 @@ impl ServerState {
         }
     }
 
-    pub fn remove_record(&self, app_slug: &str, id: &str) -> Result<bool, String> {
+    pub fn remove_record(&self, app_slug: &str, id: &str, ctx: &crate::repository::WriteCtx) -> Result<bool, String> {
         match self.repository {
-            Some(ref repo) => repo.delete_record(app_slug, id).map_err(|e| e.to_string()),
+            Some(ref repo) => repo.delete_record(app_slug, id, ctx).map_err(|e| e.to_string()),
             None => {
                 let mut map = self.memory();
                 let Some(list) = map.get_mut(app_slug) else { return Ok(false) };
