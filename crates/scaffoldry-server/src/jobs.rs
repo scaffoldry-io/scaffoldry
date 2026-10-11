@@ -71,6 +71,9 @@ pub static JOB_KINDS: &[JobKind] = &[
     JobKind { name: "build_index", max_attempts: 3, max_concurrent: 2, run: crate::index_jobs::build_index },
     JobKind { name: "recompute_flags", max_attempts: 3, max_concurrent: 1, run: crate::index_jobs::recompute_flags },
     JobKind { name: "recalc_owners", max_attempts: 3, max_concurrent: 2, run: crate::calc_jobs::recalc_owners },
+    JobKind { name: "recalc_field", max_attempts: 3, max_concurrent: 2, run: crate::calc_jobs::recalc_field },
+    JobKind { name: "convert_preview", max_attempts: 3, max_concurrent: 2, run: crate::calc_jobs::convert_preview },
+    JobKind { name: "convert_field", max_attempts: 3, max_concurrent: 1, run: crate::calc_jobs::convert_field },
 ];
 
 #[derive(Debug, Clone)]
@@ -584,6 +587,11 @@ pub struct JobCtx {
 }
 
 impl JobCtx {
+    /// The id of the job this context runs.
+    pub fn job_id(&self) -> Uuid {
+        self.id
+    }
+
     fn into_client(self) -> Client {
         self.client.into_inner()
     }

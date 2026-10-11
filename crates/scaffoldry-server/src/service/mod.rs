@@ -19,6 +19,7 @@ pub mod positions;
 pub mod processes;
 pub mod proposals;
 pub mod tools;
+pub mod calc;
 pub mod link_options;
 pub mod members;
 pub mod scope;
@@ -94,6 +95,8 @@ pub enum ServiceError {
     UndoConflict { message: String, conflicts: Vec<Value> },
     /// A rule the app set stops the change, such as a delete while records still link to the record.
     ConstraintViolated(String),
+    /// A filter or sort names a field whose values are being calculated again.
+    Calculating(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
     FieldHidden { message: String, reason: String, remedy: String },
     /// A write names fields the person may not change.
@@ -137,7 +140,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -154,6 +157,7 @@ impl ServiceError {
             Self::PositionFull(_) => "position_full",
             Self::TooLarge(_) => "too_large",
             Self::IndexBuilding(_) => "index_building",
+            Self::Calculating(_) => "calculating",
             Self::ConstraintViolated(_) => "constraint_violated",
             Self::FieldHidden { .. } => "field_hidden",
             Self::FieldReadOnly { .. } => "field_read_only",
@@ -171,6 +175,7 @@ impl ServiceError {
             | Self::PositionFull(msg)
             | Self::TooLarge(msg)
             | Self::IndexBuilding(msg)
+            | Self::Calculating(msg)
             | Self::ConstraintViolated(msg)
             | Self::Internal(msg) => msg,
             Self::FieldHidden { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,

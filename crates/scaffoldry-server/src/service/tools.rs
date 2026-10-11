@@ -874,7 +874,9 @@ fn run_list_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &Sh
         },
         state,
     )?;
-    Ok(json!({ "records": page.records, "next_cursor": page.next_cursor }))
+    let mut body = json!({ "records": page.records, "next_cursor": page.next_cursor });
+    records::add_field_states(&mut body, &page.calculating);
+    Ok(body)
 }
 
 fn run_get_record(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {

@@ -40,6 +40,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::StaleVersion { message: "Stale".into(), version: 4 }, "version_conflict", StatusCode::CONFLICT),
         (ServiceError::TooLarge("Big".into()), "too_large", StatusCode::PAYLOAD_TOO_LARGE),
         (ServiceError::IndexBuilding("Preparing".into()), "index_building", StatusCode::CONFLICT),
+        (ServiceError::Calculating("Calculating".into()), "calculating", StatusCode::CONFLICT),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
         (
             ServiceError::FieldHidden { message: "Hidden".into(), reason: "A rule hides it".into(), remedy: "Ask an owner".into() },
@@ -66,6 +67,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::StaleVersion { .. }
             | ServiceError::TooLarge(_)
             | ServiceError::IndexBuilding(_)
+            | ServiceError::Calculating(_)
             | ServiceError::ConstraintViolated(_)
             | ServiceError::FieldHidden { .. }
             | ServiceError::FieldReadOnly { .. }

@@ -11,6 +11,7 @@ export * from "./StatusBadge";
 export * from "./FormField";
 export * from "./Tabs";
 export * from "./Toast";
+export * from "./CalculatingNote";
 export * from "./ControlLabel";
 export * from "./UnitLabel";
 export * from "./PersonLabel";

@@ -52,6 +52,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "This position already has its holders.", next: "Replace a current holder, or raise the limit on the position type." };
     case "undo_conflict":
       return { message: "Someone changed this since. Undo stopped." };
+    case "calculating":
+      return { message: e.message, next: "Try again when it has finished." };
     case "index_building":
       return { message: e.message, next: "Try again in a few minutes." };
     case "field_hidden":

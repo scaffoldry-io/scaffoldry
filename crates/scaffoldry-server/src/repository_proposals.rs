@@ -246,6 +246,7 @@ impl PostgresRepository {
                     },
                 )?);
                 sync_indexes_in_tx(&mut tx, manifest, p.base_version, &decider)?;
+                sync_calcs_in_tx(&mut tx, manifest, p.base_version, &decider)?;
                 write_manifest_in_tx(&mut tx, manifest, raw, p.base_version)?;
             }
 
@@ -287,6 +288,18 @@ fn sync_indexes_in_tx(tx: &mut postgres::Transaction<'_>, new: &AppManifest, bas
         }
     }
     Ok(())
+}
+
+/// The approved manifest changes what a computed field holds, or a field's type. Queue the jobs that
+/// write the stored values again, in the approval's transaction.
+fn sync_calcs_in_tx(tx: &mut postgres::Transaction<'_>, new: &AppManifest, base_version: Option<i32>, requested_by: &str) -> Result<(), RepositoryError> {
+    let old: Option<AppManifest> = match base_version {
+        Some(_) => tx
+            .query_opt("SELECT manifest FROM app_manifests WHERE slug = $1", &[&new.slug])?
+            .and_then(|r| serde_json::from_value(r.get::<_, Value>(0)).ok()),
+        None => None,
+    };
+    crate::repository_calc::sync_calcs_in_tx(tx, old.as_ref(), new, requested_by)
 }
 
 fn write_manifest_in_tx(

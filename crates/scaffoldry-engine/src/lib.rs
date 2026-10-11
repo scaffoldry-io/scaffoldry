@@ -6,6 +6,7 @@ pub mod detect;
 pub mod graph;
 pub mod index;
 pub mod manifest;
+pub mod recalc;
 pub mod sensitivity;
 pub mod formula;
 pub use formula::*;
