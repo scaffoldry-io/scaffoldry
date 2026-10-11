@@ -28,7 +28,7 @@
       "enum": [
         "Text", "Number", "Date", "Select", "Boolean", "Relation", "Checkbox", "MultiSelect",
         "Currency", "Percent", "Rating", "Email", "Phone", "Url", "Autonumber", "CreatedTime",
-        "LastModifiedTime", "Lookup", "Count", "Rollup", "Formula"
+        "LastModifiedTime", "Lookup", "Count", "Rollup", "Formula", "Link"
       ]
     },
     "field": {
@@ -55,7 +55,12 @@
         "select_options": { "type": "array", "items": { "type": "string" } },
         "currency_symbol": { "type": ["string", "null"] },
         "precision": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
-        "indexed": { "type": "boolean", "description": "Sorting and filtering on this field use the pivot index. At most 20 per table. Not on a Lookup." }
+        "indexed": { "type": "boolean", "description": "Sorting and filtering on this field use the pivot index. At most 20 per table. Not on a Lookup." },
+        "link_target_table": { "type": ["string", "null"], "description": "A Link field: the table it points at." },
+        "link_target_app": { "type": ["string", "null"], "description": "A Link field into a dataset app." },
+        "link_cardinality": { "enum": ["One", "Many"], "description": "How many records a Link field holds. Default Many." },
+        "link_related_field": { "type": ["string", "null"], "description": "The Link field on the target table that points back." },
+        "link_on_delete": { "enum": ["Unlink", "Restrict"], "description": "What deleting a linked record does. Default Unlink." }
       }
     },
     "table": {

@@ -13,6 +13,60 @@ use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
 use scaffoldry_engine::{AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction, FilterOperator, IndexColumn};
 use serde_json::Value;
 
+/// Checks the link fields of a record about to be written. Each id must name a record of the target
+/// table of this app, a `One` field takes at most one id, and no id repeats. A record that is missing,
+/// in another table, or in an app the writer has no part in is refused with the same sentence, so the
+/// answer does not tell them apart. Every problem names its field.
+fn validate_links(app_slug: &str, data: &Value, state: &SharedState) -> Result<(), ServiceError> {
+    use crate::repository_links::{linked_ids, MAX_LINKS_PER_FIELD};
+    use scaffoldry_engine::{FieldType, LinkCardinality};
+    let table = data.get("_table_id").and_then(Value::as_str).unwrap_or("");
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    let mut bad = std::collections::BTreeMap::new();
+    let mut to_check: Vec<(String, String, Vec<String>)> = Vec::new();
+    for f in fields.iter().filter(|f| f.field_type == FieldType::Link) {
+        let value = data.get(&f.name);
+        let shaped = match value {
+            None | Some(Value::Null) => true,
+            Some(Value::String(_)) => true,
+            Some(Value::Array(a)) => a.iter().all(Value::is_string),
+            Some(_) => false,
+        };
+        if !shaped {
+            bad.insert(f.name.clone(), "must be a record id or a list of record ids".to_string());
+            continue;
+        }
+        let ids = linked_ids(value);
+        if f.link_cardinality == LinkCardinality::One && ids.len() > 1 {
+            bad.insert(f.name.clone(), format!("holds one record, and {} were given", ids.len()));
+            continue;
+        }
+        if ids.len() > MAX_LINKS_PER_FIELD {
+            bad.insert(f.name.clone(), format!("holds at most {MAX_LINKS_PER_FIELD} records, and {} were given", ids.len()));
+            continue;
+        }
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        if unique.len() != ids.len() {
+            bad.insert(f.name.clone(), "names the same record twice".to_string());
+            continue;
+        }
+        if let (false, Some(target)) = (ids.is_empty(), f.link_target_table.clone()) {
+            to_check.push((f.name.clone(), target, ids));
+        }
+    }
+    for (name, target, ids) in to_check {
+        let found = state.existing_record_ids(app_slug, &target, &ids).map_err(ServiceError::Internal)?;
+        if let Some(missing) = ids.iter().find(|id| !found.contains(id)) {
+            bad.insert(name, format!("links to a record that does not exist or cannot be seen: {missing}"));
+        }
+    }
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        Err(ServiceError::Invalid { message: "A linked record could not be used.".to_string(), fields: bad })
+    }
+}
+
 pub fn create_record(
     caller: &AuthUser,
     origin: &Origin,
@@ -43,6 +97,7 @@ pub fn create_record(
     };
 
     let data_payload = data.get("data").unwrap_or(data);
+    validate_links(app_slug, data_payload, state)?;
 
     let submitted = {
         let engine = state
@@ -163,6 +218,7 @@ pub fn update_record(
         map.entry("_table_id".to_string()).or_insert(tid);
     }
 
+    validate_links(app_slug, &new_data, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
         .save_record_checked(app_slug, id, &new_data, expected_version, &ctx)
@@ -387,6 +443,12 @@ pub(crate) fn indexed_fields_of(app_slug: &str, table_id: &str, state: &SharedSt
     let (fields, table) = table_fields_lenient(app_slug, table_id, state);
     let names = indexed_names(app_slug, &table, state);
     fields.into_iter().filter(|f| names.contains(&f.name)).collect()
+}
+
+/// The names of a table's `Link` fields. Every write keeps their `record_links` rows current.
+pub(crate) fn link_fields_of(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
+    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
+    fields.into_iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::Link).map(|f| f.name).collect()
 }
 
 /// The names of a table's indexed fields: marked, used by a view, or joined on.

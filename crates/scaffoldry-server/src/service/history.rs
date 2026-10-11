@@ -46,6 +46,7 @@ pub fn ctx_for(actor: &str, kind: ActorKind, app_slug: &str, data: &Value, state
     let table = data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("");
     ctx.computed_fields = crate::service::records::computed_fields(app_slug, table, state);
     ctx.index_fields = crate::service::records::indexed_fields_of(app_slug, table, state);
+    ctx.link_fields = crate::service::records::link_fields_of(app_slug, table, state);
     ctx
 }
 
@@ -62,6 +63,46 @@ pub fn visible_changes(entry: &HistoryEntry, hidden: &[String]) -> Value {
         }
     }
     Value::Object(out)
+}
+
+/// A change to a link field holds record ids. Show the display name of each linked record instead.
+/// The stored row keeps the ids. A record that is gone, or whose name the reader may not read,
+/// shows as its id.
+fn link_names(app_slug: &str, table_id: &str, mut changes: Value, hidden: &[String], state: &SharedState) -> Value {
+    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
+    let engine_table = |target: &str| -> Option<(String, Vec<scaffoldry_engine::FieldSpec>)> {
+        use scaffoldry_engine::HostRouter;
+        let engine = state.engine.read().ok()?;
+        let m = engine.resolve_by_slug(app_slug)?;
+        let t = m.tables.iter().find(|t| t.id == target)?;
+        Some((t.primary_field.clone().unwrap_or_default(), t.fields.clone()))
+    };
+    let Some(map) = changes.as_object_mut() else { return changes };
+    for f in fields.iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::Link) {
+        let Some(change) = map.get_mut(&f.name).and_then(Value::as_object_mut) else { continue };
+        let Some((primary, _)) = f.link_target_table.as_deref().and_then(engine_table) else { continue };
+        if primary.is_empty() || hidden.iter().any(|h| h == &f.name) {
+            continue;
+        }
+        for side in ["old", "new"] {
+            let Some(value) = change.get_mut(side) else { continue };
+            let name_of = |id: &str| -> Value {
+                state
+                    .find_record(app_slug, id)
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.data.get(&primary).cloned())
+                    .unwrap_or_else(|| Value::String(id.to_string()))
+            };
+            let shown = match &*value {
+                Value::String(id) => name_of(id),
+                Value::Array(ids) => Value::Array(ids.iter().filter_map(|v| v.as_str()).map(name_of).collect()),
+                other => other.clone(),
+            };
+            *value = shown;
+        }
+    }
+    changes
 }
 
 pub struct HistoryPage {
@@ -135,7 +176,7 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
             "table_id": row.table_id,
             "version": row.version,
             "action": row.action,
-            "changes": visible_changes(row, hide),
+            "changes": link_names(app_slug, &row.table_id, visible_changes(row, hide), hide, state),
             "actor": row.actor,
             "actor_name": name,
             "actor_kind": row.actor_kind,

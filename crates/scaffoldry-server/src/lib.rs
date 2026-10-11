@@ -6,6 +6,7 @@ pub mod jobs;
 pub mod jwt;
 pub mod repository;
 pub mod repository_index;
+pub mod repository_links;
 pub mod repository_proposals;
 pub mod routes;
 pub mod service;
