@@ -124,6 +124,8 @@ pub struct WriteCtx {
     pub index_fields: Vec<scaffoldry_engine::FieldSpec>,
     /// The table's `Link` fields. Every write keeps their `record_links` rows current, and mirrors two-way links.
     pub links: Vec<crate::repository_links::LinkSpec>,
+    /// Every `Rollup` and `Count` of the app. A write that touches the records they go through recomputes them.
+    pub computed: Vec<crate::repository_links::ComputedSpec>,
 }
 
 impl WriteCtx {
@@ -137,6 +139,7 @@ impl WriteCtx {
             reverts_batch: None,
             index_fields: Vec::new(),
             links: Vec::new(),
+            computed: Vec::new(),
         }
     }
 
@@ -274,6 +277,7 @@ pub struct RecordQuery {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SqlParam {
     Text(String),
+    Texts(Vec<String>),
     Float(f64),
     Int(i64),
 }
@@ -285,6 +289,7 @@ pub(crate) fn to_sql_params(params: Vec<SqlParam>) -> Vec<Box<dyn postgres::type
         .map(|p| -> Box<dyn postgres::types::ToSql + Sync> {
             match p {
                 SqlParam::Text(t) => Box::new(t),
+                SqlParam::Texts(t) => Box::new(t),
                 SqlParam::Float(f) => Box::new(f),
                 SqlParam::Int(i) => Box::new(i),
             }
@@ -1074,16 +1079,7 @@ impl PostgresRepository {
     pub fn query_records(&self, app_slug: &str, query: &RecordQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_record_query(app_slug, query);
         self.with_client(move |client| {
-            let boxed: Vec<Box<dyn postgres::types::ToSql + Sync>> = params
-                .into_iter()
-                .map(|p| -> Box<dyn postgres::types::ToSql + Sync> {
-                    match p {
-                        SqlParam::Text(t) => Box::new(t),
-                        SqlParam::Float(f) => Box::new(f),
-                        SqlParam::Int(i) => Box::new(i),
-                    }
-                })
-                .collect();
+            let boxed = to_sql_params(params);
             let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
             let rows = client.query(&sql, &refs)?;
             Ok(rows.iter().map(record_from_row).collect())

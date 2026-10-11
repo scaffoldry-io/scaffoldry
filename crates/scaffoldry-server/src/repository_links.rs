@@ -7,6 +7,55 @@ use scaffoldry_engine::FieldSpec;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
+/// One aggregate over a parent's link rows and the target values in `record_index`. Parameters:
+/// owner record id, link field, target field.
+pub const ROLLUP_SUM_SQL: &str = "SELECT COALESCE(SUM(i.num), 0)::float8 FROM record_links l \
+    JOIN record_index i ON i.record_id = l.to_record AND i.field = $3 AND i.ord = 0 \
+    WHERE l.from_record = $1 AND l.field = $2";
+const ROLLUP_AVG_SQL: &str = "SELECT COALESCE(AVG(i.num), 0)::float8 FROM record_links l \
+    JOIN record_index i ON i.record_id = l.to_record AND i.field = $3 AND i.ord = 0 \
+    WHERE l.from_record = $1 AND l.field = $2";
+const ROLLUP_MIN_SQL: &str = "SELECT MIN(i.num)::float8 FROM record_links l \
+    JOIN record_index i ON i.record_id = l.to_record AND i.field = $3 AND i.ord = 0 \
+    WHERE l.from_record = $1 AND l.field = $2";
+const ROLLUP_MAX_SQL: &str = "SELECT MAX(i.num)::float8 FROM record_links l \
+    JOIN record_index i ON i.record_id = l.to_record AND i.field = $3 AND i.ord = 0 \
+    WHERE l.from_record = $1 AND l.field = $2";
+const ROLLUP_COUNT_SQL: &str = "SELECT COUNT(*) FILTER (WHERE i.num IS NOT NULL OR i.txt IS NOT NULL OR i.ts IS NOT NULL)::float8 FROM record_links l \
+    JOIN record_index i ON i.record_id = l.to_record AND i.field = $3 AND i.ord = 0 \
+    WHERE l.from_record = $1 AND l.field = $2";
+const ROLLUP_DISTINCT_SQL: &str = "SELECT COUNT(DISTINCT COALESCE(i.num::text, i.txt, i.ts::text))::float8 FROM record_links l \
+    JOIN record_index i ON i.record_id = l.to_record AND i.field = $3 AND i.ord = 0 \
+    WHERE l.from_record = $1 AND l.field = $2";
+/// The number of links a record holds in a field. Parameters: owner record id, link field.
+const COUNT_SQL: &str = "SELECT COUNT(*)::float8 FROM record_links WHERE from_record = $1 AND field = $2";
+
+/// The values a page of records looks up, in one statement. Parameters: the owners on the page, the
+/// link field, the target field.
+pub const LOOKUP_SQL: &str = "SELECT l.from_record, r.data -> $3::text FROM record_links l \
+    JOIN dataset_records r ON r.id = l.to_record \
+    WHERE l.from_record = ANY($1::text[]) AND l.field = $2 ORDER BY l.from_record, l.ord";
+
+static LOOKUP_STATEMENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many lookup statements this process has run. A test reads it before and after a page.
+pub fn lookup_statements() -> u64 {
+    LOOKUP_STATEMENTS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// A `Rollup` or `Count` field, and what it needs to be recomputed.
+#[derive(Debug, Clone)]
+pub struct ComputedSpec {
+    pub owner_table: String,
+    pub field: String,
+    /// The link field of the owner it goes through.
+    pub via: String,
+    pub count: bool,
+    pub function: String,
+    pub target: Option<String>,
+    pub indexed: bool,
+}
+
 /// A link field of the table being written, and the field on the other table that mirrors it.
 #[derive(Debug, Clone)]
 pub struct LinkSpec {
@@ -107,6 +156,8 @@ pub(crate) fn write_record_links(
     ctx: &WriteCtx,
 ) -> Result<(), postgres::Error> {
     let names: Vec<String> = ctx.links.iter().map(|l| l.field.clone()).collect();
+    // Who rolled this record up before the write.
+    let mut owners = if ctx.computed.is_empty() { Vec::new() } else { owners_of(tx, record_id)? };
     tx.execute("DELETE FROM record_links WHERE from_record = $1", &[&record_id])?;
     insert_links(tx, app_slug, record_id, data, &names)?;
     // The records on the other end, locked in one order so two writers cannot wait on each other.
@@ -133,6 +184,82 @@ pub(crate) fn write_record_links(
         }
         for id in &added {
             set_membership(tx, app_slug, Membership { record_id: id, field: related, one: spec.related_one, other: record_id, present: true }, ctx)?;
+        }
+    }
+    if !ctx.computed.is_empty() {
+        // Who rolls it up now, and the record itself, which may roll up its own links.
+        owners.extend(owners_of(tx, record_id)?);
+        let table = data.get("_table_id").and_then(Value::as_str).unwrap_or("");
+        owners.extend(ctx.computed.iter().filter(|c| c.owner_table == table).map(|c| (record_id.to_string(), c.via.clone())));
+        recompute_owners(tx, app_slug, owners, ctx)?;
+    }
+    Ok(())
+}
+
+/// The records that link to `record_id`, each with the field it links through.
+fn owners_of(tx: &mut postgres::Transaction<'_>, record_id: &str) -> Result<Vec<(String, String)>, postgres::Error> {
+    Ok(tx
+        .query("SELECT from_record, field FROM record_links WHERE to_record = $1", &[&record_id])?
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect())
+}
+
+/// Writes the rollups and counts of each owner again, from its link rows and the indexed target values.
+/// The owner's version does not change, and nothing is written to history: a computed value is not a
+/// person's edit, and it must not make someone's save conflict.
+pub(crate) fn recompute_owners(
+    tx: &mut postgres::Transaction<'_>,
+    app_slug: &str,
+    mut owners: Vec<(String, String)>,
+    ctx: &WriteCtx,
+) -> Result<(), postgres::Error> {
+    owners.sort();
+    owners.dedup();
+    let mut ids: Vec<&String> = owners.iter().map(|(id, _)| id).collect();
+    ids.dedup();
+    for id in ids {
+        let Some((data, _, table)) = lock(tx, app_slug, id)? else { continue };
+        let vias: Vec<&String> = owners.iter().filter(|(o, _)| o == id).map(|(_, v)| v).collect();
+        let mut new = data.clone();
+        for spec in ctx.computed.iter().filter(|c| c.owner_table == table && vias.contains(&&c.via)) {
+            let value: Option<f64> = match (spec.count, spec.target.as_deref()) {
+                (true, _) | (_, None) => tx.query_one(COUNT_SQL, &[id, &spec.via])?.get(0),
+                (false, Some(target)) => {
+                    let sql = match spec.function.as_str() {
+                        "avg" => ROLLUP_AVG_SQL,
+                        "min" => ROLLUP_MIN_SQL,
+                        "max" => ROLLUP_MAX_SQL,
+                        "count" => ROLLUP_COUNT_SQL,
+                        "count_distinct" => ROLLUP_DISTINCT_SQL,
+                        _ => ROLLUP_SUM_SQL,
+                    };
+                    tx.query_one(sql, &[id, &spec.via, &target])?.get(0)
+                }
+            };
+            if let Some(map) = new.as_object_mut() {
+                match value.and_then(serde_json::Number::from_f64) {
+                    Some(n) => {
+                        let whole = n.as_f64().is_some_and(|f| f.fract() == 0.0 && f.abs() < 9e15);
+                        map.insert(spec.field.clone(), if whole { Value::from(n.as_f64().unwrap_or(0.0) as i64) } else { Value::Number(n) });
+                    }
+                    None => {
+                        map.remove(&spec.field);
+                    }
+                }
+            }
+            if spec.indexed {
+                tx.execute("DELETE FROM record_index WHERE record_id = $1 AND field = $2", &[id, &spec.field])?;
+                if let Some(v) = value {
+                    tx.execute(
+                        "INSERT INTO record_index (app_slug, table_id, field, record_id, num) VALUES ($1, $2, $3, $4, $5)",
+                        &[&app_slug, &table, &spec.field, id, &v],
+                    )?;
+                }
+            }
+        }
+        if new != data {
+            crate::repository::set_record_data_in_tx(tx, app_slug, id, &new)?;
         }
     }
     Ok(())
@@ -163,6 +290,11 @@ pub(crate) fn delete_record_links(tx: &mut postgres::Transaction<'_>, app_slug: 
     }
     tx.execute("DELETE FROM record_links WHERE to_record = $1", &[&record_id])?;
     tx.execute("DELETE FROM record_links WHERE from_record = $1", &[&record_id])?;
+    // The records that rolled it up now roll up one fewer.
+    if !ctx.computed.is_empty() {
+        let owners: Vec<(String, String)> = incoming.iter().map(|r| (r.get(0), r.get(1))).collect();
+        recompute_owners(tx, app_slug, owners, ctx)?;
+    }
     Ok(())
 }
 
@@ -287,6 +419,20 @@ impl PostgresRepository {
             tx.execute("DELETE FROM trash_links WHERE record_id = $1", &[&id])?;
             tx.commit()?;
             Ok(restored)
+        })
+    }
+
+    /// The value of `target` on the records each owner links to through `via`, for a whole page, in
+    /// one statement. An owner with no links is absent from the result.
+    pub fn lookup_values(&self, owners: &[String], via: &str, target: &str) -> Result<Vec<(String, Value)>, RepositoryError> {
+        let (owners, via, target) = (owners.to_vec(), via.to_string(), target.to_string());
+        self.with_client(move |client| {
+            LOOKUP_STATEMENTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(client
+                .query(LOOKUP_SQL, &[&owners, &via, &target])?
+                .iter()
+                .map(|r| (r.get::<_, String>(0), r.get::<_, Option<Value>>(1).unwrap_or(Value::Null)))
+                .collect())
         })
     }
 

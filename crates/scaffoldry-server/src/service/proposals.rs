@@ -363,6 +363,7 @@ fn check_manifest_part(
         check("data_loss", loss),
         check("page_source", vec![]),
         check("page_sensitivity", page_problems),
+        warn("relationships", scaffoldry_engine::manifest_warnings(&manifest)),
     ];
     Ok(ManifestPart { manifest, checks, sources: provided.into_iter().collect() })
 }
