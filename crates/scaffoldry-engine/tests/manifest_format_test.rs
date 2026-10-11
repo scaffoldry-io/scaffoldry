@@ -68,6 +68,29 @@ fn a_formula_that_does_not_parse_is_refused() {
     assert!(problems.iter().any(|p| p.contains("broken") && p.contains("parse")), "{problems:?}");
 }
 
+#[test]
+fn a_formula_of_201_nodes_is_refused() {
+    let mut m = base();
+    let mut f = field("too_many_nodes", FieldType::Formula);
+    // 101 numbers + 100 pluses = 201 nodes
+    let expr = (0..101).map(|_| "1").collect::<Vec<_>>().join(" + ");
+    f.formula_expression = Some(expr);
+    m.tables[0].fields.push(f);
+    let problems = validate_manifest(&m).unwrap_err();
+    assert!(problems.iter().any(|p| p.contains("too_many_nodes") && (p.contains("node") || p.contains("parse"))), "{problems:?}");
+}
+
+#[test]
+fn a_formula_of_501_characters_is_refused() {
+    let mut m = base();
+    let mut f = field("too_long", FieldType::Formula);
+    let expr = "1".repeat(501);
+    f.formula_expression = Some(expr);
+    m.tables[0].fields.push(f);
+    let problems = validate_manifest(&m).unwrap_err();
+    assert!(problems.iter().any(|p| p.contains("too_long") && (p.contains("500") || p.contains("parse") || p.contains("character"))), "{problems:?}");
+}
+
 // 4. A custom page whose grant writes a formula field is refused. So is an unknown field.
 #[test]
 fn a_grant_may_not_write_a_computed_field_or_name_a_field_that_is_missing() {

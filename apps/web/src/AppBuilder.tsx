@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { apiClient } from "./api";
 import {
   AppManifest,
   AppPage,
@@ -94,10 +95,10 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
             { name: "indirect_cost", label: "Indirect Cost (20%)", field_type: "Formula", required: false, ferpa_sensitive: false, formula_expression: "{budget} * 0.20" },
           ],
           records: [
-            { id: "APP-001", title: "Quantum Optomechanics Qubit Study", department: "Physics", lead_investigator_id: "INV-01", status: "Under Review", budget: 450000, submitted_at: "2026-10-02", ethics_approved: true, tags: ["Quantum", "HighPriority"], rating: 5 },
-            { id: "APP-002", title: "Neural Stem Cell Regeneration", department: "Bioengineering", lead_investigator_id: "INV-02", status: "Approved", budget: 820000, submitted_at: "2026-09-28", ethics_approved: true, tags: ["StemCell", "DOE-Grant"], rating: 4 },
-            { id: "APP-003", title: "Edge Sensor Fusion Lattice", department: "Computer Science", lead_investigator_id: "INV-02", status: "Funded", budget: 640000, submitted_at: "2026-09-15", ethics_approved: false, tags: ["Quantum"], rating: 3 },
-            { id: "APP-004", title: "High-Entropy Alloy Catalyst Synthesis", department: "Materials Science", lead_investigator_id: "INV-03", status: "Under Review", budget: 380000, submitted_at: "2026-10-01", ethics_approved: true, tags: ["Catalyst"], rating: 4 },
+            { id: "APP-001", title: "Quantum Optomechanics Qubit Study", department: "Physics", lead_investigator_id: "INV-01", status: "Under Review", budget: 450000, submitted_at: "2026-10-02", ethics_approved: true, tags: ["Quantum", "HighPriority"], rating: 5, indirect_cost: 90000 },
+            { id: "APP-002", title: "Neural Stem Cell Regeneration", department: "Bioengineering", lead_investigator_id: "INV-02", status: "Approved", budget: 820000, submitted_at: "2026-09-28", ethics_approved: true, tags: ["StemCell", "DOE-Grant"], rating: 4, indirect_cost: 164000 },
+            { id: "APP-003", title: "Edge Sensor Fusion Lattice", department: "Computer Science", lead_investigator_id: "INV-02", status: "Funded", budget: 640000, submitted_at: "2026-09-15", ethics_approved: false, tags: ["Quantum"], rating: 3, indirect_cost: 128000 },
+            { id: "APP-004", title: "High-Entropy Alloy Catalyst Synthesis", department: "Materials Science", lead_investigator_id: "INV-03", status: "Under Review", budget: 380000, submitted_at: "2026-10-01", ethics_approved: true, tags: ["Catalyst"], rating: 4, indirect_cost: 76000 },
           ],
         },
         {
@@ -440,7 +441,45 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const [activeColumnMenu, setActiveColumnMenu] = useState<string | null>(null);
   const [renameLabel, setRenameLabel] = useState<string>("");
   const [formulaInput, setFormulaInput] = useState<string>("");
+  const [formulaPreviewResult, setFormulaPreviewResult] = useState<any | null>(null);
+  const [formulaError, setFormulaError] = useState<string | null>(null);
+  const [formulaErrorPos, setFormulaErrorPos] = useState<number | null>(null);
   const [renameNotice, setRenameNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeColumnMenu || !formulaInput.trim()) {
+      setFormulaPreviewResult(null);
+      setFormulaError(null);
+      setFormulaErrorPos(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiClient.previewFormula({
+          expression: formulaInput,
+          table_id: activeTable.id,
+          app_slug: app.manifest.slug,
+          record: activeTable.records?.[0],
+        });
+        if (res.valid) {
+          setFormulaPreviewResult(res.result);
+          setFormulaError(null);
+          setFormulaErrorPos(null);
+        } else {
+          setFormulaPreviewResult(null);
+          const msg = res.error || (res.problems?.[0]?.message ?? "Syntax error");
+          const pos = res.error_pos !== undefined && res.error_pos !== null ? res.error_pos : (res.problems?.[0]?.position ?? 0);
+          setFormulaError(msg);
+          setFormulaErrorPos(pos);
+        }
+      } catch (e: any) {
+        setFormulaPreviewResult(null);
+        setFormulaError(e?.message || "Failed to preview formula");
+        setFormulaErrorPos(0);
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [formulaInput, activeColumnMenu, activeTable.id, app.manifest.slug]);
 
   const handleRenameField = (fieldName: string, newLabel: string) => {
     const trimmed = newLabel.trim();
@@ -1735,6 +1774,27 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                                 Save
                                               </button>
                                             </div>
+                                            {formulaPreviewResult !== null && (
+                                              <div
+                                                data-testid="formula-preview-result"
+                                                className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono mt-1"
+                                              >
+                                                Preview: {typeof formulaPreviewResult === "object" ? JSON.stringify(formulaPreviewResult) : String(formulaPreviewResult)}
+                                              </div>
+                                            )}
+                                            {formulaError && (
+                                              <div
+                                                data-testid="formula-syntax-error"
+                                                className="text-[11px] text-red-500 font-mono mt-1 whitespace-pre"
+                                              >
+                                                <div data-testid="formula-error-message">{formulaError}</div>
+                                                {formulaErrorPos !== null && (
+                                                  <div data-testid="formula-error-caret" aria-hidden="true">
+                                                    {" ".repeat(formulaErrorPos)}^
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
                                           </div>
                                         )}
 

@@ -876,6 +876,19 @@ export const apiClient = {
       body: JSON.stringify(payload),
     });
   },
+
+  previewFormula: async (payload: { expression: string; table_id: string; app_slug: string; record?: any }) => {
+    return request<{
+      valid: boolean;
+      result: any;
+      problems: Array<{ message: string; position: number }>;
+      error?: string | null;
+      error_pos?: number | null;
+    }>("/formula/preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
 };
 
 export const computeSha256 = async (message: string): Promise<string> => {
