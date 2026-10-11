@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { AppTable, FieldSpec, RegisteredApp, AccessRowRule, AccessColumnRule } from "./types";
 import { apiClient } from "./api";
 import { Banner } from "./ui/Banner";
@@ -174,7 +174,7 @@ export const AccessRulesTab: React.FC<AccessRulesTabProps> = ({
   const initialColumns = useMemo(() => app.manifest?.access?.columns || [], [app]);
 
   const [rowRules, setRowRules] = useState<AccessRowRule[]>(initialRows);
-  const [columnRules, setColumnRules] = useState<AccessColumnRule[]>(initialColumns);
+  const [columnRules] = useState<AccessColumnRule[]>(initialColumns);
 
   const tableRules = useMemo(
     () => rowRules.filter((r) => r.table_id === currentTable?.id),
