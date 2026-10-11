@@ -327,3 +327,96 @@ pub fn convert_field(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     .map_err(retry)?;
     ctx.result(json!({ "records": done, "batch_id": batch_id }))
 }
+
+/// Recalculates every volatile formula field across all records of all tables in batches.
+pub fn recalc_volatile(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
+    let repo = ctx.repository();
+    let tables: Vec<(String, String)> = repo
+        .with_client(|c| {
+            let rows = c.query("SELECT DISTINCT app_slug, table_id FROM dataset_records WHERE deleted_at IS NULL", &[])?;
+            Ok(rows.iter().map(|r| (r.get(0), r.get(1))).collect())
+        })
+        .map_err(retry)?;
+
+    let mut total_done = 0;
+    for (app, table) in tables {
+        let manifest_info: Option<(Vec<(String, String)>, Vec<scaffoldry_engine::FieldSpec>)> = repo.with_client({
+            let (app, table) = (app.clone(), table.clone());
+            move |c| {
+                let row = c.query_opt(
+                    "SELECT manifest FROM app_manifests WHERE slug = $1 ORDER BY version DESC LIMIT 1",
+                    &[&app],
+                )?;
+                let Some(row) = row else { return Ok(None) };
+                let val: Value = row.get(0);
+                let Ok(manifest): Result<scaffoldry_engine::AppManifest, _> = serde_json::from_value(val) else { return Ok(None) };
+                let Some(t) = manifest.tables.iter().find(|t| t.id == table) else { return Ok(None) };
+                let volatile: Vec<(String, String)> = t.fields.iter()
+                    .filter(|f| f.field_type == FieldType::Formula && f.formula_expression.as_deref().map(scaffoldry_engine::is_formula_volatile).unwrap_or(false))
+                    .filter_map(|f| f.formula_expression.as_ref().map(|e| (f.name.clone(), e.clone())))
+                    .collect();
+                let indexed: Vec<scaffoldry_engine::FieldSpec> = t.fields.iter().filter(|f| f.indexed).cloned().collect();
+                Ok(Some((volatile, indexed)))
+            }
+        }).map_err(retry)?;
+
+        let Some((formulas, indexed_fields)) = manifest_info else { continue };
+        if formulas.is_empty() {
+            continue;
+        }
+
+        let mut after: Option<String> = None;
+        loop {
+            if ctx.cancelled()? {
+                return Err(JobError::Cancelled);
+            }
+            let (a, t, from, f_list, idx) = (app.clone(), table.clone(), after.clone(), formulas.clone(), indexed_fields.clone());
+            let (last, read_count) = repo
+                .with_client(move |c| {
+                    let mut tx = c.transaction()?;
+                    let rows = match from {
+                        None => tx.query(
+                            "SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL ORDER BY id LIMIT $3 FOR UPDATE",
+                            &[&a, &t, &FIELD_BATCH],
+                        )?,
+                        Some(ref last_id) => tx.query(
+                            "SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND id > $3 ORDER BY id LIMIT $4 FOR UPDATE",
+                            &[&a, &t, last_id, &FIELD_BATCH],
+                        )?,
+                    };
+                    let mut last = None;
+                    for row in &rows {
+                        let id: String = row.get(0);
+                        let mut data: Value = row.get(1);
+                        last = Some(id.clone());
+                        let mut changed = false;
+                        for (field, expr) in &f_list {
+                            let new_val = scaffoldry_engine::evaluate_formula(expr, &data);
+                            if data.get(field) != Some(&new_val) {
+                                if let Some(map) = data.as_object_mut() {
+                                    map.insert(field.clone(), new_val);
+                                    changed = true;
+                                }
+                            }
+                        }
+                        if changed {
+                            crate::repository::set_record_data_in_tx(&mut tx, &a, &id, &data)?;
+                            crate::repository_index::write_record_index(&mut tx, &a, &t, &id, &data, &idx)?;
+                        }
+                    }
+                    tx.commit()?;
+                    Ok((last, rows.len() as i64))
+                })
+                .map_err(retry)?;
+
+            total_done += read_count;
+            if last.is_some() {
+                after = last;
+            }
+            if read_count < FIELD_BATCH {
+                break;
+            }
+        }
+    }
+    ctx.result(json!({ "recomputed": total_done }))
+}

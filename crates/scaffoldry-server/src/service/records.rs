@@ -95,6 +95,133 @@ fn validate_links(app_slug: &str, id: Option<&str>, current: Option<&Value>, dat
     }
 }
 
+fn apply_defaults_and_set_on_create(
+    app_slug: &str,
+    table: &str,
+    data: &mut Value,
+    state: &SharedState,
+) {
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    for f in &fields {
+        let is_missing = data.get(&f.name).is_none_or(Value::is_null);
+        if is_missing {
+            let val = if let Some(ref def) = f.default {
+                match def {
+                    Value::String(s) => {
+                        let res = scaffoldry_engine::evaluate_formula(s, data);
+                        if res.is_null() { Value::String(s.clone()) } else { res }
+                    }
+                    other => other.clone(),
+                }
+            } else if f.set_on == Some(scaffoldry_engine::SetOn::Create) {
+                f.formula_expression.as_ref().map(|expr| scaffoldry_engine::evaluate_formula(expr, data)).unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            };
+            if !val.is_null() {
+                if let Some(map) = data.as_object_mut() {
+                    map.insert(f.name.clone(), val);
+                }
+            }
+        }
+    }
+}
+
+fn apply_set_on_change(
+    app_slug: &str,
+    table: &str,
+    current: &Value,
+    new_data: &mut Value,
+    state: &SharedState,
+) {
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    for f in &fields {
+        if let Some(scaffoldry_engine::SetOn::Change { ref fields }) = f.set_on {
+            let changed = fields.iter().any(|target| {
+                new_data.get(target).is_some() && current.get(target) != new_data.get(target)
+            });
+            if changed {
+                let val = if let Some(ref expr) = f.formula_expression {
+                    scaffoldry_engine::evaluate_formula(expr, new_data)
+                } else if let Some(ref def) = f.default {
+                    match def {
+                        Value::String(s) => {
+                            let res = scaffoldry_engine::evaluate_formula(s, new_data);
+                            if res.is_null() { Value::String(s.clone()) } else { res }
+                        }
+                        other => other.clone(),
+                    }
+                } else {
+                    Value::Null
+                };
+                if !val.is_null() {
+                    if let Some(map) = new_data.as_object_mut() {
+                        map.insert(f.name.clone(), val);
+                    }
+                }
+            } else if new_data.get(&f.name).is_none() {
+                if let Some(old_val) = current.get(&f.name) {
+                    if let Some(map) = new_data.as_object_mut() {
+                        map.insert(f.name.clone(), old_val.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn validate_record_constraints(
+    app_slug: &str,
+    table: &str,
+    data: &Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    for f in &fields {
+        let val = data.get(&f.name);
+        let is_req = f.required || f.constraints.as_ref().is_some_and(|c| c.required);
+        if is_req {
+            let empty = match val {
+                None | Some(Value::Null) => true,
+                Some(Value::String(s)) => s.trim().is_empty(),
+                _ => false,
+            };
+            if empty {
+                return Err(ServiceError::ConstraintViolation {
+                    message: format!("field '{}' violates required constraint", f.name),
+                    field: f.name.clone(),
+                    constraint: "required".to_string(),
+                });
+            }
+        }
+        if let Some(ref c) = f.constraints {
+            if let Some(val) = val {
+                if let Some(num) = val.as_f64() {
+                    if let Some(min_val) = c.min {
+                        if num < min_val {
+                            return Err(ServiceError::ConstraintViolation {
+                                message: format!("field '{}' violates min constraint", f.name),
+                                field: f.name.clone(),
+                                constraint: "min".to_string(),
+                            });
+                        }
+                    }
+                    if let Some(max_val) = c.max {
+                        if num > max_val {
+                            return Err(ServiceError::ConstraintViolation {
+                                message: format!("field '{}' violates max constraint", f.name),
+                                field: f.name.clone(),
+                                constraint: "max".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn create_record(
     caller: &AuthUser,
     origin: &Origin,
@@ -124,8 +251,12 @@ pub fn create_record(
         affiliations: vec![affiliation],
     };
 
+
     let data_payload = data.get("data").unwrap_or(data);
-    let cleaned = strip_lookups(app_slug, data_payload, state);
+    let mut cleaned = strip_lookups(app_slug, data_payload, state);
+    let table = cleaned.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    apply_defaults_and_set_on_create(app_slug, &table, &mut cleaned, state);
+    validate_record_constraints(app_slug, &table, &cleaned, state)?;
     let data_payload = &cleaned;
     validate_links(app_slug, None, None, data_payload, state)?;
 
@@ -169,7 +300,12 @@ pub fn create_record(
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &record.data, state);
     state
         .insert_record(&record, &ctx)
-        .map_err(|e| ServiceError::Internal(format!("Failed to store the record: {e}")))?;
+        .map_err(|e| match e {
+            crate::repository::RepositoryError::ConstraintViolation { message, field, constraint } => {
+                ServiceError::ConstraintViolation { message, field, constraint }
+            }
+            other => ServiceError::Internal(format!("Failed to store the record: {other}")),
+        })?;
 
     let mut record_val = record.data.clone();
     if let Some(map) = record_val.as_object_mut() {
@@ -300,8 +436,28 @@ pub fn update_record(
         map.entry("_table_id".to_string()).or_insert(tid);
     }
 
-    let new_data = strip_lookups(app_slug, &new_data, state);
+    let mut new_data = strip_lookups(app_slug, &new_data, state);
     let table = new_data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let (fields, _) = table_fields_lenient(app_slug, &table, state);
+    for f in &fields {
+        if f.field_type == scaffoldry_engine::FieldType::Formula {
+            if let Some(ref expr) = f.formula_expression {
+                if scaffoldry_engine::is_formula_volatile(expr) {
+                    if new_data.get(&f.name).is_none() {
+                        if let Some(old_val) = current.data.get(&f.name) {
+                            if let Some(map) = new_data.as_object_mut() {
+                                map.insert(f.name.clone(), old_val.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    apply_set_on_change(app_slug, &table, &current.data, &mut new_data, state);
+    validate_record_constraints(app_slug, &table, &new_data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }
@@ -310,7 +466,12 @@ pub fn update_record(
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
         .save_record_checked(app_slug, id, &new_data, expected_version, &ctx)
-        .map_err(ServiceError::Internal)?;
+        .map_err(|e| match e {
+            crate::repository::RepositoryError::ConstraintViolation { message, field, constraint } => {
+                ServiceError::ConstraintViolation { message, field, constraint }
+            }
+            other => ServiceError::Internal(other.to_string()),
+        })?;
     let updated_rec = match (outcome, saved) {
         (crate::repository::RecordWrite::Saved(_), Some(rec)) => rec,
         (crate::repository::RecordWrite::Conflict(version), _) => {

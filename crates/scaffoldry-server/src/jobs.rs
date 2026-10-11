@@ -74,6 +74,7 @@ pub static JOB_KINDS: &[JobKind] = &[
     JobKind { name: "recalc_field", max_attempts: 3, max_concurrent: 2, run: crate::calc_jobs::recalc_field },
     JobKind { name: "convert_preview", max_attempts: 3, max_concurrent: 2, run: crate::calc_jobs::convert_preview },
     JobKind { name: "convert_field", max_attempts: 3, max_concurrent: 1, run: crate::calc_jobs::convert_field },
+    JobKind { name: "recalc_volatile", max_attempts: 3, max_concurrent: 1, run: crate::calc_jobs::recalc_volatile },
 ];
 
 #[derive(Debug, Clone)]
@@ -272,6 +273,23 @@ pub fn cancel_job(repo: &PostgresRepository, id: Uuid) -> Result<Option<Job>, Jo
 
 
 /// Registers a recurring schedule. Inserts at boot if missing, preserving next_run_at if already present.
+
+/// Registers the nightly recalc_volatile schedule in the given IANA timezone.
+pub fn register_volatile_schedule(
+    repo: &PostgresRepository,
+    timezone: &str,
+) -> Result<(), JobsError> {
+    let tz = timezone.to_string();
+    repo.with_client(move |c| {
+        c.execute(
+            "INSERT INTO job_schedules (kind, every_seconds, next_run_at, enabled)              VALUES ('recalc_volatile', 86400, ((CASE                  WHEN (NOW() AT TIME ZONE $1)::time < '00:05:00'::time                  THEN date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '5 minutes'                  ELSE date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '1 day 5 minutes'              END) AT TIME ZONE $1)::timestamptz, TRUE)              ON CONFLICT (kind) DO UPDATE SET next_run_at = ((CASE                  WHEN (NOW() AT TIME ZONE $1)::time < '00:05:00'::time                  THEN date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '5 minutes'                  ELSE date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '1 day 5 minutes'              END) AT TIME ZONE $1)::timestamptz",
+            &[&tz],
+        )?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
 pub fn register_schedule(
     repo: &PostgresRepository,
     kind: &str,
@@ -326,7 +344,17 @@ pub fn scheduler_tick_client(
         } else {
             (elapsed_secs / every_secs) + 1
         };
-        let new_next_run = old_next_run + chrono::Duration::seconds(steps * every_secs);
+        let new_next_run = if kind == "recalc_volatile" {
+            let tz_res = tx.query_opt("SELECT value#>>'{}' FROM platform_settings WHERE key = 'platform.timezone'", &[]);
+            let tz = tz_res.ok().flatten().and_then(|r| r.get::<_, Option<String>>(0)).unwrap_or_else(|| "UTC".to_string());
+            let next_run: chrono::DateTime<chrono::Utc> = tx.query_one(
+                "SELECT ((CASE WHEN (NOW() AT TIME ZONE $1)::time < '00:05:00'::time THEN date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '5 minutes' ELSE date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '1 day 5 minutes' END) AT TIME ZONE $1)::timestamptz",
+                &[&tz],
+            )?.get(0);
+            next_run
+        } else {
+            old_next_run + chrono::Duration::seconds(steps * every_secs)
+        };
 
         tx.execute(
             "UPDATE job_schedules SET next_run_at = $1 WHERE kind = $2",

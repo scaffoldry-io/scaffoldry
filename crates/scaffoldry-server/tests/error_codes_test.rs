@@ -43,6 +43,15 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::Calculating("Calculating".into()), "calculating", StatusCode::CONFLICT),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
         (
+            ServiceError::ConstraintViolation {
+                message: "field 'score' violates constraint 'min'".into(),
+                field: "score".into(),
+                constraint: "min".into(),
+            },
+            "constraint_violated",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
             ServiceError::FieldHidden { message: "Hidden".into(), reason: "A rule hides it".into(), remedy: "Ask an owner".into() },
             "field_hidden",
             StatusCode::FORBIDDEN,
@@ -69,6 +78,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::IndexBuilding(_)
             | ServiceError::Calculating(_)
             | ServiceError::ConstraintViolated(_)
+            | ServiceError::ConstraintViolation { .. }
             | ServiceError::FieldHidden { .. }
             | ServiceError::FieldReadOnly { .. }
             | ServiceError::UndoConflict { .. }

@@ -24,6 +24,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "jobs.schedules_disabled",
     "sensitivity.categories",
     "sensitivity.detectors",
+    "platform.timezone",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -53,6 +54,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         // The shape of these two is checked in full, with a path, where the state is known.
         "sensitivity.detectors" => scaffoldry_engine::sensitivity::validate_detectors(value).is_ok(),
         "sensitivity.categories" => value.is_array(),
+        "platform.timezone" => value.as_str().is_some_and(|s| !s.trim().is_empty()),
         _ => false,
     }
 }
@@ -178,6 +180,13 @@ async fn put_setting(
 
     // Update in-memory state
     state.settings.write().unwrap().insert(key.clone(), payload.clone());
+
+    if key == "platform.timezone" {
+        if let Some(ref repo) = state.repository {
+            let tz = payload.as_str().unwrap_or("UTC");
+            let _ = crate::jobs::register_volatile_schedule(repo, tz);
+        }
+    }
 
     (StatusCode::OK, Json(json!({ "key": key, "value": payload }))).into_response()
 }

@@ -293,6 +293,8 @@ impl ServerState {
         settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
+        settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
+        settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
         add_sensitivity_defaults(&mut settings_map);
 
         let repository = match crate::repository::PostgresRepository::connect(None) {
@@ -651,9 +653,9 @@ impl ServerState {
     }
 
     /// A new record, at version 1.
-    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), String> {
+    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), crate::repository::RepositoryError> {
         match self.repository {
-            Some(ref repo) => repo.insert_record(rec, ctx).map_err(|e| e.to_string()),
+            Some(ref repo) => repo.insert_record(rec, ctx),
             None => {
                 self.memory().entry(rec.app_slug.clone()).or_default().push(rec.clone());
                 Ok(())
@@ -689,12 +691,11 @@ impl ServerState {
         data: &Value,
         expected_version: i32,
         ctx: &crate::repository::WriteCtx,
-    ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), String> {
+    ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), crate::repository::RepositoryError> {
         use crate::repository::RecordWrite;
         let outcome = match self.repository {
             Some(ref repo) => repo
-                .update_record_checked(app_slug, id, data, expected_version, ctx)
-                .map_err(|e| e.to_string())?,
+                .update_record_checked(app_slug, id, data, expected_version, ctx)?,
             None => {
                 let mut map = self.memory();
                 match map.get_mut(app_slug).and_then(|v| v.iter_mut().find(|r| r.id == id)) {
@@ -708,7 +709,14 @@ impl ServerState {
                 }
             }
         };
-        let saved = if matches!(outcome, RecordWrite::Saved(_)) { self.find_record(app_slug, id)? } else { None };
+        let saved = if matches!(outcome, RecordWrite::Saved(_)) {
+            match self.repository {
+                Some(ref repo) => repo.get_record(app_slug, id)?,
+                None => self.memory().get(app_slug).and_then(|v| v.iter().find(|r| r.id == id).cloned()),
+            }
+        } else {
+            None
+        };
         Ok((outcome, saved))
     }
 
@@ -874,6 +882,14 @@ impl ServerState {
 
     pub fn get_scim_user(&self, id: &str) -> Option<ScimUser> {
         self.users.read().ok()?.get(id).cloned()
+    }
+
+    pub fn platform_timezone(&self) -> String {
+        self.settings
+            .read()
+            .ok()
+            .and_then(|s| s.get("platform.timezone").and_then(|v| v.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "UTC".to_string())
     }
 
     pub fn append_ledger_entry(

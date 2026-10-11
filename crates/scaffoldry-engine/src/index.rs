@@ -40,7 +40,7 @@ pub fn index_column(t: FieldType) -> IndexColumn {
 /// filter, or joined on by a relationship.
 pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
     let Some(table) = m.tables.iter().find(|t| t.id == table_id) else { return BTreeSet::new() };
-    let mut out: BTreeSet<String> = table.fields.iter().filter(|f| f.indexed).map(|f| f.name.clone()).collect();
+    let mut out: BTreeSet<String> = table.fields.iter().filter(|f| f.indexed || f.constraints.as_ref().is_some_and(|c| c.unique)).map(|f| f.name.clone()).collect();
     for view in m.views.iter().filter(|v| v.table_id.as_deref() == Some(table_id)) {
         out.extend(view.sort_rules.iter().map(|r| r.field_name.clone()));
         if let Some(filter) = &view.filters {
