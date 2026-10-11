@@ -180,7 +180,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "delete_record",
-        description: "Delete a record. Send the version you read.",
+        description: "Moves a record to trash. It can be restored. Send the version you read.",
         input_schema: schema_delete_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
@@ -384,7 +384,7 @@ fn schema_manage_workspace_member() -> Value {
             "workspace_id": { "type": "string", "description": "Unique workspace identifier" },
             "action": { "type": "string", "description": "add, update, or remove" },
             "eppn": { "type": "string", "description": "eduPersonPrincipalName of collaborator" },
-            "role": { "type": "string", "description": "owner, admin, editor, or viewer" },
+            "role": { "type": "string", "description": "owner, admin, editor, commenter, or viewer" },
             "name": { "type": "string", "description": "Full display name" }
         },
         "required": ["workspace_id", "action", "eppn"]

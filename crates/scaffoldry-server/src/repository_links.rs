@@ -33,7 +33,7 @@ const COUNT_SQL: &str = "SELECT COUNT(*)::float8 FROM record_links WHERE from_re
 /// The values a page of records looks up, in one statement. Parameters: the owners on the page, the
 /// link field, the target field.
 pub const LOOKUP_SQL: &str = "SELECT l.from_record, r.data -> $3::text FROM record_links l \
-    JOIN dataset_records r ON r.id = l.to_record \
+    JOIN dataset_records r ON r.id = l.to_record AND r.deleted_at IS NULL \
     WHERE l.from_record = ANY($1::text[]) AND l.field = $2 ORDER BY l.from_record, l.ord";
 
 static LOOKUP_STATEMENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -94,7 +94,7 @@ fn derived(ctx: &WriteCtx) -> WriteCtx {
 /// Takes a record's `data` and `version` under a row lock. `None` when the record is not there.
 fn lock(tx: &mut postgres::Transaction<'_>, app_slug: &str, id: &str) -> Result<Option<(Value, i32, String)>, postgres::Error> {
     Ok(tx
-        .query_opt("SELECT data, version, table_id FROM dataset_records WHERE app_slug = $1 AND id = $2 FOR UPDATE", &[&app_slug, &id])?
+        .query_opt("SELECT data, version, table_id FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE", &[&app_slug, &id])?
         .map(|r| (r.get(0), r.get(1), r.get(2))))
 }
 
@@ -325,6 +325,74 @@ fn insert_links(
     Ok(())
 }
 
+/// Brings back the links a deleted record had, in the caller's transaction, now that the record is
+/// live again. A link comes back only when the record on the other end is live. A record the restored
+/// one names that is not live is dropped from it. Returns the number of links restored.
+pub(crate) fn restore_links_in_tx(tx: &mut postgres::Transaction<'_>, slug: &str, id: &str, ctx: &WriteCtx) -> Result<u64, RepositoryError> {
+    let Some((own, _, _)) = lock(tx, slug, id)? else {
+        return Err(RepositoryError::NotFound(format!("record {id}")));
+    };
+    let rows = tx.query("SELECT field, other_record, direction FROM trash_links WHERE record_id = $1 ORDER BY field, other_record", &[&id])?;
+    let mut restored = 0u64;
+    // Links out: keep the ids that are still records, drop the rest from the restored record.
+    let mut data = own.clone();
+    let out_fields: BTreeSet<String> = rows.iter().filter(|r| r.get::<_, String>(2) == "out").map(|r| r.get(0)).collect();
+    for field in &out_fields {
+        let ids = linked_ids(data.get(field));
+        let live: Vec<String> = tx
+            .query("SELECT id FROM dataset_records WHERE app_slug = $1 AND id = ANY($2) AND deleted_at IS NULL", &[&slug, &ids])?
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        let kept: Vec<String> = ids.iter().filter(|x| live.contains(x)).cloned().collect();
+        restored += kept.len() as u64;
+        if let Some(map) = data.as_object_mut() {
+            match map.get(field) {
+                Some(Value::String(_)) if kept.is_empty() => {
+                    map.remove(field);
+                }
+                Some(Value::String(_)) => {}
+                _ => {
+                    map.insert(field.clone(), Value::Array(kept.into_iter().map(Value::String).collect()));
+                }
+            }
+        }
+    }
+    if data != own {
+        crate::repository::set_record_data_in_tx(tx, slug, id, &data)?;
+    }
+    for field in &out_fields {
+        tx.execute("DELETE FROM record_links WHERE from_record = $1 AND field = $2", &[&id, field])?;
+        insert_links(tx, slug, id, &data, std::slice::from_ref(field))?;
+    }
+    // Links in: put the restored record back into the field of each record that still exists.
+    for row in rows.iter().filter(|r| r.get::<_, String>(2) == "in") {
+        let (field, other): (String, String) = (row.get(0), row.get(1));
+        let Some((theirs, _, _)) = lock(tx, slug, &other)? else { continue };
+        let one = !matches!(theirs.get(&field), Some(Value::Array(_)));
+        let occupied = one && !linked_ids(theirs.get(&field)).is_empty();
+        if occupied {
+            continue;
+        }
+        if set_membership(tx, slug, Membership { record_id: &other, field: &field, one, other: id, present: true }, ctx)? {
+            restored += 1;
+        }
+    }
+    tx.execute("DELETE FROM trash_links WHERE record_id = $1", &[&id])?;
+    Ok(restored)
+}
+
+/// What a link picker asks of a table.
+pub struct LinkOptionQuery<'a> {
+    pub app_slug: &'a str,
+    pub table_id: &'a str,
+    pub fields: &'a [String],
+    pub needle: &'a str,
+    pub after: Option<&'a crate::repository::RecordCursor>,
+    pub limit: usize,
+    pub scope: Option<&'a crate::repository::ScopePlan>,
+}
+
 impl PostgresRepository {
     /// Writes a table's link rows again from the records' JSON. Returns the number of rows written.
     pub fn rebuild_links(&self, app_slug: &str, table_id: &str, fields: &[FieldSpec]) -> Result<u64, RepositoryError> {
@@ -334,15 +402,15 @@ impl PostgresRepository {
             let mut tx = client.transaction()?;
             tx.execute(
                 "DELETE FROM record_links WHERE app_slug = $1 AND from_record IN \
-                 (SELECT id FROM dataset_records WHERE app_slug = $1 AND table_id = $2)",
+                 (SELECT id FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL)",
                 &[&slug, &table],
             )?;
             let mut written = 0u64;
             let mut after: Option<String> = None;
             loop {
                 let rows = match &after {
-                    None => tx.query("SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 ORDER BY id LIMIT 5000", &[&slug, &table])?,
-                    Some(id) => tx.query("SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND id > $3 ORDER BY id LIMIT 5000", &[&slug, &table, id])?,
+                    None => tx.query("SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL ORDER BY id LIMIT 5000", &[&slug, &table])?,
+                    Some(id) => tx.query("SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND id > $3 ORDER BY id LIMIT 5000", &[&slug, &table, id])?,
                 };
                 for row in &rows {
                     let (id, data): (String, Value) = (row.get(0), row.get(1));
@@ -359,64 +427,12 @@ impl PostgresRepository {
         })
     }
 
-    /// Brings back the links a deleted record had, now that the record is back. A link comes back only
-    /// when the record on the other end is still there. A record the restored one names that is gone
-    /// is dropped from it. Returns the number of links restored.
+    /// `restore_links_in_tx` in a transaction of its own, for a record that is already live.
     pub fn restore_record_links(&self, app_slug: &str, record_id: &str) -> Result<u64, RepositoryError> {
         let (slug, id) = (app_slug.to_string(), record_id.to_string());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let ctx = WriteCtx::system("links.restore");
-            let Some((own, _, _)) = lock(&mut tx, &slug, &id)? else {
-                return Err(RepositoryError::NotFound(format!("record {id}")));
-            };
-            let rows = tx.query("SELECT field, other_record, direction FROM trash_links WHERE record_id = $1 ORDER BY field, other_record", &[&id])?;
-            let mut restored = 0u64;
-            // Links out: keep the ids that are still records, drop the rest from the restored record.
-            let mut data = own.clone();
-            let out_fields: BTreeSet<String> = rows.iter().filter(|r| r.get::<_, String>(2) == "out").map(|r| r.get(0)).collect();
-            for field in &out_fields {
-                let ids = linked_ids(data.get(field));
-                let live: Vec<String> = tx
-                    .query("SELECT id FROM dataset_records WHERE app_slug = $1 AND id = ANY($2)", &[&slug, &ids])?
-                    .iter()
-                    .map(|r| r.get(0))
-                    .collect();
-                let kept: Vec<String> = ids.iter().filter(|x| live.contains(x)).cloned().collect();
-                restored += kept.len() as u64;
-                if let Some(map) = data.as_object_mut() {
-                    match map.get(field) {
-                        Some(Value::String(_)) if kept.is_empty() => {
-                            map.remove(field);
-                        }
-                        Some(Value::String(_)) => {}
-                        _ => {
-                            map.insert(field.clone(), Value::Array(kept.into_iter().map(Value::String).collect()));
-                        }
-                    }
-                }
-            }
-            if data != own {
-                crate::repository::set_record_data_in_tx(&mut tx, &slug, &id, &data)?;
-            }
-            for field in &out_fields {
-                tx.execute("DELETE FROM record_links WHERE from_record = $1 AND field = $2", &[&id, field])?;
-                insert_links(&mut tx, &slug, &id, &data, std::slice::from_ref(field))?;
-            }
-            // Links in: put the restored record back into the field of each record that still exists.
-            for row in rows.iter().filter(|r| r.get::<_, String>(2) == "in") {
-                let (field, other): (String, String) = (row.get(0), row.get(1));
-                let Some((theirs, _, _)) = lock(&mut tx, &slug, &other)? else { continue };
-                let one = !matches!(theirs.get(&field), Some(Value::Array(_)));
-                let occupied = one && !linked_ids(theirs.get(&field)).is_empty();
-                if occupied {
-                    continue;
-                }
-                if set_membership(&mut tx, &slug, Membership { record_id: &other, field: &field, one, other: &id, present: true }, &ctx)? {
-                    restored += 1;
-                }
-            }
-            tx.execute("DELETE FROM trash_links WHERE record_id = $1", &[&id])?;
+            let restored = restore_links_in_tx(&mut tx, &slug, &id, &WriteCtx::system("links.restore"))?;
             tx.commit()?;
             Ok(restored)
         })
@@ -433,6 +449,55 @@ impl PostgresRepository {
                 .iter()
                 .map(|r| (r.get::<_, String>(0), r.get::<_, Option<Value>>(1).unwrap_or(Value::Null)))
                 .collect())
+        })
+    }
+
+    /// A page of live records of a table whose `fields` contain `needle`, ignoring case. With no
+    /// needle, the first page. `%`, `_` and `\\` in the needle are text, not wildcards.
+    pub fn link_option_rows(&self, q: &LinkOptionQuery) -> Result<Vec<crate::state::DatasetRecord>, RepositoryError> {
+        let LinkOptionQuery { app_slug, table_id, fields, needle, after, limit, scope } = q;
+        let (limit, needle) = (*limit, *needle);
+        use postgres::types::ToSql;
+        let mut params: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(app_slug.to_string()), Box::new(table_id.to_string())];
+        let mut sql = String::from(
+            "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
+             FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL",
+        );
+        if let Some(c) = after {
+            params.push(Box::new(c.created_at.clone()));
+            params.push(Box::new(c.id.clone()));
+            sql.push_str(&format!(" AND (created_at, id) > (${}::text::timestamptz, ${}::text)", params.len() - 1, params.len()));
+        }
+        if !needle.is_empty() && !fields.is_empty() {
+            let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            params.push(Box::new(format!("%{escaped}%")));
+            let pattern = params.len();
+            let mut any = Vec::new();
+            for f in fields.iter() {
+                params.push(Box::new(f.clone()));
+                any.push(format!("data->>${} ILIKE ${pattern} ESCAPE '\\'", params.len()));
+            }
+            sql.push_str(&format!(" AND ({})", any.join(" OR ")));
+        }
+        if let Some(plan) = scope {
+            let (clause, added) = plan.clause_at("dataset_records.id", app_slug, table_id, params.len() + 1);
+            sql.push_str(&clause);
+            for p in added {
+                params.push(match p {
+                    crate::repository::SqlParam::Text(t) => Box::new(t),
+                    crate::repository::SqlParam::Texts(t) => Box::new(t),
+                    crate::repository::SqlParam::Float(f) => Box::new(f),
+                    crate::repository::SqlParam::Floats(f) => Box::new(f),
+                    crate::repository::SqlParam::Int(i) => Box::new(i),
+                });
+            }
+        }
+        params.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
+        sql.push_str(&format!(" ORDER BY created_at, id LIMIT ${}", params.len()));
+        self.with_client(move |client| {
+            crate::repository::count_page_statement();
+            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|b| &**b as &(dyn ToSql + Sync)).collect();
+            Ok(client.query(&sql, &refs)?.iter().map(crate::repository::record_from_row).collect())
         })
     }
 
@@ -466,7 +531,7 @@ impl PostgresRepository {
         let (slug, table, ids) = (app_slug.to_string(), table_id.to_string(), ids.to_vec());
         self.with_client(move |client| {
             Ok(client
-                .query("SELECT id FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND id = ANY($3)", &[&slug, &table, &ids])?
+                .query("SELECT id FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND id = ANY($3) AND deleted_at IS NULL", &[&slug, &table, &ids])?
                 .iter()
                 .map(|r| r.get(0))
                 .collect())

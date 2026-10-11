@@ -272,7 +272,7 @@ async fn the_json_and_record_links_agree_after_mixed_writes_and_a_rebuild_reprod
         let slug = w.slug.clone();
         db(move |c| {
             let mut out: Vec<LinkRow> = Vec::new();
-            for row in c.query("SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = 'apps'", &[&slug]).unwrap() {
+            for row in c.query("SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = 'apps' AND deleted_at IS NULL", &[&slug]).unwrap() {
                 let (id, data): (String, Value) = (row.get(0), row.get(1));
                 for field in ["program", "also"] {
                     let ids: Vec<String> = match data.get(field) {

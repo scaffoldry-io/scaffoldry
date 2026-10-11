@@ -205,6 +205,10 @@ pub fn decide_process(
     if instance.app_slug != slug {
         return Err(ServiceError::NotFound("Process instance not found in this app".to_string()));
     }
+    // A record outside the caller's scope is not theirs to decide on, and is not said to exist.
+    if !crate::service::scope::readable_ids(caller, slug, std::slice::from_ref(&instance.record_id), state).contains(&instance.record_id) {
+        return Err(ServiceError::NotFound("Process instance not found".to_string()));
+    }
     if instance.status != ProcessStatus::Waiting {
         return Err(ServiceError::conflict("Process instance is not in Waiting status"));
     }
@@ -296,7 +300,8 @@ pub fn list_waiting_decisions(caller: &AuthUser, state: &SharedState) -> Result<
         let can_read = *readable
             .entry(inst.app_slug.clone())
             .or_insert_with(|| authorize_app(caller, &inst.app_slug, AppAction::Read, state).is_ok());
-        if can_read && crate::service::approvers::caller_can_decide(state, caller, &inst) {
+        let in_scope = crate::service::scope::readable_ids(caller, &inst.app_slug, std::slice::from_ref(&inst.record_id), state).contains(&inst.record_id);
+        if can_read && in_scope && crate::service::approvers::caller_can_decide(state, caller, &inst) {
             out.push(crate::service::approvers::instance_view(state, &inst));
             if out.len() >= MAX_WAITING {
                 break;

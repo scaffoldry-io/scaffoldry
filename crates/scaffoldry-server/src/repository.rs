@@ -44,8 +44,11 @@ const SCHEMA_0011: &str = include_str!("../../scaffoldry-core/migrations/0011_ap
 const SCHEMA_0027: &str = include_str!("../../scaffoldry-core/migrations/0027_record_history.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
+const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
+const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
 const SCHEMA_0031: &str = include_str!("../../scaffoldry-core/migrations/0031_record_links.sql");
 const SCHEMA_0032: &str = include_str!("../../scaffoldry-core/migrations/0032_trash_links.sql");
+const SCHEMA_0042: &str = include_str!("../../scaffoldry-core/migrations/0042_lifecycle.sql");
 const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_job_schedules.sql");
 
 #[derive(Debug, thiserror::Error)]
@@ -69,13 +72,13 @@ type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
 /// The next page of a table after a cursor. The row comparison walks the paging index.
 pub const PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
      FROM dataset_records \
-     WHERE app_slug = $1 AND table_id = $2 AND (created_at, id) > ($3::text::timestamptz, $4::text) \
+     WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND (created_at, id) > ($3::text::timestamptz, $4::text) \
      ORDER BY created_at, id LIMIT $5";
 
 /// The first page of a table.
 pub const FIRST_PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
      FROM dataset_records \
-     WHERE app_slug = $1 AND table_id = $2 \
+     WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
      ORDER BY created_at, id LIMIT $3";
 
 /// Who wrote a record, and how. Every write takes one, so a change cannot go unattributed.
@@ -107,6 +110,18 @@ impl ActorKind {
 /// Records read, records raised, and the last `(created_at, id)` of a flag catch-up batch.
 pub type FlagBatch = (usize, u64, Option<(String, String)>);
 
+static PAGE_STATEMENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many statements this process has run to read a page of records. A test reads it before and
+/// after a request to show that a page costs a fixed number of statements.
+pub fn page_statements() -> u64 {
+    PAGE_STATEMENTS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub(crate) fn count_page_statement() {
+    PAGE_STATEMENTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// The attribution of one record write. The history row is built from it, in the same
 /// transaction as the write.
 #[derive(Debug, Clone)]
@@ -126,6 +141,10 @@ pub struct WriteCtx {
     pub links: Vec<crate::repository_links::LinkSpec>,
     /// Every `Rollup` and `Count` of the app. A write that touches the records they go through recomputes them.
     pub computed: Vec<crate::repository_links::ComputedSpec>,
+    /// The formulas of the record's table that are stored, as `(field, expression)`, in field order.
+    pub formulas: Vec<(String, String)>,
+    /// The action the history row names, when it is not the usual one. A restore says `restore`.
+    pub action: Option<&'static str>,
 }
 
 impl WriteCtx {
@@ -140,6 +159,8 @@ impl WriteCtx {
             index_fields: Vec::new(),
             links: Vec::new(),
             computed: Vec::new(),
+            formulas: Vec::new(),
+            action: None,
         }
     }
 
@@ -226,6 +247,145 @@ pub(crate) fn set_record_data_in_tx(tx: &mut postgres::Transaction<'_>, app_slug
     Ok(())
 }
 
+/// Writes the stored formulas of the table into the record's data. A value the caller sent for one is replaced.
+pub(crate) fn apply_formulas(data: &mut Value, ctx: &WriteCtx) {
+    for (field, expression) in &ctx.formulas {
+        let value = scaffoldry_engine::evaluate_formula(expression, data);
+        if let Some(map) = data.as_object_mut() {
+            if value.is_null() {
+                map.remove(field);
+            } else {
+                map.insert(field.clone(), value);
+            }
+        }
+    }
+}
+
+/// A new record, in the caller's transaction. The history row is written with it.
+pub(crate) fn insert_record_in_tx(tx: &mut postgres::Transaction<'_>, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), postgres::Error> {
+    let mut rec = rec.clone();
+    apply_formulas(&mut rec.data, ctx);
+    let table = table_id_of(&rec.data);
+    tx.execute(
+        "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
+    )?;
+    crate::repository_index::write_record_index(tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
+    crate::repository_links::write_record_links(tx, &rec.app_slug, &rec.id, None, &rec.data, ctx)?;
+    let changes = diff_fields(None, Some(&rec.data), &ctx.computed_fields);
+    let action = ctx.action.unwrap_or("create");
+    write_history(tx, Touched { app_slug: &rec.app_slug, table_id: &table, record_id: &rec.id, version: 1, action }, &changes, ctx)?;
+    Ok(())
+}
+
+/// One update, in the caller's transaction. With `expected_version`, a record at another version is
+/// left alone and reported as a conflict. A write that changes nothing is skipped.
+pub(crate) fn update_record_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    slug: &str,
+    id: &str,
+    data: &Value,
+    expected_version: Option<i32>,
+    ctx: &WriteCtx,
+) -> Result<RecordWrite, postgres::Error> {
+    let mut data = data.clone();
+    apply_formulas(&mut data, ctx);
+    let Some(row) = tx.query_opt("SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE", &[&slug, &id])? else {
+        return Ok(RecordWrite::Missing);
+    };
+    let (old, version): (Value, i32) = (row.get(0), row.get(1));
+    if expected_version.is_some_and(|expected| expected != version) {
+        return Ok(RecordWrite::Conflict(version));
+    }
+    let changes = diff_fields(Some(&old), Some(&data), &ctx.computed_fields);
+    if changes.is_empty() {
+        return Ok(RecordWrite::Saved(version));
+    }
+    let new_table = table_id_of(&data);
+    let next: i32 = tx
+        .query_one(
+            "UPDATE dataset_records SET data = $1, table_id = $2, version = version + 1 \
+             WHERE app_slug = $3 AND id = $4 RETURNING version",
+            &[&data, &new_table, &slug, &id],
+        )?
+        .get(0);
+    crate::repository_index::write_record_index(tx, slug, &new_table, id, &data, &ctx.index_fields)?;
+    crate::repository_links::write_record_links(tx, slug, id, Some(&old), &data, ctx)?;
+    let action = ctx.action.unwrap_or("update");
+    write_history(tx, Touched { app_slug: slug, table_id: &new_table, record_id: id, version: next, action }, &changes, ctx)?;
+    Ok(RecordWrite::Saved(next))
+}
+
+/// One delete, in the caller's transaction. The record goes to trash and stays there until a
+/// retention job destroys it. Its index rows and links are removed, and the links are remembered so a
+/// restore can bring them back. With `expected_version`, a record at another version is left alone and
+/// reported as a conflict.
+pub(crate) fn delete_record_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    slug: &str,
+    id: &str,
+    expected_version: Option<i32>,
+    ctx: &WriteCtx,
+) -> Result<RecordWrite, postgres::Error> {
+    let batch = ctx.batch_id;
+    let moved = match expected_version {
+        Some(expected) => tx.query_opt(
+            "UPDATE dataset_records SET deleted_at = NOW(), deleted_by = $4, delete_batch = $5 \
+             WHERE app_slug = $1 AND id = $2 AND version = $3 AND deleted_at IS NULL RETURNING data, version, table_id",
+            &[&slug, &id, &expected, &ctx.actor, &batch],
+        )?,
+        None => tx.query_opt(
+            "UPDATE dataset_records SET deleted_at = NOW(), deleted_by = $3, delete_batch = $4 \
+             WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL RETURNING data, version, table_id",
+            &[&slug, &id, &ctx.actor, &batch],
+        )?,
+    };
+    if let Some(row) = moved {
+        let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+        tx.execute("DELETE FROM record_index WHERE record_id = $1", &[&id])?;
+        crate::repository_links::delete_record_links(tx, slug, id, ctx)?;
+        let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
+        let action = ctx.action.unwrap_or("delete");
+        write_history(tx, Touched { app_slug: slug, table_id: &table, record_id: id, version, action }, &changes, ctx)?;
+        return Ok(RecordWrite::Saved(version));
+    }
+    let current = tx.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL", &[&slug, &id])?;
+    Ok(match current {
+        Some(row) => RecordWrite::Conflict(row.get(0)),
+        None => RecordWrite::Missing,
+    })
+}
+
+/// A record in trash, with who put it there and when.
+#[derive(Debug, Clone)]
+pub struct TrashRow {
+    pub record: DatasetRecord,
+    pub deleted_by: String,
+    pub deleted_at: String,
+    pub delete_batch: Option<uuid::Uuid>,
+    /// Whole days left before a retention job may destroy it.
+    pub days_left: i64,
+}
+
+/// Brings one record out of trash, in the caller's transaction: the flags clear and the index rows
+/// are written again. Its links come back in a second pass (`restore_links_in_tx`), once every
+/// record of the batch is live again.
+pub(crate) fn restore_record_in_tx(tx: &mut postgres::Transaction<'_>, slug: &str, id: &str, ctx: &WriteCtx) -> Result<bool, postgres::Error> {
+    let Some(row) = tx.query_opt(
+        "UPDATE dataset_records SET deleted_at = NULL, deleted_by = NULL, delete_batch = NULL \
+         WHERE app_slug = $1 AND id = $2 AND deleted_at IS NOT NULL RETURNING data, version, table_id",
+        &[&slug, &id],
+    )? else {
+        return Ok(false);
+    };
+    let (data, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+    crate::repository_index::write_record_index(tx, slug, &table, id, &data, &ctx.index_fields)?;
+    let action = ctx.action.unwrap_or("restore");
+    write_history(tx, Touched { app_slug: slug, table_id: &table, record_id: id, version, action }, &serde_json::Map::new(), ctx)?;
+    Ok(true)
+}
+
 pub(crate) fn write_history(
     tx: &mut postgres::Transaction<'_>,
     at: Touched<'_>,
@@ -272,6 +432,8 @@ pub struct RecordQuery {
     pub sort: Option<(String, bool)>,
     pub after: Option<RecordCursor>,
     pub limit: usize,
+    /// Only the records inside this scope.
+    pub scope: Option<ScopePlan>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -279,7 +441,45 @@ pub enum SqlParam {
     Text(String),
     Texts(Vec<String>),
     Float(f64),
+    Floats(Vec<f64>),
     Int(i64),
+}
+
+/// A row scope for a statement over one table: the predicate, and the indexed fields it may read.
+#[derive(Debug, Clone)]
+pub struct ScopePlan {
+    pub pred: scaffoldry_core::access::Pred,
+    pub indexed: Vec<scaffoldry_engine::FieldSpec>,
+}
+
+impl ScopePlan {
+    /// The `AND` fragment for a statement that names the record id as `id_expr`, with placeholders
+    /// from `first_param`, and the parameters it needs. A scope the engine cannot compile reads nothing.
+    pub fn clause_at(&self, id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
+        use scaffoldry_engine::access::{to_sql, Param};
+        match to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
+            Ok((sql, added)) => {
+                let params = added
+                    .into_iter()
+                    .map(|p| match p {
+                        Param::Text(t) => SqlParam::Text(t),
+                        Param::Texts(t) => SqlParam::Texts(t),
+                        Param::Num(n) => SqlParam::Float(n),
+                        Param::Nums(n) => SqlParam::Floats(n),
+                    })
+                    .collect();
+                (format!(" AND ({sql})"), params)
+            }
+            Err(_) => (" AND FALSE".to_string(), Vec::new()),
+        }
+    }
+
+    /// The same, appended to a statement's parameters.
+    pub fn clause(&self, id_expr: &str, app_slug: &str, table_id: &str, params: &mut Vec<SqlParam>) -> String {
+        let (sql, added) = self.clause_at(id_expr, app_slug, table_id, params.len() + 1);
+        params.extend(added);
+        sql
+    }
 }
 
 /// Boxes parameters for the driver.
@@ -291,6 +491,7 @@ pub(crate) fn to_sql_params(params: Vec<SqlParam>) -> Vec<Box<dyn postgres::type
                 SqlParam::Text(t) => Box::new(t),
                 SqlParam::Texts(t) => Box::new(t),
                 SqlParam::Float(f) => Box::new(f),
+                SqlParam::Floats(f) => Box::new(f),
                 SqlParam::Int(i) => Box::new(i),
             }
         })
@@ -373,10 +574,17 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
             }
         }
     };
+    let scope = match &q.scope {
+        Some(plan) => {
+            let (app, table) = (match &params[0] { SqlParam::Text(t) => t.clone(), _ => String::new() }, q.table_id.clone());
+            plan.clause("dataset_records.id", &app, &table, &mut params)
+        }
+        None => String::new(),
+    };
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND ({joined}){after} \
+         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){after}{scope} \
          ORDER BY {order} LIMIT ${limit}::bigint"
     );
     (sql, params)
@@ -466,7 +674,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 26] = [
+                        let migrations: [(&str, &str); 29] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -485,8 +693,11 @@ impl PostgresRepository {
                             ("0007_record_version.sql", SCHEMA_0007),
                             ("0023_workspace_guards.sql", SCHEMA_0023),
                             ("0026_jobs.sql", SCHEMA_0026),
+                            ("0028_record_comments.sql", SCHEMA_0028),
+                            ("0030_member_principals.sql", SCHEMA_0030),
                             ("0031_record_links.sql", SCHEMA_0031),
                             ("0032_trash_links.sql", SCHEMA_0032),
+                            ("0042_lifecycle.sql", SCHEMA_0042),
                             ("0044_job_schedules.sql", SCHEMA_0044),
                             ("0045_index_status.sql", SCHEMA_0045),
                             ("0027_record_history.sql", SCHEMA_0027),
@@ -1012,16 +1223,20 @@ impl PostgresRepository {
 
     pub fn upsert_collaborator(&self, c: &CollaboratorRecord) -> Result<(), RepositoryError> {
         let c = c.clone();
+        let (kind, id) = crate::service::members::split_principal(&c.eppn);
+        let (kind, id) = (kind.as_str().to_string(), id.to_string());
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) \
+                "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department, principal_type, principal_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
                  ON CONFLICT (workspace_id, eppn) DO UPDATE SET \
                     role = EXCLUDED.role, \
                     name = EXCLUDED.name, \
                     scoped_affiliation = EXCLUDED.scoped_affiliation, \
-                    department = EXCLUDED.department",
-                &[&c.id, &c.workspace_id, &c.eppn, &c.name, &c.role, &c.scoped_affiliation, &c.department],
+                    department = EXCLUDED.department, \
+                    principal_type = EXCLUDED.principal_type, \
+                    principal_id = EXCLUDED.principal_id",
+                &[&c.id, &c.workspace_id, &c.eppn, &c.name, &c.role, &c.scoped_affiliation, &c.department, &kind, &id],
             )?;
             Ok(())
         })
@@ -1048,7 +1263,7 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let rows = client.query(
                 "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-                 FROM dataset_records WHERE app_slug = $1 ORDER BY created_at ASC, id ASC",
+                 FROM dataset_records WHERE app_slug = $1 AND deleted_at IS NULL ORDER BY created_at ASC, id ASC",
                 &[&slug],
             )?;
             Ok(rows.iter().map(record_from_row).collect())
@@ -1067,6 +1282,7 @@ impl PostgresRepository {
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         self.with_client(move |client| {
+            count_page_statement();
             let rows = match cursor {
                 Some((created_at, id)) => client.query(PAGE_SQL, &[&slug, &table, &created_at, &id, &limit])?,
                 None => client.query(FIRST_PAGE_SQL, &[&slug, &table, &limit])?,
@@ -1079,6 +1295,7 @@ impl PostgresRepository {
     pub fn query_records(&self, app_slug: &str, query: &RecordQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_record_query(app_slug, query);
         self.with_client(move |client| {
+            count_page_statement();
             let boxed = to_sql_params(params);
             let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
             let rows = client.query(&sql, &refs)?;
@@ -1092,7 +1309,7 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let n: i64 = client
                 .query_one(
-                    "SELECT count(*) FROM (SELECT 1 FROM dataset_records WHERE app_slug = $1 AND table_id = $2 LIMIT $3) t",
+                    "SELECT count(*) FROM (SELECT 1 FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL LIMIT $3) t",
                     &[&slug, &table, &(limit + 1)],
                 )?
                 .get(0);
@@ -1105,7 +1322,7 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let row = client.query_opt(
                 "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-                 FROM dataset_records WHERE app_slug = $1 AND id = $2",
+                 FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL",
                 &[&slug, &id],
             )?;
             Ok(row.as_ref().map(record_from_row))
@@ -1117,16 +1334,7 @@ impl PostgresRepository {
         let (rec, ctx) = (rec.clone(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let table = table_id_of(&rec.data);
-            tx.execute(
-                "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
-            )?;
-            crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
-            crate::repository_links::write_record_links(&mut tx, &rec.app_slug, &rec.id, None, &rec.data, &ctx)?;
-            let changes = diff_fields(None, Some(&rec.data), &ctx.computed_fields);
-            write_history(&mut tx, Touched { app_slug: &rec.app_slug, table_id: &table, record_id: &rec.id, version: 1, action: "create" }, &changes, &ctx)?;
+            insert_record_in_tx(&mut tx, &rec, &ctx)?;
             tx.commit()?;
             Ok(())
         })
@@ -1145,33 +1353,9 @@ impl PostgresRepository {
         let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let Some(row) = tx.query_opt(
-                "SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 FOR UPDATE",
-                &[&slug, &id],
-            )? else {
-                return Ok(RecordWrite::Missing);
-            };
-            let (old, version): (Value, i32) = (row.get(0), row.get(1));
-            if version != expected_version {
-                return Ok(RecordWrite::Conflict(version));
-            }
-            let changes = diff_fields(Some(&old), Some(&data), &ctx.computed_fields);
-            if changes.is_empty() {
-                return Ok(RecordWrite::Saved(version));
-            }
-            let new_table = table_id_of(&data);
-            let next: i32 = tx
-                .query_one(
-                    "UPDATE dataset_records SET data = $1, table_id = $2, version = version + 1 \
-                     WHERE app_slug = $3 AND id = $4 RETURNING version",
-                    &[&data, &new_table, &slug, &id],
-                )?
-                .get(0);
-            crate::repository_index::write_record_index(&mut tx, &slug, &new_table, &id, &data, &ctx.index_fields)?;
-            crate::repository_links::write_record_links(&mut tx, &slug, &id, Some(&old), &data, &ctx)?;
-            write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
+            let outcome = update_record_in_tx(&mut tx, &slug, &id, &data, Some(expected_version), &ctx)?;
             tx.commit()?;
-            Ok(RecordWrite::Saved(next))
+            Ok(outcome)
         })
     }
 
@@ -1181,30 +1365,12 @@ impl PostgresRepository {
         let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let Some(row) = tx.query_opt(
-                "SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 FOR UPDATE",
-                &[&slug, &id],
-            )? else {
-                return Ok(None);
-            };
-            let (old, version): (Value, i32) = (row.get(0), row.get(1));
-            let changes = diff_fields(Some(&old), Some(&data), &ctx.computed_fields);
-            if changes.is_empty() {
-                return Ok(Some(version));
-            }
-            let new_table = table_id_of(&data);
-            let next: i32 = tx
-                .query_one(
-                    "UPDATE dataset_records SET data = $1, table_id = $2, version = version + 1 \
-                     WHERE app_slug = $3 AND id = $4 RETURNING version",
-                    &[&data, &new_table, &slug, &id],
-                )?
-                .get(0);
-            crate::repository_index::write_record_index(&mut tx, &slug, &new_table, &id, &data, &ctx.index_fields)?;
-            crate::repository_links::write_record_links(&mut tx, &slug, &id, Some(&old), &data, &ctx)?;
-            write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
+            let outcome = update_record_in_tx(&mut tx, &slug, &id, &data, None, &ctx)?;
             tx.commit()?;
-            Ok(Some(next))
+            Ok(match outcome {
+                RecordWrite::Saved(version) => Some(version),
+                RecordWrite::Missing | RecordWrite::Conflict(_) => None,
+            })
         })
     }
 
@@ -1212,18 +1378,9 @@ impl PostgresRepository {
         let (slug, id, ctx) = (app_slug.to_string(), id.to_string(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let Some(row) = tx.query_opt(
-                "DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 RETURNING data, version, table_id",
-                &[&slug, &id],
-            )? else {
-                return Ok(false);
-            };
-            let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
-            crate::repository_links::delete_record_links(&mut tx, &slug, &id, &ctx)?;
-            let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
-            write_history(&mut tx, Touched { app_slug: &slug, table_id: &table, record_id: &id, version, action: "delete" }, &changes, &ctx)?;
+            let outcome = delete_record_in_tx(&mut tx, &slug, &id, None, &ctx)?;
             tx.commit()?;
-            Ok(true)
+            Ok(matches!(outcome, RecordWrite::Saved(_)))
         })
     }
 
@@ -1232,23 +1389,9 @@ impl PostgresRepository {
         let (slug, id, ctx) = (app_slug.to_string(), id.to_string(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let deleted = tx.query_opt(
-                "DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 AND version = $3 RETURNING data, version, table_id",
-                &[&slug, &id, &expected_version],
-            )?;
-            if let Some(row) = deleted {
-                let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
-                crate::repository_links::delete_record_links(&mut tx, &slug, &id, &ctx)?;
-                let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
-                write_history(&mut tx, Touched { app_slug: &slug, table_id: &table, record_id: &id, version, action: "delete" }, &changes, &ctx)?;
-                tx.commit()?;
-                return Ok(RecordWrite::Saved(version));
-            }
-            let current = tx.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2", &[&slug, &id])?;
-            Ok(match current {
-                Some(row) => RecordWrite::Conflict(row.get(0)),
-                None => RecordWrite::Missing,
-            })
+            let outcome = delete_record_in_tx(&mut tx, &slug, &id, Some(expected_version), &ctx)?;
+            tx.commit()?;
+            Ok(outcome)
         })
     }
 
@@ -1293,7 +1436,8 @@ impl PostgresRepository {
 
     /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
     pub fn upsert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
-        let (rec, ctx) = (rec.clone(), ctx.clone());
+        let (mut rec, ctx) = (rec.clone(), ctx.clone());
+        apply_formulas(&mut rec.data, &ctx);
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let before = tx.query_opt("SELECT data FROM dataset_records WHERE id = $1 FOR UPDATE", &[&rec.id])?;
@@ -1380,7 +1524,7 @@ impl PostgresRepository {
         let slugs = app_slugs.to_vec();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT app_slug, count(*)::bigint FROM dataset_records WHERE app_slug = ANY($1) GROUP BY app_slug",
+                "SELECT app_slug, count(*)::bigint FROM dataset_records WHERE app_slug = ANY($1) AND deleted_at IS NULL GROUP BY app_slug",
                 &[&slugs],
             )?;
             let mut map = HashMap::new();

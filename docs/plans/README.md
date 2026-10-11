@@ -63,18 +63,18 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 40 | [links.md](links.md) | 1 | Records link by id. A link field and its index | **COMPLETED** |
 | 41 | [links.md](links.md) | 2 | Two-way links, and what delete does to them | **COMPLETED** |
 | 42 | [links.md](links.md) | 3 | Lookup, rollup, and count through links | **COMPLETED** |
-| 43 | [row-scale.md](row-scale.md) | 3 | Computed values are written, not recomputed, using links |
-| 44 | [calc-graph.md](calc-graph.md) | 1 | One formula evaluator, in Rust, with a preview route |
+| 43 | [row-scale.md](row-scale.md) | 3 | Computed values are written, not recomputed, using links | **COMPLETED** |
+| 44 | [calc-graph.md](calc-graph.md) | 1 | One formula evaluator, in Rust, with a preview route | **COMPLETED** |
 | 45 | [calc-graph.md](calc-graph.md) | 2 | A dependency graph with cycle detection and ordered recalculation |
 | 46 | [mcp-apps.md](mcp-apps.md) | 4a | Process definitions and every direct app change are proposals. A Proposals screen exists | **COMPLETED** |
 | 47 | [mcp-apps.md](mcp-apps.md) | 5 | An agent lists and decides waiting process steps | **COMPLETED** |
-| 48 | [record-history.md](record-history.md) | 2 | Undo and restore |
-| 49 | [record-history.md](record-history.md) | 3 | Comments, mentions, and the commenter role |
-| 50 | [lifecycle.md](lifecycle.md) | 1 | Delete moves a record to trash. Restore brings it back with its links |
-| 51 | [links.md](links.md) | 4 | A link picker that respects access |
-| 52 | [access-rules.md](access-rules.md) | 1 | Share with groups, units, and positions. One `member_role` function |
-| 53 | [access-rules.md](access-rules.md) | 2 | Rules as data, one row scope, and a SQL and Rust equivalence test |
-| 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column |
+| 48 | [record-history.md](record-history.md) | 2 | Undo and restore | **COMPLETED** |
+| 49 | [record-history.md](record-history.md) | 3 | Comments, mentions, and the commenter role | **COMPLETED** |
+| 50 | [lifecycle.md](lifecycle.md) | 1 | Delete moves a record to trash. Restore brings it back with its links | **COMPLETED** |
+| 51 | [links.md](links.md) | 4 | A link picker that respects access | **COMPLETED** |
+| 52 | [access-rules.md](access-rules.md) | 1 | Share with groups, units, and positions. One `member_role` function | **COMPLETED** |
+| 53 | [access-rules.md](access-rules.md) | 2 | Rules as data, one row scope, and a SQL and Rust equivalence test | **COMPLETED** |
+| 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column | **COMPLETED** |
 | 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy |
 | 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected |
 | 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only |

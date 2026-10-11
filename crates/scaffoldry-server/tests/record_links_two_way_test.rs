@@ -8,7 +8,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use scaffoldry_engine::{AppManifest, AppTable, FieldSpec, FieldType, LinkCardinality, LinkOnDelete};
 use scaffoldry_server::build_app_with_state;
-use scaffoldry_server::repository::PostgresRepository;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
@@ -270,16 +269,6 @@ async fn a_mirror_write_keeps_the_other_records_version_and_is_recorded_as_the_s
     assert_eq!(program_batch, app_batch, "the mirror write carries the batch of the user's change");
 }
 
-fn insert_raw(slug: &str, id: &str, table: &str, data: Value) {
-    let (slug, id, table) = (slug.to_string(), id.to_string(), table.to_string());
-    db(move |c| {
-        c.execute(
-            "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, table_id) VALUES ($1, $2, $3, '{}', false, $4)",
-            &[&id, &slug, &data, &table],
-        )
-        .unwrap();
-    });
-}
 
 // 4. Deleting a program removes its links and restoring it brings them back, except to a record that is gone.
 #[tokio::test]
@@ -288,25 +277,23 @@ async fn deleting_a_program_removes_its_links_and_restoring_it_brings_them_back(
     let p = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let a1 = id_of(&create(&w, "apps", json!({ "applicant": "Ada", "program": p })).await);
     let a2 = id_of(&create(&w, "apps", json!({ "applicant": "Bo", "program": p })).await);
-    let program = get(&w, &p).await;
-    let stored_json = program["data"].clone();
-    let repo = PostgresRepository::connect(None).unwrap();
 
     // Delete: every link to and from the program is gone, and the applications no longer point at it.
     let (status, body) = delete(&w, &p).await;
     assert!(status.is_success(), "{status} {body}");
     assert!(held(&get(&w, &a1).await, "program").is_empty() && held(&get(&w, &a2).await, "program").is_empty());
     assert!(link_rows(&w.slug).iter().all(|r| r.0 != p && r.2 != p), "{:?}", link_rows(&w.slug));
-    let slug = w.slug.clone();
     let pid = p.clone();
     let saved: i64 = db(move |c| c.query_one("SELECT count(*) FROM trash_links WHERE record_id = $1", &[&pid]).unwrap().get(0));
     assert_eq!(saved, 4, "two links out and two links in were remembered");
-    let _ = slug;
 
-    // Restore: the record is back, and so are the links to records that are still there.
-    insert_raw(&w.slug, &p, "programs", stored_json.clone());
-    let restored = repo.restore_record_links(&w.slug, &p).unwrap();
-    assert_eq!(restored, 4);
+    // Restore: the record is back from trash, and so are the links to records that are still there.
+    let restore = |what: String| {
+        let (app, token, slug) = (w.app.clone(), w.token.clone(), w.slug.clone());
+        async move { send(&app, "POST", &format!("/api/v1/apps/{slug}/trash/{what}/restore"), &token, Some(json!({}))).await }
+    };
+    let (status, body) = restore(p.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(held(&get(&w, &a1).await, "program"), vec![p.clone()]);
     assert_eq!(held(&get(&w, &a2).await, "program"), vec![p.clone()]);
     assert_eq!(rows_of(&w.slug, &p, "applications"), sorted(vec![a1.clone(), a2.clone()]));
@@ -319,9 +306,8 @@ async fn deleting_a_program_removes_its_links_and_restoring_it_brings_them_back(
     assert!(status.is_success());
     let (status, _) = delete(&w, &a2).await;
     assert!(status.is_success());
-    insert_raw(&w.slug, &p, "programs", stored_json);
-    let restored = repo.restore_record_links(&w.slug, &p).unwrap();
-    assert_eq!(restored, 2, "only the link to the live application");
+    let (status, body) = restore(p.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(held(&get(&w, &a1).await, "program"), vec![p.clone()]);
     let program = get(&w, &p).await;
     assert_eq!(held(&program, "applications"), vec![a1.clone()], "the program no longer names the deleted application: {program}");

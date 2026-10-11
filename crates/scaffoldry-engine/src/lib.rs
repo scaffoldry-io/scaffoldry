@@ -1,5 +1,6 @@
 //! Scaffoldry Dynamic Engine and Manifest Renderer (Layer 3)
 
+pub mod access;
 pub mod automation;
 pub mod detect;
 pub mod index;

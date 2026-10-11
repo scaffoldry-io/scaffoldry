@@ -57,7 +57,7 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
         .map(|u| u.to_string());
     let collaborators: Vec<Collaborator> = ws_id
         .as_ref()
-        .and_then(|id| state.collaborators.read().ok().map(|c| c.get(id).cloned().unwrap_or_default()))
+        .map(|id| crate::service::members::people_records(id, state))
         .unwrap_or_default()
         .into_iter()
         .map(|c| Collaborator { eppn: c.eppn, role: c.role, affiliation: c.scoped_affiliation })

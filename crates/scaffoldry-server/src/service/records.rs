@@ -2,7 +2,9 @@
 
 use scaffoldry_engine::HostRouter;
 
+use crate::service::scope;
 use crate::service::ServiceError;
+use scaffoldry_core::access::RowOp;
 use crate::service::access::{authorize_app, AppAction};
 use crate::service::history::{write_ctx, Origin};
 use crate::state::{AuthUser, DatasetRecord, SharedState};
@@ -147,6 +149,11 @@ pub fn create_record(
             })?
     };
 
+    let table = submitted.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
+        return Err(outside_scope());
+    }
+
     let record = DatasetRecord {
         id: submitted.id.to_string(),
         app_slug: app_slug.to_string(),
@@ -184,6 +191,11 @@ pub fn create_record(
     Ok(final_record)
 }
 
+/// A write that would leave a record outside the person's own scope. It names no row and no rule.
+fn outside_scope() -> ServiceError {
+    ServiceError::forbidden("You cannot save a record that is outside the rows you have access to.")
+}
+
 pub fn list_records(
     caller: &AuthUser,
     app_slug: &str,
@@ -191,6 +203,7 @@ pub fn list_records(
 ) -> Result<Vec<DatasetRecord>, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     let rows = state.list_app_records(app_slug).map_err(ServiceError::Internal)?;
+    let rows = scope::retain_readable(caller, app_slug, rows, state);
     Ok(redact_records(caller, app_slug, rows, state))
 }
 
@@ -204,6 +217,7 @@ pub fn get_record(
     let record = state
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
+        .filter(|r| scope::allows(caller, app_slug, r, RowOp::Read, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
     Ok(redact_records(caller, app_slug, vec![record], state).remove(0))
 }
@@ -230,6 +244,7 @@ pub fn update_record(
     let current = state
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
+        .filter(|r| scope::allows(caller, app_slug, r, RowOp::Update, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
 
     let mut new_data = match payload.get("data") {
@@ -247,6 +262,10 @@ pub fn update_record(
     }
 
     let new_data = strip_lookups(app_slug, &new_data, state);
+    let table = new_data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
+        return Err(outside_scope());
+    }
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
@@ -313,6 +332,9 @@ pub fn delete_record(
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    if !scope::allows(caller, app_slug, &current, RowOp::Delete, state) {
+        return Err(ServiceError::NotFound(format!("Record '{id}' not found")));
+    }
     check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     if state.remove_record(app_slug, id, &ctx).map_err(ServiceError::Internal)? {
@@ -337,6 +359,9 @@ pub fn delete_record_checked(
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    if !scope::allows(caller, app_slug, &current, RowOp::Delete, state) {
+        return Err(ServiceError::NotFound(format!("Record '{id}' not found")));
+    }
     check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     match state.remove_record_checked(app_slug, id, version, &ctx).map_err(ServiceError::Internal)? {
@@ -440,12 +465,10 @@ fn is_viewer(caller: &AuthUser, app_slug: &str, state: &SharedState) -> bool {
         .ok()
         .and_then(|e| e.resolve_by_slug(app_slug).and_then(|m| m.workspace_id.clone()));
     let Some(workspace) = workspace else { return false };
-    state
-        .collaborators
-        .read()
-        .ok()
-        .and_then(|c| c.get(&workspace).and_then(|list| list.iter().find(|m| m.eppn == caller.eppn).map(|m| m.role.eq_ignore_ascii_case("viewer"))))
-        .unwrap_or(false)
+    matches!(
+        crate::service::members::member_role(caller, &workspace, state),
+        Some(crate::service::members::Role::Viewer | crate::service::members::Role::Commenter)
+    )
 }
 
 /// The fields a caller may not read in one table. Only a workspace viewer is held back, and the
@@ -566,6 +589,29 @@ pub(crate) fn computed_specs_of(app_slug: &str, state: &SharedState) -> Vec<crat
     out
 }
 
+/// `(field, expression)` pairs: the formulas stored at write time, and the formulas added at read time.
+pub(crate) type FormulaSplit = (Vec<(String, String)>, Vec<(String, String)>);
+
+/// The formulas of a table, split by when they are computed. A formula that names a lookup field is
+/// computed when a page is read, because the lookup is. Every other formula is stored when its
+/// record is written. Each list holds `(field, expression)` in field order.
+pub(crate) fn formula_specs_of(app_slug: &str, table_id: &str, state: &SharedState) -> FormulaSplit {
+    use scaffoldry_engine::FieldType;
+    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
+    let lookups: Vec<&str> = fields.iter().filter(|f| f.field_type == FieldType::Lookup).map(|f| f.name.as_str()).collect();
+    let (mut at_write, mut at_read) = (Vec::new(), Vec::new());
+    for f in fields.iter().filter(|f| f.field_type == FieldType::Formula) {
+        let Some(expression) = f.formula_expression.clone() else { continue };
+        let refs = scaffoldry_engine::formula_field_refs(&expression).unwrap_or_default();
+        if refs.iter().any(|r| lookups.contains(&r.as_str())) {
+            at_read.push((f.name.clone(), expression));
+        } else {
+            at_write.push((f.name.clone(), expression));
+        }
+    }
+    (at_write, at_read)
+}
+
 /// A lookup is never stored: it is added to the rows of a page when they are read. A value a caller sends
 /// under a lookup field's name is dropped.
 fn strip_lookups(app_slug: &str, data: &Value, state: &SharedState) -> Value {
@@ -575,6 +621,9 @@ fn strip_lookups(app_slug: &str, data: &Value, state: &SharedState) -> Value {
     if let Some(map) = out.as_object_mut() {
         for f in fields.iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::Lookup) {
             map.remove(&f.name);
+        }
+        for (name, _) in formula_specs_of(app_slug, table, state).1 {
+            map.remove(&name);
         }
     }
     out
@@ -614,13 +663,26 @@ fn fill_lookups(caller: &AuthUser, app_slug: &str, rows: &mut [DatasetRecord], s
                 }
             }
         }
+        // A formula over a lookup is added now that the lookups are in the rows.
+        for (name, expression) in formula_specs_of(app_slug, &table, state).1 {
+            for i in &positions {
+                let value = scaffoldry_engine::evaluate_formula(&expression, &rows[*i].data);
+                if let (false, Some(map)) = (value.is_null(), rows[*i].data.as_object_mut()) {
+                    map.insert(name.clone(), value);
+                }
+            }
+        }
     }
 }
 
 /// The names of a table's indexed fields: marked, used by a view, or joined on.
 fn indexed_names(app_slug: &str, table_id: &str, state: &SharedState) -> std::collections::BTreeSet<String> {
     let Ok(engine) = state.engine.read() else { return Default::default() };
-    engine.resolve_by_slug(app_slug).map(|m| scaffoldry_engine::indexed_fields(m, table_id)).unwrap_or_default()
+    let mut names = engine.resolve_by_slug(app_slug).map(|m| scaffoldry_engine::indexed_fields(m, table_id)).unwrap_or_default();
+    drop(engine);
+    // A field a row rule reads is indexed, so the rule compiles to the index.
+    names.extend(crate::service::scope::rule_fields(app_slug, table_id, state));
+    names
 }
 
 fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
@@ -742,12 +804,15 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     let (fields, table) = table_fields(app_slug, &query.table_id, query.must_exist, state)?;
     let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
     let check = |name: &str| -> Result<(), ServiceError> {
-        if fields.iter().any(|f| f.name == name) && !hidden.iter().any(|h| h == name) {
-            Ok(())
-        } else {
+        if !fields.iter().any(|f| f.name == name) {
             Err(ServiceError::BadRequest(format!("'{name}' is not a field of this table")))
+        } else if hidden.iter().any(|h| h == name) {
+            Err(ServiceError::FieldHidden(format!("You cannot filter or sort on '{name}' because you cannot see it.")))
+        } else {
+            Ok(())
         }
     };
+    let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
     let clauses: Vec<_> = query
         .filter
         .as_ref()
@@ -765,9 +830,27 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     let plan = indexed_plan(&fields, &indexed_names(app_slug, &table, state), query.filter.as_ref(), query.sort.as_ref());
     let mut walk_spec: Option<FieldSpec> = None;
     let mut rows = if clauses.is_empty() && query.sort.is_none() {
-        state
-            .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
-            .map_err(ServiceError::Internal)?
+        match &scope {
+            // The paging index cannot apply a scope, so a scoped walk goes through the same statement
+            // as a filtered one, in the same order.
+            Some(plan) => state
+                .query_records(
+                    app_slug,
+                    &crate::repository::RecordQuery {
+                        table_id: table.clone(),
+                        any: false,
+                        clauses: Vec::new(),
+                        sort: None,
+                        after,
+                        limit: query.limit + 1,
+                        scope: Some(plan.clone()),
+                    },
+                )
+                .map_err(ServiceError::Internal)?,
+            None => state
+                .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
+                .map_err(ServiceError::Internal)?,
+        }
     } else if let Some((iclauses, isort)) = plan.as_ref().ok().filter(|(c, s)| !c.is_empty() || s.is_some()) {
         let named: Vec<String> = iclauses.iter().map(|c| c.field.clone()).chain(isort.iter().map(|s| s.field.clone())).collect();
         if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(ServiceError::Internal)? {
@@ -780,6 +863,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             sort: isort.clone(),
             after: None,
             limit: query.limit + 1,
+            scope: scope.clone(),
         };
         if let Some((name, column, _)) = crate::repository_index::walk_of(&iq) {
             walk_spec = fields.iter().find(|f| f.name == name).cloned();
@@ -800,6 +884,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             sort: query.sort.as_ref().map(|s| (s.field_name.clone(), s.descending)),
             after,
             limit: query.limit + 1,
+            scope: scope.clone(),
         };
         state.query_records(app_slug, &q).map_err(ServiceError::Internal)?
     };

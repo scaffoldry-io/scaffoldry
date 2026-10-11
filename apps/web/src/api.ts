@@ -241,6 +241,26 @@ export interface UnitPositionRow {
   holders: { eppn: string; display_name: string; source: string }[];
 }
 
+/** One comment on a record. A removed comment has no body. */
+export interface CommentRow {
+  id: string;
+  record_id: string;
+  parent_id: string | null;
+  author: string;
+  author_name: string;
+  body: string | null;
+  mentions: string[];
+  deleted: boolean;
+  created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface Mentionable {
+  eppn: string;
+  name: string;
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
@@ -343,6 +363,53 @@ const requestFull = async <T>(path: string, options: RequestInit = {}): Promise<
 };
 
 const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => (await requestFull<T>(path, options)).data;
+
+/** Undoes a batch of record changes. The answer names the batch the undo wrote, which undoes the undo. */
+export const undoBatch = (appSlug: string, batchId: string): Promise<{ batch_id: string; records: number }> =>
+  request(`/apps/${appSlug}/history/${batchId}/undo`, { method: "POST", body: JSON.stringify({}) });
+
+/** Writes the old values of some fields of a record back, as one new version. */
+export const restoreRecord = (appSlug: string, recordId: string, body: { to_version: number; fields?: string[]; version: number }) =>
+  request<Record<string, unknown>>(`/apps/${appSlug}/records/${recordId}/restore`, { method: "POST", body: JSON.stringify(body) });
+
+export interface TrashEntry {
+  record_id: string;
+  table_id: string;
+  title: string;
+  deleted_by: string;
+  deleted_by_name: string;
+  deleted_at: string;
+  delete_batch: string;
+  days_left: number;
+}
+
+/** What is in the trash of an app, newest first. */
+export const listTrash = (appSlug: string, cursor?: string): Promise<{ entries: TrashEntry[]; next_cursor: string | null }> =>
+  request(`/apps/${appSlug}/trash${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+
+/** Brings back one record, or the whole batch when given a delete batch id. */
+export const restoreTrash = (appSlug: string, what: string): Promise<{ restored: number; batch_id: string }> =>
+  request(`/apps/${appSlug}/trash/${encodeURIComponent(what)}/restore`, { method: "POST", body: JSON.stringify({}) });
+
+export interface LinkOption {
+  id: string;
+  label: string;
+  secondary: string | null;
+}
+
+/** The records a link may point at: ids and labels only, matched on the query. */
+export const listLinkOptions = (
+  appSlug: string,
+  tableId: string,
+  q: string,
+  cursor?: string,
+): Promise<{ options: LinkOption[]; next_cursor: string | null }> => {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return request(`/apps/${appSlug}/tables/${encodeURIComponent(tableId)}/link-options${query ? `?${query}` : ""}`);
+};
 
 export const apiClient = {
   // Authentication & Sessions
@@ -508,6 +575,30 @@ export const apiClient = {
       `/orgs/${encodeURIComponent(unit)}/positions/${encodeURIComponent(key)}/holders/${encodeURIComponent(eppn)}`,
       { method: "DELETE", body: JSON.stringify({ reason }) }
     );
+  },
+
+  listComments: async (appSlug: string, recordId: string) => {
+    return request<{ comments: CommentRow[] }>(`/apps/${appSlug}/records/${recordId}/comments`);
+  },
+
+  postComment: async (appSlug: string, recordId: string, body: string, parentId?: string) => {
+    return request<CommentRow>(`/apps/${appSlug}/records/${recordId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body, ...(parentId ? { parent_id: parentId } : {}) }),
+    });
+  },
+
+  editComment: async (appSlug: string, commentId: string, body: string) => {
+    return request<CommentRow>(`/apps/${appSlug}/comments/${commentId}`, { method: "PATCH", body: JSON.stringify({ body }) });
+  },
+
+  removeComment: async (appSlug: string, commentId: string) => {
+    return request<CommentRow>(`/apps/${appSlug}/comments/${commentId}`, { method: "DELETE" });
+  },
+
+  /** The people a mention can name: those who can read the app. */
+  mentionable: async (appSlug: string) => {
+    return request<{ people: Mentionable[] }>(`/apps/${appSlug}/mentionable`);
   },
 
   listProposals: async (workspaceId: string) => {

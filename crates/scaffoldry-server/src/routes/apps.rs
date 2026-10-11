@@ -46,14 +46,8 @@ async fn create_app_in_workspace(
         })?
     };
 
-    let collabs = {
-        let collabs_guard = state.collaborators.read().map_err(|_| lock_err())?;
-        collabs_guard.get(&ws_id).cloned().unwrap_or_default()
-    };
-    let (is_member, member_role) = match collabs.iter().find(|m| m.eppn == user.eppn) {
-        Some(m) => (true, Some(m.role.clone())),
-        None => (false, None),
-    };
+    let role = crate::service::members::member_role(&user, &ws_id, &state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
     let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
 
     let decision = state
@@ -421,10 +415,13 @@ async fn list_app_processes(
             let _ = state.persist_process_instance(inst.clone());
         }
     }
+    // An instance on a record the caller cannot read is left out.
+    let record_ids: Vec<String> = all.iter().map(|i| i.record_id.clone()).collect();
+    let readable = crate::service::scope::readable_ids(&user, &slug, &record_ids, &state);
     let filtered: Vec<Value> = all
         .iter()
         .filter(|inst| {
-            if inst.app_slug != slug {
+            if inst.app_slug != slug || !readable.contains(&inst.record_id) {
                 return false;
             }
             if let Some(ref st) = query.status {

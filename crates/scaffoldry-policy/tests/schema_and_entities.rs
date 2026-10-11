@@ -81,7 +81,7 @@ fn unit_ids_stop_after_32_steps_even_with_a_cycle() {
 fn every_default_policy_has_a_non_empty_description() {
     let engine = ScaffoldryPolicyEngine::default_institutional_engine().unwrap();
     let summaries = engine.policy_summaries();
-    assert_eq!(summaries.len(), 24, "the default set holds 24 policies");
+    assert_eq!(summaries.len(), 25, "the default set holds 25 policies");
     for p in summaries {
         assert!(!p.description.trim().is_empty(), "policy {} has no @description", p.id);
     }

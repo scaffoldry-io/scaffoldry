@@ -97,12 +97,12 @@ pub(crate) fn copy_batch(
 ) -> Result<Batch, postgres::Error> {
     let batch = match after {
         None => tx.query(
-            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
              ORDER BY created_at, id LIMIT $3 FOR SHARE",
             &[&app_slug, &table_id, &limit],
         )?,
         Some((at, id)) => tx.query(
-            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
              AND (created_at, id) > ($3::text::timestamptz, $4::text) ORDER BY created_at, id LIMIT $5 FOR SHARE",
             &[&app_slug, &table_id, at, id, &limit],
         )?,
@@ -244,6 +244,7 @@ impl PostgresRepository {
     fn run_indexed(&self, q: &IndexedQuery, phase: IndexPhase) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_indexed_sql(q, phase);
         self.with_client(move |client| {
+            crate::repository::count_page_statement();
             let boxed = crate::repository::to_sql_params(params);
             let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
             let rows = client.query(&sql, &refs)?;
@@ -295,6 +296,8 @@ pub struct IndexedQuery {
     /// The last row of the previous page: its value and its record id.
     pub after: Option<(IndexedValue, String)>,
     pub limit: usize,
+    /// Only the records inside this scope.
+    pub scope: Option<crate::repository::ScopePlan>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,11 +436,15 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
             "i.record_id ASC".to_string()
         }
     };
+    let scope = match &q.scope {
+        Some(plan) => plan.clause("r.id", &q.app_slug, &q.table_id, &mut params),
+        None => String::new(),
+    };
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT r.id, r.app_slug, r.data, r.ceds_mapping, r.is_ferpa_sensitive, r.created_at::text AS created_at_text, r.created_by, r.version \
-         FROM record_index i JOIN dataset_records r ON r.id = i.record_id \
-         WHERE {} ORDER BY {order} LIMIT ${limit}::bigint",
+         FROM record_index i JOIN dataset_records r ON r.id = i.record_id AND r.deleted_at IS NULL \
+         WHERE {}{scope} ORDER BY {order} LIMIT ${limit}::bigint",
         wheres.join(" AND ")
     );
     (sql, params)
