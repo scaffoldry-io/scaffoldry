@@ -94,4 +94,17 @@ impl PostgresRepository {
             Ok(restored.into_iter().map(|(id, _)| id).collect())
         })
     }
+
+    /// Records by id, live or in trash. For a check of what the reader could see.
+    pub fn records_with_trashed(&self, app_slug: &str, ids: &[String]) -> Result<Vec<crate::state::DatasetRecord>, RepositoryError> {
+        let (slug, ids) = (app_slug.to_string(), ids.to_vec());
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
+                 FROM dataset_records WHERE app_slug = $1 AND id = ANY($2)",
+                &[&slug, &ids],
+            )?;
+            Ok(rows.iter().map(crate::repository::record_from_row).collect())
+        })
+    }
 }

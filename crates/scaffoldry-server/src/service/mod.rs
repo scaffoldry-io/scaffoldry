@@ -21,6 +21,7 @@ pub mod proposals;
 pub mod tools;
 pub mod link_options;
 pub mod members;
+pub mod scope;
 pub mod trash;
 pub mod undo;
 
@@ -93,6 +94,8 @@ pub enum ServiceError {
     UndoConflict { message: String, conflicts: Vec<Value> },
     /// A rule the app set stops the change, such as a delete while records still link to the record.
     ConstraintViolated(String),
+    /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
+    FieldHidden(String),
     Internal(String),
 }
 
@@ -129,7 +132,7 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::FieldHidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
@@ -150,6 +153,7 @@ impl ServiceError {
             Self::TooLarge(_) => "too_large",
             Self::IndexBuilding(_) => "index_building",
             Self::ConstraintViolated(_) => "constraint_violated",
+            Self::FieldHidden(_) => "field_hidden",
             Self::UndoConflict { .. } => "undo_conflict",
             Self::Internal(_) => "internal",
         }
@@ -165,6 +169,7 @@ impl ServiceError {
             | Self::TooLarge(msg)
             | Self::IndexBuilding(msg)
             | Self::ConstraintViolated(msg)
+            | Self::FieldHidden(msg)
             | Self::Internal(msg) => msg,
             Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }

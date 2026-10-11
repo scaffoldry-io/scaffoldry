@@ -176,11 +176,9 @@ async fn list_table_records(
         })));
     }
 
-    let app_records = state
-        .list_app_records(&slug)
-        .map_err(|e| ServiceError::internal(e).into_pair())?;
-    // Redact before filtering and sorting, so a viewer cannot probe a field by filtering on it.
-    let app_records = crate::service::records::redact_records(&user, &slug, app_records, &state);
+    // The service applies the row scope and redacts before filtering and sorting, so a viewer
+    // cannot probe a field by filtering on it.
+    let app_records = crate::service::records::list_records(&user, &slug, &state).map_err(ServiceError::into_pair)?;
 
     // Filter by table_id (match tagged _table_id or match all if untagged single-table)
     let mut table_records: Vec<DatasetRecord> = app_records
@@ -318,11 +316,9 @@ async fn list_records(
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let app_records = state
-        .list_app_records(&slug)
-        .map_err(|e| ServiceError::internal(e).into_pair())?;
-    // Redact before filtering and sorting, so a viewer cannot probe a field by filtering on it.
-    let app_records = crate::service::records::redact_records(&user, &slug, app_records, &state);
+    // The service applies the row scope and redacts before filtering and sorting, so a viewer
+    // cannot probe a field by filtering on it.
+    let app_records = crate::service::records::list_records(&user, &slug, &state).map_err(ServiceError::into_pair)?;
     let total = app_records.len();
 
     Ok(Json(json!({

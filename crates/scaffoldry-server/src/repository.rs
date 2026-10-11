@@ -432,6 +432,8 @@ pub struct RecordQuery {
     pub sort: Option<(String, bool)>,
     pub after: Option<RecordCursor>,
     pub limit: usize,
+    /// Only the records inside this scope.
+    pub scope: Option<ScopePlan>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -439,7 +441,45 @@ pub enum SqlParam {
     Text(String),
     Texts(Vec<String>),
     Float(f64),
+    Floats(Vec<f64>),
     Int(i64),
+}
+
+/// A row scope for a statement over one table: the predicate, and the indexed fields it may read.
+#[derive(Debug, Clone)]
+pub struct ScopePlan {
+    pub pred: scaffoldry_core::access::Pred,
+    pub indexed: Vec<scaffoldry_engine::FieldSpec>,
+}
+
+impl ScopePlan {
+    /// The `AND` fragment for a statement that names the record id as `id_expr`, with placeholders
+    /// from `first_param`, and the parameters it needs. A scope the engine cannot compile reads nothing.
+    pub fn clause_at(&self, id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
+        use scaffoldry_engine::access::{to_sql, Param};
+        match to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
+            Ok((sql, added)) => {
+                let params = added
+                    .into_iter()
+                    .map(|p| match p {
+                        Param::Text(t) => SqlParam::Text(t),
+                        Param::Texts(t) => SqlParam::Texts(t),
+                        Param::Num(n) => SqlParam::Float(n),
+                        Param::Nums(n) => SqlParam::Floats(n),
+                    })
+                    .collect();
+                (format!(" AND ({sql})"), params)
+            }
+            Err(_) => (" AND FALSE".to_string(), Vec::new()),
+        }
+    }
+
+    /// The same, appended to a statement's parameters.
+    pub fn clause(&self, id_expr: &str, app_slug: &str, table_id: &str, params: &mut Vec<SqlParam>) -> String {
+        let (sql, added) = self.clause_at(id_expr, app_slug, table_id, params.len() + 1);
+        params.extend(added);
+        sql
+    }
 }
 
 /// Boxes parameters for the driver.
@@ -451,6 +491,7 @@ pub(crate) fn to_sql_params(params: Vec<SqlParam>) -> Vec<Box<dyn postgres::type
                 SqlParam::Text(t) => Box::new(t),
                 SqlParam::Texts(t) => Box::new(t),
                 SqlParam::Float(f) => Box::new(f),
+                SqlParam::Floats(f) => Box::new(f),
                 SqlParam::Int(i) => Box::new(i),
             }
         })
@@ -533,10 +574,17 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
             }
         }
     };
+    let scope = match &q.scope {
+        Some(plan) => {
+            let (app, table) = (match &params[0] { SqlParam::Text(t) => t.clone(), _ => String::new() }, q.table_id.clone());
+            plan.clause("dataset_records.id", &app, &table, &mut params)
+        }
+        None => String::new(),
+    };
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){after} \
+         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){after}{scope} \
          ORDER BY {order} LIMIT ${limit}::bigint"
     );
     (sql, params)

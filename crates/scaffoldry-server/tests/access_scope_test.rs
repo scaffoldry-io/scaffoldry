@@ -217,7 +217,7 @@ fn insert(tx: &mut postgres::Transaction, slug: &str, id: &str, data: &Value) {
 
 /// The ids the compiled SQL returns, and the ids `eval` accepts, for the records inserted.
 fn both(tx: &mut postgres::Transaction, slug: &str, pred: &Pred, records: &[(String, Value)]) -> Result<(BTreeSet<String>, BTreeSet<String>), CompileError> {
-    let (sql, params) = to_sql(pred, &fields(), slug, "t1", 1)?;
+    let (sql, params) = to_sql(pred, &fields(), "r.id", slug, "t1", 1)?;
     let all = boxed(params);
     let refs: Vec<&(dyn ToSql + Sync)> = all.iter().map(|b| b.as_ref()).collect();
     let statement = format!("SELECT r.id FROM dataset_records r WHERE r.app_slug = $1 AND r.table_id = $2 AND r.deleted_at IS NULL AND {sql}");
@@ -301,9 +301,9 @@ fn row_scope_skips_excepted_roles_and_platform_admins_and_combines_the_rest() {
 #[test]
 fn a_field_outside_the_indexed_set_does_not_compile() {
     let p = Pred::Cmp { field: "unindexed".into(), op: Op::Eq, value: Operand::Literal(json!("x")) };
-    assert_eq!(to_sql(&p, &fields(), "a", "t", 1).unwrap_err(), CompileError::NotIndexed("unindexed".into()));
+    assert_eq!(to_sql(&p, &fields(), "r.id", "a", "t", 1).unwrap_err(), CompileError::NotIndexed("unindexed".into()));
     let text_order = Pred::Cmp { field: "t".into(), op: Op::Gt, value: Operand::Literal(json!("x")) };
-    assert!(matches!(to_sql(&text_order, &fields(), "a", "t", 1).unwrap_err(), CompileError::TextOrdering(_)));
+    assert!(matches!(to_sql(&text_order, &fields(), "r.id", "a", "t", 1).unwrap_err(), CompileError::TextOrdering(_)));
 }
 
 // 4. A multi-valued field matches on any of its values, in both evaluators.
@@ -327,7 +327,7 @@ fn a_multi_valued_field_matches_on_any_value() {
 fn a_literal_over_128_characters_is_rejected() {
     let long = Pred::Cmp { field: "t".into(), op: Op::Eq, value: Operand::Literal(json!("x".repeat(129))) };
     assert!(check(&long).is_err());
-    assert!(to_sql(&long, &fields(), "a", "t", 1).is_err());
+    assert!(to_sql(&long, &fields(), "r.id", "a", "t", 1).is_err());
     let nested = Pred::Not(Box::new(Pred::And(vec![Pred::Cmp { field: "t".into(), op: Op::In, value: Operand::Literal(json!(["ok", "y".repeat(200)])) }])));
     assert!(check(&nested).is_err());
     let exactly = Pred::Cmp { field: "t".into(), op: Op::Eq, value: Operand::Literal(json!("x".repeat(128))) };
@@ -370,7 +370,7 @@ fn a_compiled_predicate_over_200000_rows_does_not_scan() {
         let _ = c.execute("DELETE FROM dataset_records WHERE app_slug = $1", &[&slug]);
     };
     for pred in preds {
-        let (sql, params) = to_sql(&pred, &fields(), &slug, "t1", 1).unwrap();
+        let (sql, params) = to_sql(&pred, &fields(), "r.id", &slug, "t1", 1).unwrap();
         let all = boxed(params);
         let refs: Vec<&(dyn ToSql + Sync)> = all.iter().map(|b| b.as_ref()).collect();
         let statement = format!("EXPLAIN SELECT r.id FROM dataset_records r WHERE r.app_slug = $1 AND r.table_id = $2 AND r.deleted_at IS NULL AND {sql}");

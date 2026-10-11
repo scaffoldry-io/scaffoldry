@@ -117,6 +117,11 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "This field is still being prepared for sorting. It is 40% done.", next: "Try again in a few minutes." },
       ],
       [
+        "field_hidden",
+        new ApiError(403, "You cannot filter or sort on 'gpa' because you cannot see it.", { code: "field_hidden" }),
+        { message: "You cannot filter or sort on 'gpa' because you cannot see it.", next: "Choose a field you can see." },
+      ],
+      [
         "status 0",
         new ApiError(0, "Failed to fetch"),
         { message: "The server is not reachable.", next: "Check the connection and try again." },

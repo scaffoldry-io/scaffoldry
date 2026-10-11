@@ -68,9 +68,9 @@ pub fn visible_changes(entry: &HistoryEntry, hidden: &[String]) -> Value {
 }
 
 /// A change to a link field holds record ids. Show the display name of each linked record instead.
-/// The stored row keeps the ids. A record that is gone, or whose name the reader may not read,
-/// shows as its id.
-fn link_names(app_slug: &str, table_id: &str, mut changes: Value, hidden: &[String], state: &SharedState) -> Value {
+/// The stored row keeps the ids. A record that is gone, or whose name the reader may not read, or
+/// that is outside the reader's row scope, shows as its id.
+fn link_names(caller: &AuthUser, app_slug: &str, table_id: &str, mut changes: Value, hidden: &[String], state: &SharedState) -> Value {
     let (fields, _) = table_fields_lenient(app_slug, table_id, state);
     let engine_table = |target: &str| -> Option<(String, Vec<scaffoldry_engine::FieldSpec>)> {
         use scaffoldry_engine::HostRouter;
@@ -93,6 +93,7 @@ fn link_names(app_slug: &str, table_id: &str, mut changes: Value, hidden: &[Stri
                     .find_record(app_slug, id)
                     .ok()
                     .flatten()
+                    .filter(|r| crate::service::scope::allows(caller, app_slug, r, scaffoldry_core::access::RowOp::Read, state))
                     .and_then(|r| r.data.get(&primary).cloned())
                     .unwrap_or_else(|| Value::String(id.to_string()))
             };
@@ -154,6 +155,12 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
     let more = rows.len() > limit;
     rows.truncate(limit);
     let next_cursor = if more { rows.last().map(|r| r.id.to_string()) } else { None };
+    // An entry of a record the caller cannot read is left out. A page can come back short.
+    let mut ids: Vec<String> = rows.iter().map(|r| r.record_id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    let readable = crate::service::scope::readable_ids(caller, app_slug, &ids, state);
+    rows.retain(|r| readable.contains(&r.record_id));
 
     // One lookup of the hidden fields per table, and one of the people.
     let mut hidden: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
@@ -178,7 +185,7 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
             "table_id": row.table_id,
             "version": row.version,
             "action": row.action,
-            "changes": link_names(app_slug, &row.table_id, visible_changes(row, hide), hide, state),
+            "changes": link_names(caller, app_slug, &row.table_id, visible_changes(row, hide), hide, state),
             "actor": row.actor,
             "actor_name": name,
             "actor_kind": row.actor_kind,
@@ -197,6 +204,7 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
 /// anyone who can read the app.
 pub fn record_history(caller: &AuthUser, app_slug: &str, record_id: &str, mut query: HistoryQuery, state: &SharedState) -> Result<HistoryPage, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state).map_err(hide_denial)?;
+    crate::service::scope::require_readable(caller, app_slug, record_id, state)?;
     query.filter.record_id = Some(record_id.to_string());
     let result = page(caller, app_slug, query, state)?;
     if result.entries.is_empty() && state.find_record(app_slug, record_id).map_err(ServiceError::Internal)?.is_none() {

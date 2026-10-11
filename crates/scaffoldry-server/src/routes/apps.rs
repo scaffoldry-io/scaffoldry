@@ -415,10 +415,13 @@ async fn list_app_processes(
             let _ = state.persist_process_instance(inst.clone());
         }
     }
+    // An instance on a record the caller cannot read is left out.
+    let record_ids: Vec<String> = all.iter().map(|i| i.record_id.clone()).collect();
+    let readable = crate::service::scope::readable_ids(&user, &slug, &record_ids, &state);
     let filtered: Vec<Value> = all
         .iter()
         .filter(|inst| {
-            if inst.app_slug != slug {
+            if inst.app_slug != slug || !readable.contains(&inst.record_id) {
                 return false;
             }
             if let Some(ref st) = query.status {
