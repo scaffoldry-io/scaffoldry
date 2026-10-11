@@ -58,6 +58,7 @@ fn manifest(parent_extra: Vec<FieldSpec>, child_extra: Vec<FieldSpec>) -> AppMan
         views: vec![],
         ceds_mappings: Default::default(),
         pages: vec![],
+        access: Default::default(),
     }
 }
 

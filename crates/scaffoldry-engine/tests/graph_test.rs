@@ -47,6 +47,7 @@ fn manifest(tables: Vec<AppTable>) -> AppManifest {
         views: vec![],
         ceds_mappings: Default::default(),
         pages: vec![],
+        access: Default::default(),
     }
 }
 

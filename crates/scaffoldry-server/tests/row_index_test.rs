@@ -100,6 +100,7 @@ fn manifest(slug: &str, views: Vec<AppView>) -> AppManifest {
         views,
         ceds_mappings: Default::default(),
         pages: vec![],
+        access: Default::default(),
     }
 }
 

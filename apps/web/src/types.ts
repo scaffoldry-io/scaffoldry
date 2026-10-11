@@ -179,6 +179,29 @@ export interface AppTable {
   relationships?: TableRelationship[];
 }
 
+export interface AccessRowRule {
+  id: string;
+  table_id: string;
+  ops: ("Read" | "Create" | "Update" | "Delete")[];
+  visible_when: any;
+  except_roles: string[];
+  message?: string;
+}
+
+export interface AccessColumnRule {
+  id: string;
+  table_id: string;
+  fields: string[];
+  mode: "Hide" | "Mask";
+  except_roles: string[];
+  message?: string;
+}
+
+export interface AccessManifest {
+  rows: AccessRowRule[];
+  columns: AccessColumnRule[];
+}
+
 export interface AppManifest {
   slug: string;
   title: string;
@@ -196,6 +219,7 @@ export interface AppManifest {
   collaborators?: Collaborator[];
   status?: "Published" | "Collaborating" | "Draft";
   workspace_id?: string;
+  access?: AccessManifest;
 }
 
 export interface Workspace {

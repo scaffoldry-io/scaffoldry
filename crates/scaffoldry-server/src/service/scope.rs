@@ -217,3 +217,121 @@ pub fn field_visibility_of(caller: &AuthUser, app_slug: &str, table: &str, state
     let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
     scaffoldry_core::access::field_visibility(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table)
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct AccessPreviewInput {
+    pub table_id: String,
+    #[serde(default)]
+    pub person: Option<scaffoldry_core::access::Person>,
+    #[serde(default)]
+    pub eppn: Option<String>,
+    #[serde(default)]
+    pub rules: Option<Vec<scaffoldry_core::access::RowRule>>,
+    #[serde(default)]
+    pub column_rules: Option<Vec<scaffoldry_core::access::ColumnRule>>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct AccessPreviewOutput {
+    pub can_see: u64,
+    pub can_add: u64,
+    pub can_change: u64,
+    pub can_remove: u64,
+    pub total_rows: u64,
+    pub hidden_columns: Vec<String>,
+}
+
+pub fn count_scoped(
+    app_slug: &str,
+    table_id: &str,
+    scope: Option<&crate::repository::ScopePlan>,
+    state: &SharedState,
+) -> Result<u64, crate::service::ServiceError> {
+    let repo = state
+        .repository
+        .as_deref()
+        .ok_or_else(|| crate::service::ServiceError::Internal("Database required".to_string()))?;
+    repo.count_scoped_records(app_slug, table_id, scope)
+        .map_err(|e| crate::service::ServiceError::Internal(e.to_string()))
+}
+
+pub fn preview_access(
+    caller: &AuthUser,
+    app_slug: &str,
+    input: AccessPreviewInput,
+    state: &SharedState,
+) -> Result<AccessPreviewOutput, crate::service::ServiceError> {
+    crate::service::access::authorize_app(caller, app_slug, crate::service::access::AppAction::Manage, state)?;
+
+    let app = state
+        .engine
+        .read()
+        .map_err(|e| crate::service::ServiceError::Internal(e.to_string()))?
+        .resolve_by_slug(app_slug)
+        .cloned()
+        .ok_or_else(|| crate::service::ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
+
+    let ws_id = app.workspace_id.as_deref();
+
+    let person = if let Some(p) = input.person {
+        p
+    } else if let Some(eppn) = &input.eppn {
+        let dummy = AuthUser {
+            eppn: eppn.clone(),
+            name: eppn.clone(),
+            role_title: String::new(),
+            department: String::new(),
+            affiliation: String::new(),
+        };
+        person_of(&dummy, state)
+    } else {
+        person_of(caller, state)
+    };
+
+    let role = ws_id.and_then(|w| members::member_role_of(&person.address, w, state));
+    let role_str = role.as_ref().map(|r| r.as_str());
+    let is_platform_admin = person.affiliation == "central_admin";
+
+    let rules = input.rules.unwrap_or_else(|| rules_of(app_slug, state));
+    let column_rules = input.column_rules.unwrap_or_else(|| column_rules_of(app_slug, state));
+
+    let fields = fields_of(app_slug, &input.table_id, state);
+    let total_rows = count_scoped(app_slug, &input.table_id, None, state)?;
+
+    let count_for_op = |op: RowOp| -> Result<u64, crate::service::ServiceError> {
+        match row_scope(&person, role_str, is_platform_admin, &rules, &input.table_id, op) {
+            RowScope::AllowAll => Ok(total_rows),
+            RowScope::DenyAll => Ok(0),
+            RowScope::Mixed(pred) => {
+                let plan = crate::repository::ScopePlan {
+                    pred,
+                    indexed: fields.clone(),
+                };
+                count_scoped(app_slug, &input.table_id, Some(&plan), state)
+            }
+        }
+    };
+
+    let can_see = count_for_op(RowOp::Read)?;
+    let can_add = count_for_op(RowOp::Create)?;
+    let can_change = count_for_op(RowOp::Update)?;
+    let can_remove = count_for_op(RowOp::Delete)?;
+
+    let visibility = scaffoldry_core::access::field_visibility(
+        &person,
+        role_str,
+        is_platform_admin,
+        &column_rules,
+        &input.table_id,
+    );
+    let hidden_columns = visibility.hidden_names();
+
+    Ok(AccessPreviewOutput {
+        can_see,
+        can_add,
+        can_change,
+        can_remove,
+        total_rows,
+        hidden_columns,
+    })
+}

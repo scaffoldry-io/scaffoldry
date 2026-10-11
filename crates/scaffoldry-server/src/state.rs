@@ -1349,6 +1349,7 @@ impl ServerState {
             relationships: vec![],
             views: vec![],
             pages: vec![],
+            access: Default::default(),
             ceds_mappings: HashMap::new(),
         };
         let _ = self.engine.write().unwrap().register_manifest(demo_app.clone());

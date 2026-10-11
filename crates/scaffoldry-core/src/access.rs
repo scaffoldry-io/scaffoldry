@@ -88,7 +88,7 @@ pub enum RowScope {
 }
 
 /// The person a rule is read for.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Person {
     pub address: String,
     pub department: String,
@@ -330,6 +330,14 @@ pub struct Who {
 }
 
 impl Who {
+    pub fn is_empty(&self) -> bool {
+        self.affiliations.is_empty()
+            && self.units.is_empty()
+            && self.positions.is_empty()
+            && self.roles.is_empty()
+            && self.addresses.is_empty()
+    }
+
     /// True when `person`, whose workspace role is `role`, is named.
     pub fn includes(&self, person: &Person, role: Option<&str>) -> bool {
         let same = |a: &String, b: &str| a.eq_ignore_ascii_case(b);
@@ -429,4 +437,200 @@ pub fn field_visibility(person: &Person, role: Option<&str>, platform_admin: boo
         }
     }
     out
+}
+
+
+impl Pred {
+    pub fn node_count(&self) -> usize {
+        match self {
+            Pred::True | Pred::Cmp { .. } => 1,
+            Pred::And(list) | Pred::Or(list) => 1 + list.iter().map(|p| p.node_count()).sum::<usize>(),
+            Pred::Not(inner) => 1 + inner.node_count(),
+        }
+    }
+
+    pub fn depth(&self) -> usize {
+        match self {
+            Pred::True | Pred::Cmp { .. } => 1,
+            Pred::And(list) | Pred::Or(list) => 1 + list.iter().map(|p| p.depth()).max().unwrap_or(0),
+            Pred::Not(inner) => 1 + inner.depth(),
+        }
+    }
+
+    pub fn fields(&self) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        self.collect_fields(&mut out);
+        out
+    }
+
+    fn collect_fields(&self, out: &mut std::collections::BTreeSet<String>) {
+        match self {
+            Pred::True => {}
+            Pred::Cmp { field, .. } => {
+                if !field.starts_with("person.") {
+                    out.insert(field.clone());
+                }
+            }
+            Pred::And(list) | Pred::Or(list) => {
+                for p in list {
+                    p.collect_fields(out);
+                }
+            }
+            Pred::Not(inner) => {
+                inner.collect_fields(out);
+            }
+        }
+    }
+
+    pub fn is_never_true(&self) -> bool {
+        match self {
+            Pred::True => false,
+            Pred::Not(inner) => **inner == Pred::True || inner.is_always_true(),
+            Pred::Cmp { .. } => false,
+            Pred::And(ps) => {
+                if ps.is_empty() {
+                    return false;
+                }
+                if ps.iter().any(|p| p.is_never_true()) {
+                    return true;
+                }
+                for i in 0..ps.len() {
+                    for j in (i + 1)..ps.len() {
+                        if let (Pred::Cmp { field: f1, op: op1, value: v1 }, Pred::Cmp { field: f2, op: op2, value: v2 }) = (&ps[i], &ps[j]) {
+                            if f1 == f2 {
+                                if ((*op1 == Op::Eq && *op2 == Op::Ne) || (*op1 == Op::Ne && *op2 == Op::Eq)) && v1 == v2 {
+                                    return true;
+                                }
+                                if *op1 == Op::Eq && *op2 == Op::Eq && v1 != v2 {
+                                    return true;
+                                }
+                                if (*op1 == Op::IsEmpty && *op2 == Op::IsNotEmpty) || (*op1 == Op::IsNotEmpty && *op2 == Op::IsEmpty) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            Pred::Or(ps) => !ps.is_empty() && ps.iter().all(|p| p.is_never_true()),
+        }
+    }
+
+    pub fn is_always_true(&self) -> bool {
+        match self {
+            Pred::True => true,
+            Pred::Not(inner) => inner.is_never_true(),
+            _ => false,
+        }
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+fn plural_role(role: &str) -> &str {
+    match role {
+        "owner" => "owners",
+        "admin" => "admins",
+        "editor" => "editors",
+        "viewer" => "viewers",
+        "commenter" => "commenters",
+        other => other,
+    }
+}
+
+pub fn format_except_roles(roles: &[String]) -> String {
+    let plurals: Vec<&str> = roles.iter().map(|r| plural_role(r.as_str())).collect();
+    match plurals.as_slice() {
+        [] => "Everyone".to_string(),
+        [one] => format!("People who are not {one}"),
+        [first, second] => format!("People who are not {first} or {second}"),
+        more => {
+            let (last, head) = more.split_last().unwrap();
+            format!("People who are not {}, or {last}", head.join(", "))
+        }
+    }
+}
+
+pub fn format_row_ops(ops: &[RowOp]) -> String {
+    let has_read = ops.contains(&RowOp::Read);
+    let has_create = ops.contains(&RowOp::Create);
+    let has_update = ops.contains(&RowOp::Update);
+    let has_delete = ops.contains(&RowOp::Delete);
+
+    if has_read && has_create && has_update && has_delete {
+        "can see, add, change, or remove rows where".to_string()
+    } else if has_read && has_update {
+        "can see and change only rows where".to_string()
+    } else if has_read {
+        "can see only rows where".to_string()
+    } else if has_create {
+        "can add only rows where".to_string()
+    } else if has_update {
+        "can change only rows where".to_string()
+    } else if has_delete {
+        "can remove only rows where".to_string()
+    } else {
+        "can access only rows where".to_string()
+    }
+}
+
+pub fn pred_in_words(pred: &Pred) -> String {
+    match pred {
+        Pred::True => "all rows".to_string(),
+        Pred::Cmp { field, op, value } => {
+            let field_label = capitalize(field);
+            match (op, value) {
+                (Op::Eq, Operand::Person(PersonAttr::Address)) => format!("{field_label} is themselves"),
+                (Op::Eq, Operand::Person(PersonAttr::Department)) => format!("{field_label} is their department"),
+                (Op::Eq, Operand::Person(PersonAttr::Affiliation)) => format!("{field_label} is their affiliation"),
+                (Op::Eq, Operand::Person(PersonAttr::UnitIds)) => format!("{field_label} is in their unit"),
+                (Op::Eq, Operand::Person(PersonAttr::PositionKeys)) => format!("{field_label} is in their positions"),
+                (Op::Eq, Operand::Person(PersonAttr::GroupIds)) => format!("{field_label} is in their groups"),
+                (Op::Ne, Operand::Person(PersonAttr::Address)) => format!("{field_label} is not themselves"),
+                (Op::Ne, Operand::Person(PersonAttr::Department)) => format!("{field_label} is not their department"),
+                (Op::Eq, Operand::Literal(v)) => format!("{field_label} is {v}"),
+                (Op::Ne, Operand::Literal(v)) => format!("{field_label} is not {v}"),
+                (Op::In, Operand::Literal(v)) => format!("{field_label} is one of {v}"),
+                (Op::In, Operand::Person(attr)) => format!("{field_label} is one of their {attr:?}"),
+                (Op::IsEmpty, _) => format!("{field_label} is empty"),
+                (Op::IsNotEmpty, _) => format!("{field_label} is not empty"),
+                (Op::Gt, Operand::Literal(v)) => format!("{field_label} is greater than {v}"),
+                (Op::Gt, Operand::Person(attr)) => format!("{field_label} is greater than their {attr:?}"),
+                (Op::Lt, Operand::Literal(v)) => format!("{field_label} is less than {v}"),
+                (Op::Lt, Operand::Person(attr)) => format!("{field_label} is less than their {attr:?}"),
+                _ => format!("{field_label} {op:?} {value:?}"),
+            }
+        }
+        Pred::And(ps) => {
+            let parts: Vec<String> = ps.iter().map(pred_in_words).collect();
+            parts.join(" and ")
+        }
+        Pred::Or(ps) => {
+            let parts: Vec<String> = ps.iter().map(pred_in_words).collect();
+            parts.join(" or ")
+        }
+        Pred::Not(inner) => format!("not ({})", pred_in_words(inner)),
+    }
+}
+
+pub fn rule_sentence(rule: &RowRule) -> String {
+    let subject = format_except_roles(&rule.except_roles);
+    let verb = format_row_ops(&rule.ops);
+    let pred = pred_in_words(&rule.visible_when);
+    format!("{subject} {verb} {pred}.")
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AccessManifest {
+    #[serde(default)]
+    pub rows: Vec<RowRule>,
+    #[serde(default)]
+    pub columns: Vec<ColumnRule>,
 }

@@ -129,6 +129,9 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
             out.push(format!("Page \"{}\" is added.", page.title));
             out.extend(grant_sentences(proposal, &page.title, &page.kind));
         }
+        for rule in &proposal.access.rows {
+            out.push(scaffoldry_core::access::rule_sentence(rule));
+        }
         return out;
     };
     if proposal.title != live.title {
@@ -198,6 +201,18 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
     for x in &live.pages {
         if !proposal.pages.iter().any(|p| p.id == x.id) {
             out.push(format!("Page \"{}\" is removed.", x.title));
+        }
+    }
+    for rule in &proposal.access.rows {
+        match live.access.rows.iter().find(|r| r.id == rule.id) {
+            None => out.push(format!("Access rule \"{}\" is added: {}", rule.id, scaffoldry_core::access::rule_sentence(rule))),
+            Some(old) if old != rule => out.push(format!("Access rule \"{}\" is changed: {}", rule.id, scaffoldry_core::access::rule_sentence(rule))),
+            _ => {}
+        }
+    }
+    for old in &live.access.rows {
+        if !proposal.access.rows.iter().any(|r| r.id == old.id) {
+            out.push(format!("Access rule \"{}\" is removed.", old.id));
         }
     }
     if out.is_empty() {
@@ -353,6 +368,37 @@ fn check_manifest_part(
         }
     }
 
+    let access_problems = scaffoldry_engine::detect_access_problems(&manifest);
+    let mut loosened = Vec::new();
+    if let Some(l) = live {
+        for old in &l.access.rows {
+            match manifest.access.rows.iter().find(|r| r.id == old.id) {
+                None => loosened.push(format!("rule '{}' was removed", old.id)),
+                Some(new_r) => {
+                    if new_r.visible_when != old.visible_when
+                        || new_r.ops != old.ops
+                        || new_r.except_roles != old.except_roles
+                    {
+                        loosened.push(format!("rule '{}' was changed", new_r.id));
+                    }
+                }
+            }
+        }
+        for old in &l.access.columns {
+            match manifest.access.columns.iter().find(|r| r.id == old.id) {
+                None => loosened.push(format!("column rule '{}' was removed", old.id)),
+                Some(new_r) => {
+                    if new_r.fields != old.fields
+                        || new_r.mode != old.mode
+                        || new_r.unless != old.unless
+                    {
+                        loosened.push(format!("column rule '{}' was changed", new_r.id));
+                    }
+                }
+            }
+        }
+    }
+
     let checks = vec![
         check("schema", vec![]),
         check("sensitivity", sensitivity_problems),
@@ -360,6 +406,8 @@ fn check_manifest_part(
         check("page_source", vec![]),
         check("page_sensitivity", page_problems),
         warn("relationships", scaffoldry_engine::manifest_warnings(&manifest)),
+        warn("access_rules", access_problems),
+        check("access_loosened", loosened),
     ];
     Ok(ManifestPart { manifest, checks, sources: provided.into_iter().collect() })
 }
@@ -653,7 +701,9 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
                     if let Some(m) = &row.manifest {
                         let manifest: AppManifest = serde_json::from_value(m.clone()).map_err(internal)?;
-                        state.engine.write().map_err(internal)?.register_manifest(manifest).map_err(internal)?;
+                        state.engine.write().map_err(internal)?.register_manifest(manifest.clone()).map_err(internal)?;
+                        crate::service::scope::set_rules(&row.app_slug, manifest.access.rows, state);
+                        crate::service::scope::set_column_rules(&row.app_slug, manifest.access.columns, state);
                     }
                     if !done.rules.is_empty() {
                         crate::service::processes::reload_rules(state, &row.app_slug);

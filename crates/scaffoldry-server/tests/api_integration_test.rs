@@ -1792,6 +1792,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         relationships: vec![],
         views: vec![],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: Default::default(),
     };
     state.engine.write().unwrap().register_manifest(manifest).unwrap();

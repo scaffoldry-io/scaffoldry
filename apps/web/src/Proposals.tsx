@@ -3,7 +3,7 @@ import { apiClient, type ProposalCheck, type ProposalRow } from "./api";
 import { ConfirmAction, DataTable, Drawer, PageHeader, StatusBadge, type DataTableColumn } from "./ui";
 
 /** The checks that need a second person when they fail. */
-const FLAGGED = new Set(["sensitivity", "data_loss", "page_sensitivity", "rule_effects"]);
+const FLAGGED = new Set(["sensitivity", "data_loss", "page_sensitivity", "rule_effects", "access_loosened"]);
 
 const CHECK_WORDS: Record<string, string> = {
   schema: "Manifest format",
@@ -16,6 +16,8 @@ const CHECK_WORDS: Record<string, string> = {
   rule_effects: "Rule sets sensitive data",
   rule_loop: "Rule may loop",
   rule_approver: "Who decides",
+  access_rules: "Access rules",
+  access_loosened: "Access loosened",
 };
 
 function tone(c: ProposalCheck): "ok" | "warn" | "bad" {

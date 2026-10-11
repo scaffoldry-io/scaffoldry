@@ -136,6 +136,7 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
         relationships: vec![],
         views: vec![],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: std::collections::HashMap::new(),
     };
     let mut m2 = m1.clone();
@@ -494,6 +495,7 @@ async fn test_apps_inventory_list_and_filters() {
         relationships: vec![],
         views: vec![],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: std::collections::HashMap::new(),
     };
     c.state.engine.write().unwrap().register_manifest(manifest.clone()).unwrap();

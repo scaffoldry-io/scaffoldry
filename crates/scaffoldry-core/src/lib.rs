@@ -8,7 +8,7 @@ pub mod ledger;
 pub mod standards;
 pub mod workflow;
 
-pub use access::{field_visibility, row_scope, substitute, AccessError, ColumnMode, ColumnRule, Denial, FieldVisibility, Operand, Person, PersonAttr, Pred, RowOp, RowRule, RowScope, Who};
+pub use access::{field_visibility, pred_in_words, row_scope, rule_sentence, substitute, AccessError, AccessManifest, ColumnMode, ColumnRule, Denial, FieldVisibility, Operand, Person, PersonAttr, Pred, RowOp, RowRule, RowScope, Who};
 pub use dataset::*;
 pub use guards::*;
 pub use ledger::*;

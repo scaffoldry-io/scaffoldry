@@ -889,6 +889,29 @@ export const apiClient = {
       body: JSON.stringify(payload),
     });
   },
+
+  previewAccess: async (
+    slug: string,
+    payload: {
+      table_id: string;
+      eppn?: string;
+      person?: any;
+      rules?: any[];
+      column_rules?: any[];
+    }
+  ) => {
+    return request<{
+      can_see: number;
+      can_add: number;
+      can_change: number;
+      can_remove: number;
+      total_rows: number;
+      hidden_columns: string[];
+    }>(`/apps/${slug}/access/preview`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
 };
 
 export const computeSha256 = async (message: string): Promise<string> => {
