@@ -5,6 +5,7 @@ import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient, getAuthToken, setAuthToken } from "./api";
+import { BackgroundWork } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
@@ -1589,6 +1590,12 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
           {notificationToast}
         </div>
       )}
+
+      {/* The signed-in person's queued and running jobs. It shows nothing when there are none. */}
+      <BackgroundWork
+        fetchJobs={apiClient.listMyJobs}
+        className="fixed bottom-6 left-6 z-40 max-w-sm bg-white dark:bg-slate-900 shadow-lg"
+      />
 
       {/* SECURITY IMPERSONATION BANNER (OSCAL AC-02) */}
       {isImpersonating && realAdmin && (
