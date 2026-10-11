@@ -333,6 +333,28 @@ fn check_manifest_part(
             }
         }
     }
+    // A field changes type: every value that would become blank is data lost. The owner runs a preview
+    // first, and its result is attached to this check.
+    let mut previews: Vec<Value> = Vec::new();
+    if let (Some(l), true) = (live, records_exist(&manifest.slug, state)) {
+        for change in scaffoldry_engine::recalc::type_changes(l, &manifest) {
+            let what = format!("field '{}' of table '{}'", change.field, change.table_id);
+            if !scaffoldry_engine::recalc::conversion_supported(change.from, change.to) {
+                loss.push(format!("{what} cannot change from {:?} to {:?}", change.from, change.to));
+                continue;
+            }
+            match repo.latest_convert_preview(&manifest.slug, &change.table_id, &change.field, change.to).map_err(internal)? {
+                None => loss.push(format!("{what} changes type and no preview was run. POST /apps/{}/fields/convert-preview first", manifest.slug)),
+                Some(result) => {
+                    let blanks = result["blanks"].as_i64().unwrap_or(0);
+                    if blanks > 0 {
+                        loss.push(format!("{blanks} values of {what} would become blank"));
+                    }
+                    previews.push(result);
+                }
+            }
+        }
+    }
     let loss = if loss.is_empty() || !records_exist(&manifest.slug, state) { Vec::new() } else { loss };
 
     // page_sensitivity: a new or changed custom page reads a sensitive field.
@@ -353,10 +375,14 @@ fn check_manifest_part(
         }
     }
 
+    let mut data_loss = check("data_loss", loss);
+    if !previews.is_empty() {
+        data_loss["previews"] = Value::Array(previews);
+    }
     let checks = vec![
         check("schema", vec![]),
         check("sensitivity", sensitivity_problems),
-        check("data_loss", loss),
+        data_loss,
         check("page_source", vec![]),
         check("page_sensitivity", page_problems),
         warn("relationships", scaffoldry_engine::manifest_warnings(&manifest)),

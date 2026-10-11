@@ -131,6 +131,11 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "You cannot change 'name'.", next: "Ask a workspace owner or an administrator if you need access." },
       ],
       [
+        "calculating",
+        new ApiError(409, "This field is still being calculated. It is 63% done.", { code: "calculating" }),
+        { message: "This field is still being calculated. It is 63% done.", next: "Try again when it has finished." },
+      ],
+      [
         "status 0",
         new ApiError(0, "Failed to fetch"),
         { message: "The server is not reachable.", next: "Check the connection and try again." },

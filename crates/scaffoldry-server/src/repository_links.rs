@@ -69,13 +69,35 @@ pub struct TableCalc {
 pub const INLINE_OWNERS: usize = 200;
 
 /// A link field of the table being written, and the field on the other table that mirrors it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LinkSpec {
     pub field: String,
     /// The mirror field on the target table, when the link is two-way.
     pub related: Option<String>,
     /// True when the mirror field holds one record.
     pub related_one: bool,
+}
+
+/// The `Link` fields of a table in a manifest, each with the field that mirrors it.
+pub fn link_specs_in(manifest: &scaffoldry_engine::AppManifest, table_id: &str) -> Vec<LinkSpec> {
+    use scaffoldry_engine::{FieldType, LinkCardinality};
+    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id) else { return Vec::new() };
+    table
+        .fields
+        .iter()
+        .filter(|f| f.field_type == FieldType::Link)
+        .map(|f| {
+            let mirror = f.link_related_field.as_deref().and_then(|name| {
+                let target = manifest.tables.iter().find(|t| Some(t.id.as_str()) == f.link_target_table.as_deref())?;
+                target.fields.iter().find(|x| x.name == name)
+            });
+            LinkSpec {
+                field: f.name.clone(),
+                related: mirror.map(|m| m.name.clone()),
+                related_one: mirror.is_some_and(|m| m.link_cardinality == LinkCardinality::One),
+            }
+        })
+        .collect()
 }
 
 /// The records a record points at through one field, in order. Parameters: record id, field.
@@ -336,7 +358,7 @@ pub(crate) fn recompute_owners(
 }
 
 /// One rollup or count of an owner, from its link rows and the indexed target values.
-fn aggregate(tx: &mut postgres::Transaction<'_>, id: &str, spec: &ComputedSpec) -> Result<Option<f64>, postgres::Error> {
+pub(crate) fn aggregate(tx: &mut postgres::Transaction<'_>, id: &str, spec: &ComputedSpec) -> Result<Option<f64>, postgres::Error> {
     Ok(match (spec.count, spec.target.as_deref()) {
         (true, _) | (_, None) => tx.query_one(COUNT_SQL, &[&id, &spec.via])?.get(0),
         (false, Some(target)) => {

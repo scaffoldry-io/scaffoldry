@@ -176,12 +176,14 @@ async fn list_table_records(
             &state,
         )
         .map_err(ServiceError::into_pair)?;
-        return Ok(Json(json!({
+        let mut body = json!({
             "app_slug": slug,
             "table_id": table_id,
             "records": page.records,
             "next_cursor": page.next_cursor,
-        })));
+        });
+        crate::service::records::add_field_states(&mut body, &page.calculating);
+        return Ok(Json(body));
     }
 
     // The service applies the row scope and redacts before filtering and sorting, so a viewer

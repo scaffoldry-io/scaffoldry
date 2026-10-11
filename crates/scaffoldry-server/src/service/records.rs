@@ -438,7 +438,20 @@ pub struct PageQuery {
     pub must_exist: bool,
 }
 
+/// Says in a page's response which fields are being calculated again and how far along they are:
+/// `field_states: { "status": "calculating" }` and `field_progress: { "status": 63 }`. A page with
+/// nothing calculating has neither key.
+pub fn add_field_states(body: &mut Value, calculating: &[(String, i64)]) {
+    if calculating.is_empty() {
+        return;
+    }
+    body["field_states"] = Value::Object(calculating.iter().map(|(f, _)| (f.clone(), Value::String("calculating".to_string()))).collect());
+    body["field_progress"] = Value::Object(calculating.iter().map(|(f, p)| (f.clone(), Value::from(*p))).collect());
+}
+
 pub struct RecordPage {
+    /// Fields of the table that are being calculated again, each with the percent done.
+    pub calculating: Vec<(String, i64)>,
     pub records: Vec<DatasetRecord>,
     pub next_cursor: Option<String>,
 }
@@ -542,26 +555,9 @@ pub(crate) fn indexed_fields_of(app_slug: &str, table_id: &str, state: &SharedSt
 /// The `Link` fields of a table, each with the field that mirrors it on the other table. Every write
 /// keeps their `record_links` rows current and mirrors the two-way ones.
 pub(crate) fn link_specs_of(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<crate::repository_links::LinkSpec> {
-    use scaffoldry_engine::{FieldType, HostRouter, LinkCardinality};
     let Ok(engine) = state.engine.read() else { return Vec::new() };
     let Some(manifest) = engine.resolve_by_slug(app_slug) else { return Vec::new() };
-    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id) else { return Vec::new() };
-    table
-        .fields
-        .iter()
-        .filter(|f| f.field_type == FieldType::Link)
-        .map(|f| {
-            let mirror = f.link_related_field.as_deref().and_then(|name| {
-                let target = manifest.tables.iter().find(|t| Some(t.id.as_str()) == f.link_target_table.as_deref())?;
-                target.fields.iter().find(|x| x.name == name)
-            });
-            crate::repository_links::LinkSpec {
-                field: f.name.clone(),
-                related: mirror.map(|m| m.name.clone()),
-                related_one: mirror.is_some_and(|m| m.link_cardinality == LinkCardinality::One),
-            }
-        })
-        .collect()
+    crate::repository_links::link_specs_in(manifest, table_id)
 }
 
 /// The link fields, on any table of the app, that refuse the delete of a record of `table_id` while
@@ -876,9 +872,12 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     let (fields, table) = table_fields(app_slug, &query.table_id, query.must_exist, state)?;
     let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
+    let calculating: Vec<(String, i64)> = state.repository.as_deref().and_then(|r| r.calc_states(app_slug, &table).ok()).unwrap_or_default();
     let check = |name: &str| -> Result<(), ServiceError> {
         if !fields.iter().any(|f| f.name == name) {
             Err(ServiceError::BadRequest(format!("'{name}' is not a field of this table")))
+        } else if let Some((_, percent)) = calculating.iter().find(|(f, _)| f == name).filter(|_| !hidden.iter().any(|h| h == name)) {
+            Err(ServiceError::Calculating(format!("This field is still being calculated. It is {percent}% done.")))
         } else if hidden.iter().any(|h| h == name) {
             let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == name);
             Err(ServiceError::FieldHidden {
@@ -992,7 +991,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         rows.last().map(|r| encode_cursor(r, sort_field.as_deref()))
     };
     fill_lookups(caller, app_slug, &mut rows, state);
-    Ok(RecordPage { records: redact_records(caller, app_slug, rows, state), next_cursor })
+    Ok(RecordPage { records: redact_records(caller, app_slug, rows, state), next_cursor, calculating })
 }
 
 /// Who triggered an automation: their identity and their stored department.

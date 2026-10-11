@@ -4,6 +4,8 @@
 use crate::jobs::{JobCtx, JobError};
 use crate::repository::WriteCtx;
 use crate::repository_links::{recompute_owners, ComputedSpec, TableCalc, INLINE_OWNERS};
+use scaffoldry_engine::recalc::{convert_value, Converted};
+use scaffoldry_engine::FieldType;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -73,4 +75,255 @@ pub fn recalc_owners(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         }
     }
     ctx.result(json!({ "owners": done }))
+}
+
+// ---------------------------------------------------------------------------------------------
+// A definition changed: write the stored values again.
+// ---------------------------------------------------------------------------------------------
+
+/// Records read and written in one transaction.
+const FIELD_BATCH: i64 = 1_000;
+/// The examples a preview keeps of each kind.
+const EXAMPLES: usize = 50;
+
+fn parse<T: serde::de::DeserializeOwned>(payload: &Value, key: &str) -> Result<T, JobError> {
+    serde_json::from_value(payload[key].clone()).map_err(|e| JobError::Permanent(format!("the job's '{key}' is not usable: {e}")))
+}
+
+fn count_rows(ctx: &JobCtx, app: &str, table: &str) -> Result<i64, JobError> {
+    let (app, table) = (app.to_string(), table.to_string());
+    ctx.repository()
+        .with_client(move |c| Ok(c.query_one("SELECT count(*) FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL", &[&app, &table])?.get(0)))
+        .map_err(retry)
+}
+
+fn resume(ctx: &JobCtx) -> (Option<String>, i64) {
+    match ctx.load_checkpoint() {
+        Some(cp) => (cp.get("after").and_then(Value::as_str).map(str::to_string), cp.get("done").and_then(Value::as_i64).unwrap_or(0)),
+        None => (None, 0),
+    }
+}
+
+/// Writes the computed fields of `payload.fields` again for every record of a table, in run order.
+/// Each batch locks its records, evaluates the definition in force now, and writes only what changed, so
+/// a record written during the job (which already used the new definition) is left as it is.
+pub fn recalc_field(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    let (app, table) = (text(&payload, "app_slug")?, text(&payload, "table_id")?);
+    let fields: Vec<String> = parse(&payload, "fields")?;
+    let formulas: Vec<(String, String)> = parse(&payload, "formulas")?;
+    let rollups: Vec<ComputedSpec> = parse(&payload, "rollups")?;
+    let index_fields: Vec<scaffoldry_engine::FieldSpec> = parse(&payload, "index_fields")?;
+    let repo = ctx.repository();
+    let total = count_rows(ctx, &app, &table)?;
+    let (mut after, mut done) = resume(ctx);
+    loop {
+        if ctx.cancelled()? {
+            return Err(JobError::Cancelled);
+        }
+        let (a, t, from) = (app.clone(), table.clone(), after.clone());
+        let (fields, formulas, rollups, index_fields) = (fields.clone(), formulas.clone(), rollups.clone(), index_fields.clone());
+        let (last, read) = repo
+            .with_client(move |c| {
+                let mut tx = c.transaction()?;
+                let rows = tx.query(
+                    "SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ($3::text IS NULL OR id > $3) \
+                     ORDER BY id LIMIT $4 FOR UPDATE",
+                    &[&a, &t, &from, &FIELD_BATCH],
+                )?;
+                let mut last: Option<String> = None;
+                for row in &rows {
+                    let (id, data): (String, Value) = (row.get(0), row.get(1));
+                    let mut new = data.clone();
+                    for field in &fields {
+                        if let Some((_, expression)) = formulas.iter().find(|(f, _)| f == field) {
+                            crate::repository::apply_formula_list(&mut new, std::slice::from_ref(&(field.clone(), expression.clone())));
+                        } else if let Some(spec) = rollups.iter().find(|s| &s.field == field) {
+                            let value = crate::repository_links::aggregate(&mut tx, &id, spec)?;
+                            if let Some(map) = new.as_object_mut() {
+                                match value.and_then(serde_json::Number::from_f64) {
+                                    Some(n) => {
+                                        let whole = n.as_f64().is_some_and(|f| f.fract() == 0.0 && f.abs() < 9e15);
+                                        map.insert(field.clone(), if whole { Value::from(n.as_f64().unwrap_or(0.0) as i64) } else { Value::Number(n) });
+                                    }
+                                    None => {
+                                        map.remove(field);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if new != data {
+                        crate::repository::set_record_data_in_tx(&mut tx, &a, &id, &new)?;
+                        crate::repository_index::write_record_index(&mut tx, &a, &t, &id, &new, &index_fields)?;
+                    }
+                    last = Some(id);
+                }
+                tx.commit()?;
+                Ok((last, rows.len() as i64))
+            })
+            .map_err(retry)?;
+        done += read;
+        if last.is_some() {
+            after = last;
+        }
+        ctx.checkpoint(json!({ "after": after, "done": done }))?;
+        ctx.progress(done, total.max(done))?;
+        if read < FIELD_BATCH {
+            break;
+        }
+    }
+    // Only the status rows this job set: a later approval has its own job and its own rows.
+    let (a, t, fields, job) = (app.clone(), table.clone(), fields.clone(), ctx.job_id());
+    repo.with_client(move |c| {
+        c.execute(
+            "UPDATE calc_status SET state = 'ready', updated_at = NOW() WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3) AND job_id = $4",
+            &[&a, &t, &fields, &job],
+        )?;
+        Ok(())
+    })
+    .map_err(retry)?;
+    ctx.result(json!({ "records": done }))
+}
+
+/// Counts what a conversion would do, and keeps the first 50 of each kind. Nothing is written.
+pub fn convert_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    let (app, table, field) = (text(&payload, "app_slug")?, text(&payload, "table_id")?, text(&payload, "field")?);
+    let (from, to): (FieldType, FieldType) = (parse(&payload, "from")?, parse(&payload, "to")?);
+    let repo = ctx.repository();
+    let total = count_rows(ctx, &app, &table)?;
+    let (mut after, mut done) = resume(ctx);
+    let (mut converts, mut blanks) = (0i64, 0i64);
+    let (mut convert_examples, mut blank_examples): (Vec<Value>, Vec<Value>) = (Vec::new(), Vec::new());
+    if let Some(cp) = ctx.load_checkpoint() {
+        converts = cp.get("converts").and_then(Value::as_i64).unwrap_or(0);
+        blanks = cp.get("blanks").and_then(Value::as_i64).unwrap_or(0);
+        convert_examples = cp.get("convert_examples").and_then(Value::as_array).cloned().unwrap_or_default();
+        blank_examples = cp.get("blank_examples").and_then(Value::as_array).cloned().unwrap_or_default();
+    }
+    loop {
+        if ctx.cancelled()? {
+            return Err(JobError::Cancelled);
+        }
+        let (a, t, f, from_id) = (app.clone(), table.clone(), field.clone(), after.clone());
+        let rows: Vec<(String, Option<Value>)> = repo
+            .with_client(move |c| {
+                Ok(c.query(
+                    "SELECT id, data -> $3::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ($4::text IS NULL OR id > $4) ORDER BY id LIMIT $5",
+                    &[&a, &t, &f, &from_id, &(FIELD_BATCH * 2)],
+                )?
+                .iter()
+                .map(|r| (r.get(0), r.get(1)))
+                .collect())
+            })
+            .map_err(retry)?;
+        for (id, value) in &rows {
+            let Some(value) = value else { continue };
+            match convert_value(value, from, to) {
+                Converted::Keep => {}
+                Converted::To(new) => {
+                    converts += 1;
+                    if convert_examples.len() < EXAMPLES {
+                        convert_examples.push(json!({ "id": id, "old": value, "new": new }));
+                    }
+                }
+                Converted::Blank => {
+                    blanks += 1;
+                    if blank_examples.len() < EXAMPLES {
+                        blank_examples.push(json!({ "id": id, "old": value }));
+                    }
+                }
+            }
+        }
+        done += rows.len() as i64;
+        if let Some((last, _)) = rows.last() {
+            after = Some(last.clone());
+        }
+        ctx.checkpoint(json!({ "after": after, "done": done, "converts": converts, "blanks": blanks, "convert_examples": convert_examples, "blank_examples": blank_examples }))?;
+        ctx.progress(done, total.max(done))?;
+        if (rows.len() as i64) < FIELD_BATCH * 2 {
+            break;
+        }
+    }
+    ctx.result(json!({
+        "field": field,
+        "from": from,
+        "to": to,
+        "scanned": done,
+        "converts": converts,
+        "blanks": blanks,
+        "examples": { "convert": convert_examples, "blank": blank_examples },
+    }))
+}
+
+/// Converts every value of a field to its new type. Each changed record is a normal write by the
+/// system, in one batch, so its old value is in `record_history` and the batch can be undone.
+pub fn convert_field(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    let (app, table, field, actor) = (text(&payload, "app_slug")?, text(&payload, "table_id")?, text(&payload, "field")?, text(&payload, "actor")?);
+    let (from, to): (FieldType, FieldType) = (parse(&payload, "from")?, parse(&payload, "to")?);
+    let batch_id = uuid::Uuid::parse_str(&text(&payload, "batch_id")?).map_err(|e| JobError::Permanent(e.to_string()))?;
+    let mut write = WriteCtx::system(&actor);
+    write.batch_id = batch_id;
+    write.index_fields = parse(&payload, "index_fields")?;
+    write.links = parse(&payload, "links")?;
+    let repo = ctx.repository();
+    let total = count_rows(ctx, &app, &table)?;
+    let (mut after, mut done) = resume(ctx);
+    loop {
+        if ctx.cancelled()? {
+            return Err(JobError::Cancelled);
+        }
+        let (a, t, f, from_id, w) = (app.clone(), table.clone(), field.clone(), after.clone(), write.clone());
+        let (last, read) = repo
+            .with_client(move |c| {
+                let mut tx = c.transaction()?;
+                let rows = tx.query(
+                    "SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ($3::text IS NULL OR id > $3) \
+                     ORDER BY id LIMIT $4 FOR UPDATE",
+                    &[&a, &t, &from_id, &(FIELD_BATCH / 2)],
+                )?;
+                let mut last: Option<String> = None;
+                for row in &rows {
+                    let (id, data): (String, Value) = (row.get(0), row.get(1));
+                    last = Some(id.clone());
+                    let Some(old) = data.get(&f) else { continue };
+                    let mut new = data.clone();
+                    match convert_value(old, from, to) {
+                        Converted::Keep => continue,
+                        Converted::To(v) => {
+                            if let Some(m) = new.as_object_mut() {
+                                m.insert(f.clone(), v);
+                            }
+                        }
+                        Converted::Blank => {
+                            if let Some(m) = new.as_object_mut() {
+                                m.remove(&f);
+                            }
+                        }
+                    }
+                    crate::repository::update_record_in_tx(&mut tx, &a, &id, &new, None, &w)?;
+                }
+                tx.commit()?;
+                Ok((last, rows.len() as i64))
+            })
+            .map_err(retry)?;
+        done += read;
+        if last.is_some() {
+            after = last;
+        }
+        ctx.checkpoint(json!({ "after": after, "done": done }))?;
+        ctx.progress(done, total.max(done))?;
+        if read < FIELD_BATCH / 2 {
+            break;
+        }
+    }
+    let (a, t, f, job) = (app.clone(), table.clone(), field.clone(), ctx.job_id());
+    repo.with_client(move |c| {
+        c.execute(
+            "UPDATE calc_status SET state = 'ready', updated_at = NOW() WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND job_id = $4",
+            &[&a, &t, &f, &job],
+        )?;
+        Ok(())
+    })
+    .map_err(retry)?;
+    ctx.result(json!({ "records": done, "batch_id": batch_id }))
 }
