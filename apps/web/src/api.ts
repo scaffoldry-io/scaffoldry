@@ -63,6 +63,9 @@ export type SaveOutcome = { status: "live" } | { status: "pending"; proposalId: 
 export interface AdminJobRow {
   id: string;
   kind: string;
+  /** The kind's plain name and one sentence. A kind the server does not know has its own name and no sentence. */
+  title?: string;
+  description?: string;
   owner: string;
   state: "queued" | "running" | "done" | "failed" | "cancelled";
   progress: number | null;
@@ -683,6 +686,22 @@ export const apiClient = {
     setAuthToken(data.token);
     return data;
   },
+
+  /** The signed-in person's own jobs, newest first. */
+  listMyJobs: async () => (await request<{ jobs: import("./ui").BackgroundJob[] }>("/jobs?limit=50")).jobs,
+
+  /** Opens a read-only view of an app as another person. The caller swaps tokens and shows the banner. */
+  startViewAs: (appSlug: string, eppn: string) =>
+    request<{
+      token: string;
+      expires_at: string;
+      app_slug: string;
+      target: { eppn: string; name: string };
+      read_only: boolean;
+    }>(`/apps/${appSlug}/view-as`, { method: "POST", body: JSON.stringify({ eppn }) }),
+
+  /** Ends the view-as session that the current token belongs to. */
+  stopViewAs: () => request<{ status: string }>("/auth/stop-view-as", { method: "POST" }),
 
   logout: async () => {
     try {

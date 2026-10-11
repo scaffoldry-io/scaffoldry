@@ -25,6 +25,9 @@ pub fn convert_preview(caller: &AuthUser, app_slug: &str, body: &Value, state: &
     }
     let repo = state.repository.as_deref().ok_or_else(|| ServiceError::Internal("A preview needs PostgreSQL".to_string()))?;
     let payload = json!({ "app_slug": app_slug, "table_id": table_id, "field": field, "from": from, "to": to });
-    let job = crate::jobs::enqueue(repo, "convert_preview", payload, &caller.eppn, None).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let job = crate::jobs::enqueue(repo, "convert_preview", payload, &caller.eppn, None).map_err(|e| match e {
+        crate::jobs::JobsError::Quota(message) => ServiceError::QuotaExceeded(message),
+        other => ServiceError::Internal(other.to_string()),
+    })?;
     Ok(json!({ "job_id": job }))
 }

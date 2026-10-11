@@ -24,6 +24,8 @@ before(async () => {
   fs.mkdirSync(path.join(root, "dist"));
   fs.writeFileSync(path.join(root, "dist", "index.html"), "INDEX");
   fs.writeFileSync(path.join(root, "dist", "app.js"), "APP");
+  fs.mkdirSync(path.join(root, "dist", "assets"));
+  fs.writeFileSync(path.join(root, "dist", "assets", "site.css"), "CSS");
   fs.writeFileSync(path.join(root, "secret.txt"), "SECRET");
   child = spawn("node", [new URL("./server.mjs", import.meta.url).pathname], {
     env: { ...process.env, PORT: String(PORT), DIST_DIR: path.join(root, "dist") },
@@ -42,6 +44,12 @@ after(() => {
 
 test("serves a file inside the web root", async () => {
   assert.equal((await get("/app.js")).body, "APP");
+});
+
+test("serves a file in a folder, and the root as index.html", async () => {
+  assert.equal((await get("/assets/site.css")).body, "CSS");
+  assert.equal((await get("/")).body, "INDEX");
+  assert.equal((await get("/assets")).body, "INDEX");
 });
 
 test("unknown paths fall back to index.html", async () => {

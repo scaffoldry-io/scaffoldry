@@ -20,6 +20,7 @@ pub mod processes;
 pub mod proposals;
 pub mod tools;
 pub mod calc;
+pub mod view_as;
 pub mod link_options;
 pub mod members;
 pub mod scope;
@@ -103,6 +104,10 @@ pub enum ServiceError {
     },
     /// A filter or sort names a field whose values are being calculated again.
     Calculating(String),
+    /// A person or the server has too much queued work. They can try again when it clears.
+    QuotaExceeded(String),
+    /// A view-as session tried to change something. View-as only reads.
+    ViewAsReadOnly(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
     FieldHidden { message: String, reason: String, remedy: String },
     /// A write names fields the person may not change.
@@ -143,10 +148,11 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -165,6 +171,8 @@ impl ServiceError {
             Self::IndexBuilding(_) => "index_building",
             Self::Calculating(_) => "calculating",
             Self::ConstraintViolation { .. } | Self::ConstraintViolated(_) => "constraint_violated",
+            Self::QuotaExceeded(_) => "quota_exceeded",
+            Self::ViewAsReadOnly(_) => "view_as_read_only",
             Self::FieldHidden { .. } => "field_hidden",
             Self::FieldReadOnly { .. } => "field_read_only",
             Self::UndoConflict { .. } => "undo_conflict",
@@ -182,6 +190,8 @@ impl ServiceError {
             | Self::TooLarge(msg)
             | Self::IndexBuilding(msg)
             | Self::Calculating(msg)
+            | Self::QuotaExceeded(msg)
+            | Self::ViewAsReadOnly(msg)
             | Self::ConstraintViolated(msg)
             | Self::Internal(msg) => msg,
             Self::ConstraintViolation { message, .. } | Self::FieldHidden { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,

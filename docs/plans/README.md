@@ -77,7 +77,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column | **COMPLETED** |
 | 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy | **COMPLETED** |
 | 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected | **COMPLETED** |
-| 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only |
+| 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only | **COMPLETED** |
 
 ### Wave 2 — the data platform
 
@@ -87,7 +87,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | --- | --- | --- | --- |
 | 58 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run | **COMPLETED** |
 | 59 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` | **COMPLETED** |
-| 60 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator |
+| 60 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator | **COMPLETED** |
 | 61 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
 | 62 | [record-history.md](record-history.md) | 4 | The disclosure log |
 | 63 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by |

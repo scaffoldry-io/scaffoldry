@@ -89,6 +89,10 @@ impl Harness {
         });
         tokens.insert("agent".to_string(), raw);
 
+        // No job runner works inside this suite, so the jobs an approval queues stay queued. The
+        // job limits have their own tests in jobs_limits_test.rs.
+        std::env::set_var("SCAFFOLDRY_JOB_LIMIT_PER_USER", "100000");
+        std::env::set_var("SCAFFOLDRY_JOB_LIMIT_QUEUED", "100000");
         let state = Arc::new(ServerState::new().expect("state"));
         state.seed_demo().expect("seed");
         {

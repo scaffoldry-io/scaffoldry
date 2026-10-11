@@ -43,7 +43,7 @@ async fn send_req(
 
 #[test]
 fn test_decision_types_properties_and_pinned_hashes() {
-    assert_eq!(DecisionType::ALL.len(), 24);
+    assert_eq!(DecisionType::ALL.len(), 25);
 
     for &dt in DecisionType::ALL {
         let s = dt.as_str();
@@ -330,6 +330,7 @@ async fn test_overview_counts_match_fixture() {
             expires_at: chrono::Utc::now() + chrono::Duration::days(1),
             last_used_at: None,
             revoked_at: None,
+        app_slug: None,
         },
     );
 

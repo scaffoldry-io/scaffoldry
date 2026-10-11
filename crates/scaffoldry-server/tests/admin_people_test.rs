@@ -111,6 +111,7 @@ fn api_token(eppn: &str, kind: &str, raw: &str) -> ApiToken {
         expires_at: chrono::Utc::now() + chrono::Duration::days(1),
         last_used_at: None,
         revoked_at: None,
+        app_slug: None,
     }
 }
 
