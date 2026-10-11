@@ -102,6 +102,9 @@ impl ActorKind {
     }
 }
 
+/// Records read, records raised, and the last `(created_at, id)` of a flag catch-up batch.
+pub type FlagBatch = (usize, u64, Option<(String, String)>);
+
 /// The attribution of one record write. The history row is built from it, in the same
 /// transaction as the write.
 #[derive(Debug, Clone)]
@@ -1231,6 +1234,45 @@ impl PostgresRepository {
                 Some(row) => RecordWrite::Conflict(row.get(0)),
                 None => RecordWrite::Missing,
             })
+        })
+    }
+
+    /// One batch of a flag catch-up: raises the stored flag of each record after `after` that holds one
+    /// of `fields`. Returns the records read, the records raised, and the last `(created_at, id)`.
+    /// A flag is only raised here. This is a derived value, so it writes no history row.
+    pub fn raise_flags_batch(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        fields: &[String],
+        after: Option<&(String, String)>,
+        limit: i64,
+    ) -> Result<FlagBatch, RepositoryError> {
+        let (slug, table, names, from) = (app_slug.to_string(), table_id.to_string(), fields.to_vec(), after.cloned());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let rows = match &from {
+                None => tx.query(
+                    "SELECT id, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+                     ORDER BY created_at, id LIMIT $3",
+                    &[&slug, &table, &limit],
+                )?,
+                Some((at, id)) => tx.query(
+                    "SELECT id, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+                     AND (created_at, id) > ($3::text::timestamptz, $4::text) ORDER BY created_at, id LIMIT $5",
+                    &[&slug, &table, at, id, &limit],
+                )?,
+            };
+            let ids: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+            let changed = tx.execute(
+                "UPDATE dataset_records SET is_ferpa_sensitive = true \
+                 WHERE id = ANY($1) AND NOT is_ferpa_sensitive AND EXISTS ( \
+                     SELECT 1 FROM unnest($2::text[]) AS f(name) \
+                     WHERE data->f.name IS NOT NULL AND data->f.name NOT IN ('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb))",
+                &[&ids, &names],
+            )?;
+            tx.commit()?;
+            Ok((rows.len(), changed, rows.last().map(|r| (r.get::<_, String>(1), r.get::<_, String>(0)))))
         })
     }
 

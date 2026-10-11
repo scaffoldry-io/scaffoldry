@@ -122,33 +122,8 @@ pub fn recompute_flags(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
         if ctx.cancelled()? {
             return Err(JobError::Cancelled);
         }
-        let (slug, table, names, from, size) = (t.app_slug.clone(), t.table_id.clone(), t.fields.clone(), after.clone(), t.batch);
         let (read, changed, last) = repo
-            .with_client(move |c| {
-                let mut tx = c.transaction()?;
-                let rows = match &from {
-                    None => tx.query(
-                        "SELECT id, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
-                         ORDER BY created_at, id LIMIT $3",
-                        &[&slug, &table, &size],
-                    )?,
-                    Some((at, id)) => tx.query(
-                        "SELECT id, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
-                         AND (created_at, id) > ($3::text::timestamptz, $4::text) ORDER BY created_at, id LIMIT $5",
-                        &[&slug, &table, at, id, &size],
-                    )?,
-                };
-                let ids: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
-                let changed = tx.execute(
-                    "UPDATE dataset_records SET is_ferpa_sensitive = true \
-                     WHERE id = ANY($1) AND NOT is_ferpa_sensitive AND EXISTS ( \
-                         SELECT 1 FROM unnest($2::text[]) AS f(name) \
-                         WHERE data->f.name IS NOT NULL AND data->f.name NOT IN ('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb))",
-                    &[&ids, &names],
-                )?;
-                tx.commit()?;
-                Ok((rows.len(), changed, rows.last().map(|r| (r.get::<_, String>(1), r.get::<_, String>(0)))))
-            })
+            .raise_flags_batch(&t.app_slug, &t.table_id, &t.fields, after.as_ref(), t.batch)
             .map_err(retry)?;
         done += read as i64;
         raised += changed as i64;
