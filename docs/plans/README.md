@@ -70,7 +70,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 47 | [mcp-apps.md](mcp-apps.md) | 5 | An agent lists and decides waiting process steps | **COMPLETED** |
 | 48 | [record-history.md](record-history.md) | 2 | Undo and restore | **COMPLETED** |
 | 49 | [record-history.md](record-history.md) | 3 | Comments, mentions, and the commenter role | **COMPLETED** |
-| 50 | [lifecycle.md](lifecycle.md) | 1 | Delete moves a record to trash. Restore brings it back with its links |
+| 50 | [lifecycle.md](lifecycle.md) | 1 | Delete moves a record to trash. Restore brings it back with its links | **COMPLETED** |
 | 51 | [links.md](links.md) | 4 | A link picker that respects access |
 | 52 | [access-rules.md](access-rules.md) | 1 | Share with groups, units, and positions. One `member_role` function |
 | 53 | [access-rules.md](access-rules.md) | 2 | Rules as data, one row scope, and a SQL and Rust equivalence test |
