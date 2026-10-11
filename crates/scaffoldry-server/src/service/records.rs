@@ -566,10 +566,13 @@ pub(crate) fn computed_specs_of(app_slug: &str, state: &SharedState) -> Vec<crat
     out
 }
 
+/// `(field, expression)` pairs: the formulas stored at write time, and the formulas added at read time.
+pub(crate) type FormulaSplit = (Vec<(String, String)>, Vec<(String, String)>);
+
 /// The formulas of a table, split by when they are computed. A formula that names a lookup field is
 /// computed when a page is read, because the lookup is. Every other formula is stored when its
 /// record is written. Each list holds `(field, expression)` in field order.
-pub(crate) fn formula_specs_of(app_slug: &str, table_id: &str, state: &SharedState) -> (Vec<(String, String)>, Vec<(String, String)>) {
+pub(crate) fn formula_specs_of(app_slug: &str, table_id: &str, state: &SharedState) -> FormulaSplit {
     use scaffoldry_engine::FieldType;
     let (fields, _) = table_fields_lenient(app_slug, table_id, state);
     let lookups: Vec<&str> = fields.iter().filter(|f| f.field_type == FieldType::Lookup).map(|f| f.name.as_str()).collect();
