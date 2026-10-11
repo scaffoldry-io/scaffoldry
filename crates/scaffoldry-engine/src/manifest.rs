@@ -1,7 +1,7 @@
 //! The format of an app manifest. `validate_manifest` returns every problem it finds, not the
 //! first, so an agent can fix them in one pass.
 
-use crate::{formula_field_refs, indexed_fields, AppManifest, AppTable, FieldType, PageKind, MAX_INDEXED_FIELDS};
+use crate::{indexed_fields, validate_formula, AppManifest, AppTable, FieldType, PageKind, MAX_INDEXED_FIELDS};
 use std::collections::HashSet;
 
 pub const MAX_TABLES: usize = 50;
@@ -104,10 +104,10 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
             match f.field_type {
                 FieldType::Formula => {
                     if let Some(expr) = &f.formula_expression {
-                        match formula_field_refs(expr) {
-                            None => problems.push(format!("table '{}': formula '{}' does not parse", table.id, f.name)),
-                            Some(refs) => {
-                                for r in refs {
+                        match validate_formula(expr) {
+                            Err(e) => problems.push(format!("table '{}': formula '{}' does not parse: {}", table.id, f.name, e.message)),
+                            Ok(info) => {
+                                for r in info.field_refs {
                                     if !names.contains(r.as_str()) {
                                         problems.push(format!("table '{}': formula '{}' names the field '{r}', which does not exist", table.id, f.name));
                                     }

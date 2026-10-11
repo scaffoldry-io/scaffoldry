@@ -215,6 +215,7 @@ pub struct ServerState {
     /// Empty until the label table exists (admin console phase 4, later part).
     pub labels: RwLock<scaffoldry_engine::LabelSet>,
     pub settings: RwLock<HashMap<String, serde_json::Value>>,
+    pub formula_rate_limits: RwLock<HashMap<String, (std::time::Instant, u32)>>,
 }
 
 impl ServerState {
@@ -469,6 +470,7 @@ impl ServerState {
             position_types: RwLock::new(position_types),
             labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
             settings: RwLock::new(settings_map),
+            formula_rate_limits: RwLock::new(HashMap::new()),
         })
     }
 }
@@ -1143,6 +1145,30 @@ impl ServerState {
             position_types: RwLock::new(position_types),
             labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
             settings: RwLock::new(settings_map),
+            formula_rate_limits: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub fn check_formula_rate_limit(&self, user_key: &str) -> bool {
+        let mut limits = match self.formula_rate_limits.write() {
+            Ok(g) => g,
+            Err(_) => return true,
+        };
+        let now = std::time::Instant::now();
+        if let Some((start_time, count)) = limits.get_mut(user_key) {
+            if now.duration_since(*start_time).as_secs() >= 1 {
+                *start_time = now;
+                *count = 1;
+                true
+            } else if *count < 20 {
+                *count += 1;
+                true
+            } else {
+                false
+            }
+        } else {
+            limits.insert(user_key.to_string(), (now, 1));
+            true
         }
     }
 
