@@ -18,7 +18,7 @@ use std::sync::{Arc, RwLock};
 pub struct ApiToken {
     pub token_hash: String,
     pub id: uuid::Uuid,
-    pub kind: String, // 'agent' | 'impersonation' | 'scim' | 'setup'
+    pub kind: String, // 'agent' | 'impersonation' | 'scim' | 'setup' | 'viewas'
     pub eppn: String,
     pub label: String,
     pub original_admin: Option<String>,
@@ -26,6 +26,9 @@ pub struct ApiToken {
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The one app a `viewas` token reaches. Empty for every other kind.
+    #[serde(default)]
+    pub app_slug: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +181,9 @@ pub struct AuthUser {
     pub role_title: String,
     pub affiliation: String,
     pub department: String,
+    /// Set on a view-as request: the administrator looking. Rights are the intersection of both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_as_by: Option<Box<AuthUser>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,6 +289,7 @@ impl ServerState {
             expires_at: Utc::now() + chrono::Duration::days(365),
             last_used_at: None,
             revoked_at: None,
+        app_slug: None,
         };
         api_tokens.insert(scim_hash, default_scim_token.clone());
 
@@ -1117,6 +1124,7 @@ impl ServerState {
             expires_at: Utc::now() + chrono::Duration::days(365),
             last_used_at: None,
             revoked_at: None,
+        app_slug: None,
         };
         api_tokens.insert(scim_hash, default_scim_token);
 

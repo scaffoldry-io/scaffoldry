@@ -64,6 +64,7 @@ pub enum DecisionType {
     JobCancelled,
     PositionChanged,
     DelegationChanged,
+    ViewAsStarted,
 }
 
 impl DecisionType {
@@ -92,6 +93,7 @@ impl DecisionType {
         DecisionType::JobCancelled,
         DecisionType::PositionChanged,
         DecisionType::DelegationChanged,
+        DecisionType::ViewAsStarted,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -120,6 +122,7 @@ impl DecisionType {
             DecisionType::JobCancelled => "JobCancelled",
             DecisionType::PositionChanged => "PositionChanged",
             DecisionType::DelegationChanged => "DelegationChanged",
+            DecisionType::ViewAsStarted => "ViewAsStarted",
         }
     }
 

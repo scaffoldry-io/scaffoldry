@@ -1066,6 +1066,7 @@ fn run_automations_in(
                 role_title: String::new(),
                 affiliation: aff_str.to_string(),
                 department: actor.department.to_string(),
+        view_as_by: None,
             };
             let resource = scaffoldry_policy::entities::Resource::Record(scaffoldry_policy::entities::RecordCtx {
                 app_slug: app_slug.to_string(),

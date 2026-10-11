@@ -60,6 +60,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
             role_title: "Setup".to_string(),
             affiliation: "central_admin".to_string(),
             department: "System".to_string(),
+        view_as_by: None,
         });
     }
 
@@ -137,6 +138,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
         role_title,
         affiliation,
         department,
+        view_as_by: None,
     })
 }
 
@@ -186,6 +188,7 @@ pub fn create_setup_token(state: &ServerState) -> Result<String, Box<dyn std::er
         expires_at: Utc::now() + chrono::Duration::hours(24),
         last_used_at: None,
         revoked_at: None,
+        app_slug: None,
     };
     state.persist_api_token(&token)?;
     Ok(raw_token)

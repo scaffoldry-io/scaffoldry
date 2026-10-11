@@ -44,6 +44,7 @@ const SCHEMA_0011: &str = include_str!("../../scaffoldry-core/migrations/0011_ap
 const SCHEMA_0027: &str = include_str!("../../scaffoldry-core/migrations/0027_record_history.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0046: &str = include_str!("../../scaffoldry-core/migrations/0046_calc_status.sql");
+const SCHEMA_0047: &str = include_str!("../../scaffoldry-core/migrations/0047_view_as_token.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -684,7 +685,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 30] = [
+                        let migrations: [(&str, &str); 31] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -711,6 +712,7 @@ impl PostgresRepository {
                             ("0044_job_schedules.sql", SCHEMA_0044),
                             ("0045_index_status.sql", SCHEMA_0045),
                             ("0046_calc_status.sql", SCHEMA_0046),
+                            ("0047_view_as_token.sql", SCHEMA_0047),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -1589,6 +1591,7 @@ impl PostgresRepository {
                     role_title: r.get(3),
                     affiliation: r.get(4),
                     department: r.get(5),
+        view_as_by: None,
                 };
                 let original_admin = orig_admin.and_then(|v| serde_json::from_value(v).ok());
                 let session = AuthSession {
@@ -2430,7 +2433,7 @@ impl PostgresRepository {
         let token = token.clone();
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO api_tokens (token_hash, id, kind, eppn, label, original_admin, created_at, expires_at, last_used_at, revoked_at)                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)                  ON CONFLICT (token_hash) DO UPDATE SET                     label = EXCLUDED.label,                     last_used_at = EXCLUDED.last_used_at,                     revoked_at = EXCLUDED.revoked_at",
+                "INSERT INTO api_tokens (token_hash, id, kind, eppn, label, original_admin, created_at, expires_at, last_used_at, revoked_at, app_slug)                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)                  ON CONFLICT (token_hash) DO UPDATE SET                     label = EXCLUDED.label,                     last_used_at = EXCLUDED.last_used_at,                     revoked_at = EXCLUDED.revoked_at",
                 &[
                     &token.token_hash,
                     &token.id,
@@ -2442,6 +2445,7 @@ impl PostgresRepository {
                     &token.expires_at,
                     &token.last_used_at,
                     &token.revoked_at,
+                    &token.app_slug,
                 ],
             )?;
             Ok(())
@@ -2452,7 +2456,7 @@ impl PostgresRepository {
         let hash = token_hash.to_string();
         self.with_client(move |client| {
             let row_opt = client.query_opt(
-                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at, expires_at, last_used_at, revoked_at                  FROM api_tokens WHERE token_hash = $1",
+                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at, expires_at, last_used_at, revoked_at, app_slug                  FROM api_tokens WHERE token_hash = $1",
                 &[&hash],
             )?;
             match row_opt {
@@ -2467,6 +2471,7 @@ impl PostgresRepository {
                     expires_at: r.get(7),
                     last_used_at: r.get(8),
                     revoked_at: r.get(9),
+                    app_slug: r.get(10),
                 })),
                 None => Ok(None),
             }
@@ -2517,7 +2522,7 @@ impl PostgresRepository {
         let eppn = eppn.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text                  FROM api_tokens WHERE eppn = $1 AND kind = 'agent' AND revoked_at IS NULL ORDER BY created_at DESC",
+                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text, app_slug                  FROM api_tokens WHERE eppn = $1 AND kind = 'agent' AND revoked_at IS NULL ORDER BY created_at DESC",
                 &[&eppn],
             )?;
             let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
@@ -2543,6 +2548,7 @@ impl PostgresRepository {
                     expires_at: parse_time(&expires_str),
                     last_used_at: last_used_str.map(|s| parse_time(&s)),
                     revoked_at: revoked_str.map(|s| parse_time(&s)),
+                    app_slug: r.get(10),
                 });
             }
             Ok(list)
@@ -2553,7 +2559,7 @@ impl PostgresRepository {
         let eppn = eppn.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text                  FROM api_tokens WHERE eppn = $1  ORDER BY created_at DESC",
+                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text, app_slug                  FROM api_tokens WHERE eppn = $1  ORDER BY created_at DESC",
                 &[&eppn],
             )?;
             let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
@@ -2579,6 +2585,7 @@ impl PostgresRepository {
                     expires_at: parse_time(&expires_str),
                     last_used_at: last_used_str.map(|s| parse_time(&s)),
                     revoked_at: revoked_str.map(|s| parse_time(&s)),
+                    app_slug: r.get(10),
                 });
             }
             Ok(list)

@@ -684,6 +684,19 @@ export const apiClient = {
     return data;
   },
 
+  /** Opens a read-only view of an app as another person. The caller swaps tokens and shows the banner. */
+  startViewAs: (appSlug: string, eppn: string) =>
+    request<{
+      token: string;
+      expires_at: string;
+      app_slug: string;
+      target: { eppn: string; name: string };
+      read_only: boolean;
+    }>(`/apps/${appSlug}/view-as`, { method: "POST", body: JSON.stringify({ eppn }) }),
+
+  /** Ends the view-as session that the current token belongs to. */
+  stopViewAs: () => request<{ status: string }>("/auth/stop-view-as", { method: "POST" }),
+
   logout: async () => {
     try {
       await request("/auth/logout", { method: "POST" });

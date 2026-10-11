@@ -127,6 +127,12 @@ async fn handle_mcp_request(
         return StatusCode::ACCEPTED.into_response();
     }
 
+    // A view-as session reaches the tools and nothing else here.
+    if crate::guard::view_as_token(&state, &headers).is_some() && !["initialize", "ping", "tools/list", "tools/call"].contains(&req.method.as_str()) {
+        let err = crate::service::ServiceError::forbidden("This view reaches one app only. Exit it to open anything else.");
+        return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: None, error: Some(JsonRpcError { code: -32001, message: err.message().to_string(), data: None }) });
+    }
+
     match req.method.as_str() {
         "initialize" => {
             let asked = req
@@ -187,6 +193,12 @@ async fn handle_mcp_request(
             let params = req.params.unwrap_or(json!({}));
             let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
+
+            if let Some(row) = crate::guard::view_as_token(&state, &headers) {
+                if let Err(err) = crate::guard::view_as_tool_gate(&row, &tool_name, &args) {
+                    return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(service_tool_error(&err)), error: None });
+                }
+            }
 
             // A tool does database work, so it runs off the async threads.
             let origin = match crate::guard::origin(&state, &headers) {

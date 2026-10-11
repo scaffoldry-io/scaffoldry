@@ -274,6 +274,15 @@ pub fn substitute(pred: &Pred, person: &Person) -> Pred {
 }
 
 impl RowScope {
+    /// What both scopes allow. Each is already free of person attributes, so the predicates join as they are.
+    pub fn and(self, other: RowScope) -> RowScope {
+        match (self, other) {
+            (RowScope::DenyAll, _) | (_, RowScope::DenyAll) => RowScope::DenyAll,
+            (RowScope::AllowAll, x) | (x, RowScope::AllowAll) => x,
+            (RowScope::Mixed(a), RowScope::Mixed(b)) => RowScope::of(Pred::And(vec![a, b])),
+        }
+    }
+
     /// The scope of an already substituted predicate.
     pub fn of(pred: Pred) -> RowScope {
         if pred == Pred::True {
@@ -408,6 +417,21 @@ pub struct FieldVisibility {
 }
 
 impl FieldVisibility {
+    /// Everything either person may not see or change.
+    pub fn union(mut self, other: FieldVisibility) -> FieldVisibility {
+        for d in other.hidden {
+            if !self.hidden.iter().any(|x| x.field == d.field) {
+                self.hidden.push(d);
+            }
+        }
+        for d in other.read_only {
+            if !self.read_only.iter().any(|x| x.field == d.field) {
+                self.read_only.push(d);
+            }
+        }
+        self
+    }
+
     pub fn hidden_names(&self) -> Vec<String> {
         self.hidden.iter().map(|d| d.field.clone()).collect()
     }
