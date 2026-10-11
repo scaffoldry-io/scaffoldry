@@ -55,7 +55,8 @@ fn insert_rows(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &st
     tx.execute(
         "INSERT INTO record_index (app_slug, table_id, field, record_id, num, txt, ts, ord) \
          SELECT $1, $2, u.f, u.r, u.n, u.t, u.s::text::timestamptz, u.o \
-         FROM unnest($3::text[], $4::text[], $5::float8[], $6::text[], $7::text[], $8::int2[]) AS u(f, r, n, t, s, o)",
+         FROM unnest($3::text[], $4::text[], $5::float8[], $6::text[], $7::text[], $8::int2[]) AS u(f, r, n, t, s, o) \
+         ON CONFLICT (record_id, field, ord) DO NOTHING",
         &[&app_slug, &table_id, &fields, &ids, &nums, &txts, &tss, &ords],
     )?;
     Ok(())
@@ -75,7 +76,51 @@ pub(crate) fn write_record_index(
     insert_rows(tx, app_slug, table_id, &rows_of(record_id, data, fields))
 }
 
-/// Reads a table's records in batches and writes the index rows of `fields` for each.
+/// One batch of a copy.
+pub(crate) struct Batch {
+    pub read: usize,
+    pub written: u64,
+    /// The `(created_at, id)` of the last record read.
+    pub last: Option<(String, String)>,
+}
+
+/// Reads up to `limit` records after `after`, in `(created_at, id)` order, and writes the index rows
+/// of `fields` for each. The records stay locked against writers until the transaction ends, so no
+/// write slips between the read and the insert. A row already present is left as it is.
+pub(crate) fn copy_batch(
+    tx: &mut postgres::Transaction<'_>,
+    app_slug: &str,
+    table_id: &str,
+    fields: &[FieldSpec],
+    after: Option<&(String, String)>,
+    limit: i64,
+) -> Result<Batch, postgres::Error> {
+    let batch = match after {
+        None => tx.query(
+            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+             ORDER BY created_at, id LIMIT $3 FOR SHARE",
+            &[&app_slug, &table_id, &limit],
+        )?,
+        Some((at, id)) => tx.query(
+            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+             AND (created_at, id) > ($3::text::timestamptz, $4::text) ORDER BY created_at, id LIMIT $5 FOR SHARE",
+            &[&app_slug, &table_id, at, id, &limit],
+        )?,
+    };
+    let mut rows = Vec::new();
+    for r in &batch {
+        let (id, data): (String, Value) = (r.get(0), r.get(1));
+        rows.extend(rows_of(&id, &data, fields));
+    }
+    insert_rows(tx, app_slug, table_id, &rows)?;
+    Ok(Batch {
+        read: batch.len(),
+        written: rows.len() as u64,
+        last: batch.last().map(|r| (r.get::<_, String>(2), r.get::<_, String>(0))),
+    })
+}
+
+/// Writes the index rows of `fields` for every record of a table, in batches.
 fn copy_fields(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &str, fields: &[FieldSpec]) -> Result<u64, RepositoryError> {
     if fields.is_empty() {
         return Ok(0);
@@ -83,55 +128,55 @@ fn copy_fields(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &st
     let mut written = 0u64;
     let mut after: Option<(String, String)> = None;
     loop {
-        let batch = match &after {
-            None => tx.query(
-                "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
-                 ORDER BY created_at, id LIMIT $3",
-                &[&app_slug, &table_id, &REBUILD_BATCH],
-            )?,
-            Some((at, id)) => tx.query(
-                "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
-                 AND (created_at, id) > ($3::text::timestamptz, $4::text) ORDER BY created_at, id LIMIT $5",
-                &[&app_slug, &table_id, &at, &id, &REBUILD_BATCH],
-            )?,
-        };
-        if batch.is_empty() {
-            break;
-        }
-        let mut rows = Vec::new();
-        for r in &batch {
-            let (id, data): (String, Value) = (r.get(0), r.get(1));
-            rows.extend(rows_of(&id, &data, fields));
-        }
-        written += rows.len() as u64;
-        insert_rows(tx, app_slug, table_id, &rows)?;
-        let last = batch.last().unwrap();
-        after = Some((last.get::<_, String>(2), last.get::<_, String>(0)));
-        if (batch.len() as i64) < REBUILD_BATCH {
+        let batch = copy_batch(tx, app_slug, table_id, fields, after.as_ref(), REBUILD_BATCH)?;
+        written += batch.written;
+        after = batch.last;
+        if (batch.read as i64) < REBUILD_BATCH {
             break;
         }
     }
     Ok(written)
 }
 
-/// A table's indexed set changed: drop the rows of the fields that left, and write the rows of the
-/// fields that joined. The approval calls this in its transaction.
+/// A table's indexed set changed. The fields that left lose their rows and their status. The fields
+/// that joined get a `building` status and one `build_index` job. Nothing is copied here, so an
+/// approval stays fast on a table of any size. The approval calls this in its transaction.
 pub(crate) fn sync_index(
     tx: &mut postgres::Transaction<'_>,
     app_slug: &str,
     table_id: &str,
     left: &[String],
     joined: &[FieldSpec],
-) -> Result<u64, RepositoryError> {
+    requested_by: &str,
+) -> Result<(), RepositoryError> {
     if !left.is_empty() {
         tx.execute("DELETE FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)", &[&app_slug, &table_id, &left])?;
+        tx.execute("DELETE FROM index_status WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)", &[&app_slug, &table_id, &left])?;
     }
+    if joined.is_empty() {
+        return Ok(());
+    }
+    let mut names: Vec<String> = joined.iter().map(|f| f.name.clone()).collect();
+    names.sort();
     // A joining field has no rows yet. Clear any stale ones so a repeat is safe.
-    let names: Vec<String> = joined.iter().map(|f| f.name.clone()).collect();
-    if !names.is_empty() {
-        tx.execute("DELETE FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)", &[&app_slug, &table_id, &names])?;
+    tx.execute("DELETE FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)", &[&app_slug, &table_id, &names])?;
+    for name in &names {
+        tx.execute(
+            "INSERT INTO index_status (app_slug, table_id, field, state, job_id) VALUES ($1, $2, $3, 'building', NULL) \
+             ON CONFLICT (app_slug, table_id, field) DO UPDATE SET state = 'building', job_id = NULL, updated_at = NOW()",
+            &[&app_slug, &table_id, name],
+        )?;
     }
-    copy_fields(tx, app_slug, table_id, joined)
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("{app_slug}|{table_id}|{}", names.join(",")).as_bytes());
+    let key = format!("build_index:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let payload = serde_json::json!({ "app_slug": app_slug, "table_id": table_id, "fields": names });
+    let job = crate::jobs::enqueue_in_tx(tx, "build_index", &payload, requested_by, Some(&key))?;
+    tx.execute(
+        "UPDATE index_status SET job_id = $4 WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)",
+        &[&app_slug, &table_id, &names, &job],
+    )?;
+    Ok(())
 }
 
 impl PostgresRepository {
@@ -145,6 +190,23 @@ impl PostgresRepository {
             let n = copy_fields(&mut tx, &slug, &table, &fields)?;
             tx.commit()?;
             Ok(n)
+        })
+    }
+
+    /// The percent done of the build that holds back one of `fields`, or `None` when none is building.
+    pub fn index_building_percent(&self, app_slug: &str, table_id: &str, fields: &[String]) -> Result<Option<i64>, RepositoryError> {
+        let (slug, table, fields) = (app_slug.to_string(), table_id.to_string(), fields.to_vec());
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "SELECT COALESCE(j.progress_done, 0), COALESCE(j.progress_total, 0) \
+                 FROM index_status s LEFT JOIN jobs j ON j.id = s.job_id \
+                 WHERE s.app_slug = $1 AND s.table_id = $2 AND s.field = ANY($3) AND s.state = 'building' LIMIT 1",
+                &[&slug, &table, &fields],
+            )?;
+            Ok(row.map(|r| {
+                let (done, total): (i64, i64) = (r.get(0), r.get(1));
+                if total > 0 { (done * 100 / total).clamp(0, 99) } else { 0 }
+            }))
         })
     }
 

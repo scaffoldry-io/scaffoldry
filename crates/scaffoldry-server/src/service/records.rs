@@ -541,6 +541,10 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
             .map_err(ServiceError::Internal)?
     } else if let Some((iclauses, isort)) = plan.as_ref().ok().filter(|(c, s)| !c.is_empty() || s.is_some()) {
+        let named: Vec<String> = iclauses.iter().map(|c| c.field.clone()).chain(isort.iter().map(|s| s.field.clone())).collect();
+        if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(ServiceError::Internal)? {
+            return Err(ServiceError::IndexBuilding(format!("This field is still being prepared for sorting. It is {percent}% done.")));
+        }
         let mut iq = IndexedQuery {
             app_slug: app_slug.to_string(),
             table_id: table.clone(),

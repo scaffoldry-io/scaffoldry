@@ -82,6 +82,8 @@ pub enum ServiceError {
     /// A save named a version that is no longer the stored one. `version` is the current one.
     StaleVersion { message: String, version: i32 },
     TooLarge(String),
+    /// A sort or filter names a field whose index is still being built.
+    IndexBuilding(String),
     Internal(String),
 }
 
@@ -121,7 +123,7 @@ impl ServiceError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) => StatusCode::CONFLICT,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -137,6 +139,7 @@ impl ServiceError {
             Self::Conflict(_) | Self::StaleVersion { .. } => "version_conflict",
             Self::PositionFull(_) => "position_full",
             Self::TooLarge(_) => "too_large",
+            Self::IndexBuilding(_) => "index_building",
             Self::Internal(_) => "internal",
         }
     }
@@ -149,6 +152,7 @@ impl ServiceError {
             | Self::Conflict(msg)
             | Self::PositionFull(msg)
             | Self::TooLarge(msg)
+            | Self::IndexBuilding(msg)
             | Self::Internal(msg) => msg,
             Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } => message,
         }
