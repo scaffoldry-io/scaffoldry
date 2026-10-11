@@ -13,8 +13,12 @@ permissions:
   contents: read
   pull-requests: read
 
+# The jobs run at the same time, so one run shows every failure.
+# Branch protection requires the check named "validate". That is the last job. It does no work
+# of its own: it passes only when every other job passed. Do not rename it.
+
 jobs:
-  validate:
+  governance:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -32,44 +36,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install jsonschema
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Verify Compose configuration
-        run: |
-          docker compose -f deploy/docker-compose.yml config
-
-      - name: Start PostgreSQL container
-        run: |
-          docker compose -f deploy/docker-compose.yml up -d postgres
-          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
-
       - name: Hard Gate - Skills & Doctrine Audit
         run: |
           python3 governance/scripts/audit-skills.py
 
       - name: Hard Gate - App Manifest Schema
+        if: success() || failure()
         run: |
           python3 governance/scripts/validate-manifest.py
 
       - name: Hard Gate - Governance Script Tests
+        if: success() || failure()
         run: |
           python3 -m unittest discover -s governance/scripts -p "test_*.py"
-      - name: Hard Gate - Web Server Path Safety Test
-        run: |
-          node --test deploy/server.test.mjs
-
 
       - name: Hard Gate - Build Agent Changes Stay In Bounds
-        if: startsWith(github.head_ref || github.ref_name, 'agent/')
+        if: (success() || failure()) && startsWith(github.head_ref || github.ref_name, 'agent/')
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
           GH_TOKEN: ${{ github.token }}
@@ -81,21 +63,172 @@ jobs:
           python3 governance/scripts/agent-guard.py --branch "$BRANCH" --base origin/main --head HEAD $flag
 
       - name: Hard Gate - License Hygiene Audit
+        if: success() || failure()
         run: |
           python3 governance/scripts/audit-licenses.py
 
       - name: Hard Gate - Architecture Boundary Audit
+        if: success() || failure()
         run: |
           python3 governance/scripts/audit-architecture.py
 
-      - name: Hard Gate - Rust Monorepo Test & Clippy
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
         run: |
-          # The tests share one database and the process environment, so they run one at a time.
-          cargo test -- --test-threads=1
+          python -m pip install --upgrade pip
+          pip install jsonschema
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo downloads and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Verify Compose configuration
+        run: |
+          docker compose -f deploy/docker-compose.yml config
+
+      - name: Start PostgreSQL container
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d postgres
+          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
+
+      - name: Hard Gate - Rust Monorepo Tests
+        env:
+          # A test that exports OSCAL writes it here when the variable is set. The next step validates it.
+          OSCAL_OUT: ${{ runner.temp }}/oscal/component-definition.json
+          OSCAL_CATALOG_OUT: ${{ runner.temp }}/oscal/library-catalog.json
+        run: |
+          mkdir -p "$RUNNER_TEMP/oscal"
+          # Until stateless-server.md phase 1, the tests share one database and the process
+          # environment, so they run one at a time. After it each test has a database of its own.
+          # When TestDb exists, delete this branch and keep the plain `cargo test`.
+          if grep -rqs "struct TestDb" crates/scaffoldry-server/tests/common/; then
+            cargo test
+          else
+            cargo test -- --test-threads=1
+          fi
+
+      - name: Hard Gate - OSCAL Exports Validate
+        run: |
+          # A variable that the code reads must have produced a file. A variable nothing reads yet is skipped.
+          for pair in "OSCAL_OUT:component-definition.json" "OSCAL_CATALOG_OUT:library-catalog.json"; do
+            var="${pair%%:*}"; file="$RUNNER_TEMP/oscal/${pair##*:}"
+            if grep -rqsw "$var" crates/; then
+              test -s "$file" || { echo "The code reads $var, but no test wrote $file."; exit 1; }
+              python3 governance/scripts/validate-oscal.py "$file"
+            else
+              echo "Nothing reads $var yet. Skipped."
+            fi
+          done
+
+      - name: Hard Gate - Clippy
+        if: success() || failure()
+        run: |
           cargo clippy --all-targets -- -D warnings
 
-      - name: Hard Gate - Web Unit Tests & Build
+  scale:
+    # The million-row test from row-scale.md phase 6. It does nothing until that test exists.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Look for the million-row test
+        id: detect
+        run: |
+          if grep -rqs "fn million_rows" crates/; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "The million_rows test does not exist yet. Skipped."; echo "present=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Set up Rust
+        if: steps.detect.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo downloads and build output
+        if: steps.detect.outputs.present == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-release-${{ runner.os }}-
+
+      - name: Start PostgreSQL container
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d postgres
+          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
+
+      - name: Hard Gate - A Million Rows Within The Stated Limits
+        if: steps.detect.outputs.present == 'true'
+        timeout-minutes: 30
+        run: |
+          cargo test --release -- --ignored million_rows --nocapture
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Hard Gate - Web Server Path Safety Test
+        run: |
+          node --test deploy/server.test.mjs
+
+      - name: Install web dependencies
+        if: success() || failure()
         run: |
           npm ci
+
+      - name: Hard Gate - Web Unit Tests
+        if: success() || failure()
+        run: |
           npm test
+
+      - name: Hard Gate - Web Build
+        if: success() || failure()
+        run: |
           npm run build
+
+  validate:
+    # The required check. It passes only when every job above passed.
+    if: always()
+    needs: [governance, rust, scale, web]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "governance rust scale web: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then echo "A job did not pass."; exit 1; fi
+          done
