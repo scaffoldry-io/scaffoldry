@@ -14,7 +14,12 @@ fn db_url() -> String {
         .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
 }
 
+/// A connection to a database that has the schema. `ServerState::new` applies the migrations.
 fn client() -> postgres::Client {
+    static MIGRATED: std::sync::Once = std::sync::Once::new();
+    MIGRATED.call_once(|| {
+        scaffoldry_server::state::ServerState::new().expect("state");
+    });
     postgres::Client::connect(&db_url(), postgres::NoTls).expect("database")
 }
 

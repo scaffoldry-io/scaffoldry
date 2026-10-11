@@ -139,19 +139,57 @@ struct Compiler<'a> {
 const APP: usize = 0;
 const TABLE: usize = 1;
 
+/// A set of record ids: the records in `Pos`, or every record except those in `Neg`. Keeping the
+/// complement as a complement means `a AND NOT b` is `a EXCEPT b` and never reads the whole table.
+enum Set {
+    Pos(String),
+    Neg(String),
+}
+
+fn none() -> String {
+    "SELECT NULL::text AS id WHERE FALSE".to_string()
+}
+
+fn wrap(s: &str) -> String {
+    format!("({s})")
+}
+
+impl Set {
+    fn not(self) -> Set {
+        match self {
+            Set::Pos(s) => Set::Neg(s),
+            Set::Neg(s) => Set::Pos(s),
+        }
+    }
+
+    fn and(self, other: Set) -> Set {
+        match (self, other) {
+            (Set::Pos(a), Set::Pos(b)) => Set::Pos(format!("{} INTERSECT {}", wrap(&a), wrap(&b))),
+            (Set::Pos(a), Set::Neg(b)) | (Set::Neg(b), Set::Pos(a)) => Set::Pos(format!("{} EXCEPT {}", wrap(&a), wrap(&b))),
+            (Set::Neg(a), Set::Neg(b)) => Set::Neg(format!("{} UNION {}", wrap(&a), wrap(&b))),
+        }
+    }
+
+    fn or(self, other: Set) -> Set {
+        self.not().and(other.not()).not()
+    }
+}
+
 impl Compiler<'_> {
     fn bind(&mut self, p: Param, cast: &str) -> String {
         self.params.push(p);
         format!("${}{cast}", self.first + self.params.len() - 1)
     }
 
-    fn exists(&mut self, field: &FieldSpec, test: &str) -> String {
+    /// The ids of records that have a row in the index for `field` that passes `test`.
+    fn having(&mut self, field: &FieldSpec, test: &str) -> String {
         let name = self.bind(Param::Text(field.name.clone()), "");
         let (app, table) = (self.first + APP, self.first + TABLE);
-        format!("EXISTS (SELECT 1 FROM record_index i WHERE i.app_slug = ${app} AND i.table_id = ${table} AND i.field = {name} AND i.record_id = r.id{test})")
+        format!("SELECT i.record_id AS id FROM record_index i WHERE i.app_slug = ${app} AND i.table_id = ${table} AND i.field = {name}{test}")
     }
 
-    fn cmp(&mut self, field: &str, op: Op, value: &Operand) -> Result<String, CompileError> {
+    /// The set of ids a comparison selects.
+    fn cmp(&mut self, field: &str, op: Op, value: &Operand) -> Result<Set, CompileError> {
         if matches!(value, Operand::Person(_)) || field.starts_with("person.") {
             return Err(CompileError::NotSubstituted);
         }
@@ -165,67 +203,80 @@ impl Compiler<'_> {
             IndexColumn::Txt => "i.txt",
             IndexColumn::Ts => "i.ts",
         };
-        if matches!(op, Op::IsEmpty | Op::IsNotEmpty) {
-            let exists = self.exists(spec, &format!(" AND {col} IS NOT NULL"));
-            return Ok(if op == Op::IsEmpty { format!("NOT {exists}") } else { exists });
-        }
-        let want = operand_cols(spec, value);
-        let bound = |cols: &[IndexCols]| -> Option<(Param, &'static str)> {
-            match column {
-                IndexColumn::Num => Some((Param::Nums(cols.iter().filter_map(|c| c.0).collect()), "::float8[]")),
-                IndexColumn::Txt => Some((Param::Texts(cols.iter().filter_map(|c| c.1.clone()).collect()), "::text[]")),
-                IndexColumn::Ts => Some((Param::Texts(cols.iter().filter_map(|c| c.2.clone()).collect()), "::text[]::timestamptz[]")),
-            }
-        };
         match op {
+            Op::IsNotEmpty => Ok(Set::Pos(self.having(spec, &format!(" AND {col} IS NOT NULL")))),
+            Op::IsEmpty => Ok(Set::Neg(self.having(spec, &format!(" AND {col} IS NOT NULL")))),
             Op::Eq | Op::In | Op::Ne => {
-                let sql = match bound(&want) {
-                    Some((p, cast)) if !want.is_empty() => {
-                        let arr = self.bind(p, cast);
-                        self.exists(spec, &format!(" AND {col} = ANY({arr})"))
-                    }
-                    _ => "FALSE".to_string(),
+                let want = operand_cols(spec, value);
+                let set = if want.is_empty() {
+                    none()
+                } else {
+                    let (param, cast) = match column {
+                        IndexColumn::Num => (Param::Nums(want.iter().filter_map(|c| c.0).collect()), "::float8[]"),
+                        IndexColumn::Txt => (Param::Texts(want.iter().filter_map(|c| c.1.clone()).collect()), "::text[]"),
+                        IndexColumn::Ts => (Param::Texts(want.iter().filter_map(|c| c.2.clone()).collect()), "::text[]::timestamptz[]"),
+                    };
+                    let arr = self.bind(param, cast);
+                    self.having(spec, &format!(" AND {col} = ANY({arr})"))
                 };
-                Ok(if op == Op::Ne { format!("NOT ({sql})") } else { sql })
+                Ok(if op == Op::Ne { Set::Neg(set) } else { Set::Pos(set) })
             }
             Op::Gt | Op::Lt => {
                 if column == IndexColumn::Txt {
                     return Err(CompileError::TextOrdering(field.to_string()));
                 }
-                let Some(first) = want.first() else { return Ok("FALSE".to_string()) };
+                let Some(first) = want_first(spec, value) else { return Ok(Set::Pos(none())) };
                 let (param, cast) = match column {
                     IndexColumn::Num => (Param::Num(first.0.unwrap_or_default()), "::float8"),
                     _ => (Param::Text(first.2.clone().unwrap_or_default()), "::text::timestamptz"),
                 };
                 let sym = if op == Op::Gt { ">" } else { "<" };
                 let v = self.bind(param, cast);
-                Ok(self.exists(spec, &format!(" AND {col} {sym} {v}")))
+                Ok(Set::Pos(self.having(spec, &format!(" AND {col} {sym} {v}"))))
             }
-            Op::IsEmpty | Op::IsNotEmpty => unreachable!("handled above"),
         }
     }
 
-    fn pred(&mut self, p: &Pred) -> Result<String, CompileError> {
+    fn pred(&mut self, p: &Pred) -> Result<Set, CompileError> {
         Ok(match p {
-            Pred::True => "TRUE".to_string(),
+            Pred::True => Set::Neg(none()),
             Pred::Cmp { field, op, value } => self.cmp(field, *op, value)?,
-            Pred::And(ps) if ps.is_empty() => "TRUE".to_string(),
-            Pred::Or(ps) if ps.is_empty() => "FALSE".to_string(),
-            Pred::And(ps) => format!("({})", ps.iter().map(|p| self.pred(p)).collect::<Result<Vec<_>, _>>()?.join(" AND ")),
-            Pred::Or(ps) => format!("({})", ps.iter().map(|p| self.pred(p)).collect::<Result<Vec<_>, _>>()?.join(" OR ")),
-            Pred::Not(p) => format!("NOT ({})", self.pred(p)?),
+            Pred::And(ps) => {
+                let mut acc = Set::Neg(none());
+                for p in ps {
+                    acc = acc.and(self.pred(p)?);
+                }
+                acc
+            }
+            Pred::Or(ps) => {
+                let mut acc = Set::Pos(none());
+                for p in ps {
+                    acc = acc.or(self.pred(p)?);
+                }
+                acc
+            }
+            Pred::Not(p) => self.pred(p)?.not(),
         })
     }
 }
 
-/// A `WHERE` fragment over `dataset_records r`, and its parameters. Placeholders start at
+/// The first value of an ordering operand, normalised like a stored value.
+fn want_first(field: &FieldSpec, operand: &Operand) -> Option<IndexCols> {
+    operand_cols(field, operand).into_iter().next()
+}
+
+/// A `WHERE` fragment over `dataset_records r` (`r.id IN (...)` or `NOT IN`), and its parameters. Placeholders start at
 /// `first_param`; the first two parameters returned are the app and the table, which the caller
-/// binds in that order. Each comparison is an `EXISTS` over `record_index` for the same record, and
-/// every value is a bound parameter. A field that is not in `indexed` is an error: the rule would
+/// binds in that order. Each comparison is the set of record ids that `record_index` holds for it, `And`,
+/// `Or`, and `Not` are `INTERSECT`, `UNION`, and `EXCEPT` over those sets, and every value is a
+/// bound parameter. A field that is not in `indexed` is an error: the rule would
 /// otherwise scan the table.
 pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], app_slug: &str, table_id: &str, first_param: usize) -> Result<(String, Vec<Param>), CompileError> {
     check(pred)?;
     let mut c = Compiler { indexed, params: vec![Param::Text(app_slug.to_string()), Param::Text(table_id.to_string())], first: first_param };
-    let sql = c.pred(pred)?;
+    let sql = match c.pred(pred)? {
+        Set::Pos(set) => format!("r.id IN ({set})"),
+        Set::Neg(set) => format!("r.id NOT IN ({set})"),
+    };
     Ok((sql, c.params))
 }
