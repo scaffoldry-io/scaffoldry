@@ -68,7 +68,15 @@ pub fn link_options(
     let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let after = cursor.map(decode_cursor).transpose()?;
     let mut rows = repo
-        .link_option_rows(app_slug, &table, &fields, query.trim(), after.as_ref(), limit + 1)
+        .link_option_rows(&crate::repository_links::LinkOptionQuery {
+            app_slug,
+            table_id: &table,
+            fields: &fields,
+            needle: query.trim(),
+            after: after.as_ref(),
+            limit: limit + 1,
+            scope: crate::service::scope::plan_of(caller, app_slug, &table, state).as_ref(),
+        })
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
     let more = rows.len() > limit;
     rows.truncate(limit);

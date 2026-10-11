@@ -265,18 +265,18 @@ fn want_first(field: &FieldSpec, operand: &Operand) -> Option<IndexCols> {
     operand_cols(field, operand).into_iter().next()
 }
 
-/// A `WHERE` fragment over `dataset_records r` (`r.id IN (...)` or `NOT IN`), and its parameters. Placeholders start at
+/// A `WHERE` fragment over a record id (`{id_expr} IN (...)` or `NOT IN`), and its parameters. Placeholders start at
 /// `first_param`; the first two parameters returned are the app and the table, which the caller
 /// binds in that order. Each comparison is the set of record ids that `record_index` holds for it, `And`,
 /// `Or`, and `Not` are `INTERSECT`, `UNION`, and `EXCEPT` over those sets, and every value is a
 /// bound parameter. A field that is not in `indexed` is an error: the rule would
 /// otherwise scan the table.
-pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], app_slug: &str, table_id: &str, first_param: usize) -> Result<(String, Vec<Param>), CompileError> {
+pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> Result<(String, Vec<Param>), CompileError> {
     check(pred)?;
     let mut c = Compiler { indexed, params: vec![Param::Text(app_slug.to_string()), Param::Text(table_id.to_string())], first: first_param };
     let sql = match c.pred(pred)? {
-        Set::Pos(set) => format!("r.id IN ({set})"),
-        Set::Neg(set) => format!("r.id NOT IN ({set})"),
+        Set::Pos(set) => format!("{id_expr} IN ({set})"),
+        Set::Neg(set) => format!("{id_expr} NOT IN ({set})"),
     };
     Ok((sql, c.params))
 }

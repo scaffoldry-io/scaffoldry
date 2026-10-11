@@ -41,6 +41,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::TooLarge("Big".into()), "too_large", StatusCode::PAYLOAD_TOO_LARGE),
         (ServiceError::IndexBuilding("Preparing".into()), "index_building", StatusCode::CONFLICT),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
+        (ServiceError::FieldHidden("Hidden".into()), "field_hidden", StatusCode::FORBIDDEN),
         (ServiceError::UndoConflict { message: "Moved on".into(), conflicts: vec![] }, "undo_conflict", StatusCode::CONFLICT),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];
@@ -57,6 +58,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::TooLarge(_)
             | ServiceError::IndexBuilding(_)
             | ServiceError::ConstraintViolated(_)
+            | ServiceError::FieldHidden(_)
             | ServiceError::UndoConflict { .. }
             | ServiceError::Internal(_) => {}
         }

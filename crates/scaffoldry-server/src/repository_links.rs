@@ -382,6 +382,17 @@ pub(crate) fn restore_links_in_tx(tx: &mut postgres::Transaction<'_>, slug: &str
     Ok(restored)
 }
 
+/// What a link picker asks of a table.
+pub struct LinkOptionQuery<'a> {
+    pub app_slug: &'a str,
+    pub table_id: &'a str,
+    pub fields: &'a [String],
+    pub needle: &'a str,
+    pub after: Option<&'a crate::repository::RecordCursor>,
+    pub limit: usize,
+    pub scope: Option<&'a crate::repository::ScopePlan>,
+}
+
 impl PostgresRepository {
     /// Writes a table's link rows again from the records' JSON. Returns the number of rows written.
     pub fn rebuild_links(&self, app_slug: &str, table_id: &str, fields: &[FieldSpec]) -> Result<u64, RepositoryError> {
@@ -443,15 +454,9 @@ impl PostgresRepository {
 
     /// A page of live records of a table whose `fields` contain `needle`, ignoring case. With no
     /// needle, the first page. `%`, `_` and `\\` in the needle are text, not wildcards.
-    pub fn link_option_rows(
-        &self,
-        app_slug: &str,
-        table_id: &str,
-        fields: &[String],
-        needle: &str,
-        after: Option<&crate::repository::RecordCursor>,
-        limit: usize,
-    ) -> Result<Vec<crate::state::DatasetRecord>, RepositoryError> {
+    pub fn link_option_rows(&self, q: &LinkOptionQuery) -> Result<Vec<crate::state::DatasetRecord>, RepositoryError> {
+        let LinkOptionQuery { app_slug, table_id, fields, needle, after, limit, scope } = q;
+        let (limit, needle) = (*limit, *needle);
         use postgres::types::ToSql;
         let mut params: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(app_slug.to_string()), Box::new(table_id.to_string())];
         let mut sql = String::from(
@@ -468,11 +473,24 @@ impl PostgresRepository {
             params.push(Box::new(format!("%{escaped}%")));
             let pattern = params.len();
             let mut any = Vec::new();
-            for f in fields {
+            for f in fields.iter() {
                 params.push(Box::new(f.clone()));
                 any.push(format!("data->>${} ILIKE ${pattern} ESCAPE '\\'", params.len()));
             }
             sql.push_str(&format!(" AND ({})", any.join(" OR ")));
+        }
+        if let Some(plan) = scope {
+            let (clause, added) = plan.clause_at("dataset_records.id", app_slug, table_id, params.len() + 1);
+            sql.push_str(&clause);
+            for p in added {
+                params.push(match p {
+                    crate::repository::SqlParam::Text(t) => Box::new(t),
+                    crate::repository::SqlParam::Texts(t) => Box::new(t),
+                    crate::repository::SqlParam::Float(f) => Box::new(f),
+                    crate::repository::SqlParam::Floats(f) => Box::new(f),
+                    crate::repository::SqlParam::Int(i) => Box::new(i),
+                });
+            }
         }
         params.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
         sql.push_str(&format!(" ORDER BY created_at, id LIMIT ${}", params.len()));

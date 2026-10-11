@@ -296,6 +296,8 @@ pub struct IndexedQuery {
     /// The last row of the previous page: its value and its record id.
     pub after: Option<(IndexedValue, String)>,
     pub limit: usize,
+    /// Only the records inside this scope.
+    pub scope: Option<crate::repository::ScopePlan>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -434,11 +436,15 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
             "i.record_id ASC".to_string()
         }
     };
+    let scope = match &q.scope {
+        Some(plan) => plan.clause("r.id", &q.app_slug, &q.table_id, &mut params),
+        None => String::new(),
+    };
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT r.id, r.app_slug, r.data, r.ceds_mapping, r.is_ferpa_sensitive, r.created_at::text AS created_at_text, r.created_by, r.version \
          FROM record_index i JOIN dataset_records r ON r.id = i.record_id AND r.deleted_at IS NULL \
-         WHERE {} ORDER BY {order} LIMIT ${limit}::bigint",
+         WHERE {}{scope} ORDER BY {order} LIMIT ${limit}::bigint",
         wheres.join(" AND ")
     );
     (sql, params)
