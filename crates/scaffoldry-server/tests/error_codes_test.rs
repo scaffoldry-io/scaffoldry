@@ -41,6 +41,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::TooLarge("Big".into()), "too_large", StatusCode::PAYLOAD_TOO_LARGE),
         (ServiceError::IndexBuilding("Preparing".into()), "index_building", StatusCode::CONFLICT),
         (ServiceError::Calculating("Calculating".into()), "calculating", StatusCode::CONFLICT),
+        (ServiceError::QuotaExceeded("Busy".into()), "quota_exceeded", StatusCode::TOO_MANY_REQUESTS),
         (ServiceError::ViewAsReadOnly("Read only".into()), "view_as_read_only", StatusCode::FORBIDDEN),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
         (
@@ -70,6 +71,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::IndexBuilding(_)
             | ServiceError::Calculating(_)
             | ServiceError::ViewAsReadOnly(_)
+            | ServiceError::QuotaExceeded(_)
             | ServiceError::ConstraintViolated(_)
             | ServiceError::FieldHidden { .. }
             | ServiceError::FieldReadOnly { .. }

@@ -98,6 +98,8 @@ pub enum ServiceError {
     ConstraintViolated(String),
     /// A filter or sort names a field whose values are being calculated again.
     Calculating(String),
+    /// A person or the server has too much queued work. They can try again when it clears.
+    QuotaExceeded(String),
     /// A view-as session tried to change something. View-as only reads.
     ViewAsReadOnly(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
@@ -144,6 +146,7 @@ impl ServiceError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -161,6 +164,7 @@ impl ServiceError {
             Self::TooLarge(_) => "too_large",
             Self::IndexBuilding(_) => "index_building",
             Self::Calculating(_) => "calculating",
+            Self::QuotaExceeded(_) => "quota_exceeded",
             Self::ViewAsReadOnly(_) => "view_as_read_only",
             Self::ConstraintViolated(_) => "constraint_violated",
             Self::FieldHidden { .. } => "field_hidden",
@@ -180,6 +184,7 @@ impl ServiceError {
             | Self::TooLarge(msg)
             | Self::IndexBuilding(msg)
             | Self::Calculating(msg)
+            | Self::QuotaExceeded(msg)
             | Self::ViewAsReadOnly(msg)
             | Self::ConstraintViolated(msg)
             | Self::Internal(msg) => msg,

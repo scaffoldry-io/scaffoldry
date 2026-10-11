@@ -19,6 +19,9 @@ use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 fn repo() -> PostgresRepository {
+    // These tests queue many jobs under one name. The limits have their own tests in jobs_limits_test.rs.
+    std::env::set_var("SCAFFOLDRY_JOB_LIMIT_PER_USER", "100000");
+    std::env::set_var("SCAFFOLDRY_JOB_LIMIT_QUEUED", "100000");
     PostgresRepository::connect(None).expect("database is reachable")
 }
 
@@ -52,7 +55,7 @@ fn count_handler(_ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     *guard.get_or_insert_with(HashMap::new).entry(n).or_insert(0) += 1;
     Ok(json!({ "n": n }))
 }
-static K1: &[JobKind] = &[JobKind { name: "t1_count", max_attempts: 3, max_concurrent: 100, run: count_handler }];
+static K1: &[JobKind] = &[JobKind { name: "t1_count", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 100, run: count_handler }];
 
 #[test]
 fn eight_workers_run_each_of_one_hundred_jobs_exactly_once() {
@@ -75,7 +78,7 @@ fn eight_workers_run_each_of_one_hundred_jobs_exactly_once() {
 fn ok_handler(_ctx: &JobCtx, _p: Value) -> Result<Value, JobError> {
     Ok(json!({}))
 }
-static K2: &[JobKind] = &[JobKind { name: "t2_recover", max_attempts: 3, max_concurrent: 5, run: ok_handler }];
+static K2: &[JobKind] = &[JobKind { name: "t2_recover", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 5, run: ok_handler }];
 
 #[test]
 fn a_job_whose_worker_died_runs_again_after_the_lock_expires() {
@@ -108,8 +111,8 @@ fn permanent_handler(_ctx: &JobCtx, _p: Value) -> Result<Value, JobError> {
     Err(JobError::Permanent("nope".to_string()))
 }
 static K3: &[JobKind] = &[
-    JobKind { name: "t3_boom", max_attempts: 3, max_concurrent: 5, run: boom_handler },
-    JobKind { name: "t3_perm", max_attempts: 3, max_concurrent: 5, run: permanent_handler },
+    JobKind { name: "t3_boom", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 5, run: boom_handler },
+    JobKind { name: "t3_perm", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 5, run: permanent_handler },
 ];
 
 #[test]
@@ -138,7 +141,7 @@ fn checkpoint_handler(ctx: &JobCtx, _p: Value) -> Result<Value, JobError> {
         Some(cp) => ctx.result(json!({ "resumed_from": cp["batch"] })),
     }
 }
-static K4: &[JobKind] = &[JobKind { name: "t4_checkpoint", max_attempts: 3, max_concurrent: 5, run: checkpoint_handler }];
+static K4: &[JobKind] = &[JobKind { name: "t4_checkpoint", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 5, run: checkpoint_handler }];
 
 #[test]
 fn a_resumed_job_sees_its_checkpoint() {
@@ -161,7 +164,7 @@ fn slow_handler(_ctx: &JobCtx, _p: Value) -> Result<Value, JobError> {
     CURRENT.fetch_sub(1, Ordering::SeqCst);
     Ok(json!({}))
 }
-static K5: &[JobKind] = &[JobKind { name: "t5_cap", max_attempts: 3, max_concurrent: 1, run: slow_handler }];
+static K5: &[JobKind] = &[JobKind { name: "t5_cap", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 1, run: slow_handler }];
 
 #[test]
 fn a_kind_with_a_cap_of_one_never_runs_two_at_once() {
@@ -178,7 +181,7 @@ fn a_kind_with_a_cap_of_one_never_runs_two_at_once() {
 }
 
 // 6. A dedupe key returns the live job. After it finishes the key is free.
-static K6: &[JobKind] = &[JobKind { name: "t6_dedupe", max_attempts: 3, max_concurrent: 5, run: ok_handler }];
+static K6: &[JobKind] = &[JobKind { name: "t6_dedupe", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 5, run: ok_handler }];
 
 #[test]
 fn a_dedupe_key_returns_the_live_job_and_is_free_after_it_finishes() {
@@ -205,7 +208,7 @@ fn cancellable_handler(ctx: &JobCtx, _p: Value) -> Result<Value, JobError> {
     }
     Ok(json!({}))
 }
-static K7: &[JobKind] = &[JobKind { name: "t7_cancel", max_attempts: 3, max_concurrent: 5, run: cancellable_handler }];
+static K7: &[JobKind] = &[JobKind { name: "t7_cancel", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 5, run: cancellable_handler }];
 
 #[test]
 fn cancelling_a_queued_job_is_immediate_and_a_running_job_stops_at_its_next_batch() {
@@ -297,7 +300,7 @@ async fn only_the_creator_and_a_platform_admin_can_read_or_cancel_a_job() {
 fn leaky_result_handler(ctx: &JobCtx, _p: Value) -> Result<Value, JobError> {
     ctx.result(json!({ "count": 3, "token": "abc" }))
 }
-static K9: &[JobKind] = &[JobKind { name: "t9_leaky", max_attempts: 3, max_concurrent: 5, run: leaky_result_handler }];
+static K9: &[JobKind] = &[JobKind { name: "t9_leaky", title: "Test job", description: "A test job.", max_attempts: 3, max_concurrent: 5, run: leaky_result_handler }];
 
 #[test]
 fn a_payload_or_result_with_a_token_or_secret_key_is_refused() {
@@ -483,6 +486,8 @@ async fn test_phase2_admin_routes_faculty_is_403() {
 
 static K_RETRY: &[JobKind] = &[JobKind {
     name: "t_p2_retry",
+    title: "Test job",
+    description: "A test job.",
     max_attempts: 1,
     max_concurrent: 10,
     run: |_ctx, payload| {
@@ -582,4 +587,5 @@ async fn test_phase2_mcp_get_job_privacy() {
         result_alice["content"][0]["text"].as_str().unwrap().contains(&alice_job_id.to_string()),
         "Job details returned to creator"
     );
+    let _ = cancel_job(&repo, alice_job_id);
 }

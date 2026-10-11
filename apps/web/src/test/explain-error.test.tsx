@@ -136,6 +136,14 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "This field is still being calculated. It is 63% done.", next: "Try again when it has finished." },
       ],
       [
+        "quota_exceeded",
+        new ApiError(429, "You already have 5 jobs waiting or running. Wait for one to finish, or cancel one.", { code: "quota_exceeded" }),
+        {
+          message: "You already have 5 jobs waiting or running. Wait for one to finish, or cancel one.",
+          next: "Wait for your background work to finish, or cancel some of it, then try again.",
+        },
+      ],
+      [
         "view_as_read_only",
         new ApiError(403, "You are viewing as someone else. This view is read-only.", { code: "view_as_read_only" }),
         { message: "You are viewing as someone else. This view is read-only.", next: "Exit the view to make changes." },

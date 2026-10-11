@@ -45,6 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // none start. The runner stops its workers when it is dropped.
     let _job_runner = match state.repository.as_deref() {
         Some(repo) if !jobs::JOB_KINDS.is_empty() => {
+            // Finished jobs are cleared once a day.
+            jobs::register_schedule(repo, "purge_jobs", 24 * 60 * 60)?;
             Some(jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?)
         }
         _ => None,
