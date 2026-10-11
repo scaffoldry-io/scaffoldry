@@ -4,6 +4,7 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { DataGrid } from "../DataGrid";
 import { FieldSpec } from "../types";
+import { ApiError } from "../api";
 
 const mockFields: FieldSpec[] = [
   {
@@ -93,7 +94,7 @@ describe("DataGrid Phase 1 — one grid, type-aware edit", () => {
     const input2 = screen.getByRole("spinbutton") as HTMLInputElement;
     fireEvent.change(input2, { target: { value: "500" } });
     fireEvent.keyDown(input2, { key: "Enter" });
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 500);
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 500, expect.any(String));
   });
 
   it("Checkbox toggles without an input of type text", () => {
@@ -116,7 +117,7 @@ describe("DataGrid Phase 1 — one grid, type-aware edit", () => {
     expect(checkbox.checked).toBe(false);
 
     fireEvent.click(checkbox);
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "active", true);
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "active", true, expect.any(String));
   });
 
   it("Select lists select_options", () => {
@@ -213,8 +214,8 @@ describe("DataGrid Phase 2 — rectangle, paste, clear, fill, undo", () => {
     fireEvent.keyDown(cell2, { key: "Delete" });
 
     expect(handlePatch).toHaveBeenCalledTimes(2);
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "");
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", "");
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "", expect.any(String));
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", "", expect.any(String));
   });
 
   it("Paste of 10\\t20 writes those two fields on the focus row", async () => {
@@ -242,8 +243,8 @@ describe("DataGrid Phase 2 — rectangle, paste, clear, fill, undo", () => {
 
     // Wait for clipboard promise resolution
     await vi.waitFor(() => {
-      expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "10");
-      expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 20);
+      expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "10", expect.any(String));
+      expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 20, expect.any(String));
     });
   });
 
@@ -271,7 +272,7 @@ describe("DataGrid Phase 2 — rectangle, paste, clear, fill, undo", () => {
     fireEvent.keyDown(activeCell, { key: "v", ctrlKey: true });
 
     await vi.waitFor(() => {
-      expect(handlePatch).toHaveBeenCalledWith("rec-1", "status", "Draft");
+      expect(handlePatch).toHaveBeenCalledWith("rec-1", "status", "Draft", expect.any(String));
     });
 
     // Make sure formula field is never patched
@@ -281,54 +282,66 @@ describe("DataGrid Phase 2 — rectangle, paste, clear, fill, undo", () => {
     expect(formulaPatches).toHaveLength(0);
   });
 
-  it("Ctrl+Z restores the pre-paste values", async () => {
-    let recordsState = [...mockRecords];
-    const handlePatch = vi.fn((recId, fieldName, value) => {
-      recordsState = recordsState.map((r) =>
-        r.id === recId ? { ...r, [fieldName]: value } : r
-      );
-    });
-
+  const paste = async (handlePatch: (...a: any[]) => void, onUndoBatch?: (id: string) => Promise<{ batch_id: string }>) => {
     Object.assign(navigator, {
       clipboard: {
         readText: vi.fn().mockResolvedValue("NewName\t999"),
         writeText: vi.fn().mockResolvedValue(undefined),
       },
     });
-
-    const { rerender } = render(
+    render(
       <DataGrid
         fields={mockFields}
-        records={recordsState}
+        records={mockRecords}
+        tableName="Applicants"
         onPatch={handlePatch}
+        onUndoBatch={onUndoBatch}
       />
     );
-
     const cell1 = screen.getByTestId("cell-rec-1-name");
     fireEvent.click(cell1);
-
     fireEvent.keyDown(cell1, { key: "v", ctrlKey: true });
-
     await vi.waitFor(() => {
-      expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "NewName");
-      expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 999);
+      expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "NewName", expect.any(String));
+      expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 999, expect.any(String));
     });
+    return screen.getByTestId("cell-rec-1-name");
+  };
 
-    rerender(
-      <DataGrid
-        fields={mockFields}
-        records={recordsState}
-        onPatch={handlePatch}
-      />
-    );
+  it("A paste sends one batch id with every patch. Ctrl+Z asks the server to undo that batch and says so", async () => {
+    const handlePatch = vi.fn();
+    const onUndoBatch = vi.fn().mockResolvedValue({ batch_id: "reverting-1" });
+    const cell = await paste(handlePatch, onUndoBatch);
+    const batch = handlePatch.mock.calls[0][3];
+    expect(handlePatch.mock.calls.every((c) => c[3] === batch)).toBe(true);
 
-    // Press Ctrl+Z to undo the paste gesture
-    const currentCell = screen.getByTestId("cell-rec-1-name");
-    fireEvent.keyDown(currentCell, { key: "z", ctrlKey: true });
+    fireEvent.keyDown(cell, { key: "z", ctrlKey: true });
+    await vi.waitFor(() => expect(onUndoBatch).toHaveBeenCalledWith(batch));
+    expect(await screen.findByText("Undid pasting 2 cells in Applicants.")).toBeInTheDocument();
+    // The grid does not write the old values itself any more.
+    expect(handlePatch.mock.calls.every((c) => c[2] === "NewName" || c[2] === 999)).toBe(true);
 
-    // Pre-paste values for rec-1 were name: "Item Alpha", amount: 150
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "Item Alpha");
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 150);
+    // Ctrl+Shift+Z undoes the undo.
+    fireEvent.keyDown(cell, { key: "z", ctrlKey: true, shiftKey: true });
+    await vi.waitFor(() => expect(onUndoBatch).toHaveBeenCalledWith("reverting-1"));
+    expect(await screen.findByText("Redid pasting 2 cells in Applicants.")).toBeInTheDocument();
+  });
+
+  it("A conflict from the server shows that the undo stopped", async () => {
+    const handlePatch = vi.fn();
+    const onUndoBatch = vi.fn().mockRejectedValue(new ApiError(409, "raw server text", { code: "undo_conflict" }));
+    const cell = await paste(handlePatch, onUndoBatch);
+    fireEvent.keyDown(cell, { key: "z", ctrlKey: true });
+    expect(await screen.findByText("Someone changed this since. Undo stopped.")).toBeInTheDocument();
+  });
+
+  it("With nothing to undo, Ctrl+Z does nothing", () => {
+    const onUndoBatch = vi.fn();
+    render(<DataGrid fields={mockFields} records={mockRecords} onPatch={vi.fn()} onUndoBatch={onUndoBatch} />);
+    const cell = screen.getByTestId("cell-rec-1-name");
+    fireEvent.click(cell);
+    fireEvent.keyDown(cell, { key: "z", ctrlKey: true });
+    expect(onUndoBatch).not.toHaveBeenCalled();
   });
 });
 
@@ -548,7 +561,7 @@ describe("DataGrid Field Entry & Cell Text Stability", () => {
 
     // Press Enter to commit
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "Item Alpha Updated Extra");
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "name", "Item Alpha Updated Extra", expect.any(String));
   });
 
   it("blurring an active input commits the edited value", () => {
@@ -569,6 +582,6 @@ describe("DataGrid Field Entry & Cell Text Stability", () => {
 
     // Blur the input
     fireEvent.blur(input);
-    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 850);
+    expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 850, expect.any(String));
   });
 });

@@ -344,6 +344,14 @@ const requestFull = async <T>(path: string, options: RequestInit = {}): Promise<
 
 const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => (await requestFull<T>(path, options)).data;
 
+/** Undoes a batch of record changes. The answer names the batch the undo wrote, which undoes the undo. */
+export const undoBatch = (appSlug: string, batchId: string): Promise<{ batch_id: string; records: number }> =>
+  request(`/apps/${appSlug}/history/${batchId}/undo`, { method: "POST", body: JSON.stringify({}) });
+
+/** Writes the old values of some fields of a record back, as one new version. */
+export const restoreRecord = (appSlug: string, recordId: string, body: { to_version: number; fields?: string[]; version: number }) =>
+  request<Record<string, unknown>>(`/apps/${appSlug}/records/${recordId}/restore`, { method: "POST", body: JSON.stringify(body) });
+
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {

@@ -107,6 +107,11 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "The result has more than 10,000 rows", next: "Narrow the filter." },
       ],
       [
+        "undo_conflict",
+        new ApiError(409, "raw server text", { code: "undo_conflict" }),
+        { message: "Someone changed this since. Undo stopped." },
+      ],
+      [
         "index_building",
         new ApiError(409, "This field is still being prepared for sorting. It is 40% done.", { code: "index_building" }),
         { message: "This field is still being prepared for sorting. It is 40% done.", next: "Try again in a few minutes." },

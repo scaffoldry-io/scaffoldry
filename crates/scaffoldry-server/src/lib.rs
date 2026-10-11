@@ -8,6 +8,7 @@ pub mod repository;
 pub mod repository_index;
 pub mod repository_links;
 pub mod repository_proposals;
+pub mod repository_undo;
 pub mod routes;
 pub mod service;
 pub mod state;

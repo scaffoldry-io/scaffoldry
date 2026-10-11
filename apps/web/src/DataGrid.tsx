@@ -6,6 +6,7 @@ import {
   ColumnDef,
 } from "@tanstack/react-table";
 import { FieldSpec, RowDensity, FieldType, AppView, AppTable } from "./types";
+import { explainError } from "./ui/explainError";
 
 export type CellAddr = { recordId: string; fieldName: string };
 
@@ -25,8 +26,24 @@ export type DataGridProps = {
   frozen_through?: string;
   column_summary?: [string, string][];
   onViewChange?: (patch: Partial<AppView>) => void;
-  onPatch: (recordId: string, fieldName: string, value: unknown) => void;
+  /** `batchId` is the same for every cell one gesture writes, so the server can undo the gesture as one. */
+  onPatch: (recordId: string, fieldName: string, value: unknown, batchId?: string) => void;
+  /** Asks the server to undo a batch. Resolves with the batch that the undo wrote, which undoes the undo. */
+  onUndoBatch?: (batchId: string) => Promise<{ batch_id: string }>;
+  /** Names the table in the words that say what was undone. */
+  tableName?: string;
 };
+
+type Gesture = { batchId: string; label: string; at: number };
+
+/** Ctrl+Z reaches back this far. */
+const UNDO_WINDOW_MS = 60 * 60 * 1000;
+
+function newBatchId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : "xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx".replace(/[x]/g, () => Math.floor(Math.random() * 16).toString(16));
+}
 
 type PatchRecord = {
   recordId: string;
@@ -142,6 +159,8 @@ export function DataGrid({
   column_summary,
   onViewChange,
   onPatch,
+  onUndoBatch,
+  tableName = "this table",
 }: DataGridProps) {
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -158,8 +177,9 @@ export function DataGrid({
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
   const activeCellRef = useRef<HTMLTableCellElement | null>(null);
 
-  const undoStack = useRef<PatchRecord[][]>([]);
-  const redoStack = useRef<PatchRecord[][]>([]);
+  // The grid keeps no old values. It keeps which batches this person wrote, so the server can undo them.
+  const gestures = useRef<Gesture[]>([]);
+  const undone = useRef<Gesture[]>([]);
 
   // Visible and Ordered Fields
   const visibleFields = useMemo(() => {
@@ -193,38 +213,50 @@ export function DataGrid({
     []
   );
 
-  const pushUndoGesture = useCallback((gesture: PatchRecord[]) => {
-    if (gesture.length === 0) return;
-    undoStack.current.push(gesture);
-    if (undoStack.current.length > 50) {
-      undoStack.current.shift();
-    }
-    redoStack.current = [];
+  /** Remembers a gesture and the batch it wrote. Returns the batch id to send with each of its patches. */
+  const pushUndoGesture = useCallback((gesture: PatchRecord[], batchId: string = newBatchId(), verb?: string): string => {
+    if (gesture.length === 0) return batchId;
+    const words = verb
+      ? `${verb} ${gesture.length} ${gesture.length === 1 ? "cell" : "cells"}`
+      : gesture.length === 1
+        ? "editing a cell"
+        : `changing ${gesture.length} cells`;
+    gestures.current.push({ batchId, label: words, at: Date.now() });
+    if (gestures.current.length > 50) gestures.current.shift();
+    undone.current = [];
+    return batchId;
   }, []);
 
-  const handleUndo = useCallback(() => {
-    if (undoStack.current.length === 0) return;
-    const gesture = undoStack.current.pop()!;
-    gesture.forEach(({ recordId, fieldName, oldValue }) => {
-      onPatch(recordId, fieldName, oldValue);
-    });
-    redoStack.current.push(gesture);
-    if (redoStack.current.length > 50) {
-      redoStack.current.shift();
+  const handleUndo = useCallback(async () => {
+    if (!onUndoBatch) return;
+    const cutoff = Date.now() - UNDO_WINDOW_MS;
+    const last = [...gestures.current].reverse().find((g) => g.at >= cutoff);
+    if (!last) return;
+    try {
+      const result = await onUndoBatch(last.batchId);
+      gestures.current = gestures.current.filter((g) => g !== last);
+      undone.current.push({ batchId: result.batch_id, label: last.label, at: Date.now() });
+      setCopyToast(`Undid ${last.label} in ${tableName}.`);
+    } catch (e) {
+      setCopyToast(explainError(e).message);
     }
-  }, [onPatch]);
+    setTimeout(() => setCopyToast(null), 2500);
+  }, [onUndoBatch, tableName]);
 
-  const handleRedo = useCallback(() => {
-    if (redoStack.current.length === 0) return;
-    const gesture = redoStack.current.pop()!;
-    gesture.forEach(({ recordId, fieldName, newValue }) => {
-      onPatch(recordId, fieldName, newValue);
-    });
-    undoStack.current.push(gesture);
-    if (undoStack.current.length > 50) {
-      undoStack.current.shift();
+  const handleRedo = useCallback(async () => {
+    if (!onUndoBatch) return;
+    const next = undone.current[undone.current.length - 1];
+    if (!next) return;
+    try {
+      const result = await onUndoBatch(next.batchId);
+      undone.current.pop();
+      gestures.current.push({ batchId: result.batch_id, label: next.label, at: Date.now() });
+      setCopyToast(`Redid ${next.label} in ${tableName}.`);
+    } catch (e) {
+      setCopyToast(explainError(e).message);
     }
-  }, [onPatch]);
+    setTimeout(() => setCopyToast(null), 2500);
+  }, [onUndoBatch, tableName]);
 
   const getSelectionBounds = useCallback(() => {
     if (!selection) return { minRow: 0, maxRow: 0, minCol: 0, maxCol: 0 };
@@ -487,8 +519,8 @@ export function DataGrid({
       }
       const record = records.find((r, idx) => getRecordId(r, idx) === recordId);
       const oldValue = record?.[field.name];
-      pushUndoGesture([{ recordId, fieldName: field.name, oldValue, newValue: finalValue }]);
-      onPatch(recordId, field.name, finalValue);
+      const batchId = pushUndoGesture([{ recordId, fieldName: field.name, oldValue, newValue: finalValue }]);
+      onPatch(recordId, field.name, finalValue, batchId);
     },
     [records, getRecordId, onPatch, pushUndoGesture]
   );
@@ -497,6 +529,7 @@ export function DataGrid({
     if (!selection) return;
     const { minRow, maxRow, minCol, maxCol } = getSelectionBounds();
     const gesture: PatchRecord[] = [];
+    const batchId = newBatchId();
 
     for (let r = minRow; r <= maxRow; r++) {
       const rec = records[r];
@@ -511,13 +544,13 @@ export function DataGrid({
             oldValue: oldVal,
             newValue: "",
           });
-          onPatch(recId, field.name, "");
+          onPatch(recId, field.name, "", batchId);
         }
       }
     }
 
     if (gesture.length > 0) {
-      pushUndoGesture(gesture);
+      pushUndoGesture(gesture, batchId, "clearing");
     }
   }, [selection, getSelectionBounds, records, visibleFields, getRecordId, onPatch, pushUndoGesture]);
 
@@ -527,6 +560,7 @@ export function DataGrid({
     if (minRow === maxRow) return;
 
     const gesture: PatchRecord[] = [];
+    const batchId = newBatchId();
     for (let c = minCol; c <= maxCol; c++) {
       const field = visibleFields[c];
       if (isReadOnlyField(field)) continue;
@@ -543,12 +577,12 @@ export function DataGrid({
           oldValue: oldVal,
           newValue: topVal,
         });
-        onPatch(recId, field.name, topVal);
+        onPatch(recId, field.name, topVal, batchId);
       }
     }
 
     if (gesture.length > 0) {
-      pushUndoGesture(gesture);
+      pushUndoGesture(gesture, batchId, "filling");
     }
   }, [selection, getSelectionBounds, records, visibleFields, getRecordId, onPatch, pushUndoGesture]);
 
@@ -622,6 +656,7 @@ export function DataGrid({
     }
 
     const gesture: PatchRecord[] = [];
+    const batchId = newBatchId();
     lines.forEach((line, rOffset) => {
       const targetRowIdx = startRowIdx + rOffset;
       if (targetRowIdx >= records.length) return;
@@ -656,12 +691,12 @@ export function DataGrid({
           oldValue: oldVal,
           newValue: parsedVal,
         });
-        onPatch(recId, field.name, parsedVal);
+        onPatch(recId, field.name, parsedVal, batchId);
       });
     });
 
     if (gesture.length > 0) {
-      pushUndoGesture(gesture);
+      pushUndoGesture(gesture, batchId, "pasting");
     }
   }, [selection, records, visibleFields, getRecordId, onPatch, pushUndoGesture]);
 
@@ -1130,7 +1165,7 @@ export function DataGrid({
                             onChange={(e) => {
                               const oldVal = Boolean(cellVal);
                               const newVal = e.target.checked;
-                              pushUndoGesture([
+                              const batchId = pushUndoGesture([
                                 {
                                   recordId,
                                   fieldName: field.name,
@@ -1138,7 +1173,7 @@ export function DataGrid({
                                   newValue: newVal,
                                 },
                               ]);
-                              onPatch(recordId, field.name, newVal);
+                              onPatch(recordId, field.name, newVal, batchId);
                             }}
                             className="rounded text-blue-600 cursor-pointer h-4 w-4"
                           />
@@ -1160,7 +1195,7 @@ export function DataGrid({
                                   anchor: clickedCell,
                                   focus: clickedCell,
                                 });
-                                pushUndoGesture([
+                                const batchId = pushUndoGesture([
                                   {
                                     recordId,
                                     fieldName: field.name,
@@ -1168,7 +1203,7 @@ export function DataGrid({
                                     newValue: star,
                                   },
                                 ]);
-                                onPatch(recordId, field.name, star);
+                                onPatch(recordId, field.name, star, batchId);
                               }}
                               className={`text-sm cursor-pointer transition-colors ${
                                 star <= Number(cellVal || 0)
@@ -1248,7 +1283,7 @@ export function DataGrid({
                                 onClick={() => {
                                   setMultiSelectOpen(false);
                                   setIsEditing(false);
-                                  pushUndoGesture([
+                                  const batchId = pushUndoGesture([
                                     {
                                       recordId,
                                       fieldName: field.name,
@@ -1256,7 +1291,7 @@ export function DataGrid({
                                       newValue: draftMultiSelect,
                                     },
                                   ]);
-                                  onPatch(recordId, field.name, draftMultiSelect);
+                                  onPatch(recordId, field.name, draftMultiSelect, batchId);
                                 }}
                                 className="px-2.5 py-1 text-xs font-semibold bg-blue-600 text-white rounded hover:bg-blue-700 cursor-pointer shadow-xs"
                               >
@@ -1399,7 +1434,7 @@ export function DataGrid({
                                                 setActiveLinkPicker(null);
                                               }
                                               const patchVal = isMultiple ? nextIds : (nextIds[0] || "");
-                                              pushUndoGesture([
+                                              const batchId = pushUndoGesture([
                                                 {
                                                   recordId,
                                                   fieldName: field.name,
@@ -1407,7 +1442,7 @@ export function DataGrid({
                                                   newValue: patchVal,
                                                 },
                                               ]);
-                                              onPatch(recordId, field.name, patchVal);
+                                              onPatch(recordId, field.name, patchVal, batchId);
                                             }}
                                             className={`w-full text-left px-2 py-1.5 rounded flex items-center justify-between cursor-pointer transition-colors ${
                                               isLinked
