@@ -441,6 +441,48 @@ impl PostgresRepository {
         })
     }
 
+    /// A page of live records of a table whose `fields` contain `needle`, ignoring case. With no
+    /// needle, the first page. `%`, `_` and `\\` in the needle are text, not wildcards.
+    pub fn link_option_rows(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        fields: &[String],
+        needle: &str,
+        after: Option<&crate::repository::RecordCursor>,
+        limit: usize,
+    ) -> Result<Vec<crate::state::DatasetRecord>, RepositoryError> {
+        use postgres::types::ToSql;
+        let mut params: Vec<Box<dyn ToSql + Sync + Send>> = vec![Box::new(app_slug.to_string()), Box::new(table_id.to_string())];
+        let mut sql = String::from(
+            "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
+             FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL",
+        );
+        if let Some(c) = after {
+            params.push(Box::new(c.created_at.clone()));
+            params.push(Box::new(c.id.clone()));
+            sql.push_str(&format!(" AND (created_at, id) > (${}::text::timestamptz, ${}::text)", params.len() - 1, params.len()));
+        }
+        if !needle.is_empty() && !fields.is_empty() {
+            let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            params.push(Box::new(format!("%{escaped}%")));
+            let pattern = params.len();
+            let mut any = Vec::new();
+            for f in fields {
+                params.push(Box::new(f.clone()));
+                any.push(format!("data->>${} ILIKE ${pattern} ESCAPE '\\'", params.len()));
+            }
+            sql.push_str(&format!(" AND ({})", any.join(" OR ")));
+        }
+        params.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
+        sql.push_str(&format!(" ORDER BY created_at, id LIMIT ${}", params.len()));
+        self.with_client(move |client| {
+            crate::repository::count_page_statement();
+            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|b| &**b as &(dyn ToSql + Sync)).collect();
+            Ok(client.query(&sql, &refs)?.iter().map(crate::repository::record_from_row).collect())
+        })
+    }
+
     /// How many records point at `record_id` through any of `fields`.
     pub fn count_links_to(&self, app_slug: &str, record_id: &str, fields: &[String]) -> Result<i64, RepositoryError> {
         let (slug, id, fields) = (app_slug.to_string(), record_id.to_string(), fields.to_vec());
