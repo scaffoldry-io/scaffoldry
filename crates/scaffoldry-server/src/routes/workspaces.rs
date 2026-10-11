@@ -137,10 +137,10 @@ async fn list_collaborators(
     user: Option<Extension<AuthUser>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<Vec<CollaboratorRecord>>, ServiceError> {
+) -> Result<Json<Vec<serde_json::Value>>, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
     let collabs = workspace_service::list_collaborators(&caller, &id, &state)?;
-    Ok(Json(collabs))
+    Ok(Json(collabs.iter().map(|c| crate::service::members::describe(c, &state)).collect()))
 }
 
 async fn add_collaborator(
@@ -192,15 +192,11 @@ fn check_can_manage_guards(caller: &AuthUser, ws: &WorkspaceRecord, state: &Shar
         return Ok(());
     }
 
-    let collabs = {
-        let collabs_guard = state.collaborators.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.get(&ws.id).cloned().unwrap_or_default()
-    };
-    if let Some(collab) = collabs.iter().find(|c| c.eppn.eq_ignore_ascii_case(&caller.eppn)) {
-        let r = collab.role.to_lowercase();
-        if r == "owner" || r == "admin" {
-            return Ok(());
-        }
+    if matches!(
+        crate::service::members::member_role(caller, &ws.id, state),
+        Some(crate::service::members::Role::Owner | crate::service::members::Role::Admin)
+    ) {
+        return Ok(());
     }
 
     if let Some(org_id) = ws.organization_id {
@@ -486,10 +482,7 @@ async fn impact_workspace_guards(
 
     let proposed_policy_set = build_proposed_policy_set(&id, rules.as_deref(), source, &state)?;
 
-    let collabs = {
-        let collabs_guard = state.collaborators.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.get(&id).cloned().unwrap_or_default()
-    };
+    let collabs = crate::service::members::people_records(&id, &state);
 
     let actions = ["access_workspace", "read_app", "write_record", "export", "approve"];
     let sensitivities = [false, true];
@@ -603,14 +596,8 @@ async fn test_workspace_guards(
     });
     let princ = principal_ctx_for(&target_user, &state);
 
-    let collabs = {
-        let collabs_guard = state.collaborators.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.get(&id).cloned().unwrap_or_default()
-    };
-    let (is_member, member_role) = match collabs.iter().find(|c| c.eppn.eq_ignore_ascii_case(target_eppn)) {
-        Some(c) => (true, c.role.to_lowercase()),
-        None => (false, String::new()),
-    };
+    let role = crate::service::members::member_role_of(target_eppn, &id, &state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()).unwrap_or_default());
 
     let resource = match action {
         "access_workspace" => Resource::Workspace(WorkspaceCtx {

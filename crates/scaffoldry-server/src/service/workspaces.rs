@@ -1,5 +1,6 @@
 //! Sovereign Workspace Service Layer with Cedar Policy ABAC & Decision Ledger Audit
 
+use crate::service::members::{self, Kind, Role};
 use crate::service::ServiceError;
 use crate::state::{
     AuthUser, CollaboratorRecord, RecordDecisionInput, SharedState, WorkspaceRecord,
@@ -50,7 +51,13 @@ pub struct UpdateWorkspacePayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollaboratorPayload {
+    /// The address of a person. For a group, unit, or position, send `principal_type` and `principal_id`.
+    #[serde(default)]
     pub eppn: String,
+    #[serde(default)]
+    pub principal_type: Option<String>,
+    #[serde(default)]
+    pub principal_id: Option<String>,
     pub role: Option<String>,
     pub name: Option<String>,
     pub scoped_affiliation: Option<String>,
@@ -82,11 +89,8 @@ pub fn list_workspaces(
 
     for ws in ws_guard.values() {
         let collabs = collabs_guard.get(&ws.id).cloned().unwrap_or_default();
-        let (is_member, member_role): (bool, Option<String>) =
-            match collabs.iter().find(|m| m.eppn == caller.eppn) {
-                Some(m) => (true, Some(m.role.clone())),
-                None => (false, None),
-            };
+        let role = crate::service::members::member_role(caller, &ws.id, state);
+        let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
 
         let in_org_scope = match ws.organization_id {
             Some(org_id) => crate::service::organizations::unit_in_scope(&org_caller, org_id, &all_orgs, &roles),
@@ -162,11 +166,8 @@ pub fn get_workspace(
         collabs_guard.get(id).cloned().unwrap_or_default()
     };
 
-    let (is_member, member_role): (bool, Option<String>) =
-        match collabs.iter().find(|m| m.eppn == caller.eppn) {
-            Some(m) => (true, Some(m.role.clone())),
-            None => (false, None),
-        };
+    let role = crate::service::members::member_role(caller, id, state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
 
     let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
 
@@ -356,18 +357,8 @@ pub fn update_workspace(
             .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
     };
 
-    let collabs = {
-        let collabs_guard = state
-            .collaborators
-            .read()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.get(id).cloned().unwrap_or_default()
-    };
-
-    let (is_member, member_role) = match collabs.iter().find(|m| m.eppn == caller.eppn) {
-        Some(m) => (true, Some(m.role.as_str())),
-        None => (false, None),
-    };
+    let role = crate::service::members::member_role(caller, id, state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
 
     let norm_role = member_role.map(str::to_lowercase);
 
@@ -527,6 +518,29 @@ pub fn update_workspace(
     Ok(ws)
 }
 
+/// True when `target` is a person who is the only person holding the owner role.
+fn is_last_user_owner(collabs: &[CollaboratorRecord], target: &str) -> bool {
+    let owners: Vec<&CollaboratorRecord> = collabs
+        .iter()
+        .filter(|c| members::split_principal(&c.eppn).0 == Kind::User && Role::parse(&c.role) == Some(Role::Owner))
+        .collect();
+    owners.len() == 1 && owners[0].eppn == target
+}
+
+/// A unit is a unit id. A position is `{key}@{unit id}`. Whether the group or unit exists is not
+/// checked, so a membership can be set up before the directory sync that fills it.
+fn check_principal(kind: Kind, id: &str) -> Result<(), ServiceError> {
+    let bad = |what: &str| ServiceError::BadRequest(format!("principal_id must be {what}"));
+    match kind {
+        Kind::User | Kind::Group => Ok(()),
+        Kind::Unit => Uuid::parse_str(id).map(|_| ()).map_err(|_| bad("an org unit id")),
+        Kind::Position => match id.split_once('@') {
+            Some((key, unit)) if !key.is_empty() && Uuid::parse_str(unit).is_ok() => Ok(()),
+            _ => Err(bad("{position key}@{unit id}")),
+        },
+    }
+}
+
 pub fn list_collaborators(
     caller: &AuthUser,
     workspace_id: &str,
@@ -566,10 +580,8 @@ pub fn add_collaborator(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let (is_member, member_role) = match collabs.iter().find(|m| m.eppn == caller.eppn) {
-        Some(m) => (true, Some(m.role.as_str())),
-        None => (false, None),
-    };
+    let role = crate::service::members::member_role(caller, workspace_id, state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
     let norm_role = member_role.map(str::to_lowercase);
 
     let decision = state
@@ -596,15 +608,32 @@ pub fn add_collaborator(
         });
     }
 
-    if collabs.iter().any(|c| c.eppn == payload.eppn) {
+    let (kind, principal_id) = match (payload.principal_type.as_deref(), payload.principal_id.as_deref().filter(|s| !s.is_empty())) {
+        (None, None) if !payload.eppn.is_empty() => {
+            let (k, id) = members::split_principal(&payload.eppn);
+            (k, id.to_string())
+        }
+        (kind, Some(id)) => (
+            kind.map_or(Some(Kind::User), Kind::parse).ok_or_else(|| ServiceError::BadRequest("principal_type must be user, group, unit, or position".to_string()))?,
+            id.to_string(),
+        ),
+        _ => return Err(ServiceError::BadRequest("principal_id is required".to_string())),
+    };
+    check_principal(kind, &principal_id)?;
+    let key = members::stored_key(kind, &principal_id);
+
+    if collabs.iter().any(|c| c.eppn.eq_ignore_ascii_case(&key)) {
         return Err(ServiceError::BadRequest(format!(
-            "User {} is already a member of workspace {}",
-            payload.eppn, workspace_id
+            "{key} is already a member of workspace {workspace_id}",
         )));
     }
 
     let role_str = payload.role.unwrap_or_else(|| "Viewer".to_string());
-    let name_str = payload.name.unwrap_or_else(|| payload.eppn.clone());
+    let role = Role::parse(&role_str).ok_or_else(|| ServiceError::BadRequest("role must be viewer, commenter, editor, admin, or owner".to_string()))?;
+    if kind != Kind::User && role == Role::Owner {
+        return Err(ServiceError::BadRequest("Only a person can be an owner".to_string()));
+    }
+    let name_str = payload.name.unwrap_or_else(|| key.clone());
     let affiliation_str = payload
         .scoped_affiliation
         .unwrap_or_else(|| "faculty".to_string());
@@ -615,7 +644,7 @@ pub fn add_collaborator(
     let new_member = CollaboratorRecord {
         id: Uuid::new_v4().to_string(),
         workspace_id: workspace_id.to_string(),
-        eppn: payload.eppn.clone(),
+        eppn: key.clone(),
         name: name_str,
         role: role_str.clone(),
         scoped_affiliation: affiliation_str,
@@ -627,15 +656,17 @@ pub fn add_collaborator(
         principal: caller.eppn.clone(),
         organization_code: ws.code,
         app_slug: None,
-        decision_type: DecisionType::WorkspaceMemberAdded,
+        decision_type: if kind == Kind::User { DecisionType::WorkspaceMemberAdded } else { DecisionType::AccessRoleGranted },
         oscal_control_id: "AC-02".to_string(),
         rationale: format!(
             "Principal {} added {} as {} to workspace {}",
-            caller.eppn, payload.eppn, role_str, ws.name
+            caller.eppn, key, role_str, ws.name
         ),
         payload: &json!({
             "workspace_id": workspace_id,
-            "target_eppn": payload.eppn,
+            "target_eppn": key,
+            "principal_type": kind.as_str(),
+            "principal_id": principal_id,
             "role": role_str
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
@@ -684,10 +715,8 @@ pub fn update_collaborator_role(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let (is_member, member_role) = match collabs.iter().find(|m| m.eppn == caller.eppn) {
-        Some(m) => (true, Some(m.role.as_str())),
-        None => (false, None),
-    };
+    let role = crate::service::members::member_role(caller, workspace_id, state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
     let norm_role = member_role.map(str::to_lowercase);
 
     let decision = state
@@ -714,6 +743,13 @@ pub fn update_collaborator_role(
         });
     }
 
+    let wanted = Role::parse(new_role).ok_or_else(|| ServiceError::BadRequest("role must be viewer, commenter, editor, admin, or owner".to_string()))?;
+    if members::split_principal(target_eppn).0 != Kind::User && wanted == Role::Owner {
+        return Err(ServiceError::BadRequest("Only a person can be an owner".to_string()));
+    }
+    if wanted != Role::Owner && is_last_user_owner(&collabs, target_eppn) {
+        return Err(ServiceError::Conflict("A workspace keeps at least one person as owner".to_string()));
+    }
     let member = collabs
         .iter_mut()
         .find(|m| m.eppn == target_eppn)
@@ -779,10 +815,8 @@ pub fn remove_collaborator(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let (is_member, member_role) = match collabs.iter().find(|m| m.eppn == caller.eppn) {
-        Some(m) => (true, Some(m.role.as_str())),
-        None => (false, None),
-    };
+    let role = crate::service::members::member_role(caller, workspace_id, state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
     let norm_role = member_role.map(str::to_lowercase);
 
     let decision = state
@@ -809,6 +843,9 @@ pub fn remove_collaborator(
         });
     }
 
+    if is_last_user_owner(&collabs, target_eppn) {
+        return Err(ServiceError::Conflict("A workspace keeps at least one person as owner".to_string()));
+    }
     let mut remaining = collabs;
     let initial_len = remaining.len();
     remaining.retain(|m| m.eppn != target_eppn);
@@ -864,6 +901,8 @@ pub fn manage_workspace_member(
                 workspace_id,
                 CollaboratorPayload {
                     eppn: eppn.to_string(),
+                    principal_type: None,
+                    principal_id: None,
                     role: role.map(str::to_string),
                     name: name.map(str::to_string),
                     scoped_affiliation: None,

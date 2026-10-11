@@ -72,7 +72,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 49 | [record-history.md](record-history.md) | 3 | Comments, mentions, and the commenter role | **COMPLETED** |
 | 50 | [lifecycle.md](lifecycle.md) | 1 | Delete moves a record to trash. Restore brings it back with its links | **COMPLETED** |
 | 51 | [links.md](links.md) | 4 | A link picker that respects access |
-| 52 | [access-rules.md](access-rules.md) | 1 | Share with groups, units, and positions. One `member_role` function |
+| 52 | [access-rules.md](access-rules.md) | 1 | Share with groups, units, and positions. One `member_role` function | **COMPLETED** |
 | 53 | [access-rules.md](access-rules.md) | 2 | Rules as data, one row scope, and a SQL and Rust equivalence test |
 | 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column |
 | 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy |
