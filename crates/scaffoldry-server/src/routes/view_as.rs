@@ -1,6 +1,6 @@
 //! `POST /apps/{slug}/view-as` and `POST /auth/stop-view-as`. The rules are in `service::view_as`.
 
-use crate::guard::{bearer_token, session_user, unauthorized};
+use crate::guard::{bearer_token, session_user};
 use crate::service::identity::hash_token;
 use crate::service::{view_as, ServiceError};
 use crate::state::SharedState;
@@ -33,8 +33,9 @@ async fn start(State(state): State<SharedState>, headers: HeaderMap, Path(slug):
     Ok(Json(out))
 }
 
-async fn stop(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, axum::response::Response> {
-    use axum::response::IntoResponse;
-    let row = bearer_token(&headers).and_then(|t| state.get_api_token(&hash_token(t))).ok_or_else(unauthorized)?;
-    view_as::stop(&row, &state).map(Json).map_err(|e| e.into_pair().into_response())
+async fn stop(State(state): State<SharedState>, headers: HeaderMap) -> Reply {
+    let row = bearer_token(&headers)
+        .and_then(|t| state.get_api_token(&hash_token(t)))
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    view_as::stop(&row, &state).map(Json).map_err(ServiceError::into_pair)
 }
