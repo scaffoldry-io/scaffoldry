@@ -47,6 +47,7 @@ pub fn ctx_for(actor: &str, kind: ActorKind, app_slug: &str, data: &Value, state
     ctx.computed_fields = crate::service::records::computed_fields(app_slug, table, state);
     ctx.index_fields = crate::service::records::indexed_fields_of(app_slug, table, state);
     ctx.links = crate::service::records::link_specs_of(app_slug, table, state);
+    ctx.computed = crate::service::records::computed_specs_of(app_slug, state);
     ctx
 }
 

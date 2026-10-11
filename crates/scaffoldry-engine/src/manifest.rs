@@ -29,6 +29,24 @@ fn is_sha256(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c) || (b'A'..=b'F').contains(&c))
 }
 
+/// The functions a `Rollup` can apply.
+pub const ROLLUP_FUNCTIONS: [&str; 6] = ["sum", "avg", "min", "max", "count", "count_distinct"];
+
+/// True for a field type whose value is stored as a number.
+pub fn is_numeric(t: FieldType) -> bool {
+    use FieldType::*;
+    matches!(t, Number | Currency | Percent | Rating | Autonumber | Count | Rollup)
+}
+
+/// Things that still validate but should change. A relationship joins by value, and a link joins by
+/// identity (`links.md`).
+pub fn manifest_warnings(m: &AppManifest) -> Vec<String> {
+    m.relationships
+        .iter()
+        .map(|r| format!("relationship '{}' joins '{}' to '{}' by value. It is deprecated: use a Link field", r.id, r.source_table_id, r.target_table_id))
+        .collect()
+}
+
 fn table_of<'a>(m: &'a AppManifest, id: &str) -> Option<&'a AppTable> {
     m.tables.iter().find(|t| t.id == id)
 }
@@ -132,29 +150,45 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                     }
                 }
                 FieldType::Lookup | FieldType::Count | FieldType::Rollup => {
-                    let Some(target_id) = f.target_table_id.as_deref() else {
-                        problems.push(format!("table '{}': {:?} field '{}' names no target table", table.id, f.field_type, f.name));
+                    let kind = format!("{:?}", f.field_type);
+                    let Some(via) = f.computed_via.as_deref() else {
+                        problems.push(format!("table '{}': {kind} field '{}' names no link field in computed_via", table.id, f.name));
                         continue;
                     };
-                    let Some(target) = table_of(m, target_id) else {
-                        problems.push(format!("table '{}': field '{}' targets the table '{target_id}', which does not exist", table.id, f.name));
+                    let Some(via_field) = table.fields.iter().find(|x| x.name == via) else {
+                        problems.push(format!("table '{}': {kind} field '{}' goes through '{via}', which this table does not have", table.id, f.name));
                         continue;
                     };
-                    let related = m.relationships.iter().any(|r| {
-                        (r.source_table_id == table.id && r.target_table_id == target.id)
-                            || (r.target_table_id == table.id && r.source_table_id == target.id)
-                    });
-                    if !related {
-                        problems.push(format!("table '{}': field '{}' reaches '{target_id}' through no relationship", table.id, f.name));
+                    if via_field.field_type != FieldType::Link {
+                        problems.push(format!("table '{}': {kind} field '{}' goes through '{via}', which is not a Link field", table.id, f.name));
+                        continue;
                     }
-                    match f.target_display_field.as_deref() {
-                        Some(tf) if !target.fields.iter().any(|x| x.name == tf) => {
-                            problems.push(format!("table '{}': field '{}' targets the field '{tf}', which '{target_id}' does not have", table.id, f.name));
-                        }
+                    let Some(target) = via_field.link_target_table.as_deref().and_then(|t| table_of(m, t)) else { continue };
+                    let target_field = match f.target_display_field.as_deref() {
+                        Some(tf) => match target.fields.iter().find(|x| x.name == tf) {
+                            Some(found) => Some(found),
+                            None => {
+                                problems.push(format!("table '{}': field '{}' targets the field '{tf}', which '{}' does not have", table.id, f.name, target.id));
+                                continue;
+                            }
+                        },
                         None if f.field_type != FieldType::Count => {
                             problems.push(format!("table '{}': field '{}' names no target field", table.id, f.name));
+                            continue;
                         }
-                        _ => {}
+                        None => None,
+                    };
+                    if f.field_type == FieldType::Rollup {
+                        let function = f.rollup_function.as_deref().unwrap_or("sum");
+                        if !ROLLUP_FUNCTIONS.contains(&function) {
+                            problems.push(format!("table '{}': Rollup field '{}' uses the function '{function}', which is not one of {}", table.id, f.name, ROLLUP_FUNCTIONS.join(", ")));
+                        } else if matches!(function, "sum" | "avg" | "min" | "max") {
+                            if let Some(tf) = target_field {
+                                if !is_numeric(tf.field_type) {
+                                    problems.push(format!("table '{}': Rollup field '{}' applies {function} to '{}', which is not a number field", table.id, f.name, tf.name));
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}

@@ -55,6 +55,21 @@ pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
             out.insert(r.target_field.clone());
         }
     }
+    // A rollup reads its target field from the index, so the field of the table it rolls up is indexed.
+    for owner in &m.tables {
+        for f in owner.fields.iter().filter(|f| f.field_type == FieldType::Rollup) {
+            let target = f
+                .computed_via
+                .as_deref()
+                .and_then(|via| owner.fields.iter().find(|x| x.name == via))
+                .and_then(|via| via.link_target_table.as_deref());
+            if target == Some(table_id) {
+                if let Some(tf) = &f.target_display_field {
+                    out.insert(tf.clone());
+                }
+            }
+        }
+    }
     // A name that is not a field of the table is not indexed. `validate_manifest` reports it.
     out.retain(|name| table.fields.iter().any(|f| &f.name == name));
     out

@@ -1,7 +1,7 @@
 //! MCP apps phase 3: the manifest has a format. The same fixtures are checked against the JSON
 //! Schema by `governance/scripts/validate-manifest.py` and against `validate_manifest` here.
 
-use scaffoldry_engine::{validate_manifest, AppManifest, AppPage, AppTable, FieldSpec, FieldType, PageGrant, PageKind, TableRelationship};
+use scaffoldry_engine::{validate_manifest, AppManifest, AppPage, AppTable, FieldSpec, FieldType, PageGrant, PageKind};
 use std::path::PathBuf;
 
 fn fixtures(kind: &str) -> Vec<(String, AppManifest)> {
@@ -125,8 +125,11 @@ fn views_pages_and_links_must_point_at_things_that_exist() {
     m.views[0].fields.push(field("not_in_table", FieldType::Text));
     assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("not_in_table")));
 
-    // A rollup needs a target table, a relationship to it, and a target field that exists.
+    // A rollup goes through a link field of its table, and names a target field that exists.
     let mut m = base();
+    let mut courses_link = field("courses", FieldType::Link);
+    courses_link.link_target_table = Some("courses".to_string());
+    m.tables[0].fields.push(courses_link);
     m.tables.push(AppTable {
         id: "courses".into(),
         name: "Courses".into(),
@@ -138,20 +141,10 @@ fn views_pages_and_links_must_point_at_things_that_exist() {
         sample_records: vec![],
     });
     let mut roll = field("total_credits", FieldType::Rollup);
-    roll.target_table_id = Some("courses".to_string());
     roll.target_display_field = Some("credits".to_string());
     m.tables[0].fields.push(roll);
-    assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("no relationship")));
-    m.relationships.push(TableRelationship {
-        id: "r".into(),
-        name: "r".into(),
-        source_table_id: "students".into(),
-        target_table_id: "courses".into(),
-        source_field: "name".into(),
-        target_field: "credits".into(),
-        relationship_type: "one_to_many".into(),
-        display_field: "credits".into(),
-    });
+    assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("computed_via")));
+    m.tables[0].fields.last_mut().unwrap().computed_via = Some("courses".to_string());
     assert!(validate_manifest(&m).is_ok());
     m.tables[0].fields.last_mut().unwrap().target_display_field = Some("missing".to_string());
     assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("'missing'")));

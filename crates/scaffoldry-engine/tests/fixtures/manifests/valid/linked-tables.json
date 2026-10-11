@@ -19,12 +19,21 @@
           "ferpa_sensitive": false
         },
         {
+          "name": "courses",
+          "label": "Courses",
+          "field_type": "Link",
+          "required": false,
+          "ferpa_sensitive": false,
+          "link_target_table": "courses",
+          "link_related_field": "students"
+        },
+        {
           "name": "credits",
           "label": "Credits",
           "field_type": "Rollup",
           "required": false,
           "ferpa_sensitive": false,
-          "target_table_id": "courses",
+          "computed_via": "courses",
           "target_display_field": "credits",
           "rollup_function": "sum"
         }
@@ -48,20 +57,17 @@
           "field_type": "Number",
           "required": false,
           "ferpa_sensitive": false
+        },
+        {
+          "name": "students",
+          "label": "Students",
+          "field_type": "Link",
+          "required": false,
+          "ferpa_sensitive": false,
+          "link_target_table": "students",
+          "link_related_field": "courses"
         }
       ]
-    }
-  ],
-  "relationships": [
-    {
-      "id": "r1",
-      "name": "enrolled",
-      "source_table_id": "students",
-      "target_table_id": "courses",
-      "source_field": "name",
-      "target_field": "title",
-      "relationship_type": "many_to_many",
-      "display_field": "title"
     }
   ]
 }

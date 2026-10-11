@@ -8,7 +8,7 @@ pub mod sensitivity;
 
 pub use automation::*;
 pub use index::{index_column, index_rows, index_value, indexed_fields, parse_instant, IndexColumn, IndexCols, MAX_INDEXED_FIELDS};
-pub use manifest::validate_manifest;
+pub use manifest::{is_numeric, manifest_warnings, validate_manifest, ROLLUP_FUNCTIONS};
 
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_policy::ScaffoldryPolicyEngine;
@@ -188,6 +188,9 @@ pub struct FieldSpec {
     pub link_related_field: Option<String>,
     #[serde(default, skip_serializing_if = "LinkOnDelete::is_default")]
     pub link_on_delete: LinkOnDelete,
+    /// A `Lookup`, `Rollup`, or `Count`: the `Link` field of this table it goes through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computed_via: Option<String>,
 }
 
 /// How many records a link field holds.
@@ -288,6 +291,7 @@ impl FieldSpec {
             link_cardinality: LinkCardinality::Many,
             link_related_field: None,
             link_on_delete: LinkOnDelete::Unlink,
+            computed_via: None,
         }
     }
 }

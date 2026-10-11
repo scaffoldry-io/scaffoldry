@@ -123,6 +123,8 @@ pub fn create_record(
     };
 
     let data_payload = data.get("data").unwrap_or(data);
+    let cleaned = strip_lookups(app_slug, data_payload, state);
+    let data_payload = &cleaned;
     validate_links(app_slug, None, None, data_payload, state)?;
 
     let submitted = {
@@ -244,6 +246,7 @@ pub fn update_record(
         map.entry("_table_id".to_string()).or_insert(tid);
     }
 
+    let new_data = strip_lookups(app_slug, &new_data, state);
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
@@ -539,6 +542,81 @@ fn check_not_restricted(app_slug: &str, record: &DatasetRecord, state: &SharedSt
     Ok(())
 }
 
+/// Every `Rollup` and `Count` of the app, with what a write needs to recompute it.
+pub(crate) fn computed_specs_of(app_slug: &str, state: &SharedState) -> Vec<crate::repository_links::ComputedSpec> {
+    use scaffoldry_engine::{FieldType, HostRouter};
+    let Ok(engine) = state.engine.read() else { return Vec::new() };
+    let Some(manifest) = engine.resolve_by_slug(app_slug) else { return Vec::new() };
+    let mut out = Vec::new();
+    for table in &manifest.tables {
+        let indexed = scaffoldry_engine::indexed_fields(manifest, &table.id);
+        for f in &table.fields {
+            let (true, Some(via)) = (matches!(f.field_type, FieldType::Rollup | FieldType::Count), f.computed_via.clone()) else { continue };
+            out.push(crate::repository_links::ComputedSpec {
+                owner_table: table.id.clone(),
+                field: f.name.clone(),
+                via,
+                count: f.field_type == FieldType::Count,
+                function: f.rollup_function.clone().unwrap_or_else(|| "sum".to_string()),
+                target: f.target_display_field.clone(),
+                indexed: indexed.contains(&f.name),
+            });
+        }
+    }
+    out
+}
+
+/// A lookup is never stored: it is added to the rows of a page when they are read. A value a caller sends
+/// under a lookup field's name is dropped.
+fn strip_lookups(app_slug: &str, data: &Value, state: &SharedState) -> Value {
+    let table = data.get("_table_id").and_then(Value::as_str).unwrap_or("");
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    let mut out = data.clone();
+    if let Some(map) = out.as_object_mut() {
+        for f in fields.iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::Lookup) {
+            map.remove(&f.name);
+        }
+    }
+    out
+}
+
+/// Adds the lookup values to the rows of a page. One statement for each lookup field, however many
+/// rows the page has. A value the reader may not see is not added.
+fn fill_lookups(caller: &AuthUser, app_slug: &str, rows: &mut [DatasetRecord], state: &SharedState) {
+    use scaffoldry_engine::FieldType;
+    let Some(repo) = state.repository.as_deref() else { return };
+    let mut by_table: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        by_table.entry(r.data.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string()).or_default().push(i);
+    }
+    for (table, positions) in by_table {
+        let (fields, _) = table_fields_lenient(app_slug, &table, state);
+        for f in fields.iter().filter(|f| f.field_type == FieldType::Lookup) {
+            let (Some(via), Some(target)) = (f.computed_via.as_deref(), f.target_display_field.as_deref()) else { continue };
+            let Some(target_table) = fields.iter().find(|x| x.name == via).and_then(|x| x.link_target_table.clone()) else { continue };
+            let (target_fields, canonical) = table_fields_lenient(app_slug, &target_table, state);
+            if hidden_fields(caller, app_slug, &canonical, &target_fields, state).iter().any(|h| h == target) {
+                continue;
+            }
+            let owners: Vec<String> = positions.iter().map(|i| rows[*i].id.clone()).collect();
+            let Ok(found) = repo.lookup_values(&owners, via, target) else { continue };
+            let mut by_owner: std::collections::HashMap<String, Vec<Value>> = std::collections::HashMap::new();
+            for (owner, value) in found {
+                if !value.is_null() {
+                    by_owner.entry(owner).or_default().push(value);
+                }
+            }
+            for i in &positions {
+                let Some(mut values) = by_owner.remove(&rows[*i].id) else { continue };
+                let shown = if values.len() == 1 { values.remove(0) } else { Value::Array(values) };
+                if let Some(map) = rows[*i].data.as_object_mut() {
+                    map.insert(f.name.clone(), shown);
+                }
+            }
+        }
+    }
+}
+
 /// The names of a table's indexed fields: marked, used by a view, or joined on.
 fn indexed_names(app_slug: &str, table_id: &str, state: &SharedState) -> std::collections::BTreeSet<String> {
     let Ok(engine) = state.engine.read() else { return Default::default() };
@@ -750,6 +828,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     } else {
         rows.last().map(|r| encode_cursor(r, sort_field.as_deref()))
     };
+    fill_lookups(caller, app_slug, &mut rows, state);
     Ok(RecordPage { records: redact_records(caller, app_slug, rows, state), next_cursor })
 }
 
