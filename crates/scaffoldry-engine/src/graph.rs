@@ -136,8 +136,7 @@ pub fn build_graph(m: &AppManifest) -> Result<Graph, CycleError> {
     for start in nodes.iter().filter(|n| !done.contains(n)) {
         let mut stack: Vec<&NodeId> = vec![start];
         let mut seen: HashSet<&NodeId> = HashSet::from([start]);
-        loop {
-            let Some(next) = reads_of.get(*stack.last().expect("the stack holds the start")).into_iter().flatten().find(|n| !done.contains(n)) else { break };
+        while let Some(next) = reads_of.get(*stack.last().expect("the stack holds the start")).into_iter().flatten().find(|n| !done.contains(n)) {
             if let Some(at) = stack.iter().position(|n| *n == next) {
                 let path: Vec<NodeId> = stack[at..].iter().map(|n| (*n).clone()).collect();
                 let text = sentence(m, &path);

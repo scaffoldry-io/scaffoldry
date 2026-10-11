@@ -70,6 +70,7 @@ pub struct JobKind {
 pub static JOB_KINDS: &[JobKind] = &[
     JobKind { name: "build_index", max_attempts: 3, max_concurrent: 2, run: crate::index_jobs::build_index },
     JobKind { name: "recompute_flags", max_attempts: 3, max_concurrent: 1, run: crate::index_jobs::recompute_flags },
+    JobKind { name: "recalc_owners", max_attempts: 3, max_concurrent: 2, run: crate::calc_jobs::recalc_owners },
 ];
 
 #[derive(Debug, Clone)]

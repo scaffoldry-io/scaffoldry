@@ -649,7 +649,39 @@ pub(crate) fn formula_specs_of(app_slug: &str, table_id: &str, state: &SharedSta
             at_write.push((f.name.clone(), expression));
         }
     }
+    // Each runs after everything it reads, whatever order the fields were declared in.
+    let order = calc_order(app_slug, table_id, state);
+    let rank = |name: &str| order.iter().position(|x| x == name).unwrap_or(usize::MAX);
+    at_write.sort_by_key(|(name, _)| rank(name));
+    at_read.sort_by_key(|(name, _)| rank(name));
     (at_write, at_read)
+}
+
+/// The fields of a table in the order they must be computed. Empty when the app is unknown or has a cycle,
+/// which the manifest validator refuses before an app is stored.
+fn calc_order(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
+    let Ok(engine) = state.engine.read() else { return Vec::new() };
+    let Some(manifest) = engine.resolve_by_slug(app_slug) else { return Vec::new() };
+    scaffoldry_engine::graph::build_graph(manifest).map(|g| g.order(table_id)).unwrap_or_default()
+}
+
+/// What every table of the app needs when one of its records is recomputed because another changed.
+pub(crate) fn calc_tables_of(app_slug: &str, state: &SharedState) -> std::sync::Arc<std::collections::HashMap<String, crate::repository_links::TableCalc>> {
+    use scaffoldry_engine::HostRouter;
+    let ids: Vec<String> = state
+        .engine
+        .read()
+        .ok()
+        .and_then(|e| e.resolve_by_slug(app_slug).map(|m| m.tables.iter().map(|t| t.id.clone()).collect()))
+        .unwrap_or_default();
+    let tables = ids
+        .into_iter()
+        .map(|id| {
+            let calc = crate::repository_links::TableCalc { formulas: formula_specs_of(app_slug, &id, state).0, index_fields: indexed_fields_of(app_slug, &id, state) };
+            (id, calc)
+        })
+        .collect();
+    std::sync::Arc::new(tables)
 }
 
 /// A lookup is never stored: it is added to the rows of a page when they are read. A value a caller sends

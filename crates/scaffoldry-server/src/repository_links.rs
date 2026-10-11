@@ -44,7 +44,7 @@ pub fn lookup_statements() -> u64 {
 }
 
 /// A `Rollup` or `Count` field, and what it needs to be recomputed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ComputedSpec {
     pub owner_table: String,
     pub field: String,
@@ -55,6 +55,18 @@ pub struct ComputedSpec {
     pub target: Option<String>,
     pub indexed: bool,
 }
+
+/// What a table needs when one of its records is recomputed because a record it reads changed.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TableCalc {
+    /// The stored formulas, as `(field, expression)`, each after everything it reads.
+    pub formulas: Vec<(String, String)>,
+    /// The indexed fields, so the index rows of a recomputed record follow its values.
+    pub index_fields: Vec<FieldSpec>,
+}
+
+/// How many owners a write recomputes before it hands the rest to a job.
+pub const INLINE_OWNERS: usize = 200;
 
 /// A link field of the table being written, and the field on the other table that mirrors it.
 #[derive(Debug, Clone)]
@@ -157,7 +169,7 @@ pub(crate) fn write_record_links(
 ) -> Result<(), postgres::Error> {
     let names: Vec<String> = ctx.links.iter().map(|l| l.field.clone()).collect();
     // Who rolled this record up before the write.
-    let mut owners = if ctx.computed.is_empty() { Vec::new() } else { owners_of(tx, record_id)? };
+    let owners = if ctx.computed.is_empty() { Vec::new() } else { owners_of(tx, record_id)? };
     tx.execute("DELETE FROM record_links WHERE from_record = $1", &[&record_id])?;
     insert_links(tx, app_slug, record_id, data, &names)?;
     // The records on the other end, locked in one order so two writers cannot wait on each other.
@@ -188,11 +200,49 @@ pub(crate) fn write_record_links(
     }
     if !ctx.computed.is_empty() {
         // Who rolls it up now, and the record itself, which may roll up its own links.
-        owners.extend(owners_of(tx, record_id)?);
+        let now = owners_of(tx, record_id)?;
         let table = data.get("_table_id").and_then(Value::as_str).unwrap_or("");
-        owners.extend(ctx.computed.iter().filter(|c| c.owner_table == table).map(|c| (record_id.to_string(), c.via.clone())));
-        recompute_owners(tx, app_slug, owners, ctx)?;
+        let own: Vec<(String, String)> = ctx.computed.iter().filter(|c| c.owner_table == table).map(|c| (record_id.to_string(), c.via.clone())).collect();
+        refresh_owners(tx, app_slug, record_id, owners, now, own, ctx)?;
     }
+    Ok(())
+}
+
+/// Recomputes the owners of a changed record: inline when there are few, by the job `recalc_owners`
+/// when there are many. `before` and `after` are the records that rolled it up before and after the
+/// write. `own` is the record itself, which is always recomputed here.
+fn refresh_owners(
+    tx: &mut postgres::Transaction<'_>,
+    app_slug: &str,
+    record_id: &str,
+    before: Vec<(String, String)>,
+    after: Vec<(String, String)>,
+    own: Vec<(String, String)>,
+    ctx: &WriteCtx,
+) -> Result<(), postgres::Error> {
+    let distinct = |v: &[(String, String)]| v.iter().map(|(id, _)| id.as_str()).collect::<BTreeSet<_>>().len();
+    let all: Vec<(String, String)> = before.iter().chain(after.iter()).cloned().collect();
+    if distinct(&all) <= INLINE_OWNERS {
+        let mut owners = all;
+        owners.extend(own);
+        return recompute_owners(tx, app_slug, owners, ctx);
+    }
+    recompute_owners(tx, app_slug, own, ctx)?;
+    // The owners the record no longer has cannot be found from its links, so the job is told.
+    let kept: BTreeSet<&(String, String)> = after.iter().collect();
+    let dropped: Vec<&(String, String)> = before.iter().filter(|o| !kept.contains(o)).take(INLINE_OWNERS * 5).collect();
+    let payload = serde_json::json!({
+        "app_slug": app_slug,
+        "record_id": record_id,
+        "actor": ctx.actor,
+        "dropped": dropped,
+        "plan": { "computed": ctx.computed, "tables": &*ctx.calc },
+    });
+    // The job row is part of this transaction, so it exists if and only if the write commits.
+    tx.execute(
+        "INSERT INTO jobs (id, kind, payload, created_by) VALUES ($1, 'recalc_owners', $2, $3)",
+        &[&uuid::Uuid::new_v4(), &payload, &ctx.actor],
+    )?;
     Ok(())
 }
 
@@ -205,64 +255,102 @@ fn owners_of(tx: &mut postgres::Transaction<'_>, record_id: &str) -> Result<Vec<
         .collect())
 }
 
-/// Writes the rollups and counts of each owner again, from its link rows and the indexed target values.
-/// The owner's version does not change, and nothing is written to history: a computed value is not a
-/// person's edit, and it must not make someone's save conflict.
+/// The most times a recomputation repeats outward, when an owner's change reaches the records that
+/// roll it up. The graph has no cycle, so it ends sooner. This only guards a bad manifest.
+const MAX_ROUNDS: usize = 16;
+
+/// Writes the rollups and counts of each owner again, from its link rows and the indexed target values,
+/// then its stored formulas in run order, so a formula that reads a rollup follows it. When that changes
+/// a value that other records roll up, they are recomputed next. The owner's version does not change,
+/// and nothing is written to history: a computed value is not a person's edit, and it must not make
+/// someone's save conflict.
 pub(crate) fn recompute_owners(
     tx: &mut postgres::Transaction<'_>,
     app_slug: &str,
-    mut owners: Vec<(String, String)>,
+    owners: Vec<(String, String)>,
     ctx: &WriteCtx,
 ) -> Result<(), postgres::Error> {
-    owners.sort();
-    owners.dedup();
-    let mut ids: Vec<&String> = owners.iter().map(|(id, _)| id).collect();
-    ids.dedup();
-    for id in ids {
-        let Some((data, _, table)) = lock(tx, app_slug, id)? else { continue };
-        let vias: Vec<&String> = owners.iter().filter(|(o, _)| o == id).map(|(_, v)| v).collect();
-        let mut new = data.clone();
-        for spec in ctx.computed.iter().filter(|c| c.owner_table == table && vias.contains(&&c.via)) {
-            let value: Option<f64> = match (spec.count, spec.target.as_deref()) {
-                (true, _) | (_, None) => tx.query_one(COUNT_SQL, &[id, &spec.via])?.get(0),
-                (false, Some(target)) => {
-                    let sql = match spec.function.as_str() {
-                        "avg" => ROLLUP_AVG_SQL,
-                        "min" => ROLLUP_MIN_SQL,
-                        "max" => ROLLUP_MAX_SQL,
-                        "count" => ROLLUP_COUNT_SQL,
-                        "count_distinct" => ROLLUP_DISTINCT_SQL,
-                        _ => ROLLUP_SUM_SQL,
-                    };
-                    tx.query_one(sql, &[id, &spec.via, &target])?.get(0)
-                }
-            };
-            if let Some(map) = new.as_object_mut() {
-                match value.and_then(serde_json::Number::from_f64) {
-                    Some(n) => {
-                        let whole = n.as_f64().is_some_and(|f| f.fract() == 0.0 && f.abs() < 9e15);
-                        map.insert(spec.field.clone(), if whole { Value::from(n.as_f64().unwrap_or(0.0) as i64) } else { Value::Number(n) });
-                    }
-                    None => {
-                        map.remove(&spec.field);
-                    }
-                }
-            }
-            if spec.indexed {
-                tx.execute("DELETE FROM record_index WHERE record_id = $1 AND field = $2", &[id, &spec.field])?;
-                if let Some(v) = value {
-                    tx.execute(
-                        "INSERT INTO record_index (app_slug, table_id, field, record_id, num) VALUES ($1, $2, $3, $4, $5)",
-                        &[&app_slug, &table, &spec.field, id, &v],
-                    )?;
-                }
-            }
+    let mut pending = owners;
+    for _ in 0..MAX_ROUNDS {
+        pending.sort();
+        pending.dedup();
+        if pending.is_empty() {
+            break;
         }
-        if new != data {
+        let mut next: Vec<(String, String)> = Vec::new();
+        let mut ids: Vec<&String> = pending.iter().map(|(id, _)| id).collect();
+        ids.dedup();
+        for id in ids {
+            let Some((data, _, table)) = lock(tx, app_slug, id)? else { continue };
+            let vias: Vec<&String> = pending.iter().filter(|(o, _)| o == id).map(|(_, v)| v).collect();
+            let mut new = data.clone();
+            for spec in ctx.computed.iter().filter(|c| c.owner_table == table && vias.contains(&&c.via)) {
+                let value = aggregate(tx, id, spec)?;
+                if let Some(map) = new.as_object_mut() {
+                    match value.and_then(serde_json::Number::from_f64) {
+                        Some(n) => {
+                            let whole = n.as_f64().is_some_and(|f| f.fract() == 0.0 && f.abs() < 9e15);
+                            map.insert(spec.field.clone(), if whole { Value::from(n.as_f64().unwrap_or(0.0) as i64) } else { Value::Number(n) });
+                        }
+                        None => {
+                            map.remove(&spec.field);
+                        }
+                    }
+                }
+                if spec.indexed && !ctx.calc.contains_key(&table) {
+                    tx.execute("DELETE FROM record_index WHERE record_id = $1 AND field = $2", &[id, &spec.field])?;
+                    if let Some(v) = value {
+                        tx.execute(
+                            "INSERT INTO record_index (app_slug, table_id, field, record_id, num) VALUES ($1, $2, $3, $4, $5)",
+                            &[&app_slug, &table, &spec.field, id, &v],
+                        )?;
+                    }
+                }
+            }
+            let calc = ctx.calc.get(&table);
+            if let Some(c) = calc {
+                crate::repository::apply_formula_list(&mut new, &c.formulas);
+            }
+            if new == data {
+                continue;
+            }
             crate::repository::set_record_data_in_tx(tx, app_slug, id, &new)?;
+            if let Some(c) = calc {
+                crate::repository_index::write_record_index(tx, app_slug, &table, id, &new, &c.index_fields)?;
+            }
+            // What changed may be read by the records that roll this one up.
+            let changed: BTreeSet<&str> = {
+                let (old, now) = (data.as_object(), new.as_object());
+                let keys: BTreeSet<&str> = old.into_iter().chain(now).flat_map(|m| m.keys().map(String::as_str)).collect();
+                keys.into_iter().filter(|k| old.and_then(|m| m.get(*k)) != now.and_then(|m| m.get(*k))).collect()
+            };
+            for (owner, via) in owners_of(tx, id)? {
+                if ctx.computed.iter().any(|c| c.via == via && c.target.as_deref().is_some_and(|t| changed.contains(t))) {
+                    next.push((owner, via));
+                }
+            }
         }
+        pending = next;
     }
     Ok(())
+}
+
+/// One rollup or count of an owner, from its link rows and the indexed target values.
+fn aggregate(tx: &mut postgres::Transaction<'_>, id: &str, spec: &ComputedSpec) -> Result<Option<f64>, postgres::Error> {
+    Ok(match (spec.count, spec.target.as_deref()) {
+        (true, _) | (_, None) => tx.query_one(COUNT_SQL, &[&id, &spec.via])?.get(0),
+        (false, Some(target)) => {
+            let sql = match spec.function.as_str() {
+                "avg" => ROLLUP_AVG_SQL,
+                "min" => ROLLUP_MIN_SQL,
+                "max" => ROLLUP_MAX_SQL,
+                "count" => ROLLUP_COUNT_SQL,
+                "count_distinct" => ROLLUP_DISTINCT_SQL,
+                _ => ROLLUP_SUM_SQL,
+            };
+            tx.query_one(sql, &[&id, &spec.via, &target])?.get(0)
+        }
+    })
 }
 
 /// A record is gone. The links it held, in both directions, are removed and remembered in
@@ -293,7 +381,7 @@ pub(crate) fn delete_record_links(tx: &mut postgres::Transaction<'_>, app_slug: 
     // The records that rolled it up now roll up one fewer.
     if !ctx.computed.is_empty() {
         let owners: Vec<(String, String)> = incoming.iter().map(|r| (r.get(0), r.get(1))).collect();
-        recompute_owners(tx, app_slug, owners, ctx)?;
+        refresh_owners(tx, app_slug, record_id, owners, Vec::new(), Vec::new(), ctx)?;
     }
     Ok(())
 }

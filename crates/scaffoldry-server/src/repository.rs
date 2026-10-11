@@ -143,6 +143,9 @@ pub struct WriteCtx {
     pub computed: Vec<crate::repository_links::ComputedSpec>,
     /// The formulas of the record's table that are stored, as `(field, expression)`, in field order.
     pub formulas: Vec<(String, String)>,
+    /// What each table of the app needs when one of its records is recomputed because another changed:
+    /// its stored formulas in run order, and its indexed fields.
+    pub calc: std::sync::Arc<std::collections::HashMap<String, crate::repository_links::TableCalc>>,
     /// The action the history row names, when it is not the usual one. A restore says `restore`.
     pub action: Option<&'static str>,
 }
@@ -160,6 +163,7 @@ impl WriteCtx {
             links: Vec::new(),
             computed: Vec::new(),
             formulas: Vec::new(),
+            calc: Default::default(),
             action: None,
         }
     }
@@ -249,7 +253,12 @@ pub(crate) fn set_record_data_in_tx(tx: &mut postgres::Transaction<'_>, app_slug
 
 /// Writes the stored formulas of the table into the record's data. A value the caller sent for one is replaced.
 pub(crate) fn apply_formulas(data: &mut Value, ctx: &WriteCtx) {
-    for (field, expression) in &ctx.formulas {
+    apply_formula_list(data, &ctx.formulas);
+}
+
+/// The same for a list of `(field, expression)`, in the order given.
+pub(crate) fn apply_formula_list(data: &mut Value, formulas: &[(String, String)]) {
+    for (field, expression) in formulas {
         let value = scaffoldry_engine::evaluate_formula(expression, data);
         if let Some(map) = data.as_object_mut() {
             if value.is_null() {
