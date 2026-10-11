@@ -46,7 +46,7 @@ pub fn ctx_for(actor: &str, kind: ActorKind, app_slug: &str, data: &Value, state
     let table = data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("");
     ctx.computed_fields = crate::service::records::computed_fields(app_slug, table, state);
     ctx.index_fields = crate::service::records::indexed_fields_of(app_slug, table, state);
-    ctx.link_fields = crate::service::records::link_fields_of(app_slug, table, state);
+    ctx.links = crate::service::records::link_specs_of(app_slug, table, state);
     ctx
 }
 

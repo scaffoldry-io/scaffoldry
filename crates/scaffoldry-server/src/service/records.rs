@@ -13,17 +13,25 @@ use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
 use scaffoldry_engine::{AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction, FilterOperator, IndexColumn};
 use serde_json::Value;
 
+/// True when `field` of the record's table holds one record.
+fn mirror_is_one(app_slug: &str, record: &DatasetRecord, field: &str, state: &SharedState) -> bool {
+    let table = record.data.get("_table_id").and_then(Value::as_str).unwrap_or("");
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    fields.iter().any(|f| f.name == field && f.link_cardinality == scaffoldry_engine::LinkCardinality::One)
+}
+
 /// Checks the link fields of a record about to be written. Each id must name a record of the target
 /// table of this app, a `One` field takes at most one id, and no id repeats. A record that is missing,
 /// in another table, or in an app the writer has no part in is refused with the same sentence, so the
 /// answer does not tell them apart. Every problem names its field.
-fn validate_links(app_slug: &str, data: &Value, state: &SharedState) -> Result<(), ServiceError> {
+fn validate_links(app_slug: &str, id: Option<&str>, current: Option<&Value>, data: &Value, state: &SharedState) -> Result<(), ServiceError> {
     use crate::repository_links::{linked_ids, MAX_LINKS_PER_FIELD};
     use scaffoldry_engine::{FieldType, LinkCardinality};
     let table = data.get("_table_id").and_then(Value::as_str).unwrap_or("");
     let (fields, _) = table_fields_lenient(app_slug, table, state);
     let mut bad = std::collections::BTreeMap::new();
-    let mut to_check: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut mirror_added: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut to_check: Vec<(String, String, Vec<String>, Option<String>)> = Vec::new();
     for f in fields.iter().filter(|f| f.field_type == FieldType::Link) {
         let value = data.get(&f.name);
         let shaped = match value {
@@ -51,13 +59,31 @@ fn validate_links(app_slug: &str, data: &Value, state: &SharedState) -> Result<(
             continue;
         }
         if let (false, Some(target)) = (ids.is_empty(), f.link_target_table.clone()) {
-            to_check.push((f.name.clone(), target, ids));
+            let added: Vec<String> = {
+                let before = linked_ids(current.and_then(|c| c.get(&f.name)));
+                ids.iter().filter(|x| !before.contains(x)).cloned().collect()
+            };
+            to_check.push((f.name.clone(), target, ids, f.link_related_field.clone().filter(|_| !added.is_empty())));
+            mirror_added.insert(f.name.clone(), added);
         }
     }
-    for (name, target, ids) in to_check {
+    for (name, target, ids, related) in to_check {
         let found = state.existing_record_ids(app_slug, &target, &ids).map_err(ServiceError::Internal)?;
         if let Some(missing) = ids.iter().find(|id| !found.contains(id)) {
             bad.insert(name, format!("links to a record that does not exist or cannot be seen: {missing}"));
+            continue;
+        }
+        // A two-way link into a field that holds one record cannot take a record that is taken.
+        let Some(related) = related else { continue };
+        let Some(this) = id else { continue };
+        for other in mirror_added.get(&name).into_iter().flatten() {
+            let Some(theirs) = state.find_record(app_slug, other).map_err(ServiceError::Internal)? else { continue };
+            let one = !matches!(theirs.data.get(&related), Some(Value::Array(_)));
+            let taken = linked_ids(theirs.data.get(&related));
+            if one && !taken.is_empty() && taken.iter().any(|x| x != this) && mirror_is_one(app_slug, &theirs, &related, state) {
+                bad.insert(name.clone(), format!("links to a record that already links to another record through '{related}': {other}"));
+                break;
+            }
         }
     }
     if bad.is_empty() {
@@ -97,7 +123,7 @@ pub fn create_record(
     };
 
     let data_payload = data.get("data").unwrap_or(data);
-    validate_links(app_slug, data_payload, state)?;
+    validate_links(app_slug, None, None, data_payload, state)?;
 
     let submitted = {
         let engine = state
@@ -218,7 +244,7 @@ pub fn update_record(
         map.entry("_table_id".to_string()).or_insert(tid);
     }
 
-    validate_links(app_slug, &new_data, state)?;
+    validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
         .save_record_checked(app_slug, id, &new_data, expected_version, &ctx)
@@ -284,6 +310,7 @@ pub fn delete_record(
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     if state.remove_record(app_slug, id, &ctx).map_err(ServiceError::Internal)? {
         Ok(())
@@ -307,6 +334,7 @@ pub fn delete_record_checked(
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     match state.remove_record_checked(app_slug, id, version, &ctx).map_err(ServiceError::Internal)? {
         RecordWrite::Saved(_) => Ok(()),
@@ -445,10 +473,70 @@ pub(crate) fn indexed_fields_of(app_slug: &str, table_id: &str, state: &SharedSt
     fields.into_iter().filter(|f| names.contains(&f.name)).collect()
 }
 
-/// The names of a table's `Link` fields. Every write keeps their `record_links` rows current.
-pub(crate) fn link_fields_of(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
-    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
-    fields.into_iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::Link).map(|f| f.name).collect()
+/// The `Link` fields of a table, each with the field that mirrors it on the other table. Every write
+/// keeps their `record_links` rows current and mirrors the two-way ones.
+pub(crate) fn link_specs_of(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<crate::repository_links::LinkSpec> {
+    use scaffoldry_engine::{FieldType, HostRouter, LinkCardinality};
+    let Ok(engine) = state.engine.read() else { return Vec::new() };
+    let Some(manifest) = engine.resolve_by_slug(app_slug) else { return Vec::new() };
+    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id) else { return Vec::new() };
+    table
+        .fields
+        .iter()
+        .filter(|f| f.field_type == FieldType::Link)
+        .map(|f| {
+            let mirror = f.link_related_field.as_deref().and_then(|name| {
+                let target = manifest.tables.iter().find(|t| Some(t.id.as_str()) == f.link_target_table.as_deref())?;
+                target.fields.iter().find(|x| x.name == name)
+            });
+            crate::repository_links::LinkSpec {
+                field: f.name.clone(),
+                related: mirror.map(|m| m.name.clone()),
+                related_one: mirror.is_some_and(|m| m.link_cardinality == LinkCardinality::One),
+            }
+        })
+        .collect()
+}
+
+/// The link fields, on any table of the app, that refuse the delete of a record of `table_id` while
+/// records link to it. Each is `(field, name of the table that holds it)`.
+fn restricting_fields(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<(String, String, String)> {
+    use scaffoldry_engine::{FieldType, HostRouter, LinkOnDelete};
+    let Ok(engine) = state.engine.read() else { return Vec::new() };
+    let Some(manifest) = engine.resolve_by_slug(app_slug) else { return Vec::new() };
+    let target_name = manifest.tables.iter().find(|t| t.id == table_id).map(|t| t.name.clone()).unwrap_or_default();
+    manifest
+        .tables
+        .iter()
+        .flat_map(|t| t.fields.iter().map(move |f| (t, f)))
+        .filter(|(_, f)| f.field_type == FieldType::Link && f.link_on_delete == LinkOnDelete::Restrict && f.link_target_table.as_deref() == Some(table_id))
+        .map(|(t, f)| (f.name.clone(), t.name.clone(), target_name.clone()))
+        .collect()
+}
+
+fn singular(name: &str) -> String {
+    let n = name.to_lowercase();
+    if let Some(stem) = n.strip_suffix("ies") {
+        format!("{stem}y")
+    } else if n.ends_with('s') && !n.ends_with("ss") {
+        n[..n.len() - 1].to_string()
+    } else {
+        n
+    }
+}
+
+/// Refuses the delete of a record that records still link to through a `Restrict` field.
+fn check_not_restricted(app_slug: &str, record: &DatasetRecord, state: &SharedState) -> Result<(), ServiceError> {
+    let table = record.data.get("_table_id").and_then(Value::as_str).unwrap_or("");
+    for (field, holder, target) in restricting_fields(app_slug, table, state) {
+        let n = state.count_links_to(app_slug, &record.id, std::slice::from_ref(&field)).map_err(ServiceError::Internal)?;
+        if n > 0 {
+            let who = if n == 1 { singular(&holder) } else { holder.to_lowercase() };
+            let verb = if n == 1 { "still links" } else { "still link" };
+            return Err(ServiceError::ConstraintViolated(format!("{n} {who} {verb} to this {}.", singular(&target))));
+        }
+    }
+    Ok(())
 }
 
 /// The names of a table's indexed fields: marked, used by a view, or joined on.

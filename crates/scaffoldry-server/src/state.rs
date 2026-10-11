@@ -573,6 +573,14 @@ impl ServerState {
         }
     }
 
+    /// How many records point at `record_id` through any of `fields`.
+    pub fn count_links_to(&self, app_slug: &str, record_id: &str, fields: &[String]) -> Result<i64, String> {
+        match self.repository {
+            Some(ref repo) => repo.count_links_to(app_slug, record_id, fields).map_err(|e| e.to_string()),
+            None => Ok(0),
+        }
+    }
+
     /// Which of `ids` are records of this table of this app.
     pub fn existing_record_ids(&self, app_slug: &str, table_id: &str, ids: &[String]) -> Result<Vec<String>, String> {
         match self.repository {

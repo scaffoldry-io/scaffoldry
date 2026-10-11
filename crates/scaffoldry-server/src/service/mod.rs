@@ -84,6 +84,8 @@ pub enum ServiceError {
     TooLarge(String),
     /// A sort or filter names a field whose index is still being built.
     IndexBuilding(String),
+    /// A rule the app set stops the change, such as a delete while records still link to the record.
+    ConstraintViolated(String),
     Internal(String),
 }
 
@@ -123,7 +125,7 @@ impl ServiceError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::ConstraintViolated(_) => StatusCode::CONFLICT,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -140,6 +142,7 @@ impl ServiceError {
             Self::PositionFull(_) => "position_full",
             Self::TooLarge(_) => "too_large",
             Self::IndexBuilding(_) => "index_building",
+            Self::ConstraintViolated(_) => "constraint_violated",
             Self::Internal(_) => "internal",
         }
     }
@@ -153,6 +156,7 @@ impl ServiceError {
             | Self::PositionFull(msg)
             | Self::TooLarge(msg)
             | Self::IndexBuilding(msg)
+            | Self::ConstraintViolated(msg)
             | Self::Internal(msg) => msg,
             Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } => message,
         }
