@@ -327,3 +327,153 @@ pub fn convert_field(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     .map_err(retry)?;
     ctx.result(json!({ "records": done, "batch_id": batch_id }))
 }
+
+
+/// Converts every string value of a select field to its option ID.
+/// Values matching no option become blank and are counted in the result.
+/// Old values are written into record_history with system actor.
+pub fn convert_select_options(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    let app_slug = text(&payload, "app_slug")?;
+    let repo = ctx.repository();
+    let manifest = repo
+        .get_app_manifest(&app_slug)
+        .map_err(retry)?
+        .ok_or_else(|| JobError::Permanent(format!("App manifest for '{app_slug}' not found")))?;
+
+    let batch_id = uuid::Uuid::new_v4();
+    let mut total_converted: i64 = 0;
+    let mut total_blanked: i64 = 0;
+
+    for table in &manifest.tables {
+        let select_fields: Vec<scaffoldry_engine::FieldSpec> = table
+            .fields
+            .iter()
+            .filter(|f| matches!(f.field_type, FieldType::Select | FieldType::MultiSelect))
+            .cloned()
+            .collect();
+        if select_fields.is_empty() {
+            continue;
+        }
+
+        let mut write = WriteCtx::system("system");
+        write.batch_id = batch_id;
+        let indexed_names = scaffoldry_engine::indexed_fields(&manifest, &table.id);
+        write.index_fields = table.fields.iter().filter(|f| indexed_names.contains(&f.name)).cloned().collect();
+
+        let mut after: Option<String> = None;
+        loop {
+            if ctx.cancelled()? {
+                return Err(JobError::Cancelled);
+            }
+            let (a, t, from_id, w, s_fields) = (
+                app_slug.clone(),
+                table.id.clone(),
+                after.clone(),
+                write.clone(),
+                select_fields.clone(),
+            );
+
+            let (last, read, conv, blank) = repo
+                .with_client(move |c| {
+                    let mut tx = c.transaction()?;
+                    let rows = tx.query(
+                        "SELECT id, data FROM dataset_records                          WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL                            AND ($3::text IS NULL OR id > $3)                          ORDER BY id LIMIT $4 FOR UPDATE",
+                        &[&a, &t, &from_id, &100i64],
+                    )?;
+                    let mut last: Option<String> = None;
+                    let mut batch_conv = 0i64;
+                    let mut batch_blank = 0i64;
+
+                    for row in &rows {
+                        let (id, data): (String, Value) = (row.get(0), row.get(1));
+                        last = Some(id.clone());
+                        let mut new_data = data.clone();
+                        let mut changed = false;
+
+                        for f in &s_fields {
+                            let Some(val) = data.get(&f.name) else { continue };
+                            if val.is_null() { continue };
+
+                            match f.field_type {
+                                FieldType::Select => {
+                                    if let Some(s) = val.as_str() {
+                                        if f.select_options.iter().any(|o| o.id == s) {
+                                            // Already an ID
+                                            continue;
+                                        }
+                                        if let Some(opt) = f.select_options.iter().find(|o| o.label.eq_ignore_ascii_case(s) || o.label == s) {
+                                            if let Some(m) = new_data.as_object_mut() {
+                                                m.insert(f.name.clone(), Value::String(opt.id.clone()));
+                                                changed = true;
+                                                batch_conv += 1;
+                                            }
+                                        } else {
+                                            // Unknown string -> blank
+                                            if let Some(m) = new_data.as_object_mut() {
+                                                m.remove(&f.name);
+                                                changed = true;
+                                                batch_blank += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                FieldType::MultiSelect => {
+                                    if let Some(arr) = val.as_array() {
+                                        let mut new_arr = Vec::new();
+                                        let mut arr_changed = false;
+                                        for item in arr {
+                                            if let Some(s) = item.as_str() {
+                                                if f.select_options.iter().any(|o| o.id == s) {
+                                                    new_arr.push(Value::String(s.to_string()));
+                                                } else if let Some(opt) = f.select_options.iter().find(|o| o.label.eq_ignore_ascii_case(s) || o.label == s) {
+                                                    new_arr.push(Value::String(opt.id.clone()));
+                                                    arr_changed = true;
+                                                    batch_conv += 1;
+                                                } else {
+                                                    arr_changed = true;
+                                                    batch_blank += 1;
+                                                }
+                                            }
+                                        }
+                                        if arr_changed {
+                                            if let Some(m) = new_data.as_object_mut() {
+                                                if new_arr.is_empty() {
+                                                    m.remove(&f.name);
+                                                } else {
+                                                    m.insert(f.name.clone(), Value::Array(new_arr));
+                                                }
+                                                changed = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        if changed {
+                            crate::repository::update_record_in_tx(&mut tx, &a, &id, &new_data, None, &w)?;
+                        }
+                    }
+                    tx.commit()?;
+                    Ok((last, rows.len() as i64, batch_conv, batch_blank))
+                })
+                .map_err(retry)?;
+
+            total_converted += conv;
+            total_blanked += blank;
+            if last.is_some() {
+                after = last;
+            }
+            if read < 100 {
+                break;
+            }
+        }
+    }
+
+    ctx.result(json!({
+        "converted": total_converted,
+        "blanked": total_blanked,
+        "batch_id": batch_id.to_string(),
+    }))
+}

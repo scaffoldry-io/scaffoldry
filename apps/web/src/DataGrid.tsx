@@ -108,6 +108,20 @@ function formatDisplayValue(field: FieldSpec, value: unknown, tables?: AppTable[
     const num = Number(value);
     return isNaN(num) ? String(value) : num.toLocaleString();
   }
+  if (field.field_type === "Select" && field.select_options) {
+    const match = field.select_options.find((o) => (typeof o === "string" ? o : o.id) === String(value));
+    if (match) {
+      return typeof match === "string" ? match : match.label;
+    }
+  }
+  if (field.field_type === "MultiSelect" && field.select_options) {
+    const rawIds = Array.isArray(value) ? value : [String(value)];
+    const labels = rawIds.map((id) => {
+      const match = field.select_options?.find((o) => (typeof o === "string" ? o : o.id) === String(id));
+      return match ? (typeof match === "string" ? match : match.label) : String(id);
+    });
+    return labels.join(", ");
+  }
   if (Array.isArray(value)) {
     return value.join(", ");
   }
@@ -1236,11 +1250,14 @@ export function DataGrid({
                           className="w-full px-1.5 py-0.5 text-xs rounded border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
                         >
                           <option value="">Select...</option>
-                          {(field.select_options || []).map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
+                          {(field.select_options || []).map((rawOpt) => {
+                            const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                            return (
+                              <option key={opt.id} value={opt.id}>
+                                {opt.label}
+                              </option>
+                            );
+                          })}
                         </select>
                       ) : field.field_type === "MultiSelect" && isCellEditing && multiSelectOpen ? (
                         /* MultiSelect Popover */
@@ -1252,11 +1269,12 @@ export function DataGrid({
                             <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 pb-1 border-b border-slate-100 dark:border-slate-700">
                               {field.label}
                             </div>
-                            {(field.select_options || []).map((opt) => {
-                              const checked = draftMultiSelect.includes(opt);
+                            {(field.select_options || []).map((rawOpt) => {
+                              const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                              const checked = draftMultiSelect.includes(opt.id);
                               return (
                                 <label
-                                  key={opt}
+                                  key={opt.id}
                                   className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 p-1 rounded"
                                 >
                                   <input
@@ -1264,16 +1282,16 @@ export function DataGrid({
                                     checked={checked}
                                     onChange={(e) => {
                                       if (e.target.checked) {
-                                        setDraftMultiSelect((prev) => [...prev, opt]);
+                                        setDraftMultiSelect((prev) => [...prev, opt.id]);
                                       } else {
                                         setDraftMultiSelect((prev) =>
-                                          prev.filter((o) => o !== opt)
+                                          prev.filter((o) => o !== opt.id)
                                         );
                                       }
                                     }}
                                     className="rounded text-blue-600"
                                   />
-                                  <span>{opt}</span>
+                                  <span>{opt.label}</span>
                                 </label>
                               );
                             })}

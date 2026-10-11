@@ -12,7 +12,7 @@ use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::TriggerEvent;
 use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
-use scaffoldry_engine::{AppManifest, AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction, FilterOperator, IndexColumn};
+use scaffoldry_engine::{AppManifest, AutomationEngine, CompoundFilter, EngineError, FieldSpec, FieldType, FilterConjunction, FilterOperator, IndexColumn};
 use serde_json::Value;
 
 /// True when `field` of the record's table holds one record.
@@ -95,6 +95,73 @@ fn validate_links(app_slug: &str, id: Option<&str>, current: Option<&Value>, dat
     }
 }
 
+
+fn validate_select_options(
+    app_slug: &str,
+    table_id: &str,
+    data: &Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let manifest = state
+        .get_app_manifest(app_slug)
+        .or_else(|| state.engine.read().ok().and_then(|e| e.resolve_by_slug(app_slug).cloned()));
+    let Some(manifest) = manifest else { return Ok(()); };
+    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id || t.slug == table_id) else {
+        return Ok(());
+    };
+    for field in &table.fields {
+        match field.field_type {
+            FieldType::Select => {
+                if field.select_options.is_empty() {
+                    continue;
+                }
+                if let Some(val) = data.get(&field.name) {
+                    if !val.is_null() {
+                        if let Some(s) = val.as_str() {
+                            if !s.is_empty() && !field.select_options.iter().any(|o| o.id == s) {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Field '{}' has invalid option id '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            FieldType::MultiSelect => {
+                if field.select_options.is_empty() {
+                    continue;
+                }
+                if let Some(val) = data.get(&field.name) {
+                    if !val.is_null() {
+                        if let Some(arr) = val.as_array() {
+                            for item in arr {
+                                if let Some(s) = item.as_str() {
+                                    if !s.is_empty() && !field.select_options.iter().any(|o| o.id == s) {
+                                        return Err(ServiceError::BadRequest(format!(
+                                            "Field '{}' has invalid option id '{}'",
+                                            field.name, s
+                                        )));
+                                    }
+                                }
+                            }
+                        } else if let Some(s) = val.as_str() {
+                            if !s.is_empty() && !field.select_options.iter().any(|o| o.id == s) {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Field '{}' has invalid option id '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn create_record(
     caller: &AuthUser,
     origin: &Origin,
@@ -150,6 +217,7 @@ pub fn create_record(
     };
 
     let table = submitted.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    validate_select_options(app_slug, &table, &submitted.data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
         return Err(outside_scope());
     }
@@ -302,6 +370,7 @@ pub fn update_record(
 
     let new_data = strip_lookups(app_slug, &new_data, state);
     let table = new_data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    validate_select_options(app_slug, &table, &new_data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }
