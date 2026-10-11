@@ -64,7 +64,7 @@ fn link(name: &str, target: &str, cardinality: LinkCardinality, related: &str) -
 fn table(id: &str, fields: Vec<FieldSpec>, primary: &str) -> AppTable {
     AppTable {
         id: id.to_string(),
-        name: id.to_string(),
+        name: if id == "apps" { "Applications".to_string() } else { id.to_string() },
         slug: id.to_string(),
         description: None,
         icon: None,

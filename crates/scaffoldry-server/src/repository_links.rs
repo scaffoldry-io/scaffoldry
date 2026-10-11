@@ -49,18 +49,20 @@ fn lock(tx: &mut postgres::Transaction<'_>, app_slug: &str, id: &str) -> Result<
         .map(|r| (r.get(0), r.get(1), r.get(2))))
 }
 
+/// One change to a link field: `other` goes into, or out of, `field` of `record_id`.
+struct Membership<'a> {
+    record_id: &'a str,
+    field: &'a str,
+    /// True when the field holds one record.
+    one: bool,
+    other: &'a str,
+    present: bool,
+}
+
 /// Puts `other` in or takes it out of a link field of a record, without raising its version. The
 /// link rows and a history entry by the system follow, in the caller's transaction.
-fn set_membership(
-    tx: &mut postgres::Transaction<'_>,
-    app_slug: &str,
-    record_id: &str,
-    field: &str,
-    one: bool,
-    other: &str,
-    present: bool,
-    ctx: &WriteCtx,
-) -> Result<bool, postgres::Error> {
+fn set_membership(tx: &mut postgres::Transaction<'_>, app_slug: &str, m: Membership<'_>, ctx: &WriteCtx) -> Result<bool, postgres::Error> {
+    let Membership { record_id, field, one, other, present } = m;
     let Some((old, version, table)) = lock(tx, app_slug, record_id)? else { return Ok(false) };
     let mut ids = linked_ids(old.get(field));
     let has = ids.iter().any(|x| x == other);
@@ -85,7 +87,7 @@ fn set_membership(
             map.insert(field.to_string(), Value::Array(ids.iter().cloned().map(Value::String).collect()));
         }
     }
-    tx.execute("UPDATE dataset_records SET data = $3 WHERE app_slug = $1 AND id = $2", &[&app_slug, &record_id, &new])?;
+    crate::repository::set_record_data_in_tx(tx, app_slug, record_id, &new)?;
     tx.execute("DELETE FROM record_links WHERE from_record = $1 AND field = $2", &[&record_id, &field])?;
     insert_links(tx, app_slug, record_id, &new, &[field.to_string()])?;
     let changes = diff_fields(Some(&old), Some(&new), &[]);
@@ -127,10 +129,10 @@ pub(crate) fn write_record_links(
     for (spec, removed, added) in changes {
         let Some(related) = spec.related.as_deref() else { continue };
         for id in &removed {
-            set_membership(tx, app_slug, id, related, spec.related_one, record_id, false, ctx)?;
+            set_membership(tx, app_slug, Membership { record_id: id, field: related, one: spec.related_one, other: record_id, present: false }, ctx)?;
         }
         for id in &added {
-            set_membership(tx, app_slug, id, related, spec.related_one, record_id, true, ctx)?;
+            set_membership(tx, app_slug, Membership { record_id: id, field: related, one: spec.related_one, other: record_id, present: true }, ctx)?;
         }
     }
     Ok(())
@@ -157,7 +159,7 @@ pub(crate) fn delete_record_links(tx: &mut postgres::Transaction<'_>, app_slug: 
             Some((data, _, _)) => !matches!(data.get(&field), Some(Value::Array(_))),
             None => true,
         };
-        set_membership(tx, app_slug, &from, &field, one, record_id, false, ctx)?;
+        set_membership(tx, app_slug, Membership { record_id: &from, field: &field, one, other: record_id, present: false }, ctx)?;
     }
     tx.execute("DELETE FROM record_links WHERE to_record = $1", &[&record_id])?;
     tx.execute("DELETE FROM record_links WHERE from_record = $1", &[&record_id])?;
@@ -263,7 +265,7 @@ impl PostgresRepository {
                 }
             }
             if data != own {
-                tx.execute("UPDATE dataset_records SET data = $3 WHERE app_slug = $1 AND id = $2", &[&slug, &id, &data])?;
+                crate::repository::set_record_data_in_tx(&mut tx, &slug, &id, &data)?;
             }
             for field in &out_fields {
                 tx.execute("DELETE FROM record_links WHERE from_record = $1 AND field = $2", &[&id, field])?;
@@ -278,7 +280,7 @@ impl PostgresRepository {
                 if occupied {
                     continue;
                 }
-                if set_membership(&mut tx, &slug, &other, &field, one, &id, true, &ctx)? {
+                if set_membership(&mut tx, &slug, Membership { record_id: &other, field: &field, one, other: &id, present: true }, &ctx)? {
                     restored += 1;
                 }
             }

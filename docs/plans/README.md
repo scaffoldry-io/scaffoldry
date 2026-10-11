@@ -61,7 +61,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 38 | [mcp-apps.md](mcp-apps.md) | 3 | The app manifest has a published schema, pages, and size limits | **COMPLETED** |
 | 39 | [mcp-apps.md](mcp-apps.md) | 4 | An agent proposes an app change, with page source. A person approves it | **COMPLETED** |
 | 40 | [links.md](links.md) | 1 | Records link by id. A link field and its index | **COMPLETED** |
-| 41 | [links.md](links.md) | 2 | Two-way links, and what delete does to them |
+| 41 | [links.md](links.md) | 2 | Two-way links, and what delete does to them | **COMPLETED** |
 | 42 | [links.md](links.md) | 3 | Lookup, rollup, and count through links |
 | 43 | [row-scale.md](row-scale.md) | 3 | Computed values are written, not recomputed, using links |
 | 44 | [calc-graph.md](calc-graph.md) | 1 | One formula evaluator, in Rust, with a preview route |

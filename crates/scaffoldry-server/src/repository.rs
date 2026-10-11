@@ -216,6 +216,13 @@ pub(crate) struct Touched<'a> {
     pub(crate) action: &'a str,
 }
 
+/// Replaces a record's JSON without raising its version. For derived changes, such as the mirror side
+/// of a link. The caller writes the history row in the same transaction.
+pub(crate) fn set_record_data_in_tx(tx: &mut postgres::Transaction<'_>, app_slug: &str, id: &str, data: &Value) -> Result<(), postgres::Error> {
+    tx.execute("UPDATE dataset_records SET data = $3 WHERE app_slug = $1 AND id = $2", &[&app_slug, &id, data])?;
+    Ok(())
+}
+
 pub(crate) fn write_history(
     tx: &mut postgres::Transaction<'_>,
     at: Touched<'_>,
