@@ -11,6 +11,7 @@ pub mod datasets;
 pub mod discovery;
 pub mod comments;
 pub mod history;
+pub mod trash;
 pub mod framework;
 pub mod governance;
 pub mod jobs;
@@ -43,6 +44,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(apps::router())
         .merge(records::router())
         .merge(history::router())
+        .merge(trash::router())
         .merge(comments::router())
         .merge(datasets::router())
         .merge(framework::router())

@@ -9,6 +9,7 @@ pub mod repository_comments;
 pub mod repository_index;
 pub mod repository_links;
 pub mod repository_proposals;
+pub mod repository_trash;
 pub mod repository_undo;
 pub mod routes;
 pub mod service;

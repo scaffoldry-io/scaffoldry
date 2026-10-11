@@ -74,7 +74,7 @@ pub fn build_index(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 
     let (slug, table) = (t.app_slug.clone(), t.table_id.clone());
     let total: i64 = repo
-        .with_client(move |c| Ok(c.query_one("SELECT count(*) FROM dataset_records WHERE app_slug = $1 AND table_id = $2", &[&slug, &table])?.get(0)))
+        .with_client(move |c| Ok(c.query_one("SELECT count(*) FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL", &[&slug, &table])?.get(0)))
         .map_err(retry)?;
     let (mut after, mut done) = resume_point(ctx);
     loop {

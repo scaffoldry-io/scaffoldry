@@ -3,7 +3,7 @@
 use crate::repository_undo::{UndoOutcome, UndoTable};
 use crate::service::access::{authorize_app, AppAction};
 use crate::service::history::{write_ctx, Origin};
-use crate::service::records::{protected_fields_of, table_fields_lenient};
+use crate::service::records::table_fields_lenient;
 use crate::service::ServiceError;
 use crate::state::{AuthUser, DatasetRecord, SharedState};
 use serde_json::{json, Value};
@@ -41,7 +41,7 @@ pub fn undo_batch(caller: &AuthUser, origin: &Origin, app_slug: &str, batch_id: 
         let mut ctx = write_ctx(&caller.eppn, origin, app_slug, &json!({ "_table_id": entry.table_id }), state);
         ctx.batch_id = new_batch;
         ctx.reverts_batch = Some(orig);
-        tables.insert(entry.table_id.clone(), UndoTable { ctx, protected: protected_fields_of(app_slug, &entry.table_id, state) });
+        tables.insert(entry.table_id.clone(), UndoTable { ctx });
     }
     match repo.undo_batch(app_slug, batch_id, tables).map_err(internal)? {
         UndoOutcome::Undone { records } => Ok(json!({ "batch_id": new_batch, "reverts_batch": orig, "records": records })),

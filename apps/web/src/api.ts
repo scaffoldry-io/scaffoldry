@@ -372,6 +372,25 @@ export const undoBatch = (appSlug: string, batchId: string): Promise<{ batch_id:
 export const restoreRecord = (appSlug: string, recordId: string, body: { to_version: number; fields?: string[]; version: number }) =>
   request<Record<string, unknown>>(`/apps/${appSlug}/records/${recordId}/restore`, { method: "POST", body: JSON.stringify(body) });
 
+export interface TrashEntry {
+  record_id: string;
+  table_id: string;
+  title: string;
+  deleted_by: string;
+  deleted_by_name: string;
+  deleted_at: string;
+  delete_batch: string;
+  days_left: number;
+}
+
+/** What is in the trash of an app, newest first. */
+export const listTrash = (appSlug: string, cursor?: string): Promise<{ entries: TrashEntry[]; next_cursor: string | null }> =>
+  request(`/apps/${appSlug}/trash${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+
+/** Brings back one record, or the whole batch when given a delete batch id. */
+export const restoreTrash = (appSlug: string, what: string): Promise<{ restored: number; batch_id: string }> =>
+  request(`/apps/${appSlug}/trash/${encodeURIComponent(what)}/restore`, { method: "POST", body: JSON.stringify({}) });
+
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {
