@@ -391,6 +391,26 @@ export const listTrash = (appSlug: string, cursor?: string): Promise<{ entries: 
 export const restoreTrash = (appSlug: string, what: string): Promise<{ restored: number; batch_id: string }> =>
   request(`/apps/${appSlug}/trash/${encodeURIComponent(what)}/restore`, { method: "POST", body: JSON.stringify({}) });
 
+export interface LinkOption {
+  id: string;
+  label: string;
+  secondary: string | null;
+}
+
+/** The records a link may point at: ids and labels only, matched on the query. */
+export const listLinkOptions = (
+  appSlug: string,
+  tableId: string,
+  q: string,
+  cursor?: string,
+): Promise<{ options: LinkOption[]; next_cursor: string | null }> => {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return request(`/apps/${appSlug}/tables/${encodeURIComponent(tableId)}/link-options${query ? `?${query}` : ""}`);
+};
+
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {
