@@ -28,6 +28,7 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/automations/simulate", post(simulate_app_automation))
         .route("/apps/{slug}/processes", get(list_app_processes))
         .route("/apps/{slug}/processes/{id}/decide", post(decide_app_process))
+        .route("/apps/{slug}/access/preview", post(preview_app_access))
 }
 
 async fn create_app_in_workspace(
@@ -463,4 +464,20 @@ async fn decide_app_process(
         .map_err(|_| ServiceError::internal("The decision stopped before it finished").into_pair())?
         .map(Json)
         .map_err(ServiceError::into_pair)
+}
+
+
+async fn preview_app_access(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Json(payload): Json<crate::service::scope::AccessPreviewInput>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+
+    let output = crate::service::scope::preview_access(&user, &slug, payload, &state)
+        .map_err(ServiceError::into_pair)?;
+
+    Ok((StatusCode::OK, Json(serde_json::to_value(output).unwrap())))
 }

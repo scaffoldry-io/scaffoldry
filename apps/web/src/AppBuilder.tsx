@@ -26,6 +26,7 @@ import { RecordDetailDrawer } from "./RecordDetailDrawer";
 import { CsvImportModal } from "./CsvImportModal";
 import { AddViewModal } from "./AddViewModal";
 import { CreateTableModal } from "./CreateTableModal";
+import { AccessRulesTab } from "./AccessRulesTab";
 import { LinkedFieldModal } from "./LinkedFieldModal";
 import {
   applyCompoundFilter,
@@ -52,7 +53,8 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   onOpenIntakeForm,
   onSaveApp,
 }) => {
-  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings">("pages");
+  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings" | "access">("pages");
+  const [settingsTab, setSettingsTab] = useState<"general" | "access">("general");
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [activePageId, setActivePageId] = useState<string>("page-overview");
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
@@ -2671,55 +2673,107 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
         {activeTab === "settings" && (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-4xl mx-auto space-y-6">
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs space-y-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  Multi-Table Storage &amp; Vanity Routing
-                </h3>
-                <div className="grid grid-cols-2 gap-4 text-xs">
-                  <div>
-                    <label className="font-semibold text-slate-600 dark:text-slate-300">Custom Domain Host</label>
-                    <input
-                      type="text"
-                      defaultValue={app.customDomain}
-                      className="mt-1 w-full px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-semibold text-slate-600 dark:text-slate-300">Published URL Path</label>
-                    <input
-                      type="text"
-                      readOnly
-                      value={`/app/${app.slug}`}
-                      className="mt-1 w-full px-3 py-1.5 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 font-mono text-slate-500"
-                    />
-                  </div>
-                </div>
+              <div className="flex items-center gap-4 border-b border-slate-200 dark:border-slate-800 pb-2">
+                <button
+                  type="button"
+                  data-testid="tab-settings-general"
+                  onClick={() => setSettingsTab("general")}
+                  className={`text-xs font-bold pb-1 border-b-2 cursor-pointer ${
+                    settingsTab === "general"
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-slate-500"
+                  }`}
+                >
+                  General Settings
+                </button>
+                <button
+                  type="button"
+                  data-testid="tab-who-sees-what"
+                  onClick={() => setSettingsTab("access")}
+                  className={`text-xs font-bold pb-1 border-b-2 cursor-pointer ${
+                    settingsTab === "access"
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-slate-500"
+                  }`}
+                >
+                  Who sees what
+                </button>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs space-y-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  Relational Lattice Topology
-                </h3>
-                <div className="space-y-2 text-xs">
-                  {relationships.map((rel) => (
-                    <div
-                      key={rel.id}
-                      className="p-3 rounded bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
-                    >
+              {settingsTab === "access" ? (
+                <AccessRulesTab
+                  app={app}
+                  tables={tables}
+                  onSaveProposal={(updated) => {
+                    if (onSaveApp) onSaveApp(updated);
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs space-y-4">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Multi-Table Storage &amp; Vanity Routing
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4 text-xs">
                       <div>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{rel.name}</span>
-                        <p className="text-slate-500 text-[11px]">
-                          Foreign Key Link: {rel.source_table_id}.{rel.source_field} → {rel.target_table_id}.{rel.display_field}
-                        </p>
+                        <label className="font-semibold text-slate-600 dark:text-slate-300">Custom Domain Host</label>
+                        <input
+                          type="text"
+                          defaultValue={app.customDomain}
+                          className="mt-1 w-full px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono"
+                        />
                       </div>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
-                        {rel.relationship_type}
-                      </span>
+                      <div>
+                        <label className="font-semibold text-slate-600 dark:text-slate-300">Published URL Path</label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={`/app/${app.slug}`}
+                          className="mt-1 w-full px-3 py-1.5 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 font-mono text-slate-500"
+                        />
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs space-y-4">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Relational Lattice Topology
+                    </h3>
+                    <div className="space-y-2 text-xs">
+                      {relationships.map((rel) => (
+                        <div
+                          key={rel.id}
+                          className="p-3 rounded bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
+                        >
+                          <div>
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{rel.name}</span>
+                            <p className="text-slate-500 text-[11px]">
+                              Foreign Key Link: {rel.source_table_id}.{rel.source_field} → {rel.target_table_id}.{rel.display_field}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
+                            {rel.relationship_type}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
+          </div>
+        )}
+
+        {/* TAB 5: WHO SEES WHAT / ACCESS RULES */}
+        {activeTab === "access" && (
+          <div className="flex-1 overflow-y-auto">
+            <AccessRulesTab
+              app={app}
+              tables={tables}
+              onSaveProposal={(updated) => {
+                if (onSaveApp) onSaveApp(updated);
+              }}
+            />
           </div>
         )}
       </div>

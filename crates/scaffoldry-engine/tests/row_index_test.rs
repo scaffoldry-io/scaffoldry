@@ -35,6 +35,7 @@ fn manifest(fields: Vec<FieldSpec>) -> AppManifest {
         views: vec![],
         ceds_mappings: Default::default(),
         pages: vec![],
+        access: Default::default(),
     }
 }
 

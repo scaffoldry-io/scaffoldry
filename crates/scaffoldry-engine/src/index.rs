@@ -70,6 +70,11 @@ pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
             }
         }
     }
+    // Fields used in access row rules join the indexed set.
+    for rule in m.access.rows.iter().filter(|r| r.table_id == table_id) {
+        out.extend(rule.visible_when.fields());
+    }
+
     // A name that is not a field of the table is not indexed. `validate_manifest` reports it.
     out.retain(|name| table.fields.iter().any(|f| &f.name == name));
     out

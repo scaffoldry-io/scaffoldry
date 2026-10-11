@@ -89,6 +89,7 @@ fn manifest(slug: &str, formula: &str, code: FieldType) -> AppManifest {
         views: vec![],
         ceds_mappings: Default::default(),
         pages: vec![],
+        access: Default::default(),
     }
 }
 

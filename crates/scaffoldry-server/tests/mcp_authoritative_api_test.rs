@@ -233,6 +233,7 @@ async fn test_mcp_record_tools_allow_and_deny_by_department() {
             relationships: vec![],
             views: vec![],
             pages: vec![],
+        access: Default::default(),
             ceds_mappings: std::collections::HashMap::new(),
         };
         let mut engine = state_for_setup.engine.write().unwrap();

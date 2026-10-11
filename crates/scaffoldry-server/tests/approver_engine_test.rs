@@ -214,6 +214,7 @@ async fn world() -> (World, People) {
         relationships: vec![],
         views: vec![],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: Default::default(),
     }).unwrap();
 
