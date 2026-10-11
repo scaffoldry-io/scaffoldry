@@ -136,6 +136,11 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "This field is still being calculated. It is 63% done.", next: "Try again when it has finished." },
       ],
       [
+        "view_as_read_only",
+        new ApiError(403, "You are viewing as someone else. This view is read-only.", { code: "view_as_read_only" }),
+        { message: "You are viewing as someone else. This view is read-only.", next: "Exit the view to make changes." },
+      ],
+      [
         "status 0",
         new ApiError(0, "Failed to fetch"),
         { message: "The server is not reachable.", next: "Check the connection and try again." },

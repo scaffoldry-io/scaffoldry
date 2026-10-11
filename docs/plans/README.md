@@ -77,7 +77,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column | **COMPLETED** |
 | 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy | **COMPLETED** |
 | 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected | **COMPLETED** |
-| 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only |
+| 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only | **COMPLETED** |
 
 ### Wave 2 — the data platform
 

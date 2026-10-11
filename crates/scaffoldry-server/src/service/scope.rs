@@ -104,7 +104,18 @@ fn workspace_of(app_slug: &str, state: &SharedState) -> Option<String> {
 }
 
 /// What `caller` may reach on `table` for `op`. A Platform Admin skips every rule.
+///
+/// In view-as the rights are the target's intersected with the viewer's, so the result never shows
+/// more than the viewer could see.
 pub fn scope_of(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &SharedState) -> RowScope {
+    let own = scope_for(caller, app_slug, table, op, state);
+    match &caller.view_as_by {
+        Some(viewer) => own.and(scope_for(viewer, app_slug, table, op, state)),
+        None => own,
+    }
+}
+
+fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &SharedState) -> RowScope {
     let rules = rules_of(app_slug, state);
     if rules.is_empty() {
         return RowScope::AllowAll;
@@ -209,7 +220,16 @@ pub fn set_column_rules(app_slug: &str, rules: Vec<scaffoldry_core::access::Colu
 }
 
 /// The fields of `table` held back from the caller by the app's column rules.
+/// In view-as, what either the target or the viewer may not see is held back.
 pub fn field_visibility_of(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> scaffoldry_core::access::FieldVisibility {
+    let own = field_visibility_for(caller, app_slug, table, state);
+    match &caller.view_as_by {
+        Some(viewer) => own.union(field_visibility_for(viewer, app_slug, table, state)),
+        None => own,
+    }
+}
+
+fn field_visibility_for(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> scaffoldry_core::access::FieldVisibility {
     let rules = column_rules_of(app_slug, state);
     if rules.is_empty() {
         return Default::default();
@@ -282,6 +302,7 @@ pub fn preview_access(
             role_title: String::new(),
             department: String::new(),
             affiliation: String::new(),
+        view_as_by: None,
         };
         person_of(&dummy, state)
     } else {
