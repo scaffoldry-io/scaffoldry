@@ -91,7 +91,14 @@ fn sentence(m: &AppManifest, path: &[NodeId]) -> String {
 
 /// The graph of the manifest, or the first cycle in it.
 pub fn build_graph(m: &AppManifest) -> Result<Graph, CycleError> {
-    let nodes: Vec<NodeId> = m.tables.iter().flat_map(|t| t.fields.iter().map(move |f| NodeId { table: t.id.clone(), field: f.name.clone() })).collect();
+    // A field name used twice is one node. The validator reports the duplicate.
+    let mut seen_nodes: HashSet<NodeId> = HashSet::new();
+    let nodes: Vec<NodeId> = m
+        .tables
+        .iter()
+        .flat_map(|t| t.fields.iter().map(move |f| NodeId { table: t.id.clone(), field: f.name.clone() }))
+        .filter(|n| seen_nodes.insert(n.clone()))
+        .collect();
     let known: HashSet<&NodeId> = nodes.iter().collect();
     // `reads_of[n]` is what n reads. `read_by[n]` is the other direction.
     let mut reads_of: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
@@ -148,10 +155,12 @@ pub fn build_graph(m: &AppManifest) -> Result<Graph, CycleError> {
             stack.push(next);
         }
     }
-    // Unreachable: a leftover node always reads another leftover node.
-    let path = vec![nodes.iter().find(|n| !done.contains(n)).cloned().expect("a node is left over")];
-    let text = sentence(m, &path);
-    Err(CycleError { path, text })
+    // A leftover node always reads another leftover node, so the walk above finds a cycle. If it ever
+    // did not, the graph is still usable: the leftovers run last, in the order declared.
+    let leftover: Vec<NodeId> = nodes.iter().filter(|n| !done.contains(n)).cloned().collect();
+    let mut order = order.clone();
+    order.extend(leftover);
+    Ok(Graph { order, read_by })
 }
 
 impl Graph {

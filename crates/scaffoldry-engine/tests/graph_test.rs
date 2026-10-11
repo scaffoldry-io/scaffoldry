@@ -132,3 +132,13 @@ fn a_lookup_through_a_removed_link_fails_validation() {
     // And building the graph over it does not panic.
     let _ = build_graph(&removed);
 }
+
+// 5. A field name used twice is one node. The validator reports it, and the graph does not panic.
+#[test]
+fn a_duplicate_field_name_does_not_break_the_graph() {
+    let m = manifest(vec![table("t", vec![field("a", "A"), field("a", "A again"), formula("b", "B", "{a} + 1")])]);
+    let graph = build_graph(&m).unwrap();
+    assert_eq!(graph.order("t"), vec!["a", "b"]);
+    let failures = validate_manifest(&m).unwrap_err();
+    assert!(failures.iter().any(|p| p.contains("used twice")), "{failures:?}");
+}
