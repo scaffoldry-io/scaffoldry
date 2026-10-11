@@ -347,6 +347,7 @@ Settled. These were open and are now decided. Each is written into the brief nam
 | A proposer may approve their own change when no check is flagged and they own or administer the workspace | `mcp-apps.md` phase 4 |
 | PostgreSQL is the only source of truth. Any number of server instances may serve one database. Caches are refreshed by a counter read on every request, not by `LISTEN` and `NOTIFY` | `stateless-server.md` |
 | A test has a database of its own. No test changes the process environment | `stateless-server.md` phase 1 |
+| CI runs its checks as parallel jobs behind one required check, `validate`. Three steps wait for planned work and switch on by themselves: parallel tests when `TestDb` exists, OSCAL validation when code reads `OSCAL_OUT` or `OSCAL_CATALOG_OUT`, and the `million_rows` test when it exists. Agents do not edit `ci.yml` | `.github/workflows/ci.yml` |
 | Institutional rules are kept as an OSCAL catalog of sentences, each citing a stored passage. A person's own agent proposes them. A different person publishes them. Scaffoldry runs no model | `policy-library.md` |
 | The platform fetches web sources itself, through the outbound allowlist. It does not extract text from a PDF | `policy-library.md` phase 5 |
 | A change has a FIPS 199 tier from the checks it raises. A matrix says who decides. The institution sets it, units only tighten it, and a second person confirms every change to it | `authority.md` |
@@ -369,4 +370,3 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Whether Scaffoldry is also offered as a hosted service, and whether that is one stack for each institution | Self-hosting stays supported. Nothing assumes more than one institution in a database. `stateless-server.md` removes the one thing that blocks a second instance |
 | A full export of one institution in documented formats, and whether process definitions are also exported as BPMN XML | Exports are per app and capped. Not built |
 | Who holds the positions the first matrix names, such as a privacy officer | The matrix has no rows and behaves as the platform does today |
-| Removing `--test-threads=1` from `ci.yml`, adding the OSCAL catalog validation step, and adding a step that runs the `million_rows` test | Johann, after `stateless-server.md` phase 1, `policy-library.md` phase 4, and `row-scale.md` phase 6. Agents may not edit `ci.yml` |

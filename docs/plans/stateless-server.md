@@ -100,7 +100,7 @@ A database per test, in `crates/scaffoldry-server/tests/common/mod.rs`:
 1. `TestDb::new()` connects to the server in `DATABASE_URL`, runs `CREATE DATABASE scaffoldry_test_<uuid>`, and returns its URL. `Drop` runs `DROP DATABASE ... WITH (FORCE)`.
 2. `TestDb::app()` returns a router on a fresh `ServerState::connect`. `TestDb::second_app()` returns another router, on another `ServerState`, on the same database. That pair is the two-instance test.
 3. Move every integration test to `TestDb`. Delete the shared `build_app()` helpers and every `std::env::set_var("DATABASE_URL", ...)`. The test for an unreachable database calls `ServerState::connect` with a bad URL.
-4. Say in the pull request that `cargo test` now passes without `--test-threads=1`, and paste three consecutive runs. `ci.yml` is not yours to edit. Johann removes the flag.
+4. Name the struct `TestDb` and keep it in `tests/common/`. CI looks for it there and runs `cargo test` without `--test-threads=1` once it exists. Paste three consecutive passing runs of plain `cargo test`.
 
 The scan test, `crates/scaffoldry-server/tests/stateless_scan_test.rs`. It reads the source files as text.
 

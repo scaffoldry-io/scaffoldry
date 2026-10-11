@@ -372,7 +372,7 @@ The export holds one `implemented-requirement` per control. Each carries the `im
 
 Normalize control ids with `catalog::normalize` from `oscal-catalog.md` phase 1. Control titles, validation of control ids, baselines, and coverage are `oscal-catalog.md` phase 2. It edits the requirements routes and the OSCAL tab built here.
 
-Read `governance/scripts/validate-oscal.py` and `governance/schema/oscal_complete_schema-1.1.2.json`. Check that `implementation-status` is a defined property name in OSCAL 1.1.2. If it is not, use a prop in the Scaffoldry namespace and say so. Add a test that writes the export to the path in `OSCAL_OUT` when set. Add a step to `ci.yml` that sets it, runs that test, and runs `validate-oscal.py` on the file. If the script takes no path argument, add an optional first argument.
+Read `governance/scripts/validate-oscal.py` and `governance/schema/oscal_complete_schema-1.1.2.json`. Check that `implementation-status` is a defined property name in OSCAL 1.1.2. If it is not, use a prop in the Scaffoldry namespace and say so. Add a test that writes the export to the path in `OSCAL_OUT` when that variable is set. CI sets it for every test run, and validates the file with `validate-oscal.py` once any code reads the variable. Do not edit `ci.yml`.
 
 Frontend: `admin/PolicyOscal.tsx`. Delete `INITIAL_SOURCE_RULES`. Five tabs:
 

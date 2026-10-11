@@ -277,7 +277,7 @@ Two more are measured and reported with no limit, because a person editing a gri
 | Update one field on each of 1,000 records, the way a paste or a fill-down would | Total time and records per second. Say which route was used. If no route takes more than one record, say so and time 1,000 single updates in sequence |
 | Change one non-indexed field on a record while 20 other writers update other records | The slowest of 200 |
 
-Each read also passes the `Seq Scan` check. Run the test yourself with `cargo test --release -- --ignored million_rows` and paste the output. `ci.yml` is not yours to edit: say in the pull request that it needs a step that runs this command. If a limit fails and the query plan is correct, do not raise the limit. Paste the plan and the timings and stop. What happens next is Johann's decision, listed under "Open decisions" in the README.
+Each read also passes the `Seq Scan` check. Name the test `million_rows`. CI has a job that runs `cargo test --release -- --ignored million_rows` once a test of that name exists. Run it yourself as well and paste the output. If a limit fails and the query plan is correct, do not raise the limit. Paste the plan and the timings and stop. What happens next is Johann's decision, listed under "Open decisions" in the README.
 
 Write the printed tables to `docs/measurements/row-scale.md`, with the date, the PostgreSQL version, and the machine's core count and memory. Those numbers replace the estimate in this brief.
 
