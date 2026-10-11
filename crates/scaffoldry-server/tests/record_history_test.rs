@@ -80,6 +80,7 @@ async fn fixture() -> Fixture {
             custom_domain_verified: false,
             views: vec![AppView::table("main", "Main", ViewType::Table, fields())],
             pages: vec![],
+        access: Default::default(),
             ceds_mappings: Default::default(),
             tables: vec![AppTable {
                 id: "t1".to_string(),

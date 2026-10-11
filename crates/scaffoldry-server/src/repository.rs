@@ -1317,6 +1317,25 @@ impl PostgresRepository {
         })
     }
 
+    pub fn count_scoped_records(&self, app_slug: &str, table_id: &str, scope: Option<&ScopePlan>) -> Result<u64, RepositoryError> {
+        let (slug, table) = (app_slug.to_string(), table_id.to_string());
+        let mut params = vec![SqlParam::Text(slug), SqlParam::Text(table)];
+        let scope_clause = match scope {
+            Some(s) => s.clause("id", app_slug, table_id, &mut params),
+            None => String::new(),
+        };
+        let sql = format!(
+            "SELECT count(*) FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL{scope_clause}"
+        );
+        self.with_client(move |client| {
+            let boxed = to_sql_params(params);
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+            let row = client.query_one(&sql, &refs)?;
+            let count: i64 = row.get(0);
+            Ok(count as u64)
+        })
+    }
+
     pub fn get_record(&self, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, RepositoryError> {
         let (slug, id) = (app_slug.to_string(), id.to_string());
         self.with_client(move |client| {

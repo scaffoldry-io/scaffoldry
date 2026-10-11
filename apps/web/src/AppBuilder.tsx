@@ -26,6 +26,7 @@ import { RecordDetailDrawer } from "./RecordDetailDrawer";
 import { CsvImportModal } from "./CsvImportModal";
 import { AddViewModal } from "./AddViewModal";
 import { CreateTableModal } from "./CreateTableModal";
+import { AccessRulesTab } from "./AccessRulesTab";
 import { LinkedFieldModal } from "./LinkedFieldModal";
 import {
   applyCompoundFilter,
@@ -52,7 +53,8 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   onOpenIntakeForm,
   onSaveApp,
 }) => {
-  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings">("pages");
+  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings" | "access">("pages");
+  const [settingsTab, setSettingsTab] = useState<"general" | "access">("general");
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [activePageId, setActivePageId] = useState<string>("page-overview");
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);

@@ -195,6 +195,7 @@ async fn test_admin_routes_enforce_platform_admin_and_auth() {
 #[tokio::test]
 async fn test_overview_counts_match_fixture() {
     let state = Arc::new(ServerState::new().expect("server state"));
+    state.process_instances.write().unwrap().clear();
 
     // 1. Setup 2 units: root and a child department
     let root_id = Uuid::new_v4();

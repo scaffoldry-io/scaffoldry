@@ -99,6 +99,7 @@ fn manifest() -> AppManifest {
             vec![field("title", false), field("notes", false), field_in("card", &["pci"])],
         )],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: Default::default(),
         tables: vec![],
         relationships: vec![],

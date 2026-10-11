@@ -189,6 +189,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         relationships: vec![],
         views: vec![],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: std::collections::HashMap::new(),
     };
     state.persist_app_manifest(manifest.clone()).expect("Persist manifest");

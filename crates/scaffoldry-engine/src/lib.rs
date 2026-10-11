@@ -8,6 +8,8 @@ pub mod manifest;
 pub mod sensitivity;
 pub mod formula;
 pub use formula::*;
+pub use scaffoldry_core::access::AccessManifest;
+pub use manifest::detect_access_problems;
 
 pub use automation::*;
 pub use index::{index_column, index_rows, index_value, indexed_fields, parse_instant, IndexColumn, IndexCols, MAX_INDEXED_FIELDS};
@@ -609,6 +611,8 @@ pub struct AppManifest {
     pub ceds_mappings: HashMap<String, String>,
     #[serde(default)]
     pub pages: Vec<AppPage>,
+    #[serde(default)]
+    pub access: AccessManifest,
 }
 
 /// A screen of an app: a built-in view, or a custom page an agent wrote.

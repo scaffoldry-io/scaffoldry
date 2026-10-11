@@ -254,9 +254,88 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
         }
     }
 
+    for rule in &m.access.rows {
+        let Some(table) = table_of(m, &rule.table_id) else {
+            problems.push(format!("access rule '{}': table '{}' does not exist", rule.id, rule.table_id));
+            continue;
+        };
+        for f_name in rule.visible_when.fields() {
+            let Some(f) = table.fields.iter().find(|field| field.name == f_name) else {
+                problems.push(format!("table '{}': access rule '{}' names field '{f_name}', which does not exist", table.id, rule.id));
+                continue;
+            };
+            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup) {
+                problems.push(format!("table '{}': access rule '{}' uses non-indexable field '{f_name}'", table.id, rule.id));
+            }
+        }
+        if rule.visible_when.node_count() > 20 {
+            problems.push(format!("table '{}': access rule '{}' predicate has {} nodes, the limit is 20", table.id, rule.id, rule.visible_when.node_count()));
+        }
+        if rule.visible_when.depth() > 4 {
+            problems.push(format!("table '{}': access rule '{}' predicate has depth {}, the limit is 4", table.id, rule.id, rule.visible_when.depth()));
+        }
+    }
+    for rule in &m.access.columns {
+        let Some(table) = table_of(m, &rule.table_id) else {
+            problems.push(format!("column rule '{}': table '{}' does not exist", rule.id, rule.table_id));
+            continue;
+        };
+        for f_name in &rule.fields {
+            if !table.fields.iter().any(|f| &f.name == f_name) {
+                problems.push(format!("table '{}': column rule '{}' names field '{f_name}', which does not exist", table.id, rule.id));
+            }
+        }
+        if let Some(msg) = &rule.message {
+            if msg.len() > 200 {
+                problems.push(format!("table '{}': column rule '{}' message is {} characters, the limit is 200", table.id, rule.id, msg.len()));
+            }
+        }
+    }
+
     if problems.is_empty() {
         Ok(())
     } else {
         Err(problems)
     }
 }
+
+pub fn detect_access_problems(m: &AppManifest) -> Vec<String> {
+    let mut problems = Vec::new();
+    for rule in &m.access.rows {
+        if rule.visible_when.is_never_true() {
+            problems.push(format!("rule '{}': never_true", rule.id));
+            if rule.except_roles.is_empty() && rule.ops.contains(&scaffoldry_core::access::RowOp::Read) {
+                problems.push(format!("table '{}': hides_all", rule.table_id));
+            }
+        }
+        let Some(table) = table_of(m, &rule.table_id) else {
+            problems.push(format!("rule '{}': field_missing", rule.id));
+            continue;
+        };
+        for f_name in rule.visible_when.fields() {
+            let Some(f) = table.fields.iter().find(|field| field.name == f_name) else {
+                problems.push(format!("rule '{}': field_missing", rule.id));
+                continue;
+            };
+            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup) {
+                problems.push(format!("rule '{}': unsupported_field", rule.id));
+            }
+        }
+    }
+    for rule in &m.access.columns {
+        let Some(table) = table_of(m, &rule.table_id) else {
+            problems.push(format!("rule '{}': field_missing", rule.id));
+            continue;
+        };
+        for f_name in &rule.fields {
+            if !table.fields.iter().any(|f| &f.name == f_name) {
+                problems.push(format!("rule '{}': field_missing", rule.id));
+            }
+        }
+        if rule.mode == scaffoldry_core::access::ColumnMode::Hidden && rule.fields.len() >= table.fields.len() && rule.unless.is_empty() {
+            problems.push(format!("table '{}': hides_all", rule.table_id));
+        }
+    }
+    problems
+}
+
