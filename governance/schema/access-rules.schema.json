@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/access-rules.schema.json",
+  "title": "AccessRowRules",
+  "description": "Row rules of an app. A rule says which rows a person sees for the listed operations. The predicate is read by one Rust evaluator and compiled to SQL by one compiler, and a test requires them to agree.",
+  "type": "array",
+  "items": { "$ref": "#/$defs/RowRule" },
+  "$defs": {
+    "RowRule": {
+      "type": "object",
+      "required": ["id", "table_id", "ops", "visible_when"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "table_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "ops": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["read", "create", "update", "delete"] }
+        },
+        "visible_when": { "$ref": "#/$defs/Pred" },
+        "except_roles": { "type": "array", "items": { "enum": ["viewer", "commenter", "editor", "admin", "owner"] } },
+        "message": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    },
+    "Pred": {
+      "oneOf": [
+        { "const": "true" },
+        {
+          "type": "object",
+          "required": ["cmp"],
+          "additionalProperties": false,
+          "properties": {
+            "cmp": {
+              "type": "object",
+              "required": ["field", "op"],
+              "additionalProperties": false,
+              "properties": {
+                "field": {
+                  "description": "A field of the table, or person.{attribute} for a value about the person.",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "op": { "enum": ["eq", "ne", "in", "is_empty", "is_not_empty", "gt", "lt"] },
+                "value": { "$ref": "#/$defs/Operand" }
+              }
+            }
+          }
+        },
+        { "type": "object", "required": ["and"], "additionalProperties": false, "properties": { "and": { "type": "array", "items": { "$ref": "#/$defs/Pred" } } } },
+        { "type": "object", "required": ["or"], "additionalProperties": false, "properties": { "or": { "type": "array", "items": { "$ref": "#/$defs/Pred" } } } },
+        { "type": "object", "required": ["not"], "additionalProperties": false, "properties": { "not": { "$ref": "#/$defs/Pred" } } }
+      ]
+    },
+    "Operand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["literal"],
+          "additionalProperties": false,
+          "properties": {
+            "literal": {
+              "description": "A text literal is at most 128 characters, the same as the index.",
+              "oneOf": [
+                { "type": ["string", "number", "boolean", "null"], "maxLength": 128 },
+                { "type": "array", "items": { "type": ["string", "number", "boolean"], "maxLength": 128 } }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["person"],
+          "additionalProperties": false,
+          "properties": { "person": { "enum": ["address", "department", "affiliation", "unit_ids", "position_keys", "group_ids"] } }
+        }
+      ]
+    }
+  }
+}
