@@ -566,6 +566,26 @@ pub(crate) fn computed_specs_of(app_slug: &str, state: &SharedState) -> Vec<crat
     out
 }
 
+/// The formulas of a table, split by when they are computed. A formula that names a lookup field is
+/// computed when a page is read, because the lookup is. Every other formula is stored when its
+/// record is written. Each list holds `(field, expression)` in field order.
+pub(crate) fn formula_specs_of(app_slug: &str, table_id: &str, state: &SharedState) -> (Vec<(String, String)>, Vec<(String, String)>) {
+    use scaffoldry_engine::FieldType;
+    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
+    let lookups: Vec<&str> = fields.iter().filter(|f| f.field_type == FieldType::Lookup).map(|f| f.name.as_str()).collect();
+    let (mut at_write, mut at_read) = (Vec::new(), Vec::new());
+    for f in fields.iter().filter(|f| f.field_type == FieldType::Formula) {
+        let Some(expression) = f.formula_expression.clone() else { continue };
+        let refs = scaffoldry_engine::formula_field_refs(&expression).unwrap_or_default();
+        if refs.iter().any(|r| lookups.contains(&r.as_str())) {
+            at_read.push((f.name.clone(), expression));
+        } else {
+            at_write.push((f.name.clone(), expression));
+        }
+    }
+    (at_write, at_read)
+}
+
 /// A lookup is never stored: it is added to the rows of a page when they are read. A value a caller sends
 /// under a lookup field's name is dropped.
 fn strip_lookups(app_slug: &str, data: &Value, state: &SharedState) -> Value {
@@ -575,6 +595,9 @@ fn strip_lookups(app_slug: &str, data: &Value, state: &SharedState) -> Value {
     if let Some(map) = out.as_object_mut() {
         for f in fields.iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::Lookup) {
             map.remove(&f.name);
+        }
+        for (name, _) in formula_specs_of(app_slug, table, state).1 {
+            map.remove(&name);
         }
     }
     out
@@ -611,6 +634,15 @@ fn fill_lookups(caller: &AuthUser, app_slug: &str, rows: &mut [DatasetRecord], s
                 let shown = if values.len() == 1 { values.remove(0) } else { Value::Array(values) };
                 if let Some(map) = rows[*i].data.as_object_mut() {
                     map.insert(f.name.clone(), shown);
+                }
+            }
+        }
+        // A formula over a lookup is added now that the lookups are in the rows.
+        for (name, expression) in formula_specs_of(app_slug, &table, state).1 {
+            for i in &positions {
+                let value = scaffoldry_engine::evaluate_formula(&expression, &rows[*i].data);
+                if let (false, Some(map)) = (value.is_null(), rows[*i].data.as_object_mut()) {
+                    map.insert(name.clone(), value);
                 }
             }
         }
