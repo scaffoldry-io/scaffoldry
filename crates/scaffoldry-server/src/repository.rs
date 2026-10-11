@@ -107,6 +107,18 @@ impl ActorKind {
 /// Records read, records raised, and the last `(created_at, id)` of a flag catch-up batch.
 pub type FlagBatch = (usize, u64, Option<(String, String)>);
 
+static PAGE_STATEMENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many statements this process has run to read a page of records. A test reads it before and
+/// after a request to show that a page costs a fixed number of statements.
+pub fn page_statements() -> u64 {
+    PAGE_STATEMENTS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub(crate) fn count_page_statement() {
+    PAGE_STATEMENTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// The attribution of one record write. The history row is built from it, in the same
 /// transaction as the write.
 #[derive(Debug, Clone)]
@@ -126,6 +138,8 @@ pub struct WriteCtx {
     pub links: Vec<crate::repository_links::LinkSpec>,
     /// Every `Rollup` and `Count` of the app. A write that touches the records they go through recomputes them.
     pub computed: Vec<crate::repository_links::ComputedSpec>,
+    /// The formulas of the record's table that are stored, as `(field, expression)`, in field order.
+    pub formulas: Vec<(String, String)>,
 }
 
 impl WriteCtx {
@@ -140,6 +154,7 @@ impl WriteCtx {
             index_fields: Vec::new(),
             links: Vec::new(),
             computed: Vec::new(),
+            formulas: Vec::new(),
         }
     }
 
@@ -224,6 +239,20 @@ pub(crate) struct Touched<'a> {
 pub(crate) fn set_record_data_in_tx(tx: &mut postgres::Transaction<'_>, app_slug: &str, id: &str, data: &Value) -> Result<(), postgres::Error> {
     tx.execute("UPDATE dataset_records SET data = $3 WHERE app_slug = $1 AND id = $2", &[&app_slug, &id, data])?;
     Ok(())
+}
+
+/// Writes the stored formulas of the table into the record's data. A value the caller sent for one is replaced.
+pub(crate) fn apply_formulas(data: &mut Value, ctx: &WriteCtx) {
+    for (field, expression) in &ctx.formulas {
+        let value = scaffoldry_engine::evaluate_formula(expression, data);
+        if let Some(map) = data.as_object_mut() {
+            if value.is_null() {
+                map.remove(field);
+            } else {
+                map.insert(field.clone(), value);
+            }
+        }
+    }
 }
 
 pub(crate) fn write_history(
@@ -1067,6 +1096,7 @@ impl PostgresRepository {
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         self.with_client(move |client| {
+            count_page_statement();
             let rows = match cursor {
                 Some((created_at, id)) => client.query(PAGE_SQL, &[&slug, &table, &created_at, &id, &limit])?,
                 None => client.query(FIRST_PAGE_SQL, &[&slug, &table, &limit])?,
@@ -1079,6 +1109,7 @@ impl PostgresRepository {
     pub fn query_records(&self, app_slug: &str, query: &RecordQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_record_query(app_slug, query);
         self.with_client(move |client| {
+            count_page_statement();
             let boxed = to_sql_params(params);
             let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
             let rows = client.query(&sql, &refs)?;
@@ -1114,7 +1145,8 @@ impl PostgresRepository {
 
     /// A new record. The version starts at 1. The history row commits with it.
     pub fn insert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
-        let (rec, ctx) = (rec.clone(), ctx.clone());
+        let (mut rec, ctx) = (rec.clone(), ctx.clone());
+        apply_formulas(&mut rec.data, &ctx);
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let table = table_id_of(&rec.data);
@@ -1142,7 +1174,8 @@ impl PostgresRepository {
         expected_version: i32,
         ctx: &WriteCtx,
     ) -> Result<RecordWrite, RepositoryError> {
-        let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
+        let (slug, id, mut data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
+        apply_formulas(&mut data, &ctx);
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let Some(row) = tx.query_opt(
@@ -1178,7 +1211,8 @@ impl PostgresRepository {
     /// A write by the system, such as an automation. It always applies and still bumps the version,
     /// unless it changes nothing.
     pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value, ctx: &WriteCtx) -> Result<Option<i32>, RepositoryError> {
-        let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
+        let (slug, id, mut data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
+        apply_formulas(&mut data, &ctx);
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let Some(row) = tx.query_opt(
@@ -1293,7 +1327,8 @@ impl PostgresRepository {
 
     /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
     pub fn upsert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
-        let (rec, ctx) = (rec.clone(), ctx.clone());
+        let (mut rec, ctx) = (rec.clone(), ctx.clone());
+        apply_formulas(&mut rec.data, &ctx);
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let before = tx.query_opt("SELECT data FROM dataset_records WHERE id = $1 FOR UPDATE", &[&rec.id])?;

@@ -244,6 +244,7 @@ impl PostgresRepository {
     fn run_indexed(&self, q: &IndexedQuery, phase: IndexPhase) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_indexed_sql(q, phase);
         self.with_client(move |client| {
+            crate::repository::count_page_statement();
             let boxed = crate::repository::to_sql_params(params);
             let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
             let rows = client.query(&sql, &refs)?;
