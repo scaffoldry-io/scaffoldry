@@ -300,3 +300,133 @@ pub fn row_scope(person: &Person, role: Option<&str>, platform_admin: bool, rule
         .collect();
     RowScope::of(substitute(&Pred::And(applying), person))
 }
+
+// ---------------------------------------------------------------------------------------------
+// Columns
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnMode {
+    /// The field is removed from every response and cannot be filtered, sorted, or totalled on.
+    Hidden,
+    /// The field can be read and cannot be changed.
+    ReadOnly,
+}
+
+/// Who a column rule does not apply to. A person matches when any list names them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Who {
+    #[serde(default)]
+    pub affiliations: Vec<String>,
+    #[serde(default)]
+    pub units: Vec<String>,
+    #[serde(default)]
+    pub positions: Vec<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
+    #[serde(default)]
+    pub addresses: Vec<String>,
+}
+
+impl Who {
+    /// True when `person`, whose workspace role is `role`, is named.
+    pub fn includes(&self, person: &Person, role: Option<&str>) -> bool {
+        let same = |a: &String, b: &str| a.eq_ignore_ascii_case(b);
+        self.affiliations.iter().any(|a| same(a, &person.affiliation))
+            || self.units.iter().any(|u| person.unit_ids.iter().any(|p| same(u, p)))
+            || self.positions.iter().any(|k| person.position_keys.iter().any(|p| same(k, p)))
+            || role.is_some_and(|r| self.roles.iter().any(|x| same(x, r)))
+            || self.addresses.iter().any(|a| same(a, &person.address))
+    }
+
+    /// The people who are not held back, in words: `the admin or owner role`, `faculty`.
+    pub fn in_words(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        let list = |items: &[String]| match items {
+            [] => String::new(),
+            [one] => one.clone(),
+            [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+        };
+        if !self.roles.is_empty() {
+            parts.push(format!("someone with the {} role", list(&self.roles)));
+        }
+        if !self.positions.is_empty() {
+            parts.push(format!("the holder of the {} position", list(&self.positions)));
+        }
+        if !self.affiliations.is_empty() {
+            parts.push(format!("{} staff", list(&self.affiliations)));
+        }
+        if !self.addresses.is_empty() {
+            parts.push(list(&self.addresses.iter().take(3).cloned().collect::<Vec<_>>()));
+        }
+        if !self.units.is_empty() {
+            parts.push("someone in a unit that is named in the rule".to_string());
+        }
+        match parts.as_slice() {
+            [] => "an owner of this workspace".to_string(),
+            all => all.join(" or "),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ColumnRule {
+    pub id: String,
+    pub table_id: String,
+    pub fields: Vec<String>,
+    pub mode: ColumnMode,
+    #[serde(default)]
+    pub unless: Who,
+    /// One plain sentence, 200 characters at most, written by the owner.
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// Why a field is held back from a person, and what they can do about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Denial {
+    pub field: String,
+    pub rule_id: String,
+    pub reason: String,
+    pub remedy: String,
+}
+
+/// What a person may not see, and what they may not change, in one table.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FieldVisibility {
+    pub hidden: Vec<Denial>,
+    pub read_only: Vec<Denial>,
+}
+
+impl FieldVisibility {
+    pub fn hidden_names(&self) -> Vec<String> {
+        self.hidden.iter().map(|d| d.field.clone()).collect()
+    }
+}
+
+/// The fields of `table` the rules hold back from `person`. A Platform Admin is never held back.
+pub fn field_visibility(person: &Person, role: Option<&str>, platform_admin: bool, rules: &[ColumnRule], table: &str) -> FieldVisibility {
+    let mut out = FieldVisibility::default();
+    if platform_admin {
+        return out;
+    }
+    for rule in rules.iter().filter(|r| r.table_id == table && !r.unless.includes(person, role)) {
+        for field in &rule.fields {
+            let (verb, bucket) = match rule.mode {
+                ColumnMode::Hidden => ("see", &mut out.hidden),
+                ColumnMode::ReadOnly => ("change", &mut out.read_only),
+            };
+            if bucket.iter().any(|d| &d.field == field) {
+                continue;
+            }
+            bucket.push(Denial {
+                field: field.clone(),
+                rule_id: rule.id.clone(),
+                reason: rule.message.clone().unwrap_or_else(|| format!("An access rule for this app stops you from being able to {verb} '{field}'.")),
+                remedy: format!("Ask {}, or an owner of this workspace.", rule.unless.in_words()),
+            });
+        }
+    }
+    out
+}

@@ -69,6 +69,18 @@ fn coded_tool_error(code: &str, message: &str) -> Value {
     })
 }
 
+/// The same for a `ServiceError`, with the `reason` and `remedy` of a denial when it has them.
+fn service_tool_error(err: &crate::service::ServiceError) -> Value {
+    let mut value = coded_tool_error(err.code(), err.message());
+    let body = err.body();
+    for key in ["reason", "remedy", "fields"] {
+        if let Some(v) = body.get(key) {
+            value["structuredContent"][key] = v.clone();
+        }
+    }
+    value
+}
+
 /// POST /api/v1/mcp - JSON-RPC 2.0 MCP Request Handler
 async fn handle_mcp_request(
     State(state): State<SharedState>,
@@ -192,7 +204,7 @@ async fn handle_mcp_request(
                     "structuredContent": value,
                     "content": [{ "type": "text", "text": serde_json::to_string(&value).unwrap_or_default() }]
                 }),
-                Ok(Err(err)) => coded_tool_error(err.code(), err.message()),
+                Ok(Err(err)) => service_tool_error(&err),
                 Err(_) => tool_error("The tool stopped before it answered"),
             };
             rpc(JsonRpcResponse {

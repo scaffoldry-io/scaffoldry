@@ -68,10 +68,14 @@ async fn get_app_schema(
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
-    let manifest = engine
-        .resolve_by_slug(&slug)
-        .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?;
+    let mut manifest = {
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        engine
+            .resolve_by_slug(&slug)
+            .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?
+            .clone()
+    };
+    crate::service::records::without_hidden_fields(&user, &slug, &mut manifest, &state);
 
     Ok(Json(json!({
         "app_slug": manifest.slug,
@@ -97,10 +101,14 @@ async fn get_table_schema(
     authorize_app(&user, &slug, AppAction::Read, &state)
         .map_err(ServiceError::into_pair)?;
 
-    let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
-    let manifest = engine
-        .resolve_by_slug(&slug)
-        .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?;
+    let mut manifest = {
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        engine
+            .resolve_by_slug(&slug)
+            .ok_or_else(|| ServiceError::not_found("App not found").into_pair())?
+            .clone()
+    };
+    crate::service::records::without_hidden_fields(&user, &slug, &mut manifest, &state);
 
     let table = manifest
         .tables

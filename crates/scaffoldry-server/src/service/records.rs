@@ -12,7 +12,7 @@ use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::TriggerEvent;
 use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
-use scaffoldry_engine::{AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction, FilterOperator, IndexColumn};
+use scaffoldry_engine::{AppManifest, AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction, FilterOperator, IndexColumn};
 use serde_json::Value;
 
 /// True when `field` of the record's table holds one record.
@@ -153,6 +153,7 @@ pub fn create_record(
     if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
         return Err(outside_scope());
     }
+    check_read_only(caller, app_slug, &table, &submitted.data, None, state)?;
 
     let record = DatasetRecord {
         id: submitted.id.to_string(),
@@ -189,6 +190,44 @@ pub fn create_record(
     let final_record = get_record(caller, app_slug, &record.id, state).unwrap_or(record);
 
     Ok(final_record)
+}
+
+/// Fields the caller may not change that a write sets. On create, any value counts. On update, a
+/// value that differs from the stored one counts, so sending a record back unchanged is not a write.
+fn check_read_only(caller: &AuthUser, app_slug: &str, table: &str, new_data: &Value, stored: Option<&Value>, state: &SharedState) -> Result<(), ServiceError> {
+    let denied = crate::service::scope::field_visibility_of(caller, app_slug, table, state).read_only;
+    let touched: Vec<&scaffoldry_core::access::Denial> = denied
+        .iter()
+        .filter(|d| {
+            let new = new_data.get(&d.field).filter(|v| !v.is_null() && *v != "");
+            match stored {
+                None => new.is_some(),
+                Some(old) => new != old.get(&d.field).filter(|v| !v.is_null() && *v != ""),
+            }
+        })
+        .collect();
+    let Some(first) = touched.first() else { return Ok(()) };
+    let names: Vec<String> = touched.iter().map(|d| d.field.clone()).collect();
+    Err(ServiceError::FieldReadOnly {
+        message: format!("You cannot change {}.", names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ")),
+        fields: names,
+        reason: first.reason.clone(),
+        remedy: first.remedy.clone(),
+    })
+}
+
+/// A copy of the manifest without the fields the caller may not see, so nothing tells them they exist.
+pub fn without_hidden_fields(caller: &AuthUser, app_slug: &str, manifest: &mut AppManifest, state: &SharedState) {
+    for table in &mut manifest.tables {
+        let hidden = hidden_fields(caller, app_slug, &table.id, &table.fields, state);
+        if hidden.is_empty() {
+            continue;
+        }
+        table.fields.retain(|f| !hidden.contains(&f.name));
+        for view in manifest.views.iter_mut().filter(|v| v.table_id.as_deref() == Some(table.id.as_str())) {
+            view.fields.retain(|f| !hidden.contains(&f.name));
+        }
+    }
 }
 
 /// A write that would leave a record outside the person's own scope. It names no row and no rule.
@@ -266,6 +305,7 @@ pub fn update_record(
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }
+    check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
@@ -686,25 +726,26 @@ fn indexed_names(app_slug: &str, table_id: &str, state: &SharedState) -> std::co
 }
 
 fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
-    if !is_viewer(caller, app_slug, state) {
-        return Vec::new();
-    }
-    let categories = state.sensitivity_categories();
-    let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
-    fields
-        .iter()
-        .filter(|f| {
+    // The app's column rules hold a field back from any member they name. The viewer rule hides
+    // sensitive fields from a viewer. A field either rule hides is hidden.
+    let mut hidden = crate::service::scope::field_visibility_of(caller, app_slug, table, state).hidden_names();
+    if is_viewer(caller, app_slug, state) {
+        let categories = state.sensitivity_categories();
+        let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
+        for f in fields {
             let label = labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone()));
-            scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected
-        })
-        .map(|f| f.name.clone())
-        .collect()
+            if scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected && !hidden.contains(&f.name) {
+                hidden.push(f.name.clone());
+            }
+        }
+    }
+    hidden
 }
 
 /// Removes, from each row, the fields the caller may not read. Rows of the same table share one
 /// lookup.
 pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRecord>, state: &SharedState) -> Vec<DatasetRecord> {
-    if !is_viewer(caller, app_slug, state) {
+    if !is_viewer(caller, app_slug, state) && crate::service::scope::column_rules_of(app_slug, state).is_empty() {
         return rows;
     }
     let mut by_table: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
@@ -807,7 +848,12 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         if !fields.iter().any(|f| f.name == name) {
             Err(ServiceError::BadRequest(format!("'{name}' is not a field of this table")))
         } else if hidden.iter().any(|h| h == name) {
-            Err(ServiceError::FieldHidden(format!("You cannot filter or sort on '{name}' because you cannot see it.")))
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == name);
+            Err(ServiceError::FieldHidden {
+                message: format!("You cannot filter or sort on '{name}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{name}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            })
         } else {
             Ok(())
         }

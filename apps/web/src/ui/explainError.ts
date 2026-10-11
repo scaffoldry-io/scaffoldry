@@ -55,7 +55,9 @@ export function explainError(e: unknown): ExplainedError {
     case "index_building":
       return { message: e.message, next: "Try again in a few minutes." };
     case "field_hidden":
-      return { message: e.message, next: "Choose a field you can see." };
+    case "field_read_only":
+      // The rule's own sentence, and who to ask. A rule gives a reason; the server makes one when it does not.
+      return { message: e.reason ?? e.message, next: e.remedy ?? ASK_FOR_ACCESS };
     case "too_large":
       return { message: e.message, next: "Narrow the filter." };
     default:

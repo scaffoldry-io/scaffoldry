@@ -75,7 +75,7 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 52 | [access-rules.md](access-rules.md) | 1 | Share with groups, units, and positions. One `member_role` function | **COMPLETED** |
 | 53 | [access-rules.md](access-rules.md) | 2 | Rules as data, one row scope, and a SQL and Rust equivalence test | **COMPLETED** |
 | 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column | **COMPLETED** |
-| 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy |
+| 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy | **COMPLETED** |
 | 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected |
 | 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only |
 

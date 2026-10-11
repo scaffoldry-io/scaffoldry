@@ -837,15 +837,17 @@ fn run_list_apps(_caller: &AuthUser, _origin: &Origin, args: Value, state: &Shar
     Ok(Value::Array(apps))
 }
 
-fn run_describe_app(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_describe_app(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: DescribeAppArgs = parse(args)?;
-    let manifest = state
+    let mut manifest = state
         .engine
         .read()
         .map_err(|e| ServiceError::Internal(e.to_string()))?
         .resolve_by_slug(&args.app_slug)
         .cloned()
         .ok_or_else(|| ServiceError::NotFound(format!("App '{}' not found", args.app_slug)))?;
+    // An agent working for this person is not told about a field they cannot see.
+    records::without_hidden_fields(caller, &args.app_slug, &mut manifest, state);
     Ok(crate::routes::apps::with_version(state, &manifest))
 }
 
