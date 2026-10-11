@@ -48,6 +48,9 @@ pub fn ctx_for(actor: &str, kind: ActorKind, app_slug: &str, data: &Value, state
     ctx.index_fields = crate::service::records::indexed_fields_of(app_slug, table, state);
     ctx.links = crate::service::records::link_specs_of(app_slug, table, state);
     ctx.computed = crate::service::records::computed_specs_of(app_slug, state);
+    if !ctx.computed.is_empty() {
+        ctx.calc = crate::service::records::calc_tables_of(app_slug, state);
+    }
     ctx.formulas = crate::service::records::formula_specs_of(app_slug, table, state).0;
     ctx
 }

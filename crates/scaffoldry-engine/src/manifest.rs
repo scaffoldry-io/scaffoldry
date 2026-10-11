@@ -196,6 +196,11 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
         }
     }
 
+    // A computed field must not read itself, through any number of others.
+    if let Err(cycle) = crate::graph::build_graph(m) {
+        problems.push(cycle.to_string());
+    }
+
     let mut view_ids = HashSet::new();
     for view in &m.views {
         view_ids.insert(view.id.as_str());
