@@ -193,3 +193,27 @@ pub fn require_readable(caller: &AuthUser, app_slug: &str, record_id: &str, stat
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------
+// Columns
+// ---------------------------------------------------------------------------------------------
+
+/// The column rules an app has set.
+pub fn column_rules_of(app_slug: &str, state: &SharedState) -> Vec<scaffoldry_core::access::ColumnRule> {
+    state.column_rules.read().unwrap_or_else(|p| p.into_inner()).get(app_slug).cloned().unwrap_or_default()
+}
+
+/// Replaces an app's column rules.
+pub fn set_column_rules(app_slug: &str, rules: Vec<scaffoldry_core::access::ColumnRule>, state: &SharedState) {
+    state.column_rules.write().unwrap_or_else(|p| p.into_inner()).insert(app_slug.to_string(), rules);
+}
+
+/// The fields of `table` held back from the caller by the app's column rules.
+pub fn field_visibility_of(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> scaffoldry_core::access::FieldVisibility {
+    let rules = column_rules_of(app_slug, state);
+    if rules.is_empty() {
+        return Default::default();
+    }
+    let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
+    scaffoldry_core::access::field_visibility(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table)
+}

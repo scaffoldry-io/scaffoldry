@@ -194,6 +194,8 @@ pub struct ServerState {
     /// Row rules by app slug. Until rules join the manifest (access-rules phase 5), this is where an
     /// app's rules live. Read them through `service::scope::rules_of`.
     pub access_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::RowRule>>>,
+    /// Column rules by app slug, kept the same way.
+    pub column_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::ColumnRule>>>,
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
     pub collaborators: RwLock<HashMap<String, Vec<CollaboratorRecord>>>,
     /// Records live in PostgreSQL. This map holds them only when there is no repository, which
@@ -453,6 +455,7 @@ impl ServerState {
             users: RwLock::new(users),
             groups: RwLock::new(groups),
             access_rules: RwLock::new(HashMap::new()),
+            column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
             memory_records: RwLock::new(HashMap::new()),
@@ -1128,6 +1131,7 @@ impl ServerState {
             users: RwLock::new(users),
             groups: RwLock::new(groups),
             access_rules: RwLock::new(HashMap::new()),
+            column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
             memory_records: RwLock::new(HashMap::new()),

@@ -95,7 +95,9 @@ pub enum ServiceError {
     /// A rule the app set stops the change, such as a delete while records still link to the record.
     ConstraintViolated(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
-    FieldHidden(String),
+    FieldHidden { message: String, reason: String, remedy: String },
+    /// A write names fields the person may not change.
+    FieldReadOnly { message: String, fields: Vec<String>, reason: String, remedy: String },
     Internal(String),
 }
 
@@ -132,7 +134,7 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::FieldHidden(_) => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
@@ -153,7 +155,8 @@ impl ServiceError {
             Self::TooLarge(_) => "too_large",
             Self::IndexBuilding(_) => "index_building",
             Self::ConstraintViolated(_) => "constraint_violated",
-            Self::FieldHidden(_) => "field_hidden",
+            Self::FieldHidden { .. } => "field_hidden",
+            Self::FieldReadOnly { .. } => "field_read_only",
             Self::UndoConflict { .. } => "undo_conflict",
             Self::Internal(_) => "internal",
         }
@@ -169,9 +172,8 @@ impl ServiceError {
             | Self::TooLarge(msg)
             | Self::IndexBuilding(msg)
             | Self::ConstraintViolated(msg)
-            | Self::FieldHidden(msg)
             | Self::Internal(msg) => msg,
-            Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
+            Self::FieldHidden { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }
     }
 
@@ -196,6 +198,15 @@ impl ServiceError {
             }
             Self::UndoConflict { conflicts, .. } => {
                 body.insert("conflicts".to_string(), Value::Array(conflicts.clone()));
+            }
+            Self::FieldHidden { reason, remedy, .. } => {
+                body.insert("reason".to_string(), Value::String(reason.clone()));
+                body.insert("remedy".to_string(), Value::String(remedy.clone()));
+            }
+            Self::FieldReadOnly { fields, reason, remedy, .. } => {
+                body.insert("fields".to_string(), serde_json::to_value(fields.iter().map(|f| (f.clone(), "read_only".to_string())).collect::<BTreeMap<_, _>>()).unwrap_or(Value::Null));
+                body.insert("reason".to_string(), Value::String(reason.clone()));
+                body.insert("remedy".to_string(), Value::String(remedy.clone()));
             }
             _ => {}
         }
