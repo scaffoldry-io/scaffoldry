@@ -67,6 +67,9 @@ pub enum RepositoryError {
     NotFound(String),
     #[error("Conflict: {0}")]
     Conflict(String),
+    /// A limit on queued or running jobs. The text is a plain sentence for the person.
+    #[error("{0}")]
+    Quota(String),
 }
 
 type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;

@@ -54,6 +54,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "Someone changed this since. Undo stopped." };
     case "view_as_read_only":
       return { message: "You are viewing as someone else. This view is read-only.", next: "Exit the view to make changes." };
+    case "quota_exceeded":
+      return { message: e.message, next: "Wait for your background work to finish, or cancel some of it, then try again." };
     case "calculating":
       return { message: e.message, next: "Try again when it has finished." };
     case "index_building":

@@ -723,7 +723,11 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
                 }
             }
-            match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| ServiceError::Internal(format!("The approval was not kept: {e}")))? {
+            match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| match e {
+                // The approval would start more background work than the person may have. Nothing was kept.
+                crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
+                other => ServiceError::Internal(format!("The approval was not kept: {other}")),
+            })? {
                 Approval::Approved(done) => {
                     state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
                     if let Some(m) = &row.manifest {
