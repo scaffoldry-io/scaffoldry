@@ -294,9 +294,14 @@ export class ApiError extends Error {
 
 let activeToken: string | null = null;
 
-export const setAuthToken = (token: string | null) => {
+/**
+ * Sets the token that requests carry. With `persist` false the token lives in memory only, so a
+ * reload goes back to the stored one. A view-as token is set this way, because a reload would
+ * otherwise keep the view and lose its banner.
+ */
+export const setAuthToken = (token: string | null, persist = true) => {
   activeToken = token;
-  if (typeof window !== "undefined") {
+  if (persist && typeof window !== "undefined") {
     if (token) {
       localStorage.setItem("scaffoldry_token", token);
     } else {
