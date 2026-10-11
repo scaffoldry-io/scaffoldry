@@ -270,9 +270,16 @@ One test, `million_rows`, marked `#[ignore]`. It seeds 1,000,000 rows of thirty 
 | Create one record with five indexed fields | 50 ms |
 | Update one indexed field | 50 ms |
 
-Each read also passes the `Seq Scan` check. Add a CI step that runs `cargo test --release -- --ignored million_rows`. If a limit fails on the CI runner and the plan is correct, do not raise the limit. Paste the plan and the timings and stop.
+Two more are measured and reported with no limit, because a person editing a grid does them and nothing has measured them yet:
 
-Paste the printed table into the session output. Those numbers replace the estimate in this brief.
+| Operation | What to report |
+| --- | --- |
+| Update one field on each of 1,000 records, the way a paste or a fill-down would | Total time and records per second. Say which route was used. If no route takes more than one record, say so and time 1,000 single updates in sequence |
+| Change one non-indexed field on a record while 20 other writers update other records | The slowest of 200 |
+
+Each read also passes the `Seq Scan` check. Run the test yourself with `cargo test --release -- --ignored million_rows` and paste the output. `ci.yml` is not yours to edit: say in the pull request that it needs a step that runs this command. If a limit fails and the query plan is correct, do not raise the limit. Paste the plan and the timings and stop. What happens next is Johann's decision, listed under "Open decisions" in the README.
+
+Write the printed tables to `docs/measurements/row-scale.md`, with the date, the PostgreSQL version, and the machine's core count and memory. Those numbers replace the estimate in this brief.
 
 ## How to prompt Gemini
 

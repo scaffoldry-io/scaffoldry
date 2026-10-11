@@ -79,26 +79,30 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected |
 | 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only |
 
-### Wave 1b — one source of truth, and who decides
+### Wave 1b — proof of the data model, one source of truth, and who decides
 
-Nothing in Wave 2 or later may add state to the server's memory. The first six rows here remove what is there, so that two copies of the server can run at once. The rest make the rules behind a decision visible, and make who decides a setting an institution controls.
+The first two rows measure a million-row table. They come before anything else is built on the JSON record and its index, because a failed limit changes the data model. If row-scale phase 6 fails, stop and report. That decision is Johann's, under "Open decisions".
+
+Nothing in Wave 2 or later may add state to the server's memory. The six stateless rows remove what is there, so that two copies of the server can run at once. The rest make the rules behind a decision visible, and make who decides a setting an institution controls.
 
 | Order | Brief | Phase | What is true after it | Status |
 | --- | --- | --- | --- | --- |
-| 58 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | |
-| 59 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | |
-| 60 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
-| 61 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
-| 62 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | |
-| 63 | [stateless-server.md](stateless-server.md) | 6 | Every write is proven across two instances. A readiness route and a clean stop | |
-| 64 | [policy-library.md](policy-library.md) | 1 | Policies, their sources, and rules that cite a passage word for word | |
-| 65 | [policy-library.md](policy-library.md) | 2 | A person's agent reads a policy and proposes rules and questions. It cannot publish | |
-| 66 | [policy-library.md](policy-library.md) | 3 | A person who did not submit a rule reviews it against its passage and publishes it | |
-| 67 | [authority.md](authority.md) | 1 | A change has a tier. A matrix says who decides. With no rows it behaves as it does today | |
-| 68 | [authority.md](authority.md) | 2 | The matrix in the console. Its effect on real proposals is shown before a change, and a second person confirms | |
-| 69 | [policy-library.md](policy-library.md) | 4 | Everyone reads the rules as sentences, linked to policy and source, marked Enforced or Guidance | |
-| 70 | [authority.md](authority.md) | 3 | The builder is told who decides, why, and what would change it. An agent can ask first | |
-| 71 | [authority.md](authority.md) | 4 | A simulated institution of 5,000 people, and the same measures from real decisions | |
+| 58 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
+| 59 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |
+| 60 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | |
+| 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | |
+| 62 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
+| 63 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
+| 64 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | |
+| 65 | [stateless-server.md](stateless-server.md) | 6 | Every write is proven across two instances. A readiness route and a clean stop | |
+| 66 | [policy-library.md](policy-library.md) | 1 | Policies, their sources, and rules that cite a passage word for word | |
+| 67 | [policy-library.md](policy-library.md) | 2 | A person's agent reads a policy and proposes rules and questions. It cannot publish | |
+| 68 | [policy-library.md](policy-library.md) | 3 | A person who did not submit a rule reviews it against its passage and publishes it | |
+| 69 | [authority.md](authority.md) | 1 | A change has a tier. A matrix says who decides. With no rows it behaves as it does today | |
+| 70 | [authority.md](authority.md) | 2 | The matrix in the console. Its effect on real proposals is shown before a change, and a second person confirms | |
+| 71 | [policy-library.md](policy-library.md) | 4 | Everyone reads the rules as sentences, linked to policy and source, marked Enforced or Guidance | |
+| 72 | [authority.md](authority.md) | 3 | The builder is told who decides, why, and what would change it. An agent can ask first | |
+| 73 | [authority.md](authority.md) | 4 | A simulated institution of 5,000 people, and the same measures from real decisions | |
 
 ### Wave 2 — the data platform
 
@@ -106,19 +110,17 @@ Fields, files, views, import and export, and the million-row proof. A department
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 72 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run |
-| 73 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` |
-| 74 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator |
-| 75 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
-| 76 | [record-history.md](record-history.md) | 4 | The disclosure log |
-| 77 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by |
-| 78 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer |
-| 79 | [field-types.md](field-types.md) | 4 | Duration and date-time |
-| 80 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
-| 81 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |
-| 82 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules |
-| 83 | [views.md](views.md) | 3 | A million rows in a window. Needs `@tanstack/react-virtual` |
-| 84 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |
+| 74 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run |
+| 75 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` |
+| 76 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator |
+| 77 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
+| 78 | [record-history.md](record-history.md) | 4 | The disclosure log |
+| 79 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by |
+| 80 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer |
+| 81 | [field-types.md](field-types.md) | 4 | Duration and date-time |
+| 82 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |
+| 83 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules |
+| 84 | [views.md](views.md) | 3 | A million rows in a window. Needs `@tanstack/react-virtual` |
 | 85 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts |
 | 86 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
 | 87 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers |
@@ -367,4 +369,4 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Whether Scaffoldry is also offered as a hosted service, and whether that is one stack for each institution | Self-hosting stays supported. Nothing assumes more than one institution in a database. `stateless-server.md` removes the one thing that blocks a second instance |
 | A full export of one institution in documented formats, and whether process definitions are also exported as BPMN XML | Exports are per app and capped. Not built |
 | Who holds the positions the first matrix names, such as a privacy officer | The matrix has no rows and behaves as the platform does today |
-| Removing `--test-threads=1` from `ci.yml`, and adding the OSCAL catalog validation step | Johann, after `stateless-server.md` phase 1 and `policy-library.md` phase 4. Agents may not edit `ci.yml` |
+| Removing `--test-threads=1` from `ci.yml`, adding the OSCAL catalog validation step, and adding a step that runs the `million_rows` test | Johann, after `stateless-server.md` phase 1, `policy-library.md` phase 4, and `row-scale.md` phase 6. Agents may not edit `ci.yml` |
