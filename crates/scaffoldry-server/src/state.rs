@@ -557,6 +557,14 @@ impl ServerState {
         }
     }
 
+    /// The percent done of the build holding back one of `fields`, or `None` when none is building.
+    pub fn index_building_percent(&self, app_slug: &str, table_id: &str, fields: &[String]) -> Result<Option<i64>, String> {
+        match self.repository {
+            Some(ref repo) => repo.index_building_percent(app_slug, table_id, fields).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    }
+
     /// One page through the pivot index.
     pub fn indexed_page(&self, query: &crate::repository::IndexedQuery) -> Result<Vec<DatasetRecord>, String> {
         match self.repository {

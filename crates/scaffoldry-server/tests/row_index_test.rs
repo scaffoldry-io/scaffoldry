@@ -438,9 +438,9 @@ async fn a_filter_on_a_field_outside_the_index_is_refused_on_a_big_table_and_nam
     assert!(err, "one sort field");
 }
 
-// 7. Approving a manifest that adds a view sorting on a new field builds its index rows in the approval.
+// 7. Approving a manifest that adds a view sorting on a new field queues the build of its index rows.
 #[tokio::test]
-async fn approving_a_view_that_sorts_on_a_new_field_adds_its_index_rows_in_the_same_transaction() {
+async fn approving_a_view_that_sorts_on_a_new_field_gets_its_index_rows_from_a_job() {
     let _turn = LOCK.lock().await;
     let w = world().await;
     // Make the app live through the proposals path, so the stored manifest exists.
@@ -464,8 +464,23 @@ async fn approving_a_view_that_sorts_on_a_new_field_adds_its_index_rows_in_the_s
     let started = std::time::Instant::now();
     let (err, done) = tool(&w, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "ok" })).await;
     assert!(!err, "{done}");
-    println!("row_scale: the approval built {ROWS} index rows in {:?}", started.elapsed());
-    assert_eq!(index_rows(&w.slug, "score"), ROWS, "the field joined the set, so the approval wrote its rows");
+    println!("row_scale: the approval returned in {:?} on {ROWS} rows", started.elapsed());
+    // Since jobs phase 3 the approval only queues the build. A job writes the rows.
+    assert_eq!(index_rows(&w.slug, "score"), 0, "the approval copies nothing");
+    let repo = scaffoldry_server::repository::PostgresRepository::connect(None).unwrap();
+    let runner = scaffoldry_server::jobs::JobRunner::start(
+        &repo,
+        scaffoldry_server::jobs::JOB_KINDS,
+        scaffoldry_server::jobs::JobConfig { workers: 2, poll_ms: 20, ..Default::default() },
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while index_rows(&w.slug, "score") < ROWS {
+        assert!(std::time::Instant::now() < deadline, "the build job did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    runner.stop();
+    assert_eq!(index_rows(&w.slug, "score"), ROWS, "the field joined the set, so the job wrote its rows");
     assert_eq!(index_rows(&w.slug, "amount"), ROWS, "a field that stayed is left alone");
 
     // And the sort now takes the index.

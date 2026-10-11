@@ -67,7 +67,10 @@ pub struct JobKind {
 }
 
 /// Every kind of job this server can run. Later briefs add one entry each.
-pub static JOB_KINDS: &[JobKind] = &[];
+pub static JOB_KINDS: &[JobKind] = &[
+    JobKind { name: "build_index", max_attempts: 3, max_concurrent: 2, run: crate::index_jobs::build_index },
+    JobKind { name: "recompute_flags", max_attempts: 3, max_concurrent: 1, run: crate::index_jobs::recompute_flags },
+];
 
 #[derive(Debug, Clone)]
 pub struct JobConfig {
@@ -195,6 +198,33 @@ pub fn enqueue(
         }
         Err(RepositoryError::NotFound("could not enqueue the job".to_string()))
     })?)
+}
+
+/// `enqueue` inside the caller's transaction, so the job exists if and only if the transaction commits.
+pub(crate) fn enqueue_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    kind: &str,
+    payload: &Value,
+    created_by: &str,
+    dedupe_key: Option<&str>,
+) -> Result<Uuid, RepositoryError> {
+    check_clean(payload).map_err(RepositoryError::NotFound)?;
+    let id = Uuid::new_v4();
+    let key = dedupe_key.map(str::to_string);
+    let inserted = tx.query_opt(
+        "INSERT INTO jobs (id, kind, payload, created_by, dedupe_key) VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('queued', 'running') \
+         DO NOTHING RETURNING id",
+        &[&id, &kind, payload, &created_by, &key],
+    )?;
+    if let Some(row) = inserted {
+        return Ok(row.get(0));
+    }
+    let live = tx.query_one(
+        "SELECT id FROM jobs WHERE dedupe_key = $1 AND state IN ('queued', 'running')",
+        &[&key],
+    )?;
+    Ok(live.get(0))
 }
 
 pub fn get_job(repo: &PostgresRepository, id: Uuid) -> Result<Option<Job>, JobsError> {
