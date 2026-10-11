@@ -85,7 +85,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 58 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run |
+| 58 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run | **COMPLETED** |
 | 59 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` |
 | 60 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator |
 | 61 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
