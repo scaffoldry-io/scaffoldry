@@ -152,7 +152,7 @@ fn test_math_function_group() {
     let rec = json!({});
 
     // 1. ROUND digits
-    assert_eq!(evaluate_formula(r#"ROUND(3.14159, 2)"#, &rec), json!(3.14));
+    assert_eq!(evaluate_formula(r#"ROUND(3.456, 2)"#, &rec), json!(3.46));
     // 2. ROUND default 0
     assert_eq!(evaluate_formula(r#"ROUND(3.5)"#, &rec), json!(4.0));
     // 3. CEILING
