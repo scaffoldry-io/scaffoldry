@@ -123,6 +123,8 @@ pub enum FieldType {
     Count,
     Rollup,
     Formula,
+    /// A list of record ids, or one id, of records in another table. `record_links` indexes it.
+    Link,
 }
 
 impl FieldType {
@@ -173,6 +175,48 @@ pub struct FieldSpec {
     /// Sorting and filtering on this field use the pivot index. A table indexes at most 20 fields.
     #[serde(default)]
     pub indexed: bool,
+    /// A `Link` field: the table it points at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_target_table: Option<String>,
+    /// A `Link` field into a dataset app. Dataset apps are read-only (`connections.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_target_app: Option<String>,
+    #[serde(default, skip_serializing_if = "LinkCardinality::is_default")]
+    pub link_cardinality: LinkCardinality,
+    /// The field on the target table that shows the same links from the other side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_related_field: Option<String>,
+    #[serde(default, skip_serializing_if = "LinkOnDelete::is_default")]
+    pub link_on_delete: LinkOnDelete,
+}
+
+/// How many records a link field holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LinkCardinality {
+    One,
+    #[default]
+    Many,
+}
+
+impl LinkCardinality {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// What deleting a linked record does. `Unlink` removes the link and remembers it. `Restrict`
+/// refuses the delete while links exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LinkOnDelete {
+    #[default]
+    Unlink,
+    Restrict,
+}
+
+impl LinkOnDelete {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// An overlay on one field that can only add protection. It is how a compliance officer raises a
@@ -239,6 +283,11 @@ impl FieldSpec {
             currency_symbol: None,
             precision: None,
             indexed: false,
+            link_target_table: None,
+            link_target_app: None,
+            link_cardinality: LinkCardinality::Many,
+            link_related_field: None,
+            link_on_delete: LinkOnDelete::Unlink,
         }
     }
 }

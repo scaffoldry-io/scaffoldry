@@ -1,0 +1,34 @@
+{
+  "slug": "admissions",
+  "title": "Admissions",
+  "description": "Applications link to programs",
+  "organization_code": "ADM",
+  "department": "admissions",
+  "views": [],
+  "tables": [
+    {
+      "id": "applications",
+      "name": "Applications",
+      "slug": "applications",
+      "fields": [
+        { "name": "applicant", "label": "Applicant", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+        {
+          "name": "program", "label": "Program", "field_type": "Link", "required": false, "ferpa_sensitive": false,
+          "link_target_table": "programs", "link_cardinality": "One", "link_related_field": "applications"
+        }
+      ]
+    },
+    {
+      "id": "programs",
+      "name": "Programs",
+      "slug": "programs",
+      "fields": [
+        { "name": "code", "label": "Code", "field_type": "Text", "required": true, "ferpa_sensitive": false },
+        {
+          "name": "applications", "label": "Applications", "field_type": "Link", "required": false, "ferpa_sensitive": false,
+          "link_target_table": "applications", "link_related_field": "program", "link_on_delete": "Restrict"
+        }
+      ]
+    }
+  ]
+}

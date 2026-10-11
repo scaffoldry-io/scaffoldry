@@ -98,6 +98,39 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                         }
                     }
                 }
+                FieldType::Link => {
+                    if f.indexed {
+                        problems.push(format!("table '{}': Link field '{}' cannot be indexed, links have their own index", table.id, f.name));
+                    }
+                    if let Some(app) = f.link_target_app.as_deref() {
+                        problems.push(format!("table '{}': Link field '{}' names the app '{app}', which is not a dataset app", table.id, f.name));
+                        continue;
+                    }
+                    let Some(target_id) = f.link_target_table.as_deref() else {
+                        problems.push(format!("table '{}': Link field '{}' names no target table", table.id, f.name));
+                        continue;
+                    };
+                    let Some(target) = table_of(m, target_id) else {
+                        problems.push(format!("table '{}': Link field '{}' points at the table '{target_id}', which does not exist", table.id, f.name));
+                        continue;
+                    };
+                    if let Some(related) = f.link_related_field.as_deref() {
+                        match target.fields.iter().find(|x| x.name == related) {
+                            None => problems.push(format!("table '{}': Link field '{}' names the related field '{related}', which '{target_id}' does not have", table.id, f.name)),
+                            Some(back) if back.field_type != FieldType::Link => {
+                                problems.push(format!("table '{}': Link field '{}' names the related field '{related}', which is not a Link field", table.id, f.name))
+                            }
+                            Some(back) => {
+                                let points_back = back.link_target_table.as_deref() == Some(table.id.as_str())
+                                    && back.link_target_app.is_none()
+                                    && back.link_related_field.as_deref() == Some(f.name.as_str());
+                                if !points_back {
+                                    problems.push(format!("table '{}': the related field '{related}' on '{target_id}' does not point back to '{}'", table.id, f.name));
+                                }
+                            }
+                        }
+                    }
+                }
                 FieldType::Lookup | FieldType::Count | FieldType::Rollup => {
                     let Some(target_id) = f.target_table_id.as_deref() else {
                         problems.push(format!("table '{}': {:?} field '{}' names no target table", table.id, f.field_type, f.name));

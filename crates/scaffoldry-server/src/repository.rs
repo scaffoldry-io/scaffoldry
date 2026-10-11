@@ -44,6 +44,7 @@ const SCHEMA_0011: &str = include_str!("../../scaffoldry-core/migrations/0011_ap
 const SCHEMA_0027: &str = include_str!("../../scaffoldry-core/migrations/0027_record_history.sql");
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
+const SCHEMA_0031: &str = include_str!("../../scaffoldry-core/migrations/0031_record_links.sql");
 const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_job_schedules.sql");
 
 #[derive(Debug, thiserror::Error)]
@@ -120,6 +121,8 @@ pub struct WriteCtx {
     pub reverts_batch: Option<uuid::Uuid>,
     /// The indexed fields of the record's table. Every write keeps their index rows current.
     pub index_fields: Vec<scaffoldry_engine::FieldSpec>,
+    /// The names of the table's `Link` fields. Every write keeps their `record_links` rows current.
+    pub link_fields: Vec<String>,
 }
 
 impl WriteCtx {
@@ -132,6 +135,7 @@ impl WriteCtx {
             computed_fields: Vec::new(),
             reverts_batch: None,
             index_fields: Vec::new(),
+            link_fields: Vec::new(),
         }
     }
 
@@ -449,7 +453,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 24] = [
+                        let migrations: [(&str, &str); 25] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -468,6 +472,7 @@ impl PostgresRepository {
                             ("0007_record_version.sql", SCHEMA_0007),
                             ("0023_workspace_guards.sql", SCHEMA_0023),
                             ("0026_jobs.sql", SCHEMA_0026),
+                            ("0031_record_links.sql", SCHEMA_0031),
                             ("0044_job_schedules.sql", SCHEMA_0044),
                             ("0045_index_status.sql", SCHEMA_0045),
                             ("0027_record_history.sql", SCHEMA_0027),
@@ -1114,6 +1119,7 @@ impl PostgresRepository {
                 &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
             )?;
             crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
+            crate::repository_links::write_record_links(&mut tx, &rec.app_slug, &rec.id, &rec.data, &ctx.link_fields)?;
             let changes = diff_fields(None, Some(&rec.data), &ctx.computed_fields);
             write_history(&mut tx, Touched { app_slug: &rec.app_slug, table_id: &table, record_id: &rec.id, version: 1, action: "create" }, &changes, &ctx)?;
             tx.commit()?;
@@ -1157,6 +1163,7 @@ impl PostgresRepository {
                 )?
                 .get(0);
             crate::repository_index::write_record_index(&mut tx, &slug, &new_table, &id, &data, &ctx.index_fields)?;
+            crate::repository_links::write_record_links(&mut tx, &slug, &id, &data, &ctx.link_fields)?;
             write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
             tx.commit()?;
             Ok(RecordWrite::Saved(next))
@@ -1189,6 +1196,7 @@ impl PostgresRepository {
                 )?
                 .get(0);
             crate::repository_index::write_record_index(&mut tx, &slug, &new_table, &id, &data, &ctx.index_fields)?;
+            crate::repository_links::write_record_links(&mut tx, &slug, &id, &data, &ctx.link_fields)?;
             write_history(&mut tx, Touched { app_slug: &slug, table_id: &new_table, record_id: &id, version: next, action: "update" }, &changes, &ctx)?;
             tx.commit()?;
             Ok(Some(next))
@@ -1206,6 +1214,7 @@ impl PostgresRepository {
                 return Ok(false);
             };
             let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+            crate::repository_links::delete_record_links(&mut tx, &id)?;
             let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
             write_history(&mut tx, Touched { app_slug: &slug, table_id: &table, record_id: &id, version, action: "delete" }, &changes, &ctx)?;
             tx.commit()?;
@@ -1224,6 +1233,7 @@ impl PostgresRepository {
             )?;
             if let Some(row) = deleted {
                 let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+                crate::repository_links::delete_record_links(&mut tx, &id)?;
                 let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
                 write_history(&mut tx, Touched { app_slug: &slug, table_id: &table, record_id: &id, version, action: "delete" }, &changes, &ctx)?;
                 tx.commit()?;
@@ -1299,6 +1309,7 @@ impl PostgresRepository {
                 )?
                 .get(0);
             crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
+            crate::repository_links::write_record_links(&mut tx, &rec.app_slug, &rec.id, &rec.data, &ctx.link_fields)?;
             let changes = diff_fields(old.as_ref(), Some(&rec.data), &ctx.computed_fields);
             if old.is_none() || !changes.is_empty() {
                 let action = if old.is_none() { "create" } else { "update" };

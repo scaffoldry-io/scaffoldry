@@ -573,6 +573,23 @@ impl ServerState {
         }
     }
 
+    /// Which of `ids` are records of this table of this app.
+    pub fn existing_record_ids(&self, app_slug: &str, table_id: &str, ids: &[String]) -> Result<Vec<String>, String> {
+        match self.repository {
+            Some(ref repo) => repo.existing_record_ids(app_slug, table_id, ids).map_err(|e| e.to_string()),
+            None => Ok(self
+                .memory()
+                .get(app_slug)
+                .map(|rows| {
+                    rows.iter()
+                        .filter(|r| ids.contains(&r.id) && r.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("") == table_id)
+                        .map(|r| r.id.clone())
+                        .collect()
+                })
+                .unwrap_or_default()),
+        }
+    }
+
     /// True when a table holds more than `limit` rows.
     pub fn table_has_more_than(&self, app_slug: &str, table_id: &str, limit: i64) -> Result<bool, String> {
         match self.repository {
