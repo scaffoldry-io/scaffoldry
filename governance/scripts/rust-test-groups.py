@@ -7,6 +7,10 @@
 The heavy tests are listed in governance/rust-heavy-tests.json. Every file under crates/*/tests
 lands in exactly one group, so a new test is never left out. A name in the list with no file is an
 error, so the list cannot drift.
+
+To rebalance, read the "finished in" time of each test file in the CI log of both Rust jobs. Keep the
+slowest files in the heavy list until the two jobs end within a minute of each other. Local times do
+not predict CI times, so use the CI log.
 """
 
 import json
