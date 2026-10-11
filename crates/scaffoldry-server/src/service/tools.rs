@@ -384,7 +384,7 @@ fn schema_manage_workspace_member() -> Value {
             "workspace_id": { "type": "string", "description": "Unique workspace identifier" },
             "action": { "type": "string", "description": "add, update, or remove" },
             "eppn": { "type": "string", "description": "eduPersonPrincipalName of collaborator" },
-            "role": { "type": "string", "description": "owner, admin, editor, or viewer" },
+            "role": { "type": "string", "description": "owner, admin, editor, commenter, or viewer" },
             "name": { "type": "string", "description": "Full display name" }
         },
         "required": ["workspace_id", "action", "eppn"]

@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum AppAction {
     Read,
     WriteRecords,
+    /// Add a comment. A commenter may, and may not change the record.
+    Comment,
     Manage,
 }
 
@@ -265,6 +267,7 @@ pub fn authorize_app(
     let action_name = match action {
         AppAction::Read => "read_app",
         AppAction::WriteRecords => "write_record",
+        AppAction::Comment => "comment",
         AppAction::Manage => "manage_app",
     };
 

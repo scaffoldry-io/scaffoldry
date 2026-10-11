@@ -46,7 +46,7 @@ action access_workspace, manage_workspace, delete_workspace
 action read_app, manage_app
   appliesTo { principal: [User], resource: [Workspace, App] };
 
-action write_record
+action write_record, comment
   appliesTo { principal: [User], resource: [Workspace, Record] };
 
 action create_app, update_app, publish_app
