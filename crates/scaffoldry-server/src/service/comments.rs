@@ -63,12 +63,7 @@ pub fn mentions_in(body: &str) -> Vec<String> {
 fn reader(address: &str, app_slug: &str, state: &SharedState) -> Option<AuthUser> {
     use scaffoldry_engine::HostRouter;
     let workspace = state.engine.read().ok()?.resolve_by_slug(app_slug)?.workspace_id.clone()?;
-    let member = state
-        .collaborators
-        .read()
-        .ok()?
-        .get(&workspace)
-        .and_then(|list| list.iter().find(|m| m.eppn.eq_ignore_ascii_case(address)).cloned());
+    let member = crate::service::members::people_records(&workspace, state).into_iter().find(|m| m.eppn.eq_ignore_ascii_case(address));
     let user = match member {
         Some(m) => AuthUser { eppn: m.eppn, name: m.name, role_title: m.role, affiliation: m.scoped_affiliation, department: m.department },
         None => crate::service::identity::resolve_user(address, state)?,
@@ -207,7 +202,7 @@ pub fn mentionable(caller: &AuthUser, app_slug: &str, state: &SharedState) -> Re
         .resolve_by_slug(app_slug)
         .and_then(|m| m.workspace_id.clone())
         .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
-    let members = state.collaborators.read().map_err(internal)?.get(&workspace).cloned().unwrap_or_default();
+    let members = crate::service::members::people_records(&workspace, state);
     let mut people: Vec<Value> = members
         .iter()
         .filter(|m| reader(&m.eppn, app_slug, state).is_some())

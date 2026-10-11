@@ -344,17 +344,10 @@ pub fn user_detail(state: &SharedState, id: &str) -> Result<Value, ServiceError>
         })
         .collect();
 
-    let memberships: Vec<Value> = state
-        .collaborators
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
+    let workspace_ids: Vec<String> = crate::service::members::workspace_ids(state);
+    let memberships: Vec<Value> = workspace_ids
         .iter()
-        .flat_map(|(ws, members)| {
-            members
-                .iter()
-                .filter(|m| m.eppn.eq_ignore_ascii_case(&u.user_name))
-                .map(move |m| json!({ "workspace_id": ws, "role": m.role }))
-        })
+        .filter_map(|ws| crate::service::members::member_role_of(&u.user_name, ws, state).map(|r| json!({ "workspace_id": ws, "role": r.as_str() })))
         .collect();
 
     let token_rows: Vec<Value> = tokens

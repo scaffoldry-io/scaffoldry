@@ -440,12 +440,10 @@ fn is_viewer(caller: &AuthUser, app_slug: &str, state: &SharedState) -> bool {
         .ok()
         .and_then(|e| e.resolve_by_slug(app_slug).and_then(|m| m.workspace_id.clone()));
     let Some(workspace) = workspace else { return false };
-    state
-        .collaborators
-        .read()
-        .ok()
-        .and_then(|c| c.get(&workspace).and_then(|list| list.iter().find(|m| m.eppn == caller.eppn).map(|m| m.role.eq_ignore_ascii_case("viewer") || m.role.eq_ignore_ascii_case("commenter"))))
-        .unwrap_or(false)
+    matches!(
+        crate::service::members::member_role(caller, &workspace, state),
+        Some(crate::service::members::Role::Viewer | crate::service::members::Role::Commenter)
+    )
 }
 
 /// The fields a caller may not read in one table. Only a workspace viewer is held back, and the

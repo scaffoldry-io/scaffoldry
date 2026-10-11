@@ -230,11 +230,7 @@ fn role_in(caller: &AuthUser, ws_id: &str, state: &SharedState) -> Option<String
     if caller.affiliation == "central_admin" {
         return Some("admin".to_string());
     }
-    state
-        .collaborators
-        .read()
-        .ok()
-        .and_then(|c| c.get(ws_id).and_then(|l| l.iter().find(|m| m.eppn == caller.eppn).map(|m| m.role.to_lowercase())))
+    crate::service::members::member_role(caller, ws_id, state).map(|r| r.as_str().to_string())
 }
 
 /// The checks on a manifest part, and what it changed.

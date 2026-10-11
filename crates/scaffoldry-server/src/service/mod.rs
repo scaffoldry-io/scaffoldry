@@ -20,6 +20,7 @@ pub mod processes;
 pub mod proposals;
 pub mod tools;
 pub mod link_options;
+pub mod members;
 pub mod trash;
 pub mod undo;
 

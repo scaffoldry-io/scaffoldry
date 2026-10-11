@@ -174,17 +174,8 @@ pub fn authorize_workspace(
             .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{ws_id}' not found")))?
     };
 
-    let collabs = {
-        let collabs_guard = state
-            .collaborators
-            .read()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.get(ws_id).cloned().unwrap_or_default()
-    };
-    let (is_member, member_role) = match collabs.iter().find(|m| m.eppn == caller.eppn) {
-        Some(m) => (true, m.role.to_lowercase()),
-        None => (false, String::new()),
-    };
+    let role = crate::service::members::member_role(caller, ws_id, state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()).unwrap_or_default());
 
     let resource = Resource::Workspace(WorkspaceCtx {
         workspace_id: ws.id.clone(),
@@ -250,19 +241,8 @@ pub fn authorize_app(
             .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{ws_id}' not found")))?
     };
 
-    let collabs = {
-        let collabs_guard = state
-            .collaborators
-            .read()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.get(&ws_id).cloned().unwrap_or_default()
-    };
-
-    let (is_member, member_role): (bool, String) =
-        match collabs.iter().find(|m| m.eppn == caller.eppn) {
-            Some(m) => (true, m.role.to_lowercase()),
-            None => (false, String::new()),
-        };
+    let role = crate::service::members::member_role(caller, &ws_id, state);
+    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()).unwrap_or_default());
 
     let action_name = match action {
         AppAction::Read => "read_app",
