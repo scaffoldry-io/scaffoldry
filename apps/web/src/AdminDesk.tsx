@@ -5,7 +5,7 @@ import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient, getAuthToken, setAuthToken } from "./api";
-import { BackgroundWork } from "./ui";
+import { BackgroundWork, ViewAsBanner } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
@@ -936,6 +936,38 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     navigateTo("/admin");
   };
 
+  // View as: a read-only look at one app as another person. The view-as token is kept in memory
+  // only, so a reload returns to the person's own session and never keeps a view without its banner.
+  const [viewAs, setViewAs] = useState<{ appTitle: string; person: string; ownToken: string | null } | null>(null);
+
+  const handleStartViewAs = async (app: RegisteredApp, person: Collaborator) => {
+    if (viewAs) return;
+    try {
+      const ownToken = getAuthToken();
+      const started = await apiClient.startViewAs(app.slug, person.eppn);
+      setAuthToken(started.token, false);
+      setViewAs({ appTitle: app.title, person: started.target.name, ownToken });
+      setStudioOpen(false);
+      setActiveWorkspaceApp(app);
+    } catch (err: any) {
+      showToast(err?.message || "The view could not be started.");
+    }
+  };
+
+  const handleExitViewAs = async () => {
+    if (!viewAs) return;
+    let revoked = true;
+    try {
+      await apiClient.stopViewAs();
+    } catch {
+      revoked = false;
+    }
+    setAuthToken(viewAs.ownToken);
+    setViewAs(null);
+    setActiveWorkspaceApp(null);
+    if (!revoked) showToast("The view has ended here. The server closes it within 30 minutes.");
+  };
+
   // Applications & Policy Data
   const [apps, setApps] = useState<RegisteredApp[]>(INITIAL_APPS);
   const [sourceRules] = useState<SourceRule[]>(INITIAL_SOURCE_RULES);
@@ -1596,6 +1628,13 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         fetchJobs={apiClient.listMyJobs}
         className="fixed bottom-6 left-6 z-40 max-w-sm bg-white dark:bg-slate-900 shadow-lg"
       />
+
+      {/* Stays on screen for the whole of a view-as session, so no one mistakes it for their own. */}
+      {viewAs && (
+        <div className="sticky top-0 z-50">
+          <ViewAsBanner appTitle={viewAs.appTitle} person={viewAs.person} onExit={handleExitViewAs} />
+        </div>
+      )}
 
       {/* SECURITY IMPERSONATION BANNER (OSCAL AC-02) */}
       {isImpersonating && realAdmin && (
@@ -2751,6 +2790,15 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       <CoBuilderStudioModal
         isOpen={studioOpen}
         onClose={() => setStudioOpen(false)}
+        onViewAs={
+          !viewAs &&
+          activeStudioApp &&
+          (activePersona.isAdmin ||
+            ["owner", "admin"].includes(activeStudioApp.collaborators.find((c) => c.eppn === activePersona.eppn)?.role ?? ""))
+            ? (person) => handleStartViewAs(activeStudioApp, person)
+            : undefined
+        }
+        viewerEppn={activePersona.eppn}
         activeStudioApp={activeStudioApp!}
         setActiveStudioApp={setActiveStudioApp}
         studioTab={studioTab}

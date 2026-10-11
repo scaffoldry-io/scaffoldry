@@ -2,7 +2,7 @@ import React from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
 import { WorkflowBuilder } from "./WorkflowBuilder";
 import { SEEDED_DATASETS } from "./DatasetExplorer";
-import { Persona, PublishedDataset, RegisteredApp, WorkflowAutomationRule } from "./types";
+import { Collaborator, Persona, PublishedDataset, RegisteredApp, WorkflowAutomationRule } from "./types";
 
 export interface CoBuilderStudioModalProps {
   isOpen: boolean;
@@ -23,6 +23,10 @@ export interface CoBuilderStudioModalProps {
   showToast: (msg: string) => void;
   personas: Persona[];
   setApps: React.Dispatch<React.SetStateAction<RegisteredApp[]>>;
+  /** Opens a read-only view of this app as a collaborator. Left out when the viewer may not do that. */
+  onViewAs?: (person: Collaborator) => void;
+  /** The signed-in person, who cannot view as themselves. */
+  viewerEppn?: string;
 }
 
 export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
@@ -44,6 +48,8 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
   showToast,
   personas,
   setApps,
+  onViewAs,
+  viewerEppn,
 }) => {
   if (!isOpen || !activeStudioApp) return null;
 
@@ -254,9 +260,20 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
                         <div className="font-mono text-[11px] text-slate-400">{c.eppn}</div>
                       </div>
                     </div>
-                    <span className="font-mono text-xs uppercase px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 font-bold">
-                      {c.role}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {onViewAs && c.eppn !== viewerEppn && (
+                        <button
+                          type="button"
+                          onClick={() => onViewAs(c)}
+                          className="text-xs font-semibold px-2 py-0.5 rounded border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                        >
+                          View as
+                        </button>
+                      )}
+                      <span className="font-mono text-xs uppercase px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 font-bold">
+                        {c.role}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
