@@ -143,7 +143,7 @@ pub struct CollaboratorRecord {
     pub eppn: String,
     #[serde(default)]
     pub name: String,
-    pub role: String, // "owner" | "admin" | "editor" | "viewer"
+    pub role: String, // "owner" | "admin" | "editor" | "commenter" | "viewer"
     pub scoped_affiliation: String,
     #[serde(default)]
     pub department: String,

@@ -535,6 +535,23 @@ impl ScaffoldryPolicyEngine {
                 ))
             };
 
+            // 25. Permit workspace commenters, editors, admins and owners to comment on records
+            @description("Workspace commenters, editors, admins and owners can comment on records.")
+            permit (
+                principal,
+                action == Action::"comment",
+                resource is Workspace
+            )
+            when {
+                principal.scoped_affiliation == "central_admin" ||
+                (resource.is_member == true && (
+                    resource.member_role == "owner" ||
+                    resource.member_role == "admin" ||
+                    resource.member_role == "editor" ||
+                    resource.member_role == "commenter"
+                ))
+            };
+
             // 24. Permit workspace owner and admin to manage app
             @description("Workspace owners and admins can manage apps.")
             permit (

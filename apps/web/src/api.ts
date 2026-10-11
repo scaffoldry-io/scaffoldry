@@ -241,6 +241,26 @@ export interface UnitPositionRow {
   holders: { eppn: string; display_name: string; source: string }[];
 }
 
+/** One comment on a record. A removed comment has no body. */
+export interface CommentRow {
+  id: string;
+  record_id: string;
+  parent_id: string | null;
+  author: string;
+  author_name: string;
+  body: string | null;
+  mentions: string[];
+  deleted: boolean;
+  created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface Mentionable {
+  eppn: string;
+  name: string;
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
@@ -516,6 +536,30 @@ export const apiClient = {
       `/orgs/${encodeURIComponent(unit)}/positions/${encodeURIComponent(key)}/holders/${encodeURIComponent(eppn)}`,
       { method: "DELETE", body: JSON.stringify({ reason }) }
     );
+  },
+
+  listComments: async (appSlug: string, recordId: string) => {
+    return request<{ comments: CommentRow[] }>(`/apps/${appSlug}/records/${recordId}/comments`);
+  },
+
+  postComment: async (appSlug: string, recordId: string, body: string, parentId?: string) => {
+    return request<CommentRow>(`/apps/${appSlug}/records/${recordId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body, ...(parentId ? { parent_id: parentId } : {}) }),
+    });
+  },
+
+  editComment: async (appSlug: string, commentId: string, body: string) => {
+    return request<CommentRow>(`/apps/${appSlug}/comments/${commentId}`, { method: "PATCH", body: JSON.stringify({ body }) });
+  },
+
+  removeComment: async (appSlug: string, commentId: string) => {
+    return request<CommentRow>(`/apps/${appSlug}/comments/${commentId}`, { method: "DELETE" });
+  },
+
+  /** The people a mention can name: those who can read the app. */
+  mentionable: async (appSlug: string) => {
+    return request<{ people: Mentionable[] }>(`/apps/${appSlug}/mentionable`);
   },
 
   listProposals: async (workspaceId: string) => {
