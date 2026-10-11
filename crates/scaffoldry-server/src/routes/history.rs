@@ -8,7 +8,7 @@ use crate::state::SharedState;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -18,6 +18,8 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/apps/{slug}/records/{id}/history", get(get_record_history))
         .route("/apps/{slug}/history", get(get_app_history))
+        .route("/apps/{slug}/history/{batch_id}/undo", post(post_undo))
+        .route("/apps/{slug}/records/{id}/restore", post(post_restore))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -68,4 +70,33 @@ async fn get_app_history(
         .map_err(|_| ServiceError::internal("The read stopped").into_pair())?
         .map_err(ServiceError::into_pair)?;
     Ok(body(page))
+}
+
+async fn post_undo(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((slug, batch_id)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
+    tokio::task::spawn_blocking(move || crate::service::undo::undo_batch(&user, &origin, &slug, &batch_id, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The undo stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
+}
+
+async fn post_restore(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((slug, id)): Path<(String, String)>,
+    Json(payload): Json<Value>,
+) -> Result<Json<crate::state::DatasetRecord>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
+    tokio::task::spawn_blocking(move || crate::service::undo::restore_record(&user, &origin, &slug, &id, &payload, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The restore stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
 }

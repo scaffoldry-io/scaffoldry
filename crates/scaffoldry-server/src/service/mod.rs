@@ -18,6 +18,7 @@ pub mod positions;
 pub mod processes;
 pub mod proposals;
 pub mod tools;
+pub mod undo;
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -84,6 +85,8 @@ pub enum ServiceError {
     TooLarge(String),
     /// A sort or filter names a field whose index is still being built.
     IndexBuilding(String),
+    /// An undo found records that have changed since the batch. `conflicts` lists them.
+    UndoConflict { message: String, conflicts: Vec<Value> },
     /// A rule the app set stops the change, such as a delete while records still link to the record.
     ConstraintViolated(String),
     Internal(String),
@@ -125,7 +128,7 @@ impl ServiceError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::ConstraintViolated(_) => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -143,6 +146,7 @@ impl ServiceError {
             Self::TooLarge(_) => "too_large",
             Self::IndexBuilding(_) => "index_building",
             Self::ConstraintViolated(_) => "constraint_violated",
+            Self::UndoConflict { .. } => "undo_conflict",
             Self::Internal(_) => "internal",
         }
     }
@@ -158,7 +162,7 @@ impl ServiceError {
             | Self::IndexBuilding(msg)
             | Self::ConstraintViolated(msg)
             | Self::Internal(msg) => msg,
-            Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } => message,
+            Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }
     }
 
@@ -180,6 +184,9 @@ impl ServiceError {
             }
             Self::StaleVersion { version, .. } => {
                 body.insert("version".to_string(), Value::from(*version));
+            }
+            Self::UndoConflict { conflicts, .. } => {
+                body.insert("conflicts".to_string(), Value::Array(conflicts.clone()));
             }
             _ => {}
         }

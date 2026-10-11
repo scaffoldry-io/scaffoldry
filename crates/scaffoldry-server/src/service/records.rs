@@ -652,6 +652,18 @@ fn fill_lookups(caller: &AuthUser, app_slug: &str, rows: &mut [DatasetRecord], s
     }
 }
 
+/// The fields of a table that are protected under the effective rule, whoever reads them.
+pub(crate) fn protected_fields_of(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
+    let (fields, canonical) = table_fields_lenient(app_slug, table_id, state);
+    let categories = state.sensitivity_categories();
+    let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
+    fields
+        .iter()
+        .filter(|f| scaffoldry_engine::effective_ferpa_sensitive(f, labels.get(&(app_slug.to_string(), canonical.clone(), f.name.clone())), &categories).protected)
+        .map(|f| f.name.clone())
+        .collect()
+}
+
 /// The names of a table's indexed fields: marked, used by a view, or joined on.
 fn indexed_names(app_slug: &str, table_id: &str, state: &SharedState) -> std::collections::BTreeSet<String> {
     let Ok(engine) = state.engine.read() else { return Default::default() };
