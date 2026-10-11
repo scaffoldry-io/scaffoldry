@@ -45,6 +45,7 @@ pub fn ctx_for(actor: &str, kind: ActorKind, app_slug: &str, data: &Value, state
     let mut ctx = WriteCtx::new(actor, kind);
     let table = data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("");
     ctx.computed_fields = crate::service::records::computed_fields(app_slug, table, state);
+    ctx.index_fields = crate::service::records::indexed_fields_of(app_slug, table, state);
     ctx
 }
 

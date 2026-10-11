@@ -54,7 +54,8 @@
         "rollup_function": { "type": ["string", "null"] },
         "select_options": { "type": "array", "items": { "type": "string" } },
         "currency_symbol": { "type": ["string", "null"] },
-        "precision": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 }
+        "precision": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+        "indexed": { "type": "boolean", "description": "Sorting and filtering on this field use the pivot index. At most 20 per table. Not on a Lookup." }
       }
     },
     "table": {

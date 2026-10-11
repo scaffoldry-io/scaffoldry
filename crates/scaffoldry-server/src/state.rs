@@ -557,6 +557,14 @@ impl ServerState {
         }
     }
 
+    /// One page through the pivot index.
+    pub fn indexed_page(&self, query: &crate::repository::IndexedQuery) -> Result<Vec<DatasetRecord>, String> {
+        match self.repository {
+            Some(ref repo) => repo.indexed_page(query).map_err(|e| e.to_string()),
+            None => Err("Filtering and sorting need PostgreSQL".to_string()),
+        }
+    }
+
     /// True when a table holds more than `limit` rows.
     pub fn table_has_more_than(&self, app_slug: &str, table_id: &str, limit: i64) -> Result<bool, String> {
         match self.repository {

@@ -1,7 +1,7 @@
 //! The format of an app manifest. `validate_manifest` returns every problem it finds, not the
 //! first, so an agent can fix them in one pass.
 
-use crate::{formula_field_refs, AppManifest, AppTable, FieldType, PageKind};
+use crate::{formula_field_refs, indexed_fields, AppManifest, AppTable, FieldType, PageKind, MAX_INDEXED_FIELDS};
 use std::collections::HashSet;
 
 pub const MAX_TABLES: usize = 50;
@@ -71,6 +71,15 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
             }
             if !names.insert(f.name.as_str()) {
                 problems.push(format!("table '{}': field name '{}' is used twice", table.id, f.name));
+            }
+        }
+        let indexed = indexed_fields(m, &table.id);
+        if indexed.len() > MAX_INDEXED_FIELDS {
+            problems.push(format!("table '{}' indexes {} fields, the limit is {MAX_INDEXED_FIELDS}", table.id, indexed.len()));
+        }
+        for f in &table.fields {
+            if f.indexed && f.field_type == FieldType::Lookup {
+                problems.push(format!("table '{}': Lookup field '{}' cannot be indexed", table.id, f.name));
             }
         }
         for f in &table.fields {

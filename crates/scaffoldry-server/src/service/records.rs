@@ -9,7 +9,8 @@ use crate::state::{AuthUser, DatasetRecord, SharedState};
 use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::TriggerEvent;
-use scaffoldry_engine::{AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction};
+use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
+use scaffoldry_engine::{AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction, FilterOperator, IndexColumn};
 use serde_json::Value;
 
 pub fn create_record(
@@ -293,10 +294,15 @@ pub struct RecordPage {
 /// A page cursor is the last row's `(created_at, id)`, and its sort value when sorted. It is
 /// opaque to the caller.
 pub fn encode_cursor(row: &DatasetRecord, sort_field: Option<&str>) -> String {
+    let key = sort_field.map(|field| row.data.get(field).cloned().unwrap_or(Value::Null));
+    encode_cursor_key(row, key)
+}
+
+fn encode_cursor_key(row: &DatasetRecord, key: Option<Value>) -> String {
     use base64::Engine;
     let mut body = serde_json::json!({ "created_at": row.created_at, "id": row.id });
-    if let Some(field) = sort_field {
-        body["key"] = row.data.get(field).cloned().unwrap_or(Value::Null);
+    if let Some(key) = key {
+        body["key"] = key;
     }
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(body.to_string())
 }
@@ -376,6 +382,19 @@ pub(crate) fn computed_fields(app_slug: &str, table_id: &str, state: &SharedStat
         .collect()
 }
 
+/// The indexed fields of a table. A write keeps their index rows current.
+pub(crate) fn indexed_fields_of(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<FieldSpec> {
+    let (fields, table) = table_fields_lenient(app_slug, table_id, state);
+    let names = indexed_names(app_slug, &table, state);
+    fields.into_iter().filter(|f| names.contains(&f.name)).collect()
+}
+
+/// The names of a table's indexed fields: marked, used by a view, or joined on.
+fn indexed_names(app_slug: &str, table_id: &str, state: &SharedState) -> std::collections::BTreeSet<String> {
+    let Ok(engine) = state.engine.read() else { return Default::default() };
+    engine.resolve_by_slug(app_slug).map(|m| scaffoldry_engine::indexed_fields(m, table_id)).unwrap_or_default()
+}
+
 fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
     if !is_viewer(caller, app_slug, state) {
         return Vec::new();
@@ -415,8 +434,81 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
     rows
 }
 
-/// One page of a table. With no filter and no sort it walks the paging index. A filter or a sort
-/// is allowed only on a table of 10,000 rows or fewer, until the pivot index exists.
+/// What a filter or sort needs from the pivot index, or the field that stops it.
+fn indexed_plan(
+    fields: &[FieldSpec],
+    indexed: &std::collections::BTreeSet<String>,
+    filter: Option<&CompoundFilter>,
+    sort: Option<&SortSpec>,
+) -> Result<(Vec<IndexedClause>, Option<IndexedSort>), String> {
+    use scaffoldry_engine::FieldType;
+    let field = |name: &str| fields.iter().find(|f| f.name == name);
+    let mut clauses = Vec::new();
+    if let Some(f) = filter {
+        if f.conjunction == FilterConjunction::Or && f.clauses.len() > 1 {
+            return Err(f.clauses[0].field_name.clone());
+        }
+        for c in &f.clauses {
+            let spec = field(&c.field_name).filter(|s| indexed.contains(&s.name)).ok_or_else(|| c.field_name.clone())?;
+            let multi = spec.field_type == FieldType::MultiSelect;
+            let supported = match c.operator {
+                FilterOperator::Equals => true,
+                FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty => !multi,
+                FilterOperator::Contains | FilterOperator::NotContains => false,
+            };
+            if !supported {
+                return Err(c.field_name.clone());
+            }
+            let needs_value = !matches!(c.operator, FilterOperator::IsEmpty | FilterOperator::IsNotEmpty);
+            if needs_value && c.value.trim().is_empty() {
+                continue;
+            }
+            clauses.push(IndexedClause {
+                field: c.field_name.clone(),
+                column: scaffoldry_engine::index_column(spec.field_type),
+                multi,
+                op: c.operator,
+                value: c.value.clone(),
+            });
+        }
+    }
+    let sort = match sort {
+        None => None,
+        Some(s) => {
+            let spec = field(&s.field_name).filter(|f| indexed.contains(&f.name) && f.field_type != FieldType::MultiSelect).ok_or_else(|| s.field_name.clone())?;
+            Some(IndexedSort { field: s.field_name.clone(), column: scaffoldry_engine::index_column(spec.field_type), descending: s.descending })
+        }
+    };
+    Ok((clauses, sort))
+}
+
+/// The cursor's key, read as the value type of the column the page walks.
+fn indexed_after(after: &crate::repository::RecordCursor, column: IndexColumn) -> Result<(IndexedValue, String), ServiceError> {
+    let bad = || ServiceError::BadRequest("cursor is not one this server issued".to_string());
+    let value = match (&after.key, column) {
+        (None, _) | (Some(Value::Null), _) => IndexedValue::Blank,
+        (Some(Value::Number(n)), IndexColumn::Num) => IndexedValue::Num(n.as_f64().ok_or_else(bad)?),
+        (Some(Value::String(t)), IndexColumn::Txt) => IndexedValue::Txt(t.clone()),
+        (Some(Value::String(t)), IndexColumn::Ts) => IndexedValue::Ts(scaffoldry_engine::parse_instant(t).ok_or_else(bad)?),
+        _ => return Err(bad()),
+    };
+    Ok((value, after.id.clone()))
+}
+
+/// The key a row has in the index column of `field`, for the cursor.
+fn indexed_key(row: &DatasetRecord, spec: &FieldSpec) -> Value {
+    let cols = scaffoldry_engine::index_rows(spec, row.data.get(&spec.name).unwrap_or(&Value::Null)).into_iter().next().unwrap_or((None, None, None));
+    match cols {
+        (Some(n), _, _) => serde_json::Number::from_f64(n).map(Value::Number).unwrap_or(Value::Null),
+        (_, Some(t), _) => Value::String(t),
+        (_, _, Some(t)) => Value::String(t),
+        _ => Value::Null,
+    }
+}
+
+/// One page of a table. With no filter and no sort it walks the paging index. A filter or sort on
+/// indexed fields reads the pivot index. Any other filter or sort is allowed only on a table of
+/// 10,000 rows or fewer.
 pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &SharedState) -> Result<RecordPage, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     let (fields, table) = table_fields(app_slug, &query.table_id, query.must_exist, state)?;
@@ -442,13 +534,32 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     let after = query.cursor.as_deref().map(decode_cursor).transpose()?;
     let sort_field = query.sort.as_ref().map(|s| s.field_name.clone());
 
+    let plan = indexed_plan(&fields, &indexed_names(app_slug, &table, state), query.filter.as_ref(), query.sort.as_ref());
+    let mut walk_spec: Option<FieldSpec> = None;
     let mut rows = if clauses.is_empty() && query.sort.is_none() {
         state
             .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
             .map_err(ServiceError::Internal)?
+    } else if let Some((iclauses, isort)) = plan.as_ref().ok().filter(|(c, s)| !c.is_empty() || s.is_some()) {
+        let mut iq = IndexedQuery {
+            app_slug: app_slug.to_string(),
+            table_id: table.clone(),
+            clauses: iclauses.clone(),
+            sort: isort.clone(),
+            after: None,
+            limit: query.limit + 1,
+        };
+        if let Some((name, column, _)) = crate::repository_index::walk_of(&iq) {
+            walk_spec = fields.iter().find(|f| f.name == name).cloned();
+            if let Some(a) = &after {
+                iq.after = Some(indexed_after(a, column)?);
+            }
+        }
+        state.indexed_page(&iq).map_err(ServiceError::Internal)?
     } else {
         if state.table_has_more_than(app_slug, &table, UNINDEXED_ROW_LIMIT).map_err(ServiceError::Internal)? {
-            return Err(ServiceError::BadRequest(TOO_LARGE.to_string()));
+            let name = plan.err().unwrap_or_default();
+            return Err(ServiceError::BadRequest(format!("{TOO_LARGE} Mark '{name}' as indexed in the app manifest to filter or sort on it.")));
         }
         let q = crate::repository::RecordQuery {
             table_id: table.clone(),
@@ -478,7 +589,13 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             more = true;
         }
     }
-    let next_cursor = if more { rows.last().map(|r| encode_cursor(r, sort_field.as_deref())) } else { None };
+    let next_cursor = if !more {
+        None
+    } else if let Some(spec) = &walk_spec {
+        rows.last().map(|r| encode_cursor_key(r, Some(indexed_key(r, spec))))
+    } else {
+        rows.last().map(|r| encode_cursor(r, sort_field.as_deref()))
+    };
     Ok(RecordPage { records: redact_records(caller, app_slug, rows, state), next_cursor })
 }
 
