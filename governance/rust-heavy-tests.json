@@ -1,0 +1,11 @@
+{
+  "heavy": [
+    "access_scope_test",
+    "admin_people_test",
+    "calc_recalc_test",
+    "computed_links_test",
+    "index_jobs_test",
+    "record_links_two_way_test",
+    "row_index_test"
+  ]
+}
