@@ -688,7 +688,7 @@ export const apiClient = {
   },
 
   /** The signed-in person's own jobs, newest first. */
-  listMyJobs: async () => (await request<{ jobs: import("./ui").BackgroundJob[] }>("/jobs?limit=50")).jobs,
+  listMyJobs: async () => (await request<{ jobs?: import("./ui").BackgroundJob[] }>("/jobs?limit=50"))?.jobs ?? [],
 
   /** Opens a read-only view of an app as another person. The caller swaps tokens and shows the banner. */
   startViewAs: (appSlug: string, eppn: string) =>
