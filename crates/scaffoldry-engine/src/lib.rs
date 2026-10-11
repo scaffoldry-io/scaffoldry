@@ -3,6 +3,7 @@
 pub mod access;
 pub mod automation;
 pub mod detect;
+pub mod graph;
 pub mod index;
 pub mod manifest;
 pub mod sensitivity;
