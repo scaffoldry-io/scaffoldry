@@ -19,6 +19,7 @@ pub mod positions;
 pub mod processes;
 pub mod proposals;
 pub mod tools;
+pub mod trash;
 pub mod undo;
 
 use axum::http::StatusCode;

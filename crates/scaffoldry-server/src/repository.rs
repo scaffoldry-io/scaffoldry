@@ -47,6 +47,7 @@ const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_in
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0031: &str = include_str!("../../scaffoldry-core/migrations/0031_record_links.sql");
 const SCHEMA_0032: &str = include_str!("../../scaffoldry-core/migrations/0032_trash_links.sql");
+const SCHEMA_0042: &str = include_str!("../../scaffoldry-core/migrations/0042_lifecycle.sql");
 const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_job_schedules.sql");
 
 #[derive(Debug, thiserror::Error)]
@@ -70,13 +71,13 @@ type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
 /// The next page of a table after a cursor. The row comparison walks the paging index.
 pub const PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
      FROM dataset_records \
-     WHERE app_slug = $1 AND table_id = $2 AND (created_at, id) > ($3::text::timestamptz, $4::text) \
+     WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND (created_at, id) > ($3::text::timestamptz, $4::text) \
      ORDER BY created_at, id LIMIT $5";
 
 /// The first page of a table.
 pub const FIRST_PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
      FROM dataset_records \
-     WHERE app_slug = $1 AND table_id = $2 \
+     WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
      ORDER BY created_at, id LIMIT $3";
 
 /// Who wrote a record, and how. Every write takes one, so a change cannot go unattributed.
@@ -289,7 +290,7 @@ pub(crate) fn update_record_in_tx(
 ) -> Result<RecordWrite, postgres::Error> {
     let mut data = data.clone();
     apply_formulas(&mut data, ctx);
-    let Some(row) = tx.query_opt("SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 FOR UPDATE", &[&slug, &id])? else {
+    let Some(row) = tx.query_opt("SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE", &[&slug, &id])? else {
         return Ok(RecordWrite::Missing);
     };
     let (old, version): (Value, i32) = (row.get(0), row.get(1));
@@ -315,8 +316,10 @@ pub(crate) fn update_record_in_tx(
     Ok(RecordWrite::Saved(next))
 }
 
-/// One delete, in the caller's transaction. With `expected_version`, a record at another version is
-/// left alone and reported as a conflict.
+/// One delete, in the caller's transaction. The record goes to trash and stays there until a
+/// retention job destroys it. Its index rows and links are removed, and the links are remembered so a
+/// restore can bring them back. With `expected_version`, a record at another version is left alone and
+/// reported as a conflict.
 pub(crate) fn delete_record_in_tx(
     tx: &mut postgres::Transaction<'_>,
     slug: &str,
@@ -324,26 +327,62 @@ pub(crate) fn delete_record_in_tx(
     expected_version: Option<i32>,
     ctx: &WriteCtx,
 ) -> Result<RecordWrite, postgres::Error> {
-    let deleted = match expected_version {
+    let batch = ctx.batch_id;
+    let moved = match expected_version {
         Some(expected) => tx.query_opt(
-            "DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 AND version = $3 RETURNING data, version, table_id",
-            &[&slug, &id, &expected],
+            "UPDATE dataset_records SET deleted_at = NOW(), deleted_by = $4, delete_batch = $5 \
+             WHERE app_slug = $1 AND id = $2 AND version = $3 AND deleted_at IS NULL RETURNING data, version, table_id",
+            &[&slug, &id, &expected, &ctx.actor, &batch],
         )?,
-        None => tx.query_opt("DELETE FROM dataset_records WHERE app_slug = $1 AND id = $2 RETURNING data, version, table_id", &[&slug, &id])?,
+        None => tx.query_opt(
+            "UPDATE dataset_records SET deleted_at = NOW(), deleted_by = $3, delete_batch = $4 \
+             WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL RETURNING data, version, table_id",
+            &[&slug, &id, &ctx.actor, &batch],
+        )?,
     };
-    if let Some(row) = deleted {
+    if let Some(row) = moved {
         let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+        tx.execute("DELETE FROM record_index WHERE record_id = $1", &[&id])?;
         crate::repository_links::delete_record_links(tx, slug, id, ctx)?;
         let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
         let action = ctx.action.unwrap_or("delete");
         write_history(tx, Touched { app_slug: slug, table_id: &table, record_id: id, version, action }, &changes, ctx)?;
         return Ok(RecordWrite::Saved(version));
     }
-    let current = tx.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2", &[&slug, &id])?;
+    let current = tx.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL", &[&slug, &id])?;
     Ok(match current {
         Some(row) => RecordWrite::Conflict(row.get(0)),
         None => RecordWrite::Missing,
     })
+}
+
+/// A record in trash, with who put it there and when.
+#[derive(Debug, Clone)]
+pub struct TrashRow {
+    pub record: DatasetRecord,
+    pub deleted_by: String,
+    pub deleted_at: String,
+    pub delete_batch: Option<uuid::Uuid>,
+    /// Whole days left before a retention job may destroy it.
+    pub days_left: i64,
+}
+
+/// Brings one record out of trash, in the caller's transaction: the flags clear and the index rows
+/// are written again. Its links come back in a second pass (`restore_links_in_tx`), once every
+/// record of the batch is live again.
+pub(crate) fn restore_record_in_tx(tx: &mut postgres::Transaction<'_>, slug: &str, id: &str, ctx: &WriteCtx) -> Result<bool, postgres::Error> {
+    let Some(row) = tx.query_opt(
+        "UPDATE dataset_records SET deleted_at = NULL, deleted_by = NULL, delete_batch = NULL \
+         WHERE app_slug = $1 AND id = $2 AND deleted_at IS NOT NULL RETURNING data, version, table_id",
+        &[&slug, &id],
+    )? else {
+        return Ok(false);
+    };
+    let (data, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
+    crate::repository_index::write_record_index(tx, slug, &table, id, &data, &ctx.index_fields)?;
+    let action = ctx.action.unwrap_or("restore");
+    write_history(tx, Touched { app_slug: slug, table_id: &table, record_id: id, version, action }, &serde_json::Map::new(), ctx)?;
+    Ok(true)
 }
 
 pub(crate) fn write_history(
@@ -496,7 +535,7 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND ({joined}){after} \
+         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){after} \
          ORDER BY {order} LIMIT ${limit}::bigint"
     );
     (sql, params)
@@ -586,7 +625,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 27] = [
+                        let migrations: [(&str, &str); 28] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -608,6 +647,7 @@ impl PostgresRepository {
                             ("0028_record_comments.sql", SCHEMA_0028),
                             ("0031_record_links.sql", SCHEMA_0031),
                             ("0032_trash_links.sql", SCHEMA_0032),
+                            ("0042_lifecycle.sql", SCHEMA_0042),
                             ("0044_job_schedules.sql", SCHEMA_0044),
                             ("0045_index_status.sql", SCHEMA_0045),
                             ("0027_record_history.sql", SCHEMA_0027),
@@ -1169,7 +1209,7 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let rows = client.query(
                 "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-                 FROM dataset_records WHERE app_slug = $1 ORDER BY created_at ASC, id ASC",
+                 FROM dataset_records WHERE app_slug = $1 AND deleted_at IS NULL ORDER BY created_at ASC, id ASC",
                 &[&slug],
             )?;
             Ok(rows.iter().map(record_from_row).collect())
@@ -1215,7 +1255,7 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let n: i64 = client
                 .query_one(
-                    "SELECT count(*) FROM (SELECT 1 FROM dataset_records WHERE app_slug = $1 AND table_id = $2 LIMIT $3) t",
+                    "SELECT count(*) FROM (SELECT 1 FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL LIMIT $3) t",
                     &[&slug, &table, &(limit + 1)],
                 )?
                 .get(0);
@@ -1228,7 +1268,7 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let row = client.query_opt(
                 "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-                 FROM dataset_records WHERE app_slug = $1 AND id = $2",
+                 FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL",
                 &[&slug, &id],
             )?;
             Ok(row.as_ref().map(record_from_row))
@@ -1430,7 +1470,7 @@ impl PostgresRepository {
         let slugs = app_slugs.to_vec();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT app_slug, count(*)::bigint FROM dataset_records WHERE app_slug = ANY($1) GROUP BY app_slug",
+                "SELECT app_slug, count(*)::bigint FROM dataset_records WHERE app_slug = ANY($1) AND deleted_at IS NULL GROUP BY app_slug",
                 &[&slugs],
             )?;
             let mut map = HashMap::new();

@@ -180,7 +180,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "delete_record",
-        description: "Delete a record. Send the version you read.",
+        description: "Moves a record to trash. It can be restored. Send the version you read.",
         input_schema: schema_delete_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,

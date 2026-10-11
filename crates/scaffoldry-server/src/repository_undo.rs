@@ -2,9 +2,8 @@
 //! written and the records that have moved on are listed.
 
 use crate::repository::{
-    delete_record_in_tx, insert_record_in_tx, update_record_in_tx, HistoryEntry, PostgresRepository, RepositoryError, WriteCtx,
+    delete_record_in_tx, restore_record_in_tx, update_record_in_tx, HistoryEntry, PostgresRepository, RepositoryError, WriteCtx,
 };
-use crate::state::DatasetRecord;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -21,11 +20,9 @@ pub enum UndoOutcome {
     Conflicts(Vec<UndoConflict>),
 }
 
-/// What undoing a batch writes for one table: the context of the write, and the fields a record
-/// restored by it must flag as sensitive when it holds them.
+/// What undoing a batch writes for one table: the context of the write.
 pub struct UndoTable {
     pub ctx: WriteCtx,
-    pub protected: Vec<String>,
 }
 
 /// Two values are the same when they are equal, and numbers are the same when they are the same number.
@@ -70,11 +67,12 @@ impl PostgresRepository {
                 .collect();
             let mut conflicts: Vec<UndoConflict> = Vec::new();
             let mut written = 0usize;
+            let mut restored: Vec<(String, String)> = Vec::new();
             // The last change is undone first.
             for entry in entries.iter().rev() {
                 let Some(table) = tables.get(&entry.table_id) else { continue };
                 let current: Option<Value> = tx
-                    .query_opt("SELECT data FROM dataset_records WHERE app_slug = $1 AND id = $2 FOR UPDATE", &[&slug, &entry.record_id])?
+                    .query_opt("SELECT data FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE", &[&slug, &entry.record_id])?
                     .map(|r| r.get(0));
                 let changes = entry.changes.as_object().cloned().unwrap_or_default();
                 let moved_on = |data: &Value| -> Vec<String> {
@@ -88,28 +86,19 @@ impl PostgresRepository {
                     ("comment", _) => {}
                     ("delete", Some(_)) => conflicts.push(UndoConflict { record_id: entry.record_id.clone(), fields: Vec::new() }),
                     ("delete", None) => {
-                        let mut data = serde_json::Map::new();
-                        data.insert("_table_id".to_string(), Value::String(entry.table_id.clone()));
-                        for (field, change) in &changes {
-                            if let Some(old) = change.get("old") {
-                                data.insert(field.clone(), old.clone());
-                            }
+                        // The record is in trash: bring it back, with its links once the batch is live again.
+                        let trashed = tx
+                            .query_opt(
+                                "SELECT 1 FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NOT NULL FOR UPDATE",
+                                &[&slug, &entry.record_id],
+                            )?
+                            .is_some();
+                        if trashed && restore_record_in_tx(&mut tx, &slug, &entry.record_id, &table.ctx)? {
+                            restored.push((entry.record_id.clone(), entry.table_id.clone()));
+                            written += 1;
+                        } else {
+                            conflicts.push(UndoConflict { record_id: entry.record_id.clone(), fields: Vec::new() });
                         }
-                        let sensitive = table.protected.iter().any(|f| data.get(f).is_some_and(|v| !v.is_null() && v != ""));
-                        let rec = DatasetRecord {
-                            id: entry.record_id.clone(),
-                            app_slug: slug.clone(),
-                            data: Value::Object(data),
-                            ceds_mapping: serde_json::json!({}),
-                            is_ferpa_sensitive: sensitive,
-                            created_at: String::new(),
-                            created_by: Some(table.ctx.actor.clone()),
-                            version: 1,
-                        };
-                        let mut ctx = table.ctx.clone();
-                        ctx.action = Some("restore");
-                        insert_record_in_tx(&mut tx, &rec, &ctx)?;
-                        written += 1;
                     }
                     (_, None) => conflicts.push(UndoConflict { record_id: entry.record_id.clone(), fields: Vec::new() }),
                     ("create", Some(data)) => {
@@ -144,6 +133,11 @@ impl PostgresRepository {
             if !conflicts.is_empty() {
                 // Dropping the transaction rolls it back, so nothing is written.
                 return Ok(UndoOutcome::Conflicts(conflicts));
+            }
+            for (id, table) in &restored {
+                if let Some(t) = tables.get(table) {
+                    crate::repository_links::restore_links_in_tx(&mut tx, &slug, id, &t.ctx)?;
+                }
             }
             tx.commit()?;
             Ok(UndoOutcome::Undone { records: written })

@@ -203,9 +203,9 @@ async fn the_page_statements_hold_no_sequential_scan() {
         (first, next)
     });
     assert!(!first_plan.contains("Seq Scan"), "first page:\n{first_plan}");
-    assert!(first_plan.contains("idx_dataset_records_page"), "the paging index is used:\n{first_plan}");
+    assert!(first_plan.contains("idx_dataset_records_live"), "the paging index is used:\n{first_plan}");
     assert!(!next_plan.contains("Seq Scan"), "next page:\n{next_plan}");
-    assert!(next_plan.contains("idx_dataset_records_page"), "the paging index is used:\n{next_plan}");
+    assert!(next_plan.contains("idx_dataset_records_live"), "the paging index is used:\n{next_plan}");
 }
 
 // 4. A page from the middle comes back fast.

@@ -97,12 +97,12 @@ pub(crate) fn copy_batch(
 ) -> Result<Batch, postgres::Error> {
     let batch = match after {
         None => tx.query(
-            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
              ORDER BY created_at, id LIMIT $3 FOR SHARE",
             &[&app_slug, &table_id, &limit],
         )?,
         Some((at, id)) => tx.query(
-            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 \
+            "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
              AND (created_at, id) > ($3::text::timestamptz, $4::text) ORDER BY created_at, id LIMIT $5 FOR SHARE",
             &[&app_slug, &table_id, at, id, &limit],
         )?,
@@ -437,7 +437,7 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT r.id, r.app_slug, r.data, r.ceds_mapping, r.is_ferpa_sensitive, r.created_at::text AS created_at_text, r.created_by, r.version \
-         FROM record_index i JOIN dataset_records r ON r.id = i.record_id \
+         FROM record_index i JOIN dataset_records r ON r.id = i.record_id AND r.deleted_at IS NULL \
          WHERE {} ORDER BY {order} LIMIT ${limit}::bigint",
         wheres.join(" AND ")
     );
