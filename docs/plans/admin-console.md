@@ -356,7 +356,7 @@ Routes. All Platform Admin unless marked.
 | POST | `/admin/policy/versions` | Body `source`, `note`. Parses the source. A parse error is 400 with each message and its line and column. Stores a `Draft` |
 | POST | `/admin/policy/versions/{id}/clone` | A new `Draft` from any version. This is rollback: clone the old version, then activate |
 | POST | `/admin/policy/versions/{id}/run-cases` | Runs every case against that version in a temporary engine. Returns each case's expected result, actual result, and pass or fail |
-| POST | `/admin/policy/versions/{id}/activate` | Body `reason`. Refused with 409 listing failing cases when any case fails. Refused with 403 when the caller created the draft. There is no exception. The setup identity from `scaffoldry-server setup-token` is a different person and may activate. In one transaction: ledger entry `PolicyRevision` holding the version number, the SHA-256 of the source, and the previous version, then the old row `Retired`, this row `Active`. After commit, swap the engine |
+| POST | `/admin/policy/versions/{id}/activate` | Body `reason`. Refused with 409 listing failing cases when any case fails. Refused with 403 when the caller created the draft. There is no exception. The setup identity from `scaffoldry-server setup-token` is a different person and may activate. In one transaction: ledger entry `PolicyRevision` holding the version number, the SHA-256 of the source, and the previous version, then the old row `Retired`, this row `Active`. After commit, swap the engine. Once `stateless-server.md` phase 4 has run, the swap happens through `refresh()` and the `policy` counter, not directly |
 | GET, POST, DELETE | `/admin/policy/cases`, `/admin/policy/cases/{id}` | List, add, and remove cases. Adding and removing each write a `PolicyRevision` ledger entry |
 | POST | `/admin/policy/simulate` | Body `version_id` (optional, default active), `principal`, `action`, `resource`. Returns the decision, reasons, and diagnostics from the real engine |
 
@@ -519,6 +519,8 @@ Each of these adds its routes to `ADMIN_ROUTES`, is built from the kit, writes a
 | Guests | `guests.md` phase 4 |
 | Positions | `approvers.md` phase 2 |
 | Flows | `workflows.md` phase 11 |
+| Policy library | `policy-library.md` phase 6 |
+| Decision authority | `authority.md` phase 2 |
 
 ## How to prompt Gemini
 

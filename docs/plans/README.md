@@ -1,6 +1,6 @@
 # Gemini workplan
 
-Thirty-one briefs and one master. One phase per session. Do not start the next phase until the current phase's tests pass. Paste the prompt at the bottom of the brief you are in.
+Thirty-four briefs and one master. One phase per session. Do not start the next phase until the current phase's tests pass. Paste the prompt at the bottom of the brief you are in.
 
 [capability-roadmap.md](capability-roadmap.md) explains why the newer briefs exist and what they change in the older ones. Read it first.
 
@@ -79,42 +79,63 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected |
 | 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only |
 
+### Wave 1b — one source of truth, and who decides
+
+Nothing in Wave 2 or later may add state to the server's memory. The first six rows here remove what is there, so that two copies of the server can run at once. The rest make the rules behind a decision visible, and make who decides a setting an institution controls.
+
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 58 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | |
+| 59 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | |
+| 60 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
+| 61 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
+| 62 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | |
+| 63 | [stateless-server.md](stateless-server.md) | 6 | Every write is proven across two instances. A readiness route and a clean stop | |
+| 64 | [policy-library.md](policy-library.md) | 1 | Policies, their sources, and rules that cite a passage word for word | |
+| 65 | [policy-library.md](policy-library.md) | 2 | A person's agent reads a policy and proposes rules and questions. It cannot publish | |
+| 66 | [policy-library.md](policy-library.md) | 3 | A person who did not submit a rule reviews it against its passage and publishes it | |
+| 67 | [authority.md](authority.md) | 1 | A change has a tier. A matrix says who decides. With no rows it behaves as it does today | |
+| 68 | [authority.md](authority.md) | 2 | The matrix in the console. Its effect on real proposals is shown before a change, and a second person confirms | |
+| 69 | [policy-library.md](policy-library.md) | 4 | Everyone reads the rules as sentences, linked to policy and source, marked Enforced or Guidance | |
+| 70 | [authority.md](authority.md) | 3 | The builder is told who decides, why, and what would change it. An agent can ask first | |
+| 71 | [authority.md](authority.md) | 4 | A simulated institution of 5,000 people, and the same measures from real decisions | |
+
 ### Wave 2 — the data platform
 
 Fields, files, views, import and export, and the million-row proof. A department can bring its spreadsheet and work in it.
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 58 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run |
-| 59 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` |
-| 60 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator |
-| 61 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
-| 62 | [record-history.md](record-history.md) | 4 | The disclosure log |
-| 63 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by |
-| 64 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer |
-| 65 | [field-types.md](field-types.md) | 4 | Duration and date-time |
-| 66 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
-| 67 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |
-| 68 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules |
-| 69 | [views.md](views.md) | 3 | A million rows in a window. Needs `@tanstack/react-virtual` |
-| 70 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |
-| 71 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts |
-| 72 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
-| 73 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers |
-| 74 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon |
-| 75 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app |
-| 76 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures |
-| 77 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal |
-| 78 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had |
-| 79 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first |
-| 80 | [import-export.md](import-export.md) | 6 | Moving off a spreadsheet tool, with every decision listed |
-| 81 | [links.md](links.md) | 5 | Converting old value joins to links, with a preview |
-| 82 | [links.md](links.md) | 6 | Link cells, paste, and a linked records section in the grid |
-| 83 | [lifecycle.md](lifecycle.md) | 2 | Retired fields and archived apps |
-| 84 | [lifecycle.md](lifecycle.md) | 3 | Retention policies, nightly purge, and a certificate of destruction |
-| 85 | [attachments.md](attachments.md) | 4 | Orphan blob purge, retention, and bundles with files |
-| 86 | [lifecycle.md](lifecycle.md) | 4 | Legal holds that override every destruction path |
-| 87 | [record-history.md](record-history.md) | 5 | History, comments, and disclosures in the record drawer |
+| 72 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run |
+| 73 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` |
+| 74 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator |
+| 75 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
+| 76 | [record-history.md](record-history.md) | 4 | The disclosure log |
+| 77 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by |
+| 78 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer |
+| 79 | [field-types.md](field-types.md) | 4 | Duration and date-time |
+| 80 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
+| 81 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |
+| 82 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules |
+| 83 | [views.md](views.md) | 3 | A million rows in a window. Needs `@tanstack/react-virtual` |
+| 84 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |
+| 85 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts |
+| 86 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
+| 87 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers |
+| 88 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon |
+| 89 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app |
+| 90 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures |
+| 91 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal |
+| 92 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had |
+| 93 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first |
+| 94 | [import-export.md](import-export.md) | 6 | Moving off a spreadsheet tool, with every decision listed |
+| 95 | [links.md](links.md) | 5 | Converting old value joins to links, with a preview |
+| 96 | [links.md](links.md) | 6 | Link cells, paste, and a linked records section in the grid |
+| 97 | [lifecycle.md](lifecycle.md) | 2 | Retired fields and archived apps |
+| 98 | [lifecycle.md](lifecycle.md) | 3 | Retention policies, nightly purge, and a certificate of destruction |
+| 99 | [attachments.md](attachments.md) | 4 | Orphan blob purge, retention, and bundles with files |
+| 100 | [lifecycle.md](lifecycle.md) | 4 | Legal holds that override every destruction path |
+| 101 | [record-history.md](record-history.md) | 5 | History, comments, and disclosures in the record drawer |
 
 ### Wave 3 — collaboration and process
 
@@ -122,32 +143,34 @@ People are told, see each other work, and run real committee processes.
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 88 | [realtime.md](realtime.md) | 1 | Live change events over server-sent events, with no data in them |
-| 89 | [realtime.md](realtime.md) | 2 | The grid updates in place and keeps what you are typing |
-| 90 | [integrations.md](integrations.md) | 1 | An encrypted secrets store and an outbound allowlist |
-| 91 | [notifications.md](notifications.md) | 1 | An inbox and a bell |
-| 92 | [notifications.md](notifications.md) | 2 | Email through an allowlisted SMTP host |
-| 93 | [realtime.md](realtime.md) | 3 | Presence and a channel for the person's notices and jobs |
-| 94 | [approvers.md](approvers.md) | 4 | Delegation by date |
-| 95 | [approvers.md](approvers.md) | 5 | The workflow builder picks who decides and previews it |
-| 96 | [notifications.md](notifications.md) | 3 | Preferences and digests |
-| 97 | [notifications.md](notifications.md) | 4 | Every producer is wired. No notice carries a record value |
-| 98 | [process-v2.md](process-v2.md) | 1 | Process events and analytics: where time goes |
-| 99 | [workflows.md](workflows.md) | 1 | Flows run with approved grants and reach records by address. They can span apps |
-| 100 | [workflows.md](workflows.md) | 2 | A flow touching several workspaces needs approval from each. Moving sensitive data is flagged |
-| 101 | [process-v2.md](process-v2.md) | 2 | Branches, cross-table effects, manual and date triggers |
-| 102 | [workflows.md](workflows.md) | 3 | Schedules, called flows, chaining, and a circuit breaker |
-| 103 | [field-types.md](field-types.md) | 5 | A button field that starts a process |
-| 104 | [process-v2.md](process-v2.md) | 3 | Timers and escalation. No timer ever decides |
-| 105 | [process-v2.md](process-v2.md) | 4 | Committee votes |
-| 106 | [workflows.md](workflows.md) | 4 | Fill-in tasks, with a task grant on one record while the step is open |
-| 107 | [process-v2.md](process-v2.md) | 5 | Builder and desk screens for all of it |
-| 108 | [workflows.md](workflows.md) | 5 | My Work: one list of decisions, tasks, and reviews across the institution, kept in step by jobs |
-| 109 | [workflows.md](workflows.md) | 6 | The My Work page and a review queue |
-| 110 | [workflows.md](workflows.md) | 7 | Flow editor: one command model, the outline, and server validation |
-| 111 | [workflows.md](workflows.md) | 8 | Flow editor: the block-structured canvas |
-| 112 | [workflows.md](workflows.md) | 9 | Test run with a trace on the canvas |
-| 113 | [workflows.md](workflows.md) | 10 | Run history, safe retry, and version comparison |
+| 102 | [realtime.md](realtime.md) | 1 | Live change events over server-sent events, with no data in them |
+| 103 | [realtime.md](realtime.md) | 2 | The grid updates in place and keeps what you are typing |
+| 104 | [integrations.md](integrations.md) | 1 | An encrypted secrets store and an outbound allowlist |
+| 105 | [policy-library.md](policy-library.md) | 5 | Web sources are fetched through the allowlist. A changed source sends its rules back for review | |
+| 106 | [policy-library.md](policy-library.md) | 6 | A console panel and one screen for the state of the library | |
+| 107 | [notifications.md](notifications.md) | 1 | An inbox and a bell |
+| 108 | [notifications.md](notifications.md) | 2 | Email through an allowlisted SMTP host |
+| 109 | [realtime.md](realtime.md) | 3 | Presence and a channel for the person's notices and jobs |
+| 110 | [approvers.md](approvers.md) | 4 | Delegation by date |
+| 111 | [approvers.md](approvers.md) | 5 | The workflow builder picks who decides and previews it |
+| 112 | [notifications.md](notifications.md) | 3 | Preferences and digests |
+| 113 | [notifications.md](notifications.md) | 4 | Every producer is wired. No notice carries a record value |
+| 114 | [process-v2.md](process-v2.md) | 1 | Process events and analytics: where time goes |
+| 115 | [workflows.md](workflows.md) | 1 | Flows run with approved grants and reach records by address. They can span apps |
+| 116 | [workflows.md](workflows.md) | 2 | A flow touching several workspaces needs approval from each. Moving sensitive data is flagged |
+| 117 | [process-v2.md](process-v2.md) | 2 | Branches, cross-table effects, manual and date triggers |
+| 118 | [workflows.md](workflows.md) | 3 | Schedules, called flows, chaining, and a circuit breaker |
+| 119 | [field-types.md](field-types.md) | 5 | A button field that starts a process |
+| 120 | [process-v2.md](process-v2.md) | 3 | Timers and escalation. No timer ever decides |
+| 121 | [process-v2.md](process-v2.md) | 4 | Committee votes |
+| 122 | [workflows.md](workflows.md) | 4 | Fill-in tasks, with a task grant on one record while the step is open |
+| 123 | [process-v2.md](process-v2.md) | 5 | Builder and desk screens for all of it |
+| 124 | [workflows.md](workflows.md) | 5 | My Work: one list of decisions, tasks, and reviews across the institution, kept in step by jobs |
+| 125 | [workflows.md](workflows.md) | 6 | The My Work page and a review queue |
+| 126 | [workflows.md](workflows.md) | 7 | Flow editor: one command model, the outline, and server validation |
+| 127 | [workflows.md](workflows.md) | 8 | Flow editor: the block-structured canvas |
+| 128 | [workflows.md](workflows.md) | 9 | Test run with a trace on the canvas |
+| 129 | [workflows.md](workflows.md) | 10 | Run history, safe retry, and version comparison |
 
 ### Wave 4 — ecosystem and reach
 
@@ -155,42 +178,42 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 114 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
-| 115 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests |
-| 116 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
-| 117 | [integrations.md](integrations.md) | 4 | Webhooks behind an allowlist and a proposal, with signing, retries, and a call log |
-| 118 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels |
-| 119 | [connections.md](connections.md) | 1 | Datasets are real and read-only. A file-drop sync |
-| 120 | [connections.md](connections.md) | 2 | A changed source stops the sync and makes a proposal |
-| 121 | [connections.md](connections.md) | 3 | PostgreSQL connector. Needs a TLS connector |
-| 122 | [connections.md](connections.md) | 4 | HTTP connector |
-| 123 | [connections.md](connections.md) | 5 | Apps link to datasets |
-| 124 | [connections.md](connections.md) | 6 | The connections panel |
-| 125 | [mcp-apps.md](mcp-apps.md) | 6 | A custom page is rendered into a sandbox document and bounded by its grants |
-| 126 | [mcp-apps.md](mcp-apps.md) | 7 | The web desk shows a custom page in a sandboxed frame |
-| 127 | [views.md](views.md) | 5 | Dashboards and linked widgets |
-| 128 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields |
-| 129 | [views.md](views.md) | 7 | Forms with conditions, boards, calendars, and galleries |
-| 130 | [guests.md](guests.md) | 1 | A guest proves an email address with a one-time link |
-| 131 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule |
-| 132 | [guests.md](guests.md) | 3 | A plain status page for the guest |
-| 133 | [guests.md](guests.md) | 4 | Operating guests: closing forms, erasing, abuse signals |
-| 134 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens |
-| 135 | [sensitive-content.md](sensitive-content.md) | 2 | Stored records are scanned as a job. A compliance officer reviews findings and designates authorized stores |
-| 136 | [sensitive-content.md](sensitive-content.md) | 3 | New writes, imports, and plain-text files are checked. Each detector flags, warns, or blocks, as the organization chooses |
-| 137 | [sensitive-content.md](sensitive-content.md) | 4 | History, exports, and snapshots honor the categories. The old flag name is gone |
-| 138 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Needs files from Johann |
-| 139 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |
-| 140 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
-| 141 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
-| 142 | [workflows.md](workflows.md) | 11 | Console panel for flows |
-| 143 | [live-data.md](live-data.md) | 3 | The desk reads records and the directory from the API |
-| 144 | [foundation.md](foundation.md) | 10 | Tokens from the institution's identity provider are verified. Adds `jsonwebtoken` |
-| 145 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
-| 146 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |
-| 147 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both |
-| 148 | [mcp-apps.md](mcp-apps.md) | 8 | Custom pages and review screens render inside the agent. Needs the MCP Apps spec pasted in |
-| 149 | [data-grid-parity.md](data-grid-parity.md) | open phases | Grid work on the web desk. Last, because the agent is the primary surface |
+| 130 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
+| 131 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests |
+| 132 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
+| 133 | [integrations.md](integrations.md) | 4 | Webhooks behind an allowlist and a proposal, with signing, retries, and a call log |
+| 134 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels |
+| 135 | [connections.md](connections.md) | 1 | Datasets are real and read-only. A file-drop sync |
+| 136 | [connections.md](connections.md) | 2 | A changed source stops the sync and makes a proposal |
+| 137 | [connections.md](connections.md) | 3 | PostgreSQL connector. Needs a TLS connector |
+| 138 | [connections.md](connections.md) | 4 | HTTP connector |
+| 139 | [connections.md](connections.md) | 5 | Apps link to datasets |
+| 140 | [connections.md](connections.md) | 6 | The connections panel |
+| 141 | [mcp-apps.md](mcp-apps.md) | 6 | A custom page is rendered into a sandbox document and bounded by its grants |
+| 142 | [mcp-apps.md](mcp-apps.md) | 7 | The web desk shows a custom page in a sandboxed frame |
+| 143 | [views.md](views.md) | 5 | Dashboards and linked widgets |
+| 144 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields |
+| 145 | [views.md](views.md) | 7 | Forms with conditions, boards, calendars, and galleries |
+| 146 | [guests.md](guests.md) | 1 | A guest proves an email address with a one-time link |
+| 147 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule |
+| 148 | [guests.md](guests.md) | 3 | A plain status page for the guest |
+| 149 | [guests.md](guests.md) | 4 | Operating guests: closing forms, erasing, abuse signals |
+| 150 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens |
+| 151 | [sensitive-content.md](sensitive-content.md) | 2 | Stored records are scanned as a job. A compliance officer reviews findings and designates authorized stores |
+| 152 | [sensitive-content.md](sensitive-content.md) | 3 | New writes, imports, and plain-text files are checked. Each detector flags, warns, or blocks, as the organization chooses |
+| 153 | [sensitive-content.md](sensitive-content.md) | 4 | History, exports, and snapshots honor the categories. The old flag name is gone |
+| 154 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Needs files from Johann |
+| 155 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |
+| 156 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
+| 157 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
+| 158 | [workflows.md](workflows.md) | 11 | Console panel for flows |
+| 159 | [live-data.md](live-data.md) | 3 | The desk reads records and the directory from the API |
+| 160 | [foundation.md](foundation.md) | 10 | Tokens from the institution's identity provider are verified. Adds `jsonwebtoken` |
+| 161 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
+| 162 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |
+| 163 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both |
+| 164 | [mcp-apps.md](mcp-apps.md) | 8 | Custom pages and review screens render inside the agent. Needs the MCP Apps spec pasted in |
+| 165 | [data-grid-parity.md](data-grid-parity.md) | open phases | Grid work on the web desk. Last, because the agent is the primary surface |
 
 Foundation phases 10 and 11 depend on nothing after phase 9. Run them earlier if a pilot date appears.
 
@@ -226,7 +249,7 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0029_disclosure_log.sql` | record history phase 4 |
 | `0030_member_principals.sql` | access rules phase 1 |
 | `0031_record_links.sql` | links phase 1 |
-| `0032_attachments.sql` | attachments phase 1 |
+| `0032_trash_links.sql` | lifecycle phase 1 |
 | `0033_app_views.sql` | views phase 1 |
 | `0034_view_shares.sql` | views phase 6. Also creates `rate_limits` |
 | `0035_import_export.sql` | import export phase 4 (`app_templates`) |
@@ -255,11 +278,19 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0058_flow_state.sql` | workflows phase 3 |
 | `0059_content_findings.sql` | sensitive content phase 2. Also creates `authorized_stores` and adds `data_labels.categories` |
 | `0060_attachment_content_scan.sql` | sensitive content phase 3 |
+| `0061_attachments.sql` | attachments phase 1. It was `0032` until lifecycle phase 1 took that number |
+| `0062_cache_versions.sql` | stateless server phase 1 |
+| `0063_people_indexes.sql` | stateless server phase 2, only if a measured query needs an index |
+| `0064_policy_library.sql` | policy library phase 1 |
+| `0065_policy_fetch.sql` | policy library phase 5 |
+| `0066_authority.sql` | authority phase 1 |
 
 Register each file in `crates/scaffoldry-server/src/repository.rs` after the last schema already applied, inside the existing advisory lock. A file that exists is never edited. A fix is a new file. The run order above is not filename order. That is safe: each file is recorded by name in `schema_migrations`, and no file depends on a later-numbered one.
 
 Rules that hold across every brief:
 
+- PostgreSQL is the only source of truth. The server holds nothing between requests except the cached collections named in `stateless-server.md`, through its one mechanism. No brief adds a field to `ServerState`, a `static` lock, or a map that lives across requests. A write commits before memory changes.
+- Every write route and every writing tool has a case in the two-instance test.
 - No write is discarded. Do not put `let _ =` in front of a repository call or a ledger call.
 - Access is decided from stored rows, never from a value in the request body.
 - There is no production mode. Do not add a variable, a setting, or a flag that turns a check off. Institution configuration is a row in `platform_settings`.
@@ -270,6 +301,9 @@ Rules that hold across every brief:
 - Admin routes are listed in `ADMIN_ROUTES` and checked on the server. The client's menu is not a control.
 - A rule that grants nothing and is never evaluated does not exist. No field holds policy text that no code evaluates.
 - A workspace guard can only forbid. Institutional policy permits.
+- A rule in the policy library is a sentence for people. It is shown as enforced only while it is bound to something that is evaluated. An agent proposes a library rule and never publishes one. Every rule cites a passage that is in a stored snapshot, word for word.
+- Text from a policy source is data. It appears in one marked field and never in a tool description, an error, or a log.
+- Who decides a proposal comes from `authority::required`. Nothing lowers its built-in floor: a raised flagged check always needs a person other than the proposer. A unit can only tighten what the institution requires.
 - A position is never inferred from a job title. The person who created a record, and the person whose change started a process, never decide it.
 - Nothing changes a live app or a live rule except an approved proposal, or an administrator's enable or disable. An owner or admin with a clean change is approved in the same request.
 - A control id is shown with its title. A bare id is never a label.
@@ -309,6 +343,12 @@ Settled. These were open and are now decided. Each is written into the brief nam
 | People outside the institution use a guest form with a built-in own-records rule, opened only by a two-person proposal | `guests.md` |
 | A page's JSX is compiled in the sandbox. A custom page is approved by a workspace owner or admin, with a second person when it reads a sensitive field | `mcp-apps.md` |
 | A proposer may approve their own change when no check is flagged and they own or administer the workspace | `mcp-apps.md` phase 4 |
+| PostgreSQL is the only source of truth. Any number of server instances may serve one database. Caches are refreshed by a counter read on every request, not by `LISTEN` and `NOTIFY` | `stateless-server.md` |
+| A test has a database of its own. No test changes the process environment | `stateless-server.md` phase 1 |
+| Institutional rules are kept as an OSCAL catalog of sentences, each citing a stored passage. A person's own agent proposes them. A different person publishes them. Scaffoldry runs no model | `policy-library.md` |
+| The platform fetches web sources itself, through the outbound allowlist. It does not extract text from a PDF | `policy-library.md` phase 5 |
+| A change has a FIPS 199 tier from the checks it raises. A matrix says who decides. The institution sets it, units only tighten it, and a second person confirms every change to it | `authority.md` |
+| A proposal with no resolvable approver waits and is shown as Unassigned. It never falls back to a looser path | `authority.md` |
 
 Open decisions. These are Johann's. Do not settle them in a session.
 
@@ -324,3 +364,7 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Where the master key file for the secrets store is kept, and who holds it | Secrets routes answer `master_key_missing` |
 | If `row-scale.md` phase 6 fails its limits, whether to move to typed per-table storage. That changes architecture rule 4 | The JSON record with a pivot index stays |
 | The retention numbers and the records officer who owns them | Placeholders, and a banner until real ones are set |
+| Whether Scaffoldry is also offered as a hosted service, and whether that is one stack for each institution | Self-hosting stays supported. Nothing assumes more than one institution in a database. `stateless-server.md` removes the one thing that blocks a second instance |
+| A full export of one institution in documented formats, and whether process definitions are also exported as BPMN XML | Exports are per app and capped. Not built |
+| Who holds the positions the first matrix names, such as a privacy officer | The matrix has no rows and behaves as the platform does today |
+| Removing `--test-threads=1` from `ci.yml`, and adding the OSCAL catalog validation step | Johann, after `stateless-server.md` phase 1 and `policy-library.md` phase 4. Agents may not edit `ci.yml` |

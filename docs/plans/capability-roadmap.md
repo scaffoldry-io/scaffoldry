@@ -33,8 +33,15 @@ Third-party libraries are different. They are dependencies, they follow the lice
 | An inbox and email | A log line on a process instance | `notifications.md` |
 | Timers, escalation, branches, committee votes, process analytics | Linear steps with one waiting step | `process-v2.md` |
 | Trash, retention, legal hold | `delete_record` removes the row | `lifecycle.md` |
+| The server loads its data at boot and answers from memory | PostgreSQL is the only source of truth. A few small collections are cached and checked on every request | A second instance, a restart, and a hosted service all need it. This one does change code that is built |
+| Tests share one database and run one at a time | A database for each test | The shared database hid a race and made the suite order-dependent |
+| A flagged check needs any second owner or admin | That is the floor. A matrix can require a named position, and a unit can tighten it | One rule for every department does not fit a large institution |
+| A policy's source is a note in its text | A source is a stored document with snapshots, and rules cite passages in it | A reviewer must be able to check a rule against the words it came from |
 | Applicants and other people with no account | Every user is in the directory | `guests.md` |
 | Proof that the MCP surface can do what faculty ask | Tests of individual tools | `agent-coverage.md` |
+| Two copies of the server at once, for a restart or a failure nobody notices | One process answers from its own memory | `stateless-server.md` |
+| The institution's own policies, as rules people can read, each tied to its source and kept current | Policy is Cedar text and a free-text `@source` note | `policy-library.md` |
+| Who must approve a change, set by the institution and tightened by a unit, with the load shown first | Fixed in code: any second owner | `authority.md` |
 
 ## Choices
 
@@ -82,12 +89,29 @@ Each crate has its own permissive license. Gemini runs `governance/scripts/audit
 | A PostgreSQL TLS connector | `connections.md` | Talking to an external database over TLS |
 | ClamAV, a separate daemon that is not linked | `attachments.md` | Virus scanning. It is GPL, so it runs as its own process and Scaffoldry only speaks its socket protocol |
 
+## Added after the first seventeen
+
+Three briefs were added once the first waves were built: `stateless-server.md`, `policy-library.md`, and `authority.md`. They come from two questions. Can the publishing model work in an institution of thousands of people? And is the server built to change and to survive a failure?
+
+The answers were: not proven, and not yet. The approval path was one rule for everyone, with no way to see its load. The server held its data in memory, so only one copy could run.
+
+What they do not cover, and what a hosted service would still need:
+
+- Provisioning a new institution, and upgrading many installations safely.
+- Backup, restore, and a tested recovery time.
+- Metrics, tracing, and structured logs.
+- A published API description and a versioning rule for tools and routes. `integrations.md` phase 3 generates a description for each app. Nothing describes the platform's own surface.
+- One export of a whole institution, in documented formats, that can be checked without Scaffoldry. Parquet is a candidate format for bulk records if a customer asks for an analytics handoff. It would be an export format only. The decision in `foundation.md` stands: no Arrow and no second query engine in the server.
+- More than one institution in one database. Nothing is built for it and nothing should assume it.
+
+None of these is a brief yet. Each is listed under "Open decisions" in the README or here, so that it is a choice and not an accident.
+
 ## Risks
 
 - **Scope.** This is a large body of work. The run order in the README groups it into waves, and each wave ends in something usable.
 - **Order.** Several briefs reshape earlier ones. Each states what it needs and what it replaces. If one is moved, check its "Needs" line.
 - **Test weight.** Every brief carries tests. `agent-coverage.md` runs scripted requests against the whole server. Every brief adds scenarios to it.
-- **No code is written.** All of this is plan.
+- **Most of it is still plan.** The README's Status column says what is built.
 
 ## Enterprise objections
 
