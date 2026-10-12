@@ -161,7 +161,7 @@ async fn a_write_with_an_unknown_address_is_400_and_a_held_user_is_refused_and_n
     w.state.persist_app_manifest(manifest).expect("manifest");
 
     // Unknown address -> 400
-    let (status_unknown, body_unknown) = send(
+    let (status_unknown, _body_unknown) = send(
         &w.app,
         "POST",
         &format!("/api/v1/apps/{}/records", w.slug),
@@ -174,7 +174,7 @@ async fn a_write_with_an_unknown_address_is_400_and_a_held_user_is_refused_and_n
             }
         })),
     ).await;
-    assert_eq!(status_unknown, StatusCode::BAD_REQUEST, "Unknown user must return 400: {body_unknown}");
+    assert_eq!(status_unknown, StatusCode::BAD_REQUEST, "Unknown user must return 400");
 
     // Held user -> 400 and names the user
     let (status_held, body_held) = send(
@@ -190,9 +190,9 @@ async fn a_write_with_an_unknown_address_is_400_and_a_held_user_is_refused_and_n
             }
         })),
     ).await;
-    assert_eq!(status_held, StatusCode::BAD_REQUEST, "Held user must return 400: {body_held}");
+    assert_eq!(status_held, StatusCode::BAD_REQUEST, "Held user must return 400");
     let held_str = body_held.to_string();
-    assert!(held_str.contains(held_user_addr), "Error must name the held user: {held_str}");
+    assert!(held_str.contains(held_user_addr), "Error must name the held user");
 }
 
 // 2. A deactivated person renders with `(no longer active)`.
@@ -210,7 +210,7 @@ async fn a_deactivated_person_renders_with_no_longer_active() {
     });
 
     let rendered_active = scaffoldry_server::service::people::render_collaborator(deactivated_user, &w.state);
-    assert!(!rendered_active.contains("(no longer active)"), "Active user should not show no longer active: {rendered_active}");
+    assert!(!rendered_active.contains("(no longer active)"), "Active user should not show no longer active");
 
     // Now deactivate
     let _ = upsert_user(&w.state, UserFields {
@@ -220,7 +220,7 @@ async fn a_deactivated_person_renders_with_no_longer_active() {
     });
 
     let rendered_deactivated = scaffoldry_server::service::people::render_collaborator(deactivated_user, &w.state);
-    assert!(rendered_deactivated.contains("Dr. Rivera (no longer active)"), "Deactivated user must render '(no longer active)': {rendered_deactivated}");
+    assert!(rendered_deactivated.contains("Dr. Rivera (no longer active)"), "Deactivated user must render '(no longer active)'");
 }
 
 // 3. `CreatedBy` does not change on update. `LastModifiedBy` does.
@@ -277,7 +277,7 @@ async fn created_by_does_not_change_on_update_last_modified_by_does() {
     let last_modified_updated = &r2["data"]["editor"];
 
     assert_eq!(created_by_updated, created_by_initial, "CreatedBy must not change on update!");
-    assert!(last_modified_updated.to_string().contains(SECOND), "LastModifiedBy must change to SECOND: {last_modified_updated}");
+    assert!(last_modified_updated.to_string().contains(SECOND), "LastModifiedBy must change to SECOND");
 }
 
 // 4. An import sets `CreatedBy` to the importer and the kind to `Import`.
@@ -309,8 +309,8 @@ async fn an_import_sets_created_by_to_the_importer_and_the_kind_to_import() {
     ).expect("create_record with import origin");
 
     let creator_val = &rec.data["creator"];
-    assert!(creator_val.to_string().contains(OWNER), "CreatedBy must contain importer: {creator_val}");
-    assert!(creator_val.to_string().to_lowercase().contains("import"), "CreatedBy kind must be Import: {creator_val}");
+    assert!(creator_val.to_string().contains(OWNER), "CreatedBy must contain importer");
+    assert!(creator_val.to_string().to_lowercase().contains("import"), "CreatedBy kind must be Import");
 }
 
 // 5. A filter by a collaborator uses the index, with no sequential scan.
