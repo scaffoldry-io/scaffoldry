@@ -33,11 +33,6 @@ pub fn scim_affiliation(u: &crate::state::ScimUser) -> String {
             continue;
         };
         let word = val.split('@').next().unwrap_or(val);
-        // Compliance is not an eduPerson value, but the governance routes, the policies and the workspace
-        // guards all name it, so a SCIM record that says `compliance@...` must resolve to it.
-        if word.eq_ignore_ascii_case("compliance") {
-            return "compliance".to_string();
-        }
         if let Ok(parsed) = scaffoldry_core::standards::eduperson::EduPersonAffiliation::from_str(word) {
             use scaffoldry_core::standards::eduperson::EduPersonAffiliation as A;
             return match parsed {
@@ -57,6 +52,36 @@ pub fn scim_affiliation(u: &crate::state::ScimUser) -> String {
 
 /// Resolves an AuthUser from stored rows for the given eppn.
 /// A token carries no name, no affiliation, and no department.
+/// Whether this person holds a `platform_admin` role, and whether they hold a `compliance` role, on the
+/// root unit.
+fn root_roles(eppn: &str, state: &SharedState) -> (bool, bool) {
+    if let Some(ref repo) = state.repository {
+        let eppn = eppn.to_string();
+        return repo
+            .with_client(move |client| {
+                let row = client.query_one(
+                    "SELECT COALESCE(bool_or(r.scoped_affiliation = 'platform_admin'), false), \
+                            COALESCE(bool_or(r.scoped_affiliation = 'compliance'), false) \
+                     FROM roles r JOIN persons p ON r.person_id = p.id JOIN organizations o ON r.organization_id = o.id \
+                     WHERE LOWER(p.eppn) = LOWER($1) AND r.scoped_affiliation IN ('platform_admin', 'compliance') AND o.parent_id IS NULL",
+                    &[&eppn],
+                )?;
+                Ok((row.get(0), row.get(1)))
+            })
+            .unwrap_or((false, false));
+    }
+    let roles = state.roles.read().unwrap();
+    let orgs = state.organizations.read().unwrap();
+    let held = |kind: &str| {
+        roles.iter().any(|r| {
+            r.eppn.eq_ignore_ascii_case(eppn)
+                && r.scoped_affiliation == kind
+                && orgs.values().any(|o| o.id == r.organization_id && o.parent_id.is_none())
+        })
+    };
+    (held("platform_admin"), held("compliance"))
+}
+
 pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     if eppn == "setup@scaffoldry.local" {
         return Some(AuthUser {
@@ -106,31 +131,15 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     // Resolve role_title
     let role_title = scim_user.as_ref().and_then(|u| u.title.clone()).unwrap_or(def_role);
 
-    // Resolve affiliation:
-    let is_platform_admin = if let Some(ref repo) = state.repository {
-        repo.with_client({
-            let eppn_owned = eppn.to_string();
-            move |client| {
-                let row = client.query_one(
-                    "SELECT COUNT(*) FROM roles r                      JOIN persons p ON r.person_id = p.id                      JOIN organizations o ON r.organization_id = o.id                      WHERE LOWER(p.eppn) = LOWER($1)                        AND r.scoped_affiliation = 'platform_admin'                        AND o.parent_id IS NULL",
-                    &[&eppn_owned],
-                )?;
-                let cnt: i64 = row.get(0);
-                Ok(cnt > 0)
-            }
-        }).unwrap_or(false)
-    } else {
-        let roles = state.roles.read().unwrap();
-        let orgs = state.organizations.read().unwrap();
-        roles.iter().any(|r| {
-            r.eppn.eq_ignore_ascii_case(eppn)
-                && r.scoped_affiliation == "platform_admin"
-                && orgs.values().any(|o| o.id == r.organization_id && o.parent_id.is_none())
-        })
-    };
+    // Resolve affiliation. Two roles on the root unit decide it, and both are granted here, never by the
+    // registry: a Platform Admin is central_admin, and a compliance officer is compliance. A SCIM record
+    // that says `compliance@...` grants nothing. Otherwise the registry's affiliation stands.
+    let (is_platform_admin, is_compliance) = root_roles(eppn, state);
 
     let affiliation = if is_platform_admin {
         "central_admin".to_string()
+    } else if is_compliance {
+        "compliance".to_string()
     } else if let Some(ref u) = scim_user {
         scim_affiliation(u)
     } else {

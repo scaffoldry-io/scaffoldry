@@ -8,7 +8,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
-use scaffoldry_engine::{AppManifest, AppTable, FieldSpec, FieldType};
+use scaffoldry_engine::{AppManifest, AppTable, AppView, FieldSpec, FieldType, SelectOption, SelectOptionColor, ViewType};
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::admin::ADMIN_ROUTES;
 use scaffoldry_server::service::disclosure::{
@@ -49,6 +49,7 @@ impl Drop for Cleanup {
         let _ = std::thread::spawn(move || {
             if let Ok(mut c) = postgres::Client::connect(&url, postgres::NoTls) {
                 let like = format!("%{tag}%");
+                let _ = c.execute("DELETE FROM roles WHERE scoped_affiliation = 'compliance' AND person_id IN (SELECT id FROM persons WHERE LOWER(eppn) = LOWER($1))", &[&COMPLIANCE]);
                 let _ = c.execute("DELETE FROM disclosure_records WHERE disclosure_id IN (SELECT id FROM disclosure_log WHERE app_slug LIKE $1)", &[&like]);
                 let _ = c.execute("DELETE FROM disclosure_log WHERE app_slug LIKE $1", &[&like]);
                 let _ = c.execute("DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn LIKE $2", &[&WORKSPACE, &like]);
@@ -61,6 +62,14 @@ impl Drop for Cleanup {
 }
 
 fn manifest(slug: &str) -> AppManifest {
+    let mut status = FieldSpec::simple("status", "Status", FieldType::Select, false, false);
+    status.select_options = vec![
+        SelectOption { id: "opt_a".into(), label: "A".into(), color: SelectOptionColor::Ok, order: 0 },
+        SelectOption { id: "opt_b".into(), label: "B".into(), color: SelectOptionColor::Warn, order: 1 },
+    ];
+    let mut board = AppView::table("board", "Board", ViewType::Kanban, vec![]);
+    board.table_id = Some("students".to_string());
+    board.kanban_column_field = Some("status".to_string());
     AppManifest {
         slug: slug.to_string(),
         title: "Registrar".to_string(),
@@ -81,12 +90,13 @@ fn manifest(slug: &str) -> AppManifest {
                 FieldSpec::simple("name", "Name", FieldType::Text, false, false),
                 FieldSpec::simple("major", "Major", FieldType::Text, false, false),
                 FieldSpec::simple("student_id", "Student ID", FieldType::Text, false, true),
+                status,
             ],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
         }],
         relationships: vec![],
-        views: vec![],
+        views: vec![board],
         ceds_mappings: Default::default(),
         pages: vec![],
         access: Default::default(),
@@ -133,16 +143,18 @@ async fn world() -> World {
 
     let state = Arc::new(ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
-    // The server has made the officer's SCIM record by now. A compliance officer's affiliation is compliance.
-    let updated = db(|c| {
+    // A compliance officer is appointed, not claimed. The role sits on the root unit.
+    let granted = db(|c| {
+        c.execute("DELETE FROM roles WHERE scoped_affiliation = 'compliance' AND person_id IN (SELECT id FROM persons WHERE LOWER(eppn) = LOWER($1))", &[&COMPLIANCE]).unwrap();
         c.execute(
-            "UPDATE scim_users SET payload = jsonb_set(payload, '{roles}', '[{\"type\":\"eduPersonScopedAffiliation\",\"value\":\"compliance@state.edu\"}]'::jsonb) \
-             WHERE user_name = 'compliance.officer@state.edu'",
-            &[],
+            "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source) \
+             SELECT gen_random_uuid(), p.id, o.id, 'Compliance Officer', 'compliance', true, 'api' \
+             FROM persons p, organizations o WHERE LOWER(p.eppn) = LOWER($1) AND o.parent_id IS NULL",
+            &[&COMPLIANCE],
         )
         .unwrap()
     });
-    assert_eq!(updated, 1, "the compliance officer exists");
+    assert_eq!(granted, 1, "the compliance officer exists");
     state.engine.write().unwrap().register_manifest(manifest(&slug)).unwrap();
     collaborator(&state, &owner_eppn, "admin");
     collaborator(&state, &editor_eppn, "editor");
@@ -152,7 +164,8 @@ async fn world() -> World {
         c.execute(
             "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, table_id, created_at) \
              SELECT $1::text || lpad(g::text, 6, '0'), $1::text, \
-                    jsonb_build_object('_table_id', 'students', 'name', 'student-' || g, 'major', 'Biology', 'student_id', 'S' || lpad(g::text, 6, '0')), \
+                    jsonb_build_object('_table_id', 'students', 'name', 'student-' || g, 'major', 'Biology', 'student_id', 'S' || lpad(g::text, 6, '0')) \
+                    || CASE WHEN g <= 30 THEN jsonb_build_object('status', CASE WHEN g % 2 = 0 THEN 'opt_a' ELSE 'opt_b' END) ELSE '{}'::jsonb END, \
                     '{}'::jsonb, false, 'students', TIMESTAMPTZ '2026-01-01 00:00:00+00' + g * interval '1 millisecond' \
              FROM generate_series(1, $2::bigint) g",
             &[&s, &STUDENTS],
@@ -339,6 +352,31 @@ async fn every_way_an_agent_lists_records_is_logged() {
     assert_eq!((log[2].0.as_str(), log[2].2), ("agent_read", 30));
 }
 
+// 2c. The board view puts every record it shows into stages. An agent fetching it reads those records, so
+//     the read is logged for what came back (30 of the 40 are in a stage), and a person's fetch is not.
+#[tokio::test]
+async fn an_agent_fetching_a_board_is_logged_for_the_records_it_receives() {
+    let w = world().await;
+    let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "get_view_data", "arguments": { "app_slug": w.slug, "view_id": "board" } } });
+
+    let (s, body) = send(&w.app, "POST", "/api/v1/mcp", &w.admin, Some(call.clone())).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(entries(&w).is_empty(), "a person fetching the board writes none");
+
+    let (s, body) = send(&w.app, "POST", "/api/v1/mcp", &w.agent, Some(call)).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let log = entries(&w);
+    assert_eq!(log.len(), 1, "{log:?}");
+    let (kind, actor, count, fields, recipient, _, _) = &log[0];
+    assert_eq!((kind.as_str(), actor.as_str(), *count), ("agent_read", ADMIN, 30), "only records in a stage were returned");
+    assert_eq!(fields, &vec!["student_id".to_string()]);
+    assert_eq!(recipient.as_deref(), Some("Registrar bot"));
+    assert_eq!(record_rows(&w), 30);
+}
+
 // 3. An export of 120,000 records sets records_truncated and keeps the count.
 #[tokio::test]
 async fn an_entry_above_100000_records_keeps_the_count_and_drops_the_record_rows() {
@@ -519,15 +557,4 @@ fn every_function_that_releases_records_logs_the_release_or_says_why_not() {
     assert!(missing_call.is_empty(), "these are listed in AGENT_RELEASES but never call record_agent_read: {missing_call:?}");
     let stale: Vec<_> = AGENT_RELEASES.iter().chain(AGENT_RELEASE_EXEMPT.iter().map(|(s, _)| s)).filter(|s| !seen.contains(&s.to_string())).collect();
     assert!(stale.is_empty(), "these are listed but release nothing any more: {stale:?}");
-}
-
-// 7. A SCIM user provisioned as compliance resolves as compliance. Until it did, no one could reach the
-//    routes that are for a Platform Admin or compliance, because `compliance` is not an eduPerson value.
-#[tokio::test]
-async fn a_scim_user_provisioned_as_compliance_resolves_as_compliance() {
-    let w = world().await;
-    let officer = scaffoldry_server::service::identity::resolve_user(COMPLIANCE, &w.state).expect("the officer resolves");
-    assert_eq!(officer.affiliation, "compliance");
-    let faculty = scaffoldry_server::service::identity::resolve_user(FACULTY, &w.state).expect("faculty resolves");
-    assert_eq!(faculty.affiliation, "faculty", "the other affiliations are as they were");
 }
