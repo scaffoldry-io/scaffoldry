@@ -1,5 +1,6 @@
 import React from "react";
 import { AppTable } from "./types";
+import { LongTextEditor } from "./LongTextEditor";
 import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
 
 export interface RecordDetailDrawerProps {
@@ -27,6 +28,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
   const activeDetailRecord = (activeTable.records || []).find(
     (r) => r.id === selectedRecordId
   );
+  const [editingFields, setEditingFields] = React.useState<Record<string, boolean>>({});
   if (!activeDetailRecord) return null;
 
   const relatedTables = tables.filter((t) => t.id !== activeTable.id);
@@ -137,7 +139,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
                 return (
                   <div
                     key={field.name}
-                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5"
+                    className={`p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5 ${field.field_type === "LongText" ? "md:col-span-2" : ""}`}
                   >
                     <div className="flex items-center justify-between">
                       <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -162,6 +164,26 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
                           ? computedVal.toLocaleString()
                           : String(computedVal ?? "")}
                       </div>
+                    ) : field.field_type === "LongText" ? (
+                      <LongTextEditor
+                        id={`detail-input-${field.name}`}
+                        label={field.label}
+                        value={String(activeDetailRecord[field.name] ?? "")}
+                        onChange={(val) =>
+                          onUpdateRecordField(
+                            activeDetailRecord.id,
+                            field.name,
+                            val
+                          )
+                        }
+                        isEditing={editingFields[field.name] ?? false}
+                        onToggleEdit={() =>
+                          setEditingFields((prev) => ({
+                            ...prev,
+                            [field.name]: !prev[field.name],
+                          }))
+                        }
+                      />
                     ) : field.field_type === "Checkbox" ? (
                       <div className="pt-1">
                         <input

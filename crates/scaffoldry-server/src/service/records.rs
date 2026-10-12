@@ -218,6 +218,35 @@ fn validate_collaborators(
     Ok(())
 }
 
+fn validate_long_text(
+    app_slug: &str,
+    table: &str,
+    data: &Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    for field in fields.iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::LongText) {
+        if let Some(val) = data.get(&field.name) {
+            match val {
+                Value::Null => {}
+                Value::String(s) => {
+                    if s.chars().count() > 100_000 {
+                        return Err(ServiceError::BadRequest(format!(
+                            "Field '{}' exceeds the 100,000 character limit",
+                            field.name
+                        )));
+                    }
+                }
+                _ => return Err(ServiceError::BadRequest(format!(
+                    "Field '{}' must be a text string",
+                    field.name
+                ))),
+            }
+        }
+    }
+    Ok(())
+}
+
 fn format_actor_value(actor: &str, kind: crate::repository::ActorKind, token_label: Option<&str>, state: &SharedState) -> Value {
     use crate::repository::ActorKind;
     let user = crate::service::people::find_by_user_name(state, actor);
@@ -305,6 +334,7 @@ pub fn create_record(
     let table = submitted.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     validate_select_options(app_slug, &table, &submitted.data, state)?;
     validate_collaborators(app_slug, &table, &submitted.data, state)?;
+    validate_long_text(app_slug, &table, &submitted.data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
         return Err(outside_scope());
     }
@@ -470,6 +500,7 @@ pub fn update_record(
     let table = new_data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     validate_select_options(app_slug, &table, &new_data, state)?;
     validate_collaborators(app_slug, &table, &new_data, state)?;
+    validate_long_text(app_slug, &table, &new_data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }

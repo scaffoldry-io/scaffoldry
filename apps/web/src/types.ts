@@ -65,7 +65,8 @@ export type FieldType =
   | "Formula"
   | "Collaborator"
   | "CreatedBy"
-  | "LastModifiedBy";
+  | "LastModifiedBy"
+  | "LongText";
 
 export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
 
