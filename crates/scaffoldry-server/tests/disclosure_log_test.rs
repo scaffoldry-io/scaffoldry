@@ -49,6 +49,7 @@ impl Drop for Cleanup {
         let _ = std::thread::spawn(move || {
             if let Ok(mut c) = postgres::Client::connect(&url, postgres::NoTls) {
                 let like = format!("%{tag}%");
+                let _ = c.execute("DELETE FROM roles WHERE scoped_affiliation = 'compliance' AND person_id IN (SELECT id FROM persons WHERE LOWER(eppn) = LOWER($1))", &[&COMPLIANCE]);
                 let _ = c.execute("DELETE FROM disclosure_records WHERE disclosure_id IN (SELECT id FROM disclosure_log WHERE app_slug LIKE $1)", &[&like]);
                 let _ = c.execute("DELETE FROM disclosure_log WHERE app_slug LIKE $1", &[&like]);
                 let _ = c.execute("DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn LIKE $2", &[&WORKSPACE, &like]);
@@ -133,16 +134,18 @@ async fn world() -> World {
 
     let state = Arc::new(ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
-    // The server has made the officer's SCIM record by now. A compliance officer's affiliation is compliance.
-    let updated = db(|c| {
+    // A compliance officer is appointed, not claimed. The role sits on the root unit.
+    let granted = db(|c| {
+        c.execute("DELETE FROM roles WHERE scoped_affiliation = 'compliance' AND person_id IN (SELECT id FROM persons WHERE LOWER(eppn) = LOWER($1))", &[&COMPLIANCE]).unwrap();
         c.execute(
-            "UPDATE scim_users SET payload = jsonb_set(payload, '{roles}', '[{\"type\":\"eduPersonScopedAffiliation\",\"value\":\"compliance@state.edu\"}]'::jsonb) \
-             WHERE user_name = 'compliance.officer@state.edu'",
-            &[],
+            "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source) \
+             SELECT gen_random_uuid(), p.id, o.id, 'Compliance Officer', 'compliance', true, 'api' \
+             FROM persons p, organizations o WHERE LOWER(p.eppn) = LOWER($1) AND o.parent_id IS NULL",
+            &[&COMPLIANCE],
         )
         .unwrap()
     });
-    assert_eq!(updated, 1, "the compliance officer exists");
+    assert_eq!(granted, 1, "the compliance officer exists");
     state.engine.write().unwrap().register_manifest(manifest(&slug)).unwrap();
     collaborator(&state, &owner_eppn, "admin");
     collaborator(&state, &editor_eppn, "editor");
@@ -519,15 +522,4 @@ fn every_function_that_releases_records_logs_the_release_or_says_why_not() {
     assert!(missing_call.is_empty(), "these are listed in AGENT_RELEASES but never call record_agent_read: {missing_call:?}");
     let stale: Vec<_> = AGENT_RELEASES.iter().chain(AGENT_RELEASE_EXEMPT.iter().map(|(s, _)| s)).filter(|s| !seen.contains(&s.to_string())).collect();
     assert!(stale.is_empty(), "these are listed but release nothing any more: {stale:?}");
-}
-
-// 7. A SCIM user provisioned as compliance resolves as compliance. Until it did, no one could reach the
-//    routes that are for a Platform Admin or compliance, because `compliance` is not an eduPerson value.
-#[tokio::test]
-async fn a_scim_user_provisioned_as_compliance_resolves_as_compliance() {
-    let w = world().await;
-    let officer = scaffoldry_server::service::identity::resolve_user(COMPLIANCE, &w.state).expect("the officer resolves");
-    assert_eq!(officer.affiliation, "compliance");
-    let faculty = scaffoldry_server::service::identity::resolve_user(FACULTY, &w.state).expect("faculty resolves");
-    assert_eq!(faculty.affiliation, "faculty", "the other affiliations are as they were");
 }
