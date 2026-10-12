@@ -72,6 +72,30 @@ export interface LinkFilter {
   value: string;
 }
 
+export type SelectOptionColor =
+  | "neutral"
+  | "ok"
+  | "warn"
+  | "bad"
+  | "info"
+  | "accent1"
+  | "accent2"
+  | "accent3";
+
+export interface SelectOption {
+  id: string;
+  label: string;
+  color?: SelectOptionColor;
+  order?: number;
+}
+
+export function normalizeSelectOption(opt: SelectOption | string, idx: number = 0): SelectOption {
+  if (typeof opt === "string") {
+    return { id: opt, label: opt, color: "neutral", order: idx };
+  }
+  return opt;
+}
+
 export interface FieldSpec {
   name: string;
   label: string;
@@ -88,7 +112,7 @@ export interface FieldSpec {
   link_filter?: LinkFilter;
   formula_expression?: string;
   rollup_function?: "sum" | "avg" | "min" | "max" | "count" | "concat";
-  select_options?: string[];
+  select_options?: (SelectOption | string)[];
   currency_symbol?: string;
   precision?: number;
 }

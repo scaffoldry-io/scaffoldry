@@ -142,6 +142,126 @@ impl FieldType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectOptionColor {
+    #[default]
+    Neutral,
+    Ok,
+    Warn,
+    Bad,
+    Info,
+    Accent1,
+    Accent2,
+    Accent3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectOption {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub color: SelectOptionColor,
+    #[serde(default)]
+    pub order: i32,
+}
+
+pub fn deserialize_select_options<'de, D>(deserializer: D) -> Result<Vec<SelectOption>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(items) => {
+            let mut result = Vec::new();
+            for (idx, item) in items.into_iter().enumerate() {
+                if let serde_json::Value::String(s) = item {
+                    let clean: String = s
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                        .collect();
+                    let trimmed = clean.trim_matches('_');
+                    let slug = if trimmed.is_empty() { format!("opt_{idx}") } else { format!("opt_{trimmed}") };
+                    result.push(SelectOption {
+                        id: slug,
+                        label: s,
+                        color: SelectOptionColor::Neutral,
+                        order: idx as i32,
+                    });
+                } else {
+                    let opt: SelectOption = serde_json::from_value(item).map_err(serde::de::Error::custom)?;
+                    result.push(opt);
+                }
+            }
+            Ok(result)
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanStage {
+    pub id: String,
+    pub label: String,
+    pub color: SelectOptionColor,
+    pub records: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanViewData {
+    pub column_field: String,
+    pub stages: Vec<KanbanStage>,
+}
+
+pub fn group_by_select(
+    manifest: &AppManifest,
+    view: &AppView,
+    records: &[serde_json::Value],
+) -> Option<KanbanViewData> {
+    let col_name = view.kanban_column_field.as_deref().or(view.group_by_field.as_deref())?;
+    let table_id = view.table_id.as_deref();
+    let table = manifest.tables.iter().find(|t| table_id.is_none_or(|tid| t.id == tid || t.slug == tid))?;
+    let field = table.fields.iter().find(|f| f.name == col_name)?;
+    if !matches!(field.field_type, FieldType::Select | FieldType::MultiSelect) {
+        return None;
+    }
+
+    let mut stages: Vec<KanbanStage> = field
+        .select_options
+        .iter()
+        .map(|opt| KanbanStage {
+            id: opt.id.clone(),
+            label: opt.label.clone(),
+            color: opt.color,
+            records: Vec::new(),
+        })
+        .collect();
+
+    for r in records {
+        let val = r.get(col_name).or_else(|| r.get("data").and_then(|d| d.get(col_name)));
+        if let Some(v) = val {
+            if let Some(id_str) = v.as_str() {
+                if let Some(stage) = stages.iter_mut().find(|s| s.id == id_str) {
+                    stage.records.push(r.clone());
+                }
+            } else if let Some(arr) = v.as_array() {
+                for item in arr {
+                    if let Some(id_str) = item.as_str() {
+                        if let Some(stage) = stages.iter_mut().find(|s| s.id == id_str) {
+                            stage.records.push(r.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some(KanbanViewData {
+        column_field: col_name.to_string(),
+        stages,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldSpec {
     pub name: String,
@@ -173,8 +293,8 @@ pub struct FieldSpec {
     pub formula_expression: Option<String>,
     #[serde(default)]
     pub rollup_function: Option<String>,
-    #[serde(default)]
-    pub select_options: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_select_options")]
+    pub select_options: Vec<SelectOption>,
     #[serde(default)]
     pub currency_symbol: Option<String>,
     #[serde(default)]

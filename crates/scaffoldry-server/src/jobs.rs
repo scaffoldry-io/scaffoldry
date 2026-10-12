@@ -124,6 +124,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::calc_jobs::convert_field,
     },
     JobKind {
+        name: "convert_select_options",
+        title: "Converting select options",
+        description: "Converts legacy string values in select fields to option IDs.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::calc_jobs::convert_select_options,
+    },
+    JobKind {
         name: "purge_jobs",
         title: "Clearing old job records",
         description: "Deletes finished jobs after 30 days and failed jobs after 90 days.",
