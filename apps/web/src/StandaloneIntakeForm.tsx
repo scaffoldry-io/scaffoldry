@@ -424,29 +424,33 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
                         className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-850 text-slate-900 dark:text-white focus:outline-blue-500 cursor-pointer"
                       >
                         <option value="">Select an option...</option>
-                        {(field.select_options || ["Under Review", "Approved", "Funded", "Archived"]).map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
+                        {(field.select_options || ["Under Review", "Approved", "Funded", "Archived"]).map((rawOpt) => {
+                          const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                          return (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          );
+                        })}
                       </select>
                     ) : field.field_type === "MultiSelect" ? (
                       <div className="flex flex-wrap gap-2 pt-1">
-                        {(field.select_options || ["Priority", "Standard", "Expedited", "Institutional"]).map((opt) => {
-                          const isSelected = Array.isArray(value) && value.includes(opt);
+                        {(field.select_options || ["Priority", "Standard", "Expedited", "Institutional"]).map((rawOpt) => {
+                          const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                          const isSelected = Array.isArray(value) && (value.includes(opt.id) || value.includes(opt.label));
                           return (
                             <button
-                              key={opt}
+                              key={opt.id}
                               type="button"
-                              data-testid={`multiselect-option-${opt}`}
-                              onClick={() => handleToggleMultiSelect(field.name, opt)}
+                              data-testid={`multiselect-option-${opt.label}`}
+                              onClick={() => handleToggleMultiSelect(field.name, opt.id)}
                               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                                 isSelected
                                   ? "bg-blue-600 text-white font-bold"
                                   : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
                               }`}
                             >
-                              {isSelected ? `✓ ${opt}` : `+ ${opt}`}
+                              {isSelected ? `✓ ${opt.label}` : `+ ${opt.label}`}
                             </button>
                           );
                         })}

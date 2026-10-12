@@ -105,7 +105,10 @@ fn test_rich_field_type_serialization() {
     let mut field = FieldSpec::simple("grant_rating", "Grant Rating", FieldType::Rating, false, false);
     field.currency_symbol = Some("$".to_string());
     field.precision = Some(2);
-    field.select_options = vec!["Level 1".to_string(), "Level 2".to_string()];
+    field.select_options = vec![
+        scaffoldry_engine::SelectOption { id: "opt_1".to_string(), label: "Level 1".to_string(), color: Default::default(), order: 0 },
+        scaffoldry_engine::SelectOption { id: "opt_2".to_string(), label: "Level 2".to_string(), color: Default::default(), order: 1 },
+    ];
 
     let serialized = serde_json::to_string(&field).expect("Must serialize FieldSpec");
     let deserialized: FieldSpec = serde_json::from_str(&serialized).expect("Must deserialize FieldSpec");

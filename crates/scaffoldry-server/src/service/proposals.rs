@@ -9,7 +9,7 @@ use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::standards::ceds::CedsElement;
 use scaffoldry_core::workflow::describe_rule;
 use scaffoldry_core::{AutomationRule, StepKind};
-use scaffoldry_engine::{effective_ferpa_sensitive, validate_manifest, AppManifest, FieldSpec, HostRouter, PageKind};
+use scaffoldry_engine::{effective_ferpa_sensitive, validate_manifest, AppManifest, FieldSpec, FieldType, HostRouter, PageKind};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -255,6 +255,39 @@ struct ManifestPart {
     sources: Vec<(String, String)>,
 }
 
+
+fn count_records_using_option(
+    app_slug: &str,
+    table_id: &str,
+    field_name: &str,
+    field_type: FieldType,
+    option_id: &str,
+    state: &SharedState,
+) -> i64 {
+    let Some(repo) = state.repository.as_deref() else {
+        return 0;
+    };
+    let app = app_slug.to_string();
+    let table = table_id.to_string();
+    let field = field_name.to_string();
+    let opt = option_id.to_string();
+    let is_multi = field_type == FieldType::MultiSelect;
+    repo.with_client(move |c| {
+        let count: i64 = if is_multi {
+            c.query_one(
+                "SELECT count(*) FROM dataset_records                  WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL                    AND (data->$3 ? $4 OR data->>$3 = $4)",
+                &[&app, &table, &field, &opt],
+            )?.get(0)
+        } else {
+            c.query_one(
+                "SELECT count(*) FROM dataset_records                  WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL                    AND data->>$3 = $4",
+                &[&app, &table, &field, &opt],
+            )?.get(0)
+        };
+        Ok(count)
+    }).unwrap_or(0)
+}
+
 fn check_manifest_part(
     input_manifest: Value,
     page_sources: Vec<String>,
@@ -342,6 +375,17 @@ fn check_manifest_part(
                     for lf in &lt.fields {
                         if !t.fields.iter().any(|f| f.name == lf.name) {
                             loss.push(format!("field '{}' of table '{}' is removed", lf.name, lt.name));
+                        } else if matches!(lf.field_type, FieldType::Select | FieldType::MultiSelect) {
+                            if let Some(f) = t.fields.iter().find(|f| f.name == lf.name) {
+                                for live_opt in &lf.select_options {
+                                    if !f.select_options.iter().any(|o| o.id == live_opt.id) {
+                                        let count = count_records_using_option(&manifest.slug, &lt.id, &lf.name, lf.field_type, &live_opt.id, state);
+                                        if count > 0 {
+                                            loss.push(format!("option '{}' of field '{}' in table '{}' is removed and used by {} records", live_opt.label, lf.name, lt.name, count));
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

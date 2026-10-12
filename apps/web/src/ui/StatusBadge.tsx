@@ -1,4 +1,12 @@
-export type BadgeTone = "ok" | "warn" | "bad" | "neutral";
+export type BadgeTone =
+  | "ok"
+  | "warn"
+  | "bad"
+  | "neutral"
+  | "info"
+  | "accent1"
+  | "accent2"
+  | "accent3";
 
 export interface StatusBadgeProps {
   tone: BadgeTone;
@@ -23,7 +31,26 @@ export function StatusBadge({ tone, text }: StatusBadgeProps) {
       style: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
       icon: "○",
     },
-  }[tone];
+    info: {
+      style: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800",
+      icon: "ℹ",
+    },
+    accent1: {
+      style: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-300 dark:border-indigo-800",
+      icon: "✦",
+    },
+    accent2: {
+      style: "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-800",
+      icon: "★",
+    },
+    accent3: {
+      style: "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/30 dark:text-teal-300 dark:border-teal-800",
+      icon: "◆",
+    },
+  }[tone] || {
+    style: "bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
+    icon: "○",
+  };
 
   return (
     <span

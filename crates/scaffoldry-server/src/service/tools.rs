@@ -154,7 +154,15 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         run: run_list_records,
     },
-    Tool {
+        Tool {
+        name: "get_view_data",
+        description: "Returns grouped records for a kanban or group-by view with option labels and colors.",
+        input_schema: schema_get_view_data,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_get_view_data,
+    },
+Tool {
         name: "get_record",
         description: "One record, with its version.",
         input_schema: schema_get_record,
@@ -1071,4 +1079,48 @@ fn run_list_waiting_decisions(caller: &AuthUser, _origin: &Origin, _args: Value,
 fn run_decide_process(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: DecideProcessArgs = parse(args)?;
     to_value(&crate::service::processes::decide_process(caller, origin, &a.app_slug, &a.instance_id, &a.decision, state)?)
+}
+
+
+fn schema_get_view_data() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string" },
+            "view_id": { "type": "string" },
+        },
+        "required": ["app_slug", "view_id"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct GetViewDataArgs {
+    app_slug: String,
+    view_id: String,
+}
+
+fn run_get_view_data(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: GetViewDataArgs = parse(args)?;
+    let manifest = state
+        .engine
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .resolve_by_slug(&args.app_slug)
+        .cloned()
+        .or_else(|| state.get_app_manifest(&args.app_slug))
+        .ok_or_else(|| ServiceError::NotFound(format!("App '{}' not found", args.app_slug)))?;
+
+    let view = manifest
+        .views
+        .iter()
+        .find(|v| v.id == args.view_id)
+        .ok_or_else(|| ServiceError::NotFound(format!("View '{}' not found", args.view_id)))?;
+
+    let all_records = records::list_records(caller, &args.app_slug, state)?;
+    let raw_records: Vec<Value> = all_records.into_iter().map(|r| r.data).collect();
+
+    let view_data = scaffoldry_engine::group_by_select(&manifest, view, &raw_records)
+        .ok_or_else(|| ServiceError::BadRequest(format!("View '{}' is not over a select field", args.view_id)))?;
+
+    to_value(&view_data)
 }

@@ -102,6 +102,18 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
         }
         for f in &table.fields {
             match f.field_type {
+                FieldType::Select | FieldType::MultiSelect => {
+                    let mut opt_ids = HashSet::new();
+                    let mut opt_labels = HashSet::new();
+                    for opt in &f.select_options {
+                        if opt.id.is_empty() || !opt_ids.insert(opt.id.as_str()) {
+                            problems.push(format!("table '{}': field '{}' has duplicate or empty select option id '{}'", table.id, f.name, opt.id));
+                        }
+                        if opt.label.is_empty() || !opt_labels.insert(opt.label.as_str()) {
+                            problems.push(format!("table '{}': field '{}' has duplicate or empty select option label '{}'", table.id, f.name, opt.label));
+                        }
+                    }
+                }
                 FieldType::Formula => {
                     if let Some(expr) = &f.formula_expression {
                         match validate_formula(expr) {

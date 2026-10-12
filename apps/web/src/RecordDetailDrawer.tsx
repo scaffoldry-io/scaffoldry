@@ -196,11 +196,14 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
                           "Approved",
                           "Funded",
                           "Rejected",
-                        ]).map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
+                        ]).map((rawOpt) => {
+                          const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                          return (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          );
+                        })}
                       </select>
                     ) : field.field_type === "Rating" ? (
                       <div className="flex items-center gap-1 pt-1">
