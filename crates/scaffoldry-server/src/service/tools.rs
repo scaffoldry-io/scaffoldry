@@ -851,8 +851,9 @@ fn run_describe_app(caller: &AuthUser, _origin: &Origin, args: Value, state: &Sh
     Ok(crate::routes::apps::with_version(state, &manifest))
 }
 
-fn run_list_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_records(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: ListRecordsArgs = parse(args)?;
+    let (app_slug, table_id) = (args.app_slug.clone(), args.table_id.clone());
     let limit = args.limit.unwrap_or(50);
     if limit == 0 || limit > MAX_ROWS {
         return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
@@ -874,6 +875,7 @@ fn run_list_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &Sh
         },
         state,
     )?;
+    crate::service::disclosure::record_agent_read(caller, origin, &app_slug, Some(&table_id), &page.records, state)?;
     let mut body = json!({ "records": page.records, "next_cursor": page.next_cursor });
     records::add_field_states(&mut body, &page.calculating);
     Ok(body)

@@ -753,6 +753,22 @@ fn indexed_names(app_slug: &str, table_id: &str, state: &SharedState) -> std::co
     names
 }
 
+/// The names of a table's fields that are effective-sensitive: marked in the manifest, or made so by a
+/// label or a category. The disclosure log writes an entry only when a release includes one.
+pub(crate) fn sensitive_fields_of(app_slug: &str, table: &str, state: &SharedState) -> Vec<String> {
+    let Ok((fields, canonical)) = table_fields(app_slug, table, false, state) else { return Vec::new() };
+    let categories = state.sensitivity_categories();
+    let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
+    fields
+        .iter()
+        .filter(|f| {
+            let label = labels.get(&(app_slug.to_string(), canonical.clone(), f.name.clone()));
+            scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected
+        })
+        .map(|f| f.name.clone())
+        .collect()
+}
+
 fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
     // The app's column rules hold a field back from any member they name. The viewer rule hides
     // sensitive fields from a viewer. A field either rule hides is hidden.

@@ -45,6 +45,7 @@ const SCHEMA_0027: &str = include_str!("../../scaffoldry-core/migrations/0027_re
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0046: &str = include_str!("../../scaffoldry-core/migrations/0046_calc_status.sql");
 const SCHEMA_0047: &str = include_str!("../../scaffoldry-core/migrations/0047_view_as_token.sql");
+const SCHEMA_0048: &str = include_str!("../../scaffoldry-core/migrations/0048_disclosure_log.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -688,7 +689,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 31] = [
+                        let migrations: [(&str, &str); 32] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -716,6 +717,7 @@ impl PostgresRepository {
                             ("0045_index_status.sql", SCHEMA_0045),
                             ("0046_calc_status.sql", SCHEMA_0046),
                             ("0047_view_as_token.sql", SCHEMA_0047),
+                            ("0048_disclosure_log.sql", SCHEMA_0048),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),

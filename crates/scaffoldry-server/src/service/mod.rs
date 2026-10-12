@@ -10,6 +10,7 @@ pub mod organizations;
 pub mod records;
 pub mod access;
 pub mod comments;
+pub mod disclosure;
 pub mod workspaces;
 pub mod identity;
 pub mod admin;

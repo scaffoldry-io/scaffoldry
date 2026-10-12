@@ -176,6 +176,8 @@ async fn list_table_records(
             &state,
         )
         .map_err(ServiceError::into_pair)?;
+        crate::service::disclosure::record_agent_read(&user, &crate::guard::read_origin(&state, &headers), &slug, Some(&table_id), &page.records, &state)
+            .map_err(ServiceError::into_pair)?;
         let mut body = json!({
             "app_slug": slug,
             "table_id": table_id,
@@ -249,6 +251,9 @@ async fn list_table_records(
         .skip(offset)
         .take(page_size)
         .collect();
+
+    crate::service::disclosure::record_agent_read(&user, &crate::guard::read_origin(&state, &headers), &slug, Some(&table_id), &paged_records, &state)
+        .map_err(ServiceError::into_pair)?;
 
     let next_offset = if offset + paged_records.len() < total {
         Some(offset + paged_records.len())
@@ -329,6 +334,8 @@ async fn list_records(
     // The service applies the row scope and redacts before filtering and sorting, so a viewer
     // cannot probe a field by filtering on it.
     let app_records = crate::service::records::list_records(&user, &slug, &state).map_err(ServiceError::into_pair)?;
+    crate::service::disclosure::record_agent_read(&user, &crate::guard::read_origin(&state, &headers), &slug, None, &app_records, &state)
+        .map_err(ServiceError::into_pair)?;
     let total = app_records.len();
 
     Ok(Json(json!({

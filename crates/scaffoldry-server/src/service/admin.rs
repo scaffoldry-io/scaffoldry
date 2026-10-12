@@ -26,6 +26,8 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/admin/workspaces/{id}"),
     ("POST", "/admin/workspaces/{id}/transfer-ownership"),
     ("GET", "/admin/apps"),
+    ("GET", "/admin/disclosures"),
+    ("GET", "/admin/disclosures/export"),
 ];
 
 pub fn require_platform_admin(caller: &AuthUser, state: &SharedState) -> Result<(), ServiceError> {
