@@ -147,6 +147,14 @@ pub static TOOLS: &[Tool] = &[
         run: run_describe_app,
     },
     Tool {
+        name: "aggregate_records",
+        description: "Aggregate records in a table using count, sum, avg, min, or max, optionally grouped by an indexed field.",
+        input_schema: schema_aggregate_records,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_aggregate_records,
+    },
+    Tool {
         name: "list_records",
         description: "One page of a table's records, up to 200. Pass next_cursor back as cursor for the next page. A filter or sort works on a table of 10,000 rows or fewer.",
         input_schema: schema_list_records,
@@ -823,7 +831,8 @@ fn schema_list_records() -> Value {
             "filter": { "type": "object", "description": "{ conjunction: And|Or, clauses: [{ id, field_name, operator, value }] }. Operators: Equals, NotEquals, Contains, NotContains, GreaterThan, LessThan, IsEmpty, IsNotEmpty" },
             "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
             "limit": { "type": "integer", "description": "Rows per page, 1 to 200. Default 50" },
-            "cursor": { "type": "string", "description": "The next_cursor of the previous page" }
+            "cursor": { "type": "string", "description": "The next_cursor of the previous page" },
+            "search": { "type": "string", "description": "Full-text search query across record fields" }
         },
         "required": ["app_slug", "table_id"]
     })
@@ -893,6 +902,7 @@ struct ListRecordsArgs {
     sort: Option<SortArg>,
     limit: Option<usize>,
     cursor: Option<String>,
+    search: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -967,6 +977,7 @@ fn run_list_records(caller: &AuthUser, origin: &Origin, args: Value, state: &Sha
             cursor: args.cursor,
             max_bytes: Some(MAX_BYTES),
             must_exist: true,
+            search: args.search,
         },
         state,
     )?;
@@ -1216,4 +1227,55 @@ fn run_get_view_data(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
     crate::service::disclosure::record_agent_read(caller, origin, &args.app_slug, view.table_id.as_deref(), &released, state)?;
 
     to_value(&view_data)
+}
+
+fn schema_aggregate_records() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "table_id": { "type": "string", "description": "Table id or slug from describe_app" },
+            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max"], "description": "Aggregate function" },
+            "field": { "type": "string", "description": "Numeric field to aggregate (required unless function is count)" },
+            "filter": { "type": "object", "description": "Optional filter on indexed fields" },
+            "group_by": { "type": "string", "description": "Optional indexed field to group by" }
+        },
+        "required": ["app_slug", "table_id", "function"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AggregateRecordsArgs {
+    app_slug: String,
+    table_id: String,
+    function: String,
+    field: Option<String>,
+    filter: Option<scaffoldry_engine::CompoundFilter>,
+    group_by: Option<String>,
+}
+
+fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: AggregateRecordsArgs = parse(args)?;
+    let func = match args.function.to_lowercase().as_str() {
+        "count" => records::AggregateFunction::Count,
+        "sum" => records::AggregateFunction::Sum,
+        "avg" => records::AggregateFunction::Avg,
+        "min" => records::AggregateFunction::Min,
+        "max" => records::AggregateFunction::Max,
+        other => return Err(ServiceError::BadRequest(format!("Unknown aggregate function '{other}'"))),
+    };
+    let res = records::aggregate_records(
+        caller,
+        &args.app_slug,
+        &args.table_id,
+        records::AggregateQuery {
+            function: func,
+            field: args.field,
+            filter: args.filter,
+            group_by: args.group_by,
+        },
+        state,
+    )?;
+    serde_json::to_value(res).map_err(|e| ServiceError::Internal(e.to_string()))
 }

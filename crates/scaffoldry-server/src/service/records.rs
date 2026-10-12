@@ -1,5 +1,6 @@
 //! Sovereign Tabular Record Service Layer with Cedar Policy Enforcement
 
+pub use crate::repository_index::AggregateFunction;
 use scaffoldry_engine::HostRouter;
 
 use crate::service::scope;
@@ -748,6 +749,8 @@ pub struct PageQuery {
     pub max_bytes: Option<usize>,
     /// True makes a table the manifest does not name a `NotFound`.
     pub must_exist: bool,
+    /// Full-text search string.
+    pub search: Option<String>,
 }
 
 /// Says in a page's response which fields are being calculated again and how far along they are:
@@ -1232,9 +1235,24 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     let after = query.cursor.as_deref().map(decode_cursor).transpose()?;
     let sort_field = query.sort.as_ref().map(|s| s.field_name.clone());
 
+    if query.search.as_ref().is_some_and(|s| !s.trim().is_empty()) {
+        let sensitive_hidden = is_viewer(caller, app_slug, state) && {
+            let categories = state.sensitivity_categories();
+            let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
+            fields.iter().any(|f| {
+                let label = labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone()));
+                scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected
+            })
+        };
+        if sensitive_hidden {
+            return Err(ServiceError::BadRequest("Search is not available on this table for your role.".to_string()));
+        }
+    }
+
     let plan = indexed_plan(&fields, &indexed_names(app_slug, &table, state), query.filter.as_ref(), query.sort.as_ref());
+    let has_search = query.search.as_ref().is_some_and(|s| !s.trim().is_empty());
     let mut walk_spec: Option<FieldSpec> = None;
-    let mut rows = if clauses.is_empty() && query.sort.is_none() {
+    let mut rows = if clauses.is_empty() && query.sort.is_none() && !has_search {
         match &scope {
             // The paging index cannot apply a scope, so a scoped walk goes through the same statement
             // as a filtered one, in the same order.
@@ -1249,6 +1267,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
                         after,
                         limit: query.limit + 1,
                         scope: Some(plan.clone()),
+                        search: None,
                     },
                 )
                 .map_err(ServiceError::Internal)?,
@@ -1269,6 +1288,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             after: None,
             limit: query.limit + 1,
             scope: scope.clone(),
+            search: query.search.clone(),
         };
         if let Some((name, column, _)) = crate::repository_index::walk_of(&iq) {
             walk_spec = fields.iter().find(|f| f.name == name).cloned();
@@ -1278,7 +1298,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         }
         state.indexed_page(&iq).map_err(ServiceError::Internal)?
     } else {
-        if state.table_has_more_than(app_slug, &table, UNINDEXED_ROW_LIMIT).map_err(ServiceError::Internal)? {
+        if (!clauses.is_empty() || query.sort.is_some()) && state.table_has_more_than(app_slug, &table, UNINDEXED_ROW_LIMIT).map_err(ServiceError::Internal)? {
             let name = plan.err().unwrap_or_default();
             return Err(ServiceError::BadRequest(format!("{TOO_LARGE} Mark '{name}' as indexed in the app manifest to filter or sort on it.")));
         }
@@ -1290,6 +1310,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             after,
             limit: query.limit + 1,
             scope: scope.clone(),
+            search: query.search.clone(),
         };
         state.query_records(app_slug, &q).map_err(ServiceError::Internal)?
     };
@@ -1458,4 +1479,177 @@ fn version_required(message: &str) -> ServiceError {
         message: message.to_string(),
         fields: std::collections::BTreeMap::from([("version".to_string(), "required".to_string())]),
     }
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Aggregate records (Totals & Groups)
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AggregateGroup {
+    pub key: String,
+    pub group: String,
+    pub value: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AggregateResult {
+    pub function: AggregateFunction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub groups: Option<Vec<AggregateGroup>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more: Option<bool>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct AggregateQuery {
+    pub function: AggregateFunction,
+    pub field: Option<String>,
+    pub filter: Option<CompoundFilter>,
+    pub group_by: Option<String>,
+}
+
+pub fn aggregate_records(
+    caller: &AuthUser,
+    app_slug: &str,
+    table_id: &str,
+    query: AggregateQuery,
+    state: &SharedState,
+) -> Result<AggregateResult, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::Read, state)?;
+    let (fields, table) = table_fields(app_slug, table_id, true, state)?;
+    let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
+    let indexed = indexed_names(app_slug, &table, state);
+
+    if query.function != AggregateFunction::Count && query.field.is_none() {
+        return Err(ServiceError::BadRequest(format!("'field' is required for {:?} aggregate", query.function)));
+    }
+
+    if let Some(ref f) = query.field {
+        if !fields.iter().any(|s| s.name == *f) {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not a field of this table")));
+        }
+        if !indexed.contains(f) {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not in the indexed set")));
+        }
+        let spec = fields.iter().find(|s| s.name == *f).unwrap();
+        if scaffoldry_engine::index_column(spec.field_type) != scaffoldry_engine::IndexColumn::Num {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not a numeric field (must be stored in num)")));
+        }
+        if hidden.iter().any(|h| h == f) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *f);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot aggregate on '{f}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{f}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+
+    if let Some(ref g) = query.group_by {
+        if !fields.iter().any(|s| s.name == *g) {
+            return Err(ServiceError::BadRequest(format!("'{g}' is not a field of this table")));
+        }
+        if !indexed.contains(g) {
+            return Err(ServiceError::BadRequest(format!("'{g}' is not in the indexed set")));
+        }
+        if hidden.iter().any(|h| h == g) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *g);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot group by '{g}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{g}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+
+    let mut iclauses = Vec::new();
+    if let Some(ref filter) = query.filter {
+        for c in &filter.clauses {
+            if hidden.iter().any(|h| h == &c.field_name) {
+                let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == c.field_name);
+                return Err(ServiceError::FieldHidden {
+                    message: format!("You cannot filter on '{}' because you cannot see it.", c.field_name),
+                    reason: rule.as_ref().map_or_else(|| format!("'{}' is hidden from you.", c.field_name), |d| d.reason.clone()),
+                    remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                });
+            }
+        }
+        let plan_res = indexed_plan(&fields, &indexed, Some(filter), None);
+        match plan_res {
+            Ok((clauses, _)) => iclauses = clauses,
+            Err(name) => return Err(ServiceError::BadRequest(format!("'{name}' must be in the indexed set to filter aggregate"))),
+        }
+    }
+
+    let mut driving_field = query.field.clone();
+    if driving_field.is_none() && query.group_by.is_none() {
+        if let Some(first_clause) = iclauses.first() {
+            driving_field = Some(first_clause.field.clone());
+        } else if let Some(first_idx) = indexed.iter().next() {
+            driving_field = Some(first_idx.clone());
+        } else {
+            return Err(ServiceError::BadRequest("Table has no indexed fields to aggregate".to_string()));
+        }
+    }
+
+    let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
+    let plan = crate::repository_index::AggregatePlan {
+        app_slug: app_slug.to_string(),
+        table_id: table.clone(),
+        function: query.function,
+        field: driving_field,
+        group_by: query.group_by.clone(),
+        clauses: iclauses,
+        scope,
+    };
+
+    let raw = state.aggregate_records(&plan).map_err(ServiceError::Internal)?;
+    let result = match query.group_by {
+        Some(g) => {
+            let groups: Vec<AggregateGroup> = raw.groups.unwrap_or_default().into_iter().map(|grp| AggregateGroup {
+                group: grp.key.clone(),
+                key: grp.key,
+                value: grp.value,
+                count: if query.function == AggregateFunction::Count { Some(grp.value) } else { None },
+            }).collect();
+            AggregateResult {
+                function: query.function,
+                field: query.field,
+                group_by: Some(g),
+                value: None,
+                count: None,
+                groups: Some(groups),
+                has_more: Some(raw.has_more),
+                more: Some(raw.has_more),
+            }
+        }
+        None => {
+            let val = raw.value.unwrap_or(0.0);
+            AggregateResult {
+                function: query.function,
+                field: query.field,
+                group_by: None,
+                value: Some(val),
+                count: if query.function == AggregateFunction::Count { Some(val) } else { None },
+                groups: None,
+                has_more: None,
+                more: None,
+            }
+        }
+    };
+    Ok(result)
 }

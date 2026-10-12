@@ -609,6 +609,14 @@ impl ServerState {
         }
     }
 
+    /// Aggregate over record_index.
+    pub fn aggregate_records(&self, plan: &crate::repository_index::AggregatePlan) -> Result<crate::repository_index::AggregateResultRaw, String> {
+        match self.repository {
+            Some(ref repo) => repo.aggregate_records(plan).map_err(|e| e.to_string()),
+            None => Err("Aggregates need PostgreSQL".to_string()),
+        }
+    }
+
     /// The percent done of the build holding back one of `fields`, or `None` when none is building.
     pub fn index_building_percent(&self, app_slug: &str, table_id: &str, fields: &[String]) -> Result<Option<i64>, String> {
         match self.repository {
