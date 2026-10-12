@@ -3,6 +3,8 @@
 pub mod access;
 pub mod duration;
 pub use duration::*;
+pub mod filter_tree;
+pub use filter_tree::{check_filter, clauses_of, instant_of, is_flat, list_of, range_of, relative_range, resolve_relative_dates, MAX_FILTER_CLAUSES, MAX_FILTER_DEPTH};
 pub mod automation;
 pub mod detect;
 pub mod graph;
@@ -64,6 +66,15 @@ pub enum FilterOperator {
     LessThan,
     IsEmpty,
     IsNotEmpty,
+    /// The cell is one of a list: a JSON array or a comma list.
+    In,
+    /// The cell is from `low` to `high`, both inside: `10..20`, `2026-01-01..2026-01-31`, or a relative date
+    /// such as `last_7_days` on a date field.
+    Between,
+    /// A date before the value.
+    Before,
+    /// A date after the value.
+    After,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +95,9 @@ pub struct FilterClause {
 pub struct CompoundFilter {
     pub conjunction: FilterConjunction,
     pub clauses: Vec<FilterClause>,
+    /// Nested groups, joined with the clauses by the same conjunction. A group nests two levels below the root.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<CompoundFilter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -682,8 +696,70 @@ pub struct AppView {
     pub hidden_columns: Vec<String>,
     #[serde(default)]
     pub frozen_through: Option<String>,
+    /// Each field's footer choice: `(field, function)`. The functions are in `FOOTER_FUNCTIONS`.
     #[serde(default)]
     pub column_summary: Vec<(String, String)>,
+    /// Up to three fields to group by, outermost first. Computed by the server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_by: Vec<String>,
+    /// Up to ten rules that tone a row or a field when a filter matches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub color_rules: Vec<ColorRule>,
+}
+
+/// The footer choices a field may have.
+pub const FOOTER_FUNCTIONS: [&str; 8] = ["count", "filled", "empty", "unique", "sum", "avg", "min", "max"];
+pub const MAX_GROUP_LEVELS: usize = 3;
+pub const MAX_COLOR_RULES: usize = 10;
+
+/// The fixed set of tones. A tone shows as a color, an icon and the rule's label. Never as color alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tone {
+    Neutral,
+    Info,
+    Success,
+    Warning,
+    Danger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorTarget {
+    Row,
+    Field,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColorRule {
+    pub id: String,
+    pub label: String,
+    pub when: CompoundFilter,
+    pub tone: Tone,
+    pub target: ColorTarget,
+    /// The field a `field` rule colors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+/// A rule that matched a row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AppliedTone {
+    pub id: String,
+    pub label: String,
+    pub tone: Tone,
+    pub target: ColorTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+/// The rules that match a record, in the order the view lists them.
+pub fn tones_of(record: &Value, rules: &[ColorRule]) -> Vec<AppliedTone> {
+    rules
+        .iter()
+        .filter(|r| matches_filter(record, &r.when))
+        .map(|r| AppliedTone { id: r.id.clone(), label: r.label.clone(), tone: r.tone, target: r.target, field: r.field.clone() })
+        .collect()
 }
 
 impl AppView {
@@ -710,17 +786,30 @@ impl AppView {
             hidden_columns: Vec::new(),
             frozen_through: None,
             column_summary: Vec::new(),
+            group_by: Vec::new(),
+            color_rules: Vec::new(),
         }
     }
 }
 
 pub fn matches_filter(record: &Value, filter: &CompoundFilter) -> bool {
-    if filter.clauses.is_empty() {
+    if filter.clauses.is_empty() && filter.groups.is_empty() {
         return true;
     }
+    let clauses = filter.clauses.iter().map(|c| matches_clause(record, c));
+    let groups = filter.groups.iter().map(|g| matches_filter(record, g));
     match filter.conjunction {
-        FilterConjunction::And => filter.clauses.iter().all(|c| matches_clause(record, c)),
-        FilterConjunction::Or => filter.clauses.iter().any(|c| matches_clause(record, c)),
+        FilterConjunction::And => clauses.chain(groups).all(|m| m),
+        FilterConjunction::Or => clauses.chain(groups).any(|m| m),
+    }
+}
+
+fn cell_text(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::Bool(b)) => b.to_string(),
+        _ => String::new(),
     }
 }
 
@@ -801,6 +890,33 @@ pub fn matches_clause(record: &Value, clause: &FilterClause) -> bool {
                 _ => false,
             }
         }
+        FilterOperator::In => {
+            let wanted: Vec<String> = list_of(&clause.value).into_iter().map(|v| v.to_lowercase()).collect();
+            match cell_val {
+                Some(Value::Array(items)) => items.iter().any(|i| wanted.contains(&cell_text(Some(i)).to_lowercase())),
+                other => wanted.contains(&cell_text(other).to_lowercase()),
+            }
+        }
+        FilterOperator::Between => match range_of(&clause.value) {
+            None => false,
+            Some((low, high)) => {
+                if let (Some(n), Ok(a), Ok(b)) = (cell_val.and_then(Value::as_f64), low.parse::<f64>(), high.parse::<f64>()) {
+                    return a <= n && n <= b;
+                }
+                match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(low), instant_of(high)) {
+                    (Some(t), Some(a), Some(b)) => a <= t && t <= b,
+                    _ => false,
+                }
+            }
+        },
+        FilterOperator::Before => match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(&clause.value)) {
+            (Some(t), Some(limit)) => t < limit,
+            _ => false,
+        },
+        FilterOperator::After => match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(&clause.value)) {
+            (Some(t), Some(limit)) => t > limit,
+            _ => false,
+        },
     }
 }
 

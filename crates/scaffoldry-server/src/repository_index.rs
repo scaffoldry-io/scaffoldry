@@ -300,6 +300,27 @@ pub struct IndexedQuery {
     pub scope: Option<crate::repository::ScopePlan>,
     /// Full-text search string.
     pub search: Option<String>,
+    /// A filter tree that does not fit `clauses`: groups, OR, or the newer operators. Joined with AND to the clauses.
+    /// A query that has one also has a sort, which is what its pages walk.
+    pub expr: Option<Expr>,
+}
+
+/// A filter tree whose leaves are typed clauses.
+#[derive(Debug, Clone)]
+pub enum Expr {
+    Leaf(IndexedClause),
+    And(Vec<Expr>),
+    Or(Vec<Expr>),
+}
+
+impl Expr {
+    /// Every clause in the tree.
+    pub fn leaves(&self) -> Vec<&IndexedClause> {
+        match self {
+            Expr::Leaf(c) => vec![c],
+            Expr::And(v) | Expr::Or(v) => v.iter().flat_map(Expr::leaves).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,29 +393,7 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
             IndexedValue::Blank => None,
         }
     };
-    let predicate = |params: &mut Vec<SqlParam>, alias: &str, c: &IndexedClause| -> String {
-        let cname = column_name(c.column);
-        let blank = format!("({alias}.num IS NULL AND {alias}.txt IS NULL AND {alias}.ts IS NULL)");
-        match c.op {
-            FilterOperator::IsEmpty => blank,
-            FilterOperator::IsNotEmpty => format!("NOT {blank}"),
-            op => {
-                let typed = match c.column {
-                    IndexColumn::Num => c.value.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map(IndexedValue::Num),
-                    IndexColumn::Txt => Some(IndexedValue::Txt(c.value.to_lowercase().chars().take(128).collect())),
-                    IndexColumn::Ts => scaffoldry_engine::parse_instant(&c.value).map(IndexedValue::Ts),
-                };
-                let Some(v) = typed.and_then(|t| value_param(params, &t)) else { return "FALSE".to_string() };
-                match op {
-                    FilterOperator::Equals => format!("{alias}.{cname} = {v}"),
-                    FilterOperator::NotEquals => format!("{alias}.{cname} IS DISTINCT FROM {v}"),
-                    FilterOperator::GreaterThan => format!("{alias}.{cname} > {v}"),
-                    FilterOperator::LessThan => format!("{alias}.{cname} < {v}"),
-                    _ => "FALSE".to_string(),
-                }
-            }
-        }
-    };
+    let predicate = |params: &mut Vec<SqlParam>, alias: &str, c: &IndexedClause| -> String { agg_predicate(params, alias, c) };
     for (i, c) in q.clauses.iter().enumerate() {
         // A clause on the field being walked reads the walked row itself.
         let on_walked = single && !c.multi && c.field == field_name;
@@ -405,6 +404,11 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
             let p = predicate(&mut params, "f", c);
             wheres.push(format!("EXISTS (SELECT 1 FROM record_index f WHERE f.app_slug = $1 AND f.table_id = $2 AND f.record_id = i.record_id AND f.field = ${cf} AND {p})"));
         }
+    }
+
+    if let Some(e) = &q.expr {
+        let walked = if single { Some(field_name.as_str()) } else { None };
+        wheres.push(expr_sql(&mut params, e, "i.record_id", walked));
     }
 
     if let Some(s) = &q.search {
@@ -473,6 +477,12 @@ pub enum AggregateFunction {
     Avg,
     Min,
     Max,
+    /// Rows with a value in the field. Any field type.
+    Filled,
+    /// Rows with none. Any field type.
+    Empty,
+    /// Distinct values. Any field type.
+    Unique,
 }
 
 #[derive(Debug, Clone)]
@@ -481,8 +491,12 @@ pub struct AggregatePlan {
     pub table_id: String,
     pub function: AggregateFunction,
     pub field: Option<String>,
+    /// The field whose rows the statement walks when `field` is not given.
+    pub driver: Option<String>,
     pub group_by: Option<String>,
     pub clauses: Vec<IndexedClause>,
+    /// A filter tree, joined with AND to the clauses.
+    pub expr: Option<Expr>,
     pub scope: Option<crate::repository::ScopePlan>,
 }
 
@@ -523,11 +537,49 @@ fn agg_value_param(params: &mut Vec<SqlParam>, v: &IndexedValue) -> Option<Strin
 }
 
 fn agg_predicate(params: &mut Vec<SqlParam>, alias: &str, c: &IndexedClause) -> String {
+    use scaffoldry_engine::{list_of, parse_instant, range_of};
     let cname = column_name(c.column);
     let blank = format!("({alias}.num IS NULL AND {alias}.txt IS NULL AND {alias}.ts IS NULL)");
+    let ts = |params: &mut Vec<SqlParam>, v: &str| -> Option<String> { parse_instant(v.trim()).map(|t| { let n = push_param(params, SqlParam::Text(t)); format!("${n}::text::timestamptz") }) };
+    let num = |params: &mut Vec<SqlParam>, v: &str| -> Option<String> { v.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map(|n| { let i = push_param(params, SqlParam::Float(n)); format!("${i}::float8") }) };
     match c.op {
         FilterOperator::IsEmpty => blank,
         FilterOperator::IsNotEmpty => format!("NOT {blank}"),
+        FilterOperator::In => match c.column {
+            IndexColumn::Txt => {
+                let list: Vec<String> = list_of(&c.value).into_iter().map(|v| v.to_lowercase().chars().take(128).collect()).collect();
+                if list.is_empty() {
+                    return "FALSE".to_string();
+                }
+                let n = push_param(params, SqlParam::Texts(list));
+                format!("{alias}.txt = ANY(${n}::text[])")
+            }
+            IndexColumn::Num => {
+                let list: Vec<f64> = list_of(&c.value).iter().filter_map(|v| v.parse::<f64>().ok()).filter(|n| n.is_finite()).collect();
+                if list.is_empty() {
+                    return "FALSE".to_string();
+                }
+                let n = push_param(params, SqlParam::Floats(list));
+                format!("{alias}.num = ANY(${n}::float8[])")
+            }
+            IndexColumn::Ts => "FALSE".to_string(),
+        },
+        FilterOperator::Between => {
+            let Some((low, high)) = range_of(&c.value) else { return "FALSE".to_string() };
+            let (a, b) = match c.column {
+                IndexColumn::Num => (num(params, low), num(params, high)),
+                IndexColumn::Ts => (ts(params, low), ts(params, high)),
+                IndexColumn::Txt => return "FALSE".to_string(),
+            };
+            match (a, b) {
+                (Some(a), Some(b)) => format!("{alias}.{cname} BETWEEN {a} AND {b}"),
+                _ => "FALSE".to_string(),
+            }
+        }
+        FilterOperator::Before | FilterOperator::After => match (c.column, ts(params, &c.value)) {
+            (IndexColumn::Ts, Some(v)) => format!("{alias}.ts {} {v}", if c.op == FilterOperator::Before { "<" } else { ">" }),
+            _ => "FALSE".to_string(),
+        },
         op => {
             let typed = match c.column {
                 IndexColumn::Num => c.value.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map(IndexedValue::Num),
@@ -546,13 +598,34 @@ fn agg_predicate(params: &mut Vec<SqlParam>, alias: &str, c: &IndexedClause) -> 
     }
 }
 
+/// The condition a filter tree puts on the record in `record_col`. A leaf on the field the statement walks reads
+/// the walked row. Any other leaf asks the index for that field's row of the same record.
+pub fn expr_sql(params: &mut Vec<SqlParam>, e: &Expr, record_col: &str, walked: Option<&str>) -> String {
+    match e {
+        Expr::Leaf(c) => {
+            if !c.multi && walked == Some(c.field.as_str()) {
+                return agg_predicate(params, "i", c);
+            }
+            let cf = push_param(params, SqlParam::Text(c.field.clone()));
+            let pred = agg_predicate(params, "fc", c);
+            format!("EXISTS (SELECT 1 FROM record_index fc WHERE fc.app_slug = $1 AND fc.table_id = $2 AND fc.record_id = {record_col} AND fc.field = ${cf} AND {pred})")
+        }
+        Expr::And(v) if v.is_empty() => "TRUE".to_string(),
+        Expr::Or(v) if v.is_empty() => "FALSE".to_string(),
+        Expr::And(v) => format!("({})", v.iter().map(|x| expr_sql(params, x, record_col, walked)).collect::<Vec<_>>().join(" AND ")),
+        Expr::Or(v) => format!("({})", v.iter().map(|x| expr_sql(params, x, record_col, walked)).collect::<Vec<_>>().join(" OR ")),
+    }
+}
+
+const BLANK: &str = "(i.num IS NULL AND i.txt IS NULL AND i.ts IS NULL)";
+
 pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
     let mut params = vec![SqlParam::Text(p.app_slug.clone()), SqlParam::Text(p.table_id.clone())];
 
     if let Some(ref g) = p.group_by {
         let gp = push_param(&mut params, SqlParam::Text(g.clone()));
         let mut wheres = vec![format!("g.app_slug = $1 AND g.table_id = $2 AND g.field = ${gp} AND g.ord = 0")];
-        let group_expr = "COALESCE(g.txt, g.num::text, g.ts::text, '')";
+        let group_expr = "COALESCE(g.txt, g.num::text, to_char(g.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), '')";
         let mut join = String::new();
         let agg_expr = match p.function {
             AggregateFunction::Count => "COUNT(*)".to_string(),
@@ -583,6 +656,9 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
                 wheres.push(format!("EXISTS (SELECT 1 FROM record_index fc WHERE fc.app_slug = $1 AND fc.table_id = $2 AND fc.record_id = g.record_id AND fc.field = ${cf} AND {pred})"));
             }
         }
+        if let Some(e) = &p.expr {
+            wheres.push(expr_sql(&mut params, e, "g.record_id", Some(g.as_str())));
+        }
         let scope_clause = match &p.scope {
             Some(plan) => plan.clause("g.record_id", &p.app_slug, &p.table_id, &mut params),
             None => String::new(),
@@ -593,11 +669,9 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
         );
         (sql, params)
     } else {
-        let driving_field = match &p.field {
-            Some(f) => f.clone(),
-            None => {
-                p.clauses.first().map(|c| c.field.clone()).unwrap_or_default()
-            }
+        let driving_field = match (&p.field, &p.driver) {
+            (Some(f), _) | (None, Some(f)) => f.clone(),
+            (None, None) => p.clauses.first().map(|c| c.field.clone()).unwrap_or_default(),
         };
         let fp = push_param(&mut params, SqlParam::Text(driving_field.clone()));
         let mut wheres = vec![format!("i.app_slug = $1 AND i.table_id = $2 AND i.field = ${fp} AND i.ord = 0")];
@@ -613,6 +687,9 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
             AggregateFunction::Avg => "AVG(i.num)".to_string(),
             AggregateFunction::Min => "MIN(i.num)".to_string(),
             AggregateFunction::Max => "MAX(i.num)".to_string(),
+            AggregateFunction::Filled => format!("COUNT(*) FILTER (WHERE NOT {BLANK})"),
+            AggregateFunction::Empty => format!("COUNT(*) FILTER (WHERE {BLANK})"),
+            AggregateFunction::Unique => format!("COUNT(DISTINCT COALESCE(i.txt, i.num::text, i.ts::text)) FILTER (WHERE NOT {BLANK})"),
         };
         for c in &p.clauses {
             if c.field == driving_field && !c.multi {
@@ -623,12 +700,15 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
                 wheres.push(format!("EXISTS (SELECT 1 FROM record_index fc WHERE fc.app_slug = $1 AND fc.table_id = $2 AND fc.record_id = i.record_id AND fc.field = ${cf} AND {pred})"));
             }
         }
+        if let Some(e) = &p.expr {
+            wheres.push(expr_sql(&mut params, e, "i.record_id", Some(driving_field.as_str())));
+        }
         let scope_clause = match &p.scope {
             Some(plan) => plan.clause("i.record_id", &p.app_slug, &p.table_id, &mut params),
             None => String::new(),
         };
         let default_val = match p.function {
-            AggregateFunction::Count | AggregateFunction::Sum => "COALESCE(val, 0.0)",
+            AggregateFunction::Count | AggregateFunction::Sum | AggregateFunction::Filled | AggregateFunction::Empty | AggregateFunction::Unique => "COALESCE(val, 0.0)",
             _ => "val",
         };
         let sql = format!(

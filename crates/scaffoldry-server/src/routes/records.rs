@@ -501,6 +501,9 @@ async fn aggregate_table_records(
         "avg" => crate::service::records::AggregateFunction::Avg,
         "min" => crate::service::records::AggregateFunction::Min,
         "max" => crate::service::records::AggregateFunction::Max,
+        "filled" => crate::service::records::AggregateFunction::Filled,
+        "empty" => crate::service::records::AggregateFunction::Empty,
+        "unique" => crate::service::records::AggregateFunction::Unique,
         other => return Err(ServiceError::BadRequest(format!("Unknown aggregate function '{other}'")).into_pair()),
     };
 

@@ -149,6 +149,7 @@ async fn test_manifest_rejects_sort_and_filter_on_long_text() {
     });
     view.filters = Some(CompoundFilter {
         conjunction: FilterConjunction::And,
+        groups: vec![],
         clauses: vec![FilterClause {
             id: "c1".to_string(),
             field_name: "body".to_string(),

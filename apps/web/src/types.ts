@@ -16,7 +16,11 @@ export type FilterOperator =
   | "greater_than"
   | "less_than"
   | "is_empty"
-  | "is_not_empty";
+  | "is_not_empty"
+  | "in"
+  | "between"
+  | "before"
+  | "after";
 
 export type FilterConjunction = "AND" | "OR";
 
@@ -30,6 +34,20 @@ export interface FilterClause {
 export interface CompoundFilter {
   conjunction: FilterConjunction;
   clauses: FilterClause[];
+  /** Nested groups, joined with the clauses by the same conjunction. Two levels below the root at most. */
+  groups?: CompoundFilter[];
+}
+
+/** The fixed set of tones a color rule may use. */
+export type ColorTone = "neutral" | "info" | "success" | "warning" | "danger";
+
+export interface ColorRule {
+  id: string;
+  label: string;
+  when: CompoundFilter;
+  tone: ColorTone;
+  target: "row" | "field";
+  field?: string;
 }
 
 export type SortDirection = "asc" | "desc";
@@ -142,6 +160,10 @@ export interface AppView {
   hidden_columns?: string[];
   frozen_through?: string;
   column_summary?: [string, string][];
+  /** Up to three fields to group by, outermost first. The server computes the groups. */
+  group_by?: string[];
+  /** Up to ten rules that tone a row or a field. */
+  color_rules?: ColorRule[];
 }
 
 export interface Collaborator {

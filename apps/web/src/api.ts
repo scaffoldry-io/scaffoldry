@@ -531,6 +531,47 @@ export const deleteView = (
   });
 };
 
+/** One level of a grouped view: the groups, with counts. */
+export interface ViewGroups {
+  level: number;
+  field: string;
+  items: { key: string; count: number }[];
+  has_more: boolean;
+}
+
+export interface ViewFooter {
+  function: string;
+  value: number | null;
+  unsupported?: boolean;
+}
+
+/** What running a view returns: the groups of the next level, or the rows of a group (or of the whole view). */
+export interface ViewData {
+  view_id: string;
+  groups?: ViewGroups;
+  records?: { id: string; data: Record<string, any> }[];
+  next_cursor?: string | null;
+  /** On the first page only. A hidden field has none. */
+  footers?: Record<string, ViewFooter>;
+}
+
+/**
+ * Runs a view on the server. `groupPath` holds the key chosen at each level so far. The server filters, sorts,
+ * groups and totals. The browser only draws.
+ */
+export const runView = (
+  appSlug: string,
+  viewId: string,
+  opts: { groupPath?: string[]; cursor?: string; limit?: number } = {}
+): Promise<ViewData> => {
+  const q = new URLSearchParams();
+  if (opts.groupPath?.length) q.set("group_path", JSON.stringify(opts.groupPath));
+  if (opts.cursor) q.set("cursor", opts.cursor);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return request(`/apps/${appSlug}/views/${viewId}/data${qs ? `?${qs}` : ""}`);
+};
+
 export const duplicateView = (
   appSlug: string,
   viewId: string

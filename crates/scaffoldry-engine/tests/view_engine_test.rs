@@ -18,6 +18,7 @@ fn test_compound_filter_and_or() {
     // AND filter: status == "Approved" AND budget > 500000
     let and_filter = CompoundFilter {
         conjunction: FilterConjunction::And,
+        groups: vec![],
         clauses: vec![
             FilterClause {
                 id: "c1".to_string(),
@@ -41,6 +42,7 @@ fn test_compound_filter_and_or() {
     // OR filter: dept == "Bioengineering" OR status == "Funded"
     let or_filter = CompoundFilter {
         conjunction: FilterConjunction::Or,
+        groups: vec![],
         clauses: vec![
             FilterClause {
                 id: "c3".to_string(),
@@ -112,6 +114,8 @@ fn test_view_spec_serialization_with_all_view_types() {
         hidden_columns: vec![],
         frozen_through: None,
         column_summary: vec![],
+        group_by: vec![],
+        color_rules: vec![],
     };
 
     let serialized = serde_json::to_string(&view).expect("Serialize AppView");

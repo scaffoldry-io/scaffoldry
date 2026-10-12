@@ -43,6 +43,7 @@ pub const AGENT_RELEASES: &[&str] = &[
     "routes/records.rs::list_records",
     "service/tools.rs::run_list_records",
     "service/tools.rs::run_get_view_data",
+    "service/views.rs::run",
 ];
 
 /// Functions that return record data and do not log it, each with the reason.

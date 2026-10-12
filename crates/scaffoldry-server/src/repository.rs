@@ -457,6 +457,8 @@ pub struct RecordQuery {
     pub scope: Option<ScopePlan>,
     /// Full-text search string.
     pub search: Option<String>,
+    /// A filter tree, read from each record's JSON. Used instead of `clauses` when set.
+    pub expr: Option<crate::repository_index::Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -524,53 +526,23 @@ pub(crate) fn to_sql_params(params: Vec<SqlParam>) -> Vec<Box<dyn postgres::type
 /// The statement for a `RecordQuery`, and its parameters in order. Pure, so it can be tested
 /// without a database.
 pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlParam>) {
-    use scaffoldry_engine::FilterOperator as Op;
     fn push(params: &mut Vec<SqlParam>, p: SqlParam) -> usize {
         params.push(p);
         params.len()
     }
     let mut params = vec![SqlParam::Text(app_slug.to_string()), SqlParam::Text(q.table_id.clone())];
-    let mut preds: Vec<String> = Vec::new();
-    for (field, op, value) in &q.clauses {
-        // The older evaluator treats a clause with no value as no clause. So does this.
-        if value.trim().is_empty() && !matches!(op, Op::IsEmpty | Op::IsNotEmpty) {
-            continue;
+    let joined = match &q.expr {
+        Some(e) => json_expr(&mut params, e),
+        None => {
+            let mut preds: Vec<String> = Vec::new();
+            for (field, op, value) in &q.clauses {
+                if let Some(pred) = json_clause(&mut params, field, *op, value, None) {
+                    preds.push(pred);
+                }
+            }
+            if preds.is_empty() { "TRUE".to_string() } else { preds.join(if q.any { " OR " } else { " AND " }) }
         }
-        let pred = match op {
-            Op::IsEmpty | Op::IsNotEmpty => {
-                let f = push(&mut params, SqlParam::Text(field.clone()));
-                let empty = format!(
-                    "((data -> ${f}::text) IS NULL OR (data -> ${f}::text) = 'null'::jsonb OR data ->> ${f}::text = '')"
-                );
-                if matches!(op, Op::IsEmpty) { empty } else { format!("NOT {empty}") }
-            }
-            Op::Equals | Op::NotEquals | Op::Contains | Op::NotContains => {
-                let f = push(&mut params, SqlParam::Text(field.clone()));
-                let v = push(&mut params, SqlParam::Text(value.clone()));
-                let cell = format!("lower(COALESCE(data ->> ${f}::text, ''))");
-                let want = format!("lower(${v}::text)");
-                match op {
-                    Op::Equals => format!("{cell} = {want}"),
-                    Op::NotEquals => format!("{cell} <> {want}"),
-                    Op::Contains => format!("strpos({cell}, {want}) > 0"),
-                    _ => format!("strpos({cell}, {want}) = 0"),
-                }
-            }
-            Op::GreaterThan | Op::LessThan => match value.parse::<f64>() {
-                Ok(n) if n.is_finite() => {
-                    let f = push(&mut params, SqlParam::Text(field.clone()));
-                    let v = push(&mut params, SqlParam::Float(n));
-                    let sign = if matches!(op, Op::GreaterThan) { ">" } else { "<" };
-                    format!(
-                        "CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 {sign} ${v}::float8 ELSE FALSE END"
-                    )
-                }
-                _ => "FALSE".to_string(),
-            },
-        };
-        preds.push(pred);
-    }
-    let joined = if preds.is_empty() { "TRUE".to_string() } else { preds.join(if q.any { " OR " } else { " AND " }) };
+    };
 
     let key = q.sort.as_ref().map(|(field, _)| {
         let f = push(&mut params, SqlParam::Text(field.clone()));
@@ -618,6 +590,111 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
          ORDER BY {order} LIMIT ${limit}::bigint"
     );
     (sql, params)
+}
+
+
+fn push_sql(params: &mut Vec<SqlParam>, p: SqlParam) -> usize {
+    params.push(p);
+    params.len()
+}
+
+/// A date in a record's JSON, as an instant. A plain date is midnight UTC, as the index reads it.
+fn json_instant(f: usize) -> String {
+    format!(
+        "(CASE WHEN data ->> ${f}::text ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' THEN ((data ->> ${f}::text) || 'T00:00:00+00:00')::timestamptz \
+         WHEN data ->> ${f}::text ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}:[0-9]{{2}}(\\.[0-9]+)?(Z|[+-][0-9]{{2}}:[0-9]{{2}})$' THEN (data ->> ${f}::text)::timestamptz \
+         ELSE NULL END)"
+    )
+}
+
+/// The condition one clause puts on a record's JSON, or `None` for a clause that has no value and so is no clause.
+/// The newer operators need the column of the field to know whether the cell is a number or a date.
+fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::FilterOperator, value: &str, column: Option<scaffoldry_engine::IndexColumn>) -> Option<String> {
+    use scaffoldry_engine::{list_of, parse_instant, range_of, IndexColumn, FilterOperator as Op};
+    // The older evaluator treats a clause with no value as no clause. So does this.
+    if value.trim().is_empty() && !matches!(op, Op::IsEmpty | Op::IsNotEmpty) {
+        return None;
+    }
+    Some(match op {
+        Op::IsEmpty | Op::IsNotEmpty => {
+            let f = push_sql(params, SqlParam::Text(field.to_string()));
+            let empty = format!("((data -> ${f}::text) IS NULL OR (data -> ${f}::text) = 'null'::jsonb OR data ->> ${f}::text = '')");
+            if matches!(op, Op::IsEmpty) { empty } else { format!("NOT {empty}") }
+        }
+        Op::Equals | Op::NotEquals | Op::Contains | Op::NotContains => {
+            let f = push_sql(params, SqlParam::Text(field.to_string()));
+            let v = push_sql(params, SqlParam::Text(value.to_string()));
+            let cell = format!("lower(COALESCE(data ->> ${f}::text, ''))");
+            let want = format!("lower(${v}::text)");
+            match op {
+                Op::Equals => format!("{cell} = {want}"),
+                Op::NotEquals => format!("{cell} <> {want}"),
+                Op::Contains => format!("strpos({cell}, {want}) > 0"),
+                _ => format!("strpos({cell}, {want}) = 0"),
+            }
+        }
+        Op::GreaterThan | Op::LessThan => match value.parse::<f64>() {
+            Ok(n) if n.is_finite() => {
+                let f = push_sql(params, SqlParam::Text(field.to_string()));
+                let v = push_sql(params, SqlParam::Float(n));
+                let sign = if matches!(op, Op::GreaterThan) { ">" } else { "<" };
+                format!("CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 {sign} ${v}::float8 ELSE FALSE END")
+            }
+            _ => "FALSE".to_string(),
+        },
+        Op::In => {
+            let list: Vec<String> = list_of(value).into_iter().map(|v| v.to_lowercase()).collect();
+            if list.is_empty() {
+                return Some("FALSE".to_string());
+            }
+            let f = push_sql(params, SqlParam::Text(field.to_string()));
+            let l = push_sql(params, SqlParam::Texts(list));
+            format!(
+                "(lower(COALESCE(data ->> ${f}::text, '')) = ANY(${l}::text[]) OR (jsonb_typeof(data -> ${f}::text) = 'array' AND EXISTS \
+                 (SELECT 1 FROM jsonb_array_elements_text(data -> ${f}::text) e WHERE lower(e) = ANY(${l}::text[]))))"
+            )
+        }
+        Op::Between => match (column, range_of(value)) {
+            (Some(IndexColumn::Num), Some((low, high))) => match (low.parse::<f64>(), high.parse::<f64>()) {
+                (Ok(a), Ok(b)) if a.is_finite() && b.is_finite() => {
+                    let f = push_sql(params, SqlParam::Text(field.to_string()));
+                    let (a, b) = (push_sql(params, SqlParam::Float(a)), push_sql(params, SqlParam::Float(b)));
+                    format!("CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 BETWEEN ${a}::float8 AND ${b}::float8 ELSE FALSE END")
+                }
+                _ => "FALSE".to_string(),
+            },
+            (Some(IndexColumn::Ts), Some((low, high))) => match (parse_instant(low), parse_instant(high)) {
+                (Some(a), Some(b)) => {
+                    let f = push_sql(params, SqlParam::Text(field.to_string()));
+                    let (a, b) = (push_sql(params, SqlParam::Text(a)), push_sql(params, SqlParam::Text(b)));
+                    format!("COALESCE({} BETWEEN ${a}::text::timestamptz AND ${b}::text::timestamptz, FALSE)", json_instant(f))
+                }
+                _ => "FALSE".to_string(),
+            },
+            _ => "FALSE".to_string(),
+        },
+        Op::Before | Op::After => match (column, parse_instant(value.trim())) {
+            (Some(IndexColumn::Ts), Some(t)) => {
+                let f = push_sql(params, SqlParam::Text(field.to_string()));
+                let v = push_sql(params, SqlParam::Text(t));
+                let sign = if matches!(op, Op::Before) { "<" } else { ">" };
+                format!("COALESCE({} {sign} ${v}::text::timestamptz, FALSE)", json_instant(f))
+            }
+            _ => "FALSE".to_string(),
+        },
+    })
+}
+
+/// A filter tree as a condition on a record's JSON.
+fn json_expr(params: &mut Vec<SqlParam>, e: &crate::repository_index::Expr) -> String {
+    use crate::repository_index::Expr;
+    match e {
+        Expr::Leaf(c) => json_clause(params, &c.field, c.op, &c.value, Some(c.column)).unwrap_or_else(|| "TRUE".to_string()),
+        Expr::And(v) if v.is_empty() => "TRUE".to_string(),
+        Expr::Or(v) if v.is_empty() => "FALSE".to_string(),
+        Expr::And(v) => format!("({})", v.iter().map(|x| json_expr(params, x)).collect::<Vec<_>>().join(" AND ")),
+        Expr::Or(v) => format!("({})", v.iter().map(|x| json_expr(params, x)).collect::<Vec<_>>().join(" OR ")),
+    }
 }
 
 /// The table a record belongs to, as the column holds it. The key also stays in the JSON.

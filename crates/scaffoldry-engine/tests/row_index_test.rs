@@ -45,6 +45,7 @@ fn view_on(table: &str, filter_field: Option<&str>, sort_field: Option<&str>) ->
     if let Some(f) = filter_field {
         v.filters = Some(CompoundFilter {
             conjunction: FilterConjunction::And,
+            groups: vec![],
             clauses: vec![FilterClause { id: "c".into(), field_name: f.into(), operator: FilterOperator::Equals, value: "x".into() }],
         });
     }
