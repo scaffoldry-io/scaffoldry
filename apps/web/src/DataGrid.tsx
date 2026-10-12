@@ -60,6 +60,8 @@ const READ_ONLY_TYPES = new Set<FieldType>([
   "Autonumber",
   "CreatedTime",
   "LastModifiedTime",
+  "CreatedBy",
+  "LastModifiedBy",
 ]);
 
 function isReadOnlyField(field?: FieldSpec): boolean {
@@ -122,8 +124,26 @@ function formatDisplayValue(field: FieldSpec, value: unknown, tables?: AppTable[
     });
     return labels.join(", ");
   }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const obj = value as Record<string, any>;
+    if (obj.name && obj.email) return `${obj.name} <${obj.email}>`;
+    if (obj.name) return obj.name;
+    if (obj.label) return obj.label;
+    if (obj.importer) return `Import (${obj.importer})`;
+    if (obj.actor) return obj.actor;
+    return JSON.stringify(obj);
+  }
   if (Array.isArray(value)) {
-    return value.join(", ");
+    return value
+      .map((v) => {
+        if (typeof v === "object" && v !== null) {
+          const obj = v as Record<string, any>;
+          if (obj.name && obj.email) return `${obj.name} <${obj.email}>`;
+          return obj.name || obj.label || obj.actor || obj.email || JSON.stringify(obj);
+        }
+        return String(v);
+      })
+      .join(", ");
   }
   return String(value);
 }

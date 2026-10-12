@@ -142,6 +142,12 @@ export function getFieldTypeIcon(type: string): string {
     case "CreatedTime":
     case "LastModifiedTime":
       return "🕒";
+    case "Collaborator":
+      return "👤";
+    case "CreatedBy":
+      return "✍️";
+    case "LastModifiedBy":
+      return "🕒";
     default:
       return "📄";
   }

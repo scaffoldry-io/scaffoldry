@@ -29,6 +29,7 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/processes", get(list_app_processes))
         .route("/apps/{slug}/processes/{id}/decide", post(decide_app_process))
         .route("/apps/{slug}/access/preview", post(preview_app_access))
+        .route("/apps/{slug}/collaborators", get(list_app_collaborators))
 }
 
 async fn create_app_in_workspace(
@@ -480,4 +481,28 @@ async fn preview_app_access(
         .map_err(ServiceError::into_pair)?;
 
     Ok((StatusCode::OK, Json(serde_json::to_value(output).unwrap())))
+}
+
+
+#[derive(Debug, Deserialize, Default)]
+struct CollaboratorQuery {
+    q: Option<String>,
+}
+
+async fn list_app_collaborators(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Query(params): Query<CollaboratorQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+
+    authorize_app(&user, &slug, AppAction::Read, &state)
+        .map_err(ServiceError::into_pair)?;
+
+    let collabs = crate::service::people::list_app_collaborators(&slug, params.q.as_deref().unwrap_or(""), &state)
+        .map_err(ServiceError::into_pair)?;
+
+    Ok(Json(json!({ "collaborators": collabs })))
 }

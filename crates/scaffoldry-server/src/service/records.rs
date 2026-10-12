@@ -13,7 +13,7 @@ use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdent
 use scaffoldry_core::TriggerEvent;
 use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
 use scaffoldry_engine::{AppManifest, AutomationEngine, CompoundFilter, EngineError, FieldSpec, FieldType, FilterConjunction, FilterOperator, IndexColumn};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// True when `field` of the record's table holds one record.
 fn mirror_is_one(app_slug: &str, record: &DatasetRecord, field: &str, state: &SharedState) -> bool {
@@ -162,6 +162,92 @@ fn validate_select_options(
     Ok(())
 }
 
+
+fn validate_collaborators(
+    app_slug: &str,
+    table_id: &str,
+    data: &Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let manifest = state
+        .get_app_manifest(app_slug)
+        .or_else(|| state.engine.read().ok().and_then(|e| e.resolve_by_slug(app_slug).cloned()));
+    let Some(manifest) = manifest else { return Ok(()); };
+    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id || t.slug == table_id) else {
+        return Ok(());
+    };
+    for field in &table.fields {
+        if let FieldType::Collaborator { allow_multiple } = field.field_type {
+            let Some(val) = data.get(&field.name) else { continue };
+            if val.is_null() { continue };
+            let addresses: Vec<&str> = match val {
+                Value::String(s) => if s.trim().is_empty() { vec![] } else { vec![s.as_str()] },
+                Value::Array(arr) => {
+                    if !allow_multiple && arr.len() > 1 {
+                        return Err(ServiceError::BadRequest(format!(
+                            "Field '{}' only allows a single collaborator, but {} were provided",
+                            field.name, arr.len()
+                        )));
+                    }
+                    arr.iter().filter_map(Value::as_str).collect()
+                }
+                _ => return Err(ServiceError::BadRequest(format!(
+                    "Field '{}' must be an address string or list of addresses", field.name
+                ))),
+            };
+            for addr in addresses {
+                let user = crate::service::people::find_by_user_name(state, addr);
+                let Some(user) = user else {
+                    return Err(ServiceError::BadRequest(format!(
+                        "Unknown collaborator address: '{addr}'"
+                    )));
+                };
+                if user.admin_hold {
+                    return Err(ServiceError::BadRequest(format!(
+                        "Collaborator '{addr}' is on administrative hold"
+                    )));
+                }
+                if !user.active {
+                    return Err(ServiceError::BadRequest(format!(
+                        "Collaborator '{addr}' is inactive"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_actor_value(actor: &str, kind: crate::repository::ActorKind, token_label: Option<&str>, state: &SharedState) -> Value {
+    use crate::repository::ActorKind;
+    let user = crate::service::people::find_by_user_name(state, actor);
+    let user_name = user.as_ref().map(crate::service::people::display_name);
+    let (name, detail) = match kind {
+        ActorKind::User | ActorKind::Guest => (user_name.unwrap_or_else(|| actor.to_string()), token_label.map(str::to_string)),
+        ActorKind::Agent => (user_name.unwrap_or_else(|| actor.to_string()), token_label.map(str::to_string)),
+        ActorKind::Automation => ("Automation".to_string(), token_label.map(str::to_string).or_else(|| Some(actor.to_string()))),
+        ActorKind::Import => ("Import".to_string(), token_label.map(str::to_string)),
+        ActorKind::Sync => ("Sync".to_string(), token_label.map(str::to_string).or_else(|| Some(actor.to_string()))),
+        ActorKind::System => ("System".to_string(), token_label.map(str::to_string)),
+    };
+    let kind_str = match kind {
+        ActorKind::User => "User",
+        ActorKind::Agent => "Agent",
+        ActorKind::Automation => "Automation",
+        ActorKind::Import => "Import",
+        ActorKind::Sync => "Sync",
+        ActorKind::System => "System",
+        ActorKind::Guest => "Guest",
+    };
+    json!({
+        "actor": actor,
+        "importer": actor,
+        "kind": kind_str,
+        "name": name,
+        "detail": detail,
+    })
+}
+
 pub fn create_record(
     caller: &AuthUser,
     origin: &Origin,
@@ -218,15 +304,27 @@ pub fn create_record(
 
     let table = submitted.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     validate_select_options(app_slug, &table, &submitted.data, state)?;
+    validate_collaborators(app_slug, &table, &submitted.data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
         return Err(outside_scope());
     }
     check_read_only(caller, app_slug, &table, &submitted.data, None, state)?;
 
+    let (fields, _) = table_fields_lenient(app_slug, &table, state);
+    let mut final_data = submitted.data;
+    if let Some(map) = final_data.as_object_mut() {
+        let actor_val = format_actor_value(&caller.eppn, origin.kind, origin.token_label.as_deref(), state);
+        for f in &fields {
+            if f.field_type == FieldType::CreatedBy || f.field_type == FieldType::LastModifiedBy {
+                map.insert(f.name.clone(), actor_val.clone());
+            }
+        }
+    }
+
     let record = DatasetRecord {
         id: submitted.id.to_string(),
         app_slug: app_slug.to_string(),
-        data: submitted.data,
+        data: final_data,
         ceds_mapping: submitted.ceds_mapping,
         is_ferpa_sensitive: submitted.is_ferpa_sensitive,
         created_at: Utc::now().to_rfc3339(),
@@ -371,11 +469,29 @@ pub fn update_record(
     let new_data = strip_lookups(app_slug, &new_data, state);
     let table = new_data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     validate_select_options(app_slug, &table, &new_data, state)?;
+    validate_collaborators(app_slug, &table, &new_data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }
     check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
+
+    let (fields, _) = table_fields_lenient(app_slug, &table, state);
+    let mut final_new_data = new_data;
+    if let Some(map) = final_new_data.as_object_mut() {
+        let actor_val = format_actor_value(&caller.eppn, origin.kind, origin.token_label.as_deref(), state);
+        for f in &fields {
+            if f.field_type == FieldType::CreatedBy {
+                if let Some(old_val) = current.data.get(&f.name) {
+                    map.insert(f.name.clone(), old_val.clone());
+                }
+            } else if f.field_type == FieldType::LastModifiedBy {
+                map.insert(f.name.clone(), actor_val.clone());
+            }
+        }
+    }
+    let new_data = final_new_data;
+
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
         .save_record_checked(app_slug, id, &new_data, expected_version, &ctx)
@@ -894,7 +1010,7 @@ fn indexed_plan(
         }
         for c in &f.clauses {
             let spec = field(&c.field_name).filter(|s| indexed.contains(&s.name)).ok_or_else(|| c.field_name.clone())?;
-            let multi = spec.field_type == FieldType::MultiSelect;
+            let multi = spec.field_type == FieldType::MultiSelect || matches!(spec.field_type, FieldType::Collaborator { allow_multiple: true });
             let supported = match c.operator {
                 FilterOperator::Equals => true,
                 FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty => !multi,
@@ -919,7 +1035,7 @@ fn indexed_plan(
     let sort = match sort {
         None => None,
         Some(s) => {
-            let spec = field(&s.field_name).filter(|f| indexed.contains(&f.name) && f.field_type != FieldType::MultiSelect).ok_or_else(|| s.field_name.clone())?;
+            let spec = field(&s.field_name).filter(|f| indexed.contains(&f.name) && f.field_type != FieldType::MultiSelect && !matches!(f.field_type, FieldType::Collaborator { allow_multiple: true })).ok_or_else(|| s.field_name.clone())?;
             Some(IndexedSort { field: s.field_name.clone(), column: scaffoldry_engine::index_column(spec.field_type), descending: s.descending })
         }
     };
