@@ -14,6 +14,7 @@ pub mod repository_links;
 pub mod repository_proposals;
 pub mod repository_trash;
 pub mod repository_undo;
+pub mod repository_views;
 pub mod routes;
 pub mod service;
 pub mod state;

@@ -94,7 +94,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 64 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer | **COMPLETED** |
 | 65 | [field-types.md](field-types.md) | 4 | Duration and date-time | **COMPLETED** |
 | 66 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
-| 67 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |
+| 67 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked | **COMPLETED** |
 | 68 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules |
 | 69 | [views.md](views.md) | 3 | A million rows in a window. Needs `@tanstack/react-virtual` |
 | 70 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |

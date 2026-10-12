@@ -776,7 +776,7 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
                     if let Some(m) = &row.manifest {
                         let manifest: AppManifest = serde_json::from_value(m.clone()).map_err(internal)?;
-                        state.engine.write().map_err(internal)?.register_manifest(manifest.clone()).map_err(internal)?;
+                        state.register_runtime_manifest(manifest.clone()).map_err(internal)?;
                         crate::service::scope::set_rules(&row.app_slug, manifest.access.rows, state);
                         crate::service::scope::set_column_rules(&row.app_slug, manifest.access.columns, state);
                     }

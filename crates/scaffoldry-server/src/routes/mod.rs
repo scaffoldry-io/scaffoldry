@@ -16,6 +16,7 @@ pub mod history;
 pub mod link_options;
 pub mod calc;
 pub mod view_as;
+pub mod views;
 pub mod trash;
 pub mod framework;
 pub mod governance;
@@ -53,6 +54,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(trash::router())
         .merge(calc::router())
         .merge(view_as::router())
+        .merge(views::router())
         .merge(link_options::router())
         .merge(comments::router())
         .merge(disclosures::router())
