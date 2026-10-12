@@ -508,6 +508,8 @@ async fn a_color_rule_marks_the_right_rows_and_a_rule_on_a_hidden_field_is_dropp
                 rule("r1", "At risk", when("status", "Equals", "s1"), "danger", "row", None),
                 rule("r2", "Large", when("amount", "GreaterThan", "100"), "warning", "field", Some("amount")),
                 rule("r3", "Program one", when("program", "Equals", "p1"), "info", "row", None),
+                // On a redacted row `program` is absent, so without the drop this would mark every row for the viewer.
+                rule("r4", "No program", when("program", "IsEmpty", ""), "neutral", "row", None),
             ]
         }),
     )
