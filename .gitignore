@@ -30,3 +30,7 @@ dist/
 
 # Build agent scratch space (reports and bundles, never committed)
 .agent/
+
+# Python bytecode
+__pycache__/
+*.pyc
