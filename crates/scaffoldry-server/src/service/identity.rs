@@ -33,6 +33,11 @@ pub fn scim_affiliation(u: &crate::state::ScimUser) -> String {
             continue;
         };
         let word = val.split('@').next().unwrap_or(val);
+        // Compliance is not an eduPerson value, but the governance routes, the policies and the workspace
+        // guards all name it, so a SCIM record that says `compliance@...` must resolve to it.
+        if word.eq_ignore_ascii_case("compliance") {
+            return "compliance".to_string();
+        }
         if let Ok(parsed) = scaffoldry_core::standards::eduperson::EduPersonAffiliation::from_str(word) {
             use scaffoldry_core::standards::eduperson::EduPersonAffiliation as A;
             return match parsed {
