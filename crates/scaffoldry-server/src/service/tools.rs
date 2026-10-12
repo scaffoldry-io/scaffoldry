@@ -251,6 +251,30 @@ Tool {
         run: run_decide_process,
     },
     Tool {
+        name: "list_views",
+        description: "List the views of an app: your personal views and every collaborative and locked one.",
+        input_schema: schema_list_views,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_list_views,
+    },
+    Tool {
+        name: "save_view",
+        description: "Create a view, or change one by naming its view_id and its current version. A personal view is yours. A collaborative view needs an editor. A locked view needs an admin.",
+        input_schema: schema_save_view,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_save_view,
+    },
+    Tool {
+        name: "delete_view",
+        description: "Delete a view. The rights are those of saving it.",
+        input_schema: schema_delete_view,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_delete_view,
+    },
+    Tool {
         name: "get_job",
         description: "Get status, progress, result, error, and logs of a job (only creator or Platform Admin).",
         input_schema: schema_get_job,
@@ -632,6 +656,69 @@ fn run_export_oscal_compliance(_caller: &AuthUser, _origin: &Origin, _args: Valu
 
 fn run_get_framework_spec(_caller: &AuthUser, _origin: &Origin, _args: Value, _state: &SharedState) -> Result<Value, ServiceError> {
     Ok(crate::routes::framework::build_framework_spec_json())
+}
+
+fn schema_list_views() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "app_slug": { "type": "string", "description": "Application slug identifier" } },
+        "required": ["app_slug"]
+    })
+}
+
+fn schema_save_view() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "view_id": { "type": "string", "description": "The view to change. Leave out to create one" },
+            "name": { "type": "string", "description": "1 to 120 characters" },
+            "kind": { "type": "string", "enum": ["grid", "kanban", "calendar", "gallery", "form", "summary", "dashboard"], "description": "Required to create" },
+            "ownership": { "type": "string", "enum": ["personal", "collaborative", "locked"], "description": "To create. Default collaborative" },
+            "table_id": { "type": "string", "description": "The table the view is over, from describe_app" },
+            "config": { "type": "object", "description": "The sort, filters, grouping and layout" },
+            "version": { "type": "integer", "description": "The version you read. Required to change a view" }
+        },
+        "required": ["app_slug", "name"]
+    })
+}
+
+fn schema_delete_view() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "view_id": { "type": "string", "description": "The view to delete" }
+        },
+        "required": ["app_slug", "view_id"]
+    })
+}
+
+fn view_uuid(args: &Value) -> Result<uuid::Uuid, ServiceError> {
+    uuid::Uuid::parse_str(required_str(args, "view_id")?).map_err(|_| ServiceError::NotFound("View not found".to_string()))
+}
+
+fn run_list_views(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::views::list(caller, required_str(&args, "app_slug")?, state)
+}
+
+fn run_save_view(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let app = required_str(&args, "app_slug")?.to_string();
+    if args.get("view_id").is_some() {
+        let id = view_uuid(&args)?;
+        let body: crate::service::views::UpdateBody = parse(json!({
+            "name": args.get("name"),
+            "config": args.get("config").cloned().unwrap_or_else(|| json!({})),
+            "version": args.get("version"),
+        }))?;
+        return crate::service::views::update(caller, &app, id, body, state).map_err(stale_as_text);
+    }
+    let body: crate::service::views::CreateBody = parse(args)?;
+    crate::service::views::create(caller, &app, body, state)
+}
+
+fn run_delete_view(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::views::delete(caller, required_str(&args, "app_slug")?, view_uuid(&args)?, state)
 }
 
 fn schema_get_job() -> Value {
@@ -1127,6 +1214,7 @@ fn run_get_view_data(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
         .find(|v| v.id == args.view_id)
         .ok_or_else(|| ServiceError::NotFound(format!("View '{}' not found", args.view_id)))?;
 
+    crate::service::views::check_runnable(caller, &args.app_slug, view, state)?;
     let all_records = records::list_records(caller, &args.app_slug, state)?;
     let raw_records: Vec<Value> = all_records.iter().map(|r| r.data.clone()).collect();
 

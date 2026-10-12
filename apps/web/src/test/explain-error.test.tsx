@@ -144,6 +144,14 @@ describe("UX standards phase 2: errors that explain", () => {
         },
       ],
       [
+        "too_many_indexes",
+        new ApiError(400, "This table already indexes 20 fields.", { code: "too_many_indexes", unused: ["kept01", "kept02", "kept03", "kept04"] }),
+        {
+          message: "This table already indexes 20 fields.",
+          next: "Ask an admin to stop indexing a field no view uses, such as kept01, kept02, kept03.",
+        },
+      ],
+      [
         "view_as_read_only",
         new ApiError(403, "You are viewing as someone else. This view is read-only.", { code: "view_as_read_only" }),
         { message: "You are viewing as someone else. This view is read-only.", next: "Exit the view to make changes." },

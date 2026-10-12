@@ -286,13 +286,13 @@ async fn only_an_owner_or_admin_may_start_view_as() {
 #[tokio::test]
 async fn each_start_is_a_ledger_entry() {
     let w = world().await;
-    let count = |body: &Value| body["entries"].as_array().unwrap().iter().filter(|e| e["decision_type"] == "ViewAsStarted").count();
+    let count = |body: &Value| body["entries"].as_array().unwrap().iter().filter(|e| e["decision_type"] == "ViewAsStarted" && e["app_slug"] == w.slug.as_str()).count();
     let (_, before) = send(&w.app, "GET", "/api/v1/governance/ledger", &w.admin, None).await;
     view_as(&w, &w.olga, &w.slug, &target(&w)).await;
     view_as(&w, &w.olga, &w.slug, &target(&w)).await;
     let (_, after) = send(&w.app, "GET", "/api/v1/governance/ledger", &w.admin, None).await;
     assert_eq!(count(&after), count(&before) + 2);
-    let last = after["entries"].as_array().unwrap().last().unwrap();
+    let last = after["entries"].as_array().unwrap().iter().rfind(|e| e["app_slug"] == w.slug.as_str()).unwrap();
     assert_eq!(last["decision_type"], "ViewAsStarted");
     assert_eq!(last["app_slug"], w.slug.as_str());
 }

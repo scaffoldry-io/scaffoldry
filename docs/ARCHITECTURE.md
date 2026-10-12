@@ -247,6 +247,14 @@ Changes to an application never push directly to live data. Every creation, form
    - Automated check results (Pass/Fail).
 4. **Governed Deployment:** When approved, the system writes the manifest and appends an audit block to the `governance_ledger` in one transaction. The production database and calculation engine reload the new manifest instantly.
 
+#### 6.1.1 Views Live Apart From the Manifest
+
+A view is presentation, so it is not governed. Views are stored in `app_views`, not in the manifest, and changing one is not a proposal. A view cannot grant access, because every read still goes through the row scope and the field visibility rules, and a view over a field the person cannot see is refused when it is run.
+
+- **Ownership decides who changes a view.** A `personal` view is its owner's alone. A `collaborative` view needs an editor. A `locked` view needs an admin, and everyone who can read the app may use it. Routes: `GET`/`POST /apps/{slug}/views`, `PUT`/`DELETE /apps/{slug}/views/{id}`, `POST .../duplicate`. The MCP tools are `list_views`, `save_view` and `delete_view`. A save names the version it read, and a stale one is a `409`.
+- **Indexes follow views.** A save that sorts or filters on a field outside the table's indexed set starts that index in the same transaction (`index_state: building`), and a table may index 20 fields (`too_many_indexes` lists the indexed fields no view uses).
+- **What runs is the manifest with the stored views merged in.** A manifest stored with views in it has them moved once, when the server starts, and the move is one `ViewsMigrated` ledger entry with the count. The engine's copy keeps the merged list, so validation, index derivation and the schema routes read `views` as before.
+
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
 In legacy low-code tools, departmental apps become unmaintained legacy liabilities. In Scaffoldry, apps are maintained as version-controlled repositories:
