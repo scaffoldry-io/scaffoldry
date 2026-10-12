@@ -1122,6 +1122,7 @@ fn run_get_view_data(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
     let view_data = scaffoldry_engine::group_by_select(&manifest, view, &raw_records)
         .ok_or_else(|| ServiceError::BadRequest(format!("View '{}' is not over a select field", args.view_id)))?;
 
+    // The stages hold the records themselves, so this is a release of records. Log the ones that came back.
     let returned: std::collections::HashSet<String> = view_data.stages.iter().flat_map(|s| s.records.iter().map(Value::to_string)).collect();
     let released: Vec<_> = all_records.iter().filter(|r| returned.contains(&r.data.to_string())).cloned().collect();
     crate::service::disclosure::record_agent_read(caller, origin, &args.app_slug, view.table_id.as_deref(), &released, state)?;
