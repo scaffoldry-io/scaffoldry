@@ -243,12 +243,55 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                         }
                     }
                     if let Some(filters) = &view.filters {
-                        for c in &filters.clauses {
+                        if let Err(e) = crate::check_filter(filters) {
+                            problems.push(format!("view '{}': {e}", view.id));
+                        }
+                        for c in crate::clauses_of(filters) {
                             if let Some(f) = table.fields.iter().find(|x| x.name == c.field_name) {
                                 if f.field_type == FieldType::LongText {
                                     problems.push(format!("view '{}': LongText field '{}' cannot be used for filter", view.id, c.field_name));
                                 }
                             }
+                        }
+                    }
+                    let has = |name: &str| table.fields.iter().any(|x| x.name == name);
+                    if view.group_by.len() > crate::MAX_GROUP_LEVELS {
+                        problems.push(format!("view '{}' groups by {} fields, and {} is the most", view.id, view.group_by.len(), crate::MAX_GROUP_LEVELS));
+                    }
+                    for name in &view.group_by {
+                        if !has(name) {
+                            problems.push(format!("view '{}' groups by the field '{name}', which '{tid}' does not have", view.id));
+                        }
+                    }
+                    for (name, function) in &view.column_summary {
+                        if !has(name) {
+                            problems.push(format!("view '{}' totals the field '{name}', which '{tid}' does not have", view.id));
+                        }
+                        if !crate::FOOTER_FUNCTIONS.contains(&function.as_str()) {
+                            problems.push(format!("view '{}': '{function}' is not a footer choice. Use one of {}", view.id, crate::FOOTER_FUNCTIONS.join(", ")));
+                        }
+                    }
+                    if view.color_rules.len() > crate::MAX_COLOR_RULES {
+                        problems.push(format!("view '{}' has {} color rules, and {} is the most", view.id, view.color_rules.len(), crate::MAX_COLOR_RULES));
+                    }
+                    for rule in &view.color_rules {
+                        if rule.label.trim().is_empty() {
+                            problems.push(format!("view '{}': color rule '{}' needs a label, because color is never the only signal", view.id, rule.id));
+                        }
+                        if let Err(e) = crate::check_filter(&rule.when) {
+                            problems.push(format!("view '{}': color rule '{}': {e}", view.id, rule.id));
+                        }
+                        for c in crate::clauses_of(&rule.when) {
+                            if !has(&c.field_name) {
+                                problems.push(format!("view '{}': color rule '{}' reads the field '{}', which '{tid}' does not have", view.id, rule.id, c.field_name));
+                            }
+                        }
+                        match (&rule.target, rule.field.as_deref()) {
+                            (crate::ColorTarget::Field, None) => problems.push(format!("view '{}': color rule '{}' colors a field and names none", view.id, rule.id)),
+                            (crate::ColorTarget::Field, Some(f)) if !has(f) => {
+                                problems.push(format!("view '{}': color rule '{}' colors the field '{f}', which '{tid}' does not have", view.id, rule.id));
+                            }
+                            _ => {}
                         }
                     }
                 }

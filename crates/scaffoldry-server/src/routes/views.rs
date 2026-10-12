@@ -17,6 +17,7 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/views", get(list_views).post(create_view))
         .route("/apps/{slug}/views/{id}", axum::routing::put(update_view).delete(delete_view))
         .route("/apps/{slug}/views/{id}/duplicate", post(duplicate_view))
+        .route("/apps/{slug}/views/{id}/data", get(view_data))
 }
 
 fn caller(user: Option<Extension<AuthUser>>, headers: &HeaderMap, state: &SharedState) -> Result<AuthUser, ServiceError> {
@@ -96,4 +97,32 @@ async fn duplicate_view(
         .await
         .map_err(|_| ServiceError::Internal("The copy stopped".to_string()))??;
     Ok((StatusCode::CREATED, Json(copy)))
+}
+
+/// `GET /apps/{slug}/views/{id}/data?cursor=&limit=&group_path=`. `group_path` is a JSON array of group keys.
+#[derive(serde::Deserialize)]
+struct DataQuery {
+    cursor: Option<String>,
+    limit: Option<usize>,
+    group_path: Option<String>,
+}
+
+async fn view_data(
+    State(state): State<SharedState>,
+    user: Option<Extension<AuthUser>>,
+    headers: HeaderMap,
+    Path((slug, id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<DataQuery>,
+) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let id = view_id(&id)?;
+    let group_path: Vec<String> = match q.group_path.as_deref().filter(|p| !p.trim().is_empty()) {
+        None => Vec::new(),
+        Some(p) => serde_json::from_str(p).map_err(|_| ServiceError::BadRequest("group_path must be a JSON array of strings".to_string()))?,
+    };
+    let origin = crate::guard::read_origin(&state, &headers);
+    let body = tokio::task::spawn_blocking(move || views::run(&caller, &origin, &slug, id, views::RunQuery { cursor: q.cursor, limit: q.limit, group_path }, &state))
+        .await
+        .map_err(|_| ServiceError::Internal("The read stopped".to_string()))??;
+    Ok(Json(body))
 }

@@ -64,14 +64,30 @@ fn body_of(v: &StoredView, index_state: Option<&str>) -> Value {
     out
 }
 
-/// The fields a config sorts, filters, groups or lays out by.
+/// Every field a filter group names, at any depth.
+fn filter_fields(filter: &Value, out: &mut BTreeSet<String>) {
+    if let Some(clauses) = filter.get("clauses").and_then(Value::as_array) {
+        out.extend(clauses.iter().filter_map(|c| c.get("field_name").and_then(Value::as_str)).map(str::to_string));
+    }
+    if let Some(groups) = filter.get("groups").and_then(Value::as_array) {
+        for g in groups {
+            filter_fields(g, out);
+        }
+    }
+}
+
+/// The fields a config sorts, filters, groups or lays out by. Footers and color rules are left out on purpose:
+/// a footer or a rule on a field the caller cannot see is dropped when the view runs, and does not stop it.
 fn used_fields(config: &Value) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     if let Some(rules) = config.get("sort_rules").and_then(Value::as_array) {
         out.extend(rules.iter().filter_map(|r| r.get("field_name").and_then(Value::as_str)).map(str::to_string));
     }
-    if let Some(clauses) = config.pointer("/filters/clauses").and_then(Value::as_array) {
-        out.extend(clauses.iter().filter_map(|c| c.get("field_name").and_then(Value::as_str)).map(str::to_string));
+    if let Some(filter) = config.get("filters") {
+        filter_fields(filter, &mut out);
+    }
+    if let Some(levels) = config.get("group_by").and_then(Value::as_array) {
+        out.extend(levels.iter().filter_map(Value::as_str).map(str::to_string));
     }
     for key in ["kanban_column_field", "group_by_field", "calendar_date_field"] {
         if let Some(f) = config.get(key).and_then(Value::as_str) {
@@ -358,4 +374,173 @@ pub fn duplicate(caller: &AuthUser, app_slug: &str, id: Uuid, state: &SharedStat
         CreateBody { name, kind: current.kind, ownership: Some("personal".to_string()), table_id: current.table_id, config: Some(current.config) },
         state,
     )
+}
+
+// ---------------------------------------------------------------------------------------------
+// Running a view (views phase 2)
+// ---------------------------------------------------------------------------------------------
+
+/// What a run asks for. A grouped view answers with the groups of the next level until `group_path` names a
+/// group of the last level, and then it pages that group's rows.
+#[derive(Debug, Default, Deserialize)]
+pub struct RunQuery {
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// The key of the group chosen at each level so far. An empty string is the group with no value.
+    #[serde(default)]
+    pub group_path: Vec<String>,
+}
+
+/// The view's filter, narrowed to one group.
+fn narrowed(base: Option<scaffoldry_engine::CompoundFilter>, levels: &[String], path: &[String]) -> Option<scaffoldry_engine::CompoundFilter> {
+    use scaffoldry_engine::{CompoundFilter, FilterClause, FilterConjunction, FilterOperator};
+    if path.is_empty() {
+        return base;
+    }
+    let clauses: Vec<FilterClause> = path
+        .iter()
+        .zip(levels)
+        .enumerate()
+        .map(|(i, (key, field))| FilterClause {
+            id: format!("group-{i}"),
+            field_name: field.clone(),
+            operator: if key.is_empty() { FilterOperator::IsEmpty } else { FilterOperator::Equals },
+            value: key.clone(),
+        })
+        .collect();
+    Some(match base {
+        None => CompoundFilter { conjunction: FilterConjunction::And, clauses, groups: Vec::new() },
+        Some(mut f) if f.conjunction == FilterConjunction::And => {
+            f.clauses.extend(clauses);
+            f
+        }
+        Some(f) => CompoundFilter { conjunction: FilterConjunction::And, clauses, groups: vec![f] },
+    })
+}
+
+/// A footer for each field the caller can see. A hidden field offers none, and neither does a function the
+/// field's type cannot answer.
+fn footers(caller: &AuthUser, app_slug: &str, table_id: &str, view: &scaffoldry_engine::AppView, hidden: &[String], state: &SharedState) -> Result<Value, ServiceError> {
+    use records::AggregateFunction as F;
+    let (fields, _) = records::table_fields_lenient(app_slug, table_id, state);
+    let mut out = serde_json::Map::new();
+    for (field, function) in &view.column_summary {
+        let Some(spec) = fields.iter().find(|f| &f.name == field) else { continue };
+        if hidden.contains(field) {
+            continue;
+        }
+        let numeric = scaffoldry_engine::index_column(spec.field_type) == scaffoldry_engine::IndexColumn::Num;
+        let (func, uses_field) = match function.as_str() {
+            "count" => (F::Count, false),
+            "filled" => (F::Filled, true),
+            "empty" => (F::Empty, true),
+            "unique" => (F::Unique, true),
+            "sum" if numeric => (F::Sum, true),
+            "avg" if numeric => (F::Avg, true),
+            "min" if numeric => (F::Min, true),
+            "max" if numeric => (F::Max, true),
+            _ => {
+                out.insert(field.clone(), json!({ "function": function, "value": Value::Null, "unsupported": true }));
+                continue;
+            }
+        };
+        let result = records::aggregate_records(
+            caller,
+            app_slug,
+            table_id,
+            records::AggregateQuery { function: func, field: uses_field.then(|| field.clone()), filter: view.filters.clone(), group_by: None },
+            state,
+        )?;
+        out.insert(field.clone(), json!({ "function": function, "value": result.value }));
+    }
+    Ok(Value::Object(out))
+}
+
+/// `GET /apps/{slug}/views/{id}/data`: the view's rows or groups, with its footers on the first page and a tone on
+/// each row a color rule matches. The server filters, sorts, groups and totals. Nothing here widens access: the
+/// rows are the ones the person's row scope and column rules already allow.
+pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug: &str, id: Uuid, query: RunQuery, state: &SharedState) -> Result<Value, ServiceError> {
+    let stored = existing(caller, app_slug, id, state)?;
+    let view = materialize(&stored).ok_or_else(|| ServiceError::BadRequest("config is not a view".to_string()))?;
+    let table_id = view.table_id.clone().ok_or_else(|| ServiceError::BadRequest("This view is not over a table".to_string()))?;
+    check_runnable(caller, app_slug, &view, state)?;
+
+    let levels: Vec<String> = if view.group_by.is_empty() { view.group_by_field.iter().cloned().collect() } else { view.group_by.clone() };
+    if query.group_path.len() > levels.len() {
+        return Err(ServiceError::BadRequest(format!("This view groups by {} fields, and the path names {}", levels.len(), query.group_path.len())));
+    }
+    let filter = narrowed(view.filters.clone(), &levels, &query.group_path);
+    let (fields, table) = records::table_fields_lenient(app_slug, &table_id, state);
+    let hidden = records::hidden_fields_for(caller, app_slug, &table, &fields, state);
+    let first_page = query.cursor.is_none();
+    let footer = if first_page { Some(footers(caller, app_slug, &table_id, &view, &hidden, state)?) } else { None };
+
+    if query.group_path.len() < levels.len() {
+        let level = query.group_path.len();
+        let result = records::aggregate_records(
+            caller,
+            app_slug,
+            &table_id,
+            records::AggregateQuery { function: records::AggregateFunction::Count, field: None, filter, group_by: Some(levels[level].clone()) },
+            state,
+        )?;
+        let mut items: Vec<Value> = result.groups.unwrap_or_default().into_iter().map(|g| json!({ "key": g.key, "count": g.value })).collect();
+        items.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
+        let mut body = json!({
+            "view_id": stored.id,
+            "groups": { "level": level, "field": levels[level], "items": items, "has_more": result.has_more.unwrap_or(false) },
+        });
+        if let Some(f) = footer {
+            body["footers"] = f;
+        }
+        return Ok(body);
+    }
+
+    let sort = view.sort_rules.first().map(|r| records::SortSpec { field_name: r.field_name.clone(), descending: r.direction == scaffoldry_engine::SortDirection::Desc });
+    let page = records::list_page(
+        caller,
+        app_slug,
+        records::PageQuery {
+            table_id: table_id.clone(),
+            filter,
+            sort,
+            limit: query.limit.unwrap_or(100).clamp(1, 1000),
+            cursor: query.cursor,
+            max_bytes: None,
+            must_exist: true,
+            search: None,
+        },
+        state,
+    )?;
+    crate::service::disclosure::record_agent_read(caller, origin, app_slug, Some(&table_id), &page.records, state)?;
+
+    // A rule that reads a field the person cannot see is dropped for them, so a tone never says what they may not know.
+    let (now, zone) = (chrono::Utc::now(), state.platform_timezone());
+    let rules: Vec<scaffoldry_engine::ColorRule> = view
+        .color_rules
+        .iter()
+        .filter(|r| {
+            scaffoldry_engine::clauses_of(&r.when).iter().all(|c| !hidden.contains(&c.field_name)) && r.field.as_ref().is_none_or(|f| !hidden.contains(f))
+        })
+        .map(|r| scaffoldry_engine::ColorRule { when: scaffoldry_engine::resolve_relative_dates(&r.when, now, &zone), ..r.clone() })
+        .collect();
+    let mut rows = page.records;
+    if !rules.is_empty() {
+        for row in &mut rows {
+            let tones = scaffoldry_engine::tones_of(&row.data, &rules);
+            if !tones.is_empty() {
+                if let Some(map) = row.data.as_object_mut() {
+                    map.insert("_tone".to_string(), serde_json::to_value(tones).map_err(internal)?);
+                }
+            }
+        }
+    }
+
+    let mut body = json!({ "view_id": stored.id, "records": rows, "next_cursor": page.next_cursor, "group_path": query.group_path });
+    if let Some(f) = footer {
+        body["footers"] = f;
+    }
+    Ok(body)
 }

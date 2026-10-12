@@ -44,8 +44,11 @@ pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
     for view in m.views.iter().filter(|v| v.table_id.as_deref() == Some(table_id)) {
         out.extend(view.sort_rules.iter().map(|r| r.field_name.clone()));
         if let Some(filter) = &view.filters {
-            out.extend(filter.clauses.iter().map(|c| c.field_name.clone()));
+            out.extend(crate::clauses_of(filter).into_iter().map(|c| c.field_name.clone()));
         }
+        // Groups and footers are computed over the index.
+        out.extend(view.group_by.iter().cloned());
+        out.extend(view.column_summary.iter().map(|(field, _)| field.clone()));
     }
     for r in &m.relationships {
         if r.source_table_id == table_id {

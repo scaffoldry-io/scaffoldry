@@ -958,6 +958,9 @@ fn run_describe_app(caller: &AuthUser, _origin: &Origin, args: Value, state: &Sh
 
 fn run_list_records(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: ListRecordsArgs = parse(args)?;
+    if let Some(f) = &args.filter {
+        scaffoldry_engine::check_filter(f).map_err(ServiceError::BadRequest)?;
+    }
     let (app_slug, table_id) = (args.app_slug.clone(), args.table_id.clone());
     let limit = args.limit.unwrap_or(50);
     if limit == 0 || limit > MAX_ROWS {
@@ -1235,7 +1238,7 @@ fn schema_aggregate_records() -> Value {
         "properties": {
             "app_slug": { "type": "string", "description": "Application slug identifier" },
             "table_id": { "type": "string", "description": "Table id or slug from describe_app" },
-            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max"], "description": "Aggregate function" },
+            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "filled", "empty", "unique"], "description": "Aggregate function. filled, empty and unique work on a field of any type" },
             "field": { "type": "string", "description": "Numeric field to aggregate (required unless function is count)" },
             "filter": { "type": "object", "description": "Optional filter on indexed fields" },
             "group_by": { "type": "string", "description": "Optional indexed field to group by" }
@@ -1263,6 +1266,9 @@ fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state
         "avg" => records::AggregateFunction::Avg,
         "min" => records::AggregateFunction::Min,
         "max" => records::AggregateFunction::Max,
+        "filled" => records::AggregateFunction::Filled,
+        "empty" => records::AggregateFunction::Empty,
+        "unique" => records::AggregateFunction::Unique,
         other => return Err(ServiceError::BadRequest(format!("Unknown aggregate function '{other}'"))),
     };
     let res = records::aggregate_records(

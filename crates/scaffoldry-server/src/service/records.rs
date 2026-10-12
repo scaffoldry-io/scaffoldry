@@ -13,6 +13,7 @@ use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::TriggerEvent;
 use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
+use crate::repository_index::Expr;
 use scaffoldry_engine::{AppManifest, AutomationEngine, CompoundFilter, EngineError, FieldSpec, FieldType, FilterConjunction, FilterOperator, IndexColumn};
 use serde_json::{json, Value};
 
@@ -734,6 +735,7 @@ pub fn delete_record_checked(
 pub const UNINDEXED_ROW_LIMIT: i64 = 10_000;
 pub const TOO_LARGE: &str = "This table is too large to filter or sort on a field that is not indexed.";
 
+#[derive(Clone)]
 pub struct SortSpec {
     pub field_name: String,
     pub descending: bool,
@@ -1124,6 +1126,78 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
     rows
 }
 
+/// A filter ready to run, with each relative date resolved to a range in the institution's zone at
+/// this moment. A filter with no clause is no filter.
+pub fn prepared_filter(filter: Option<&CompoundFilter>, state: &SharedState) -> Result<Option<CompoundFilter>, ServiceError> {
+    let Some(f) = filter else { return Ok(None) };
+    if scaffoldry_engine::clauses_of(f).is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(scaffoldry_engine::resolve_relative_dates(f, chrono::Utc::now(), &state.platform_timezone())))
+}
+
+fn is_multi(spec: &FieldSpec) -> bool {
+    spec.field_type == scaffoldry_engine::FieldType::MultiSelect || matches!(spec.field_type, scaffoldry_engine::FieldType::Collaborator { allow_multiple: true })
+}
+
+/// A filter tree with typed leaves. A clause that names a field the table lacks reads as no clause here. The caller
+/// has already refused that.
+pub fn expr_of(fields: &[FieldSpec], f: &CompoundFilter) -> Expr {
+    let mut kids: Vec<Expr> = Vec::new();
+    for c in &f.clauses {
+        let needs_value = !matches!(c.operator, FilterOperator::IsEmpty | FilterOperator::IsNotEmpty);
+        match fields.iter().find(|s| s.name == c.field_name) {
+            // The older evaluator treats a clause with no value as true. So does this.
+            Some(_) if needs_value && c.value.trim().is_empty() => kids.push(Expr::And(Vec::new())),
+            Some(spec) => kids.push(Expr::Leaf(IndexedClause {
+                field: c.field_name.clone(),
+                column: scaffoldry_engine::index_column(spec.field_type),
+                multi: is_multi(spec),
+                op: c.operator,
+                value: c.value.clone(),
+            })),
+            None => kids.push(Expr::And(Vec::new())),
+        }
+    }
+    kids.extend(f.groups.iter().map(|g| expr_of(fields, g)));
+    match f.conjunction {
+        FilterConjunction::And => Expr::And(kids),
+        FilterConjunction::Or => Expr::Or(kids),
+    }
+}
+
+/// Whether the index can answer one leaf.
+fn leaf_indexable(c: &IndexedClause) -> bool {
+    match c.op {
+        FilterOperator::Equals | FilterOperator::In => true,
+        FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty | FilterOperator::Between | FilterOperator::Before | FilterOperator::After => !c.multi,
+        FilterOperator::Contains | FilterOperator::NotContains => false,
+    }
+}
+
+/// What a filter tree needs from the index: the sort its pages walk, or the field that stops it. With no sort given,
+/// the pages walk the first single-valued field the tree names.
+fn tree_plan(
+    fields: &[FieldSpec],
+    indexed: &std::collections::BTreeSet<String>,
+    expr: &Expr,
+    sort: Option<&SortSpec>,
+) -> Result<(Vec<IndexedClause>, Option<IndexedSort>), String> {
+    let leaves = expr.leaves();
+    for c in &leaves {
+        if !indexed.contains(&c.field) || !leaf_indexable(c) {
+            return Err(c.field.clone());
+        }
+    }
+    let walked = match sort {
+        Some(s) => Some(s.clone()),
+        None => leaves.iter().find(|c| !c.multi).map(|c| SortSpec { field_name: c.field.clone(), descending: false }),
+    };
+    let Some(walked) = walked else { return Err(leaves.first().map(|c| c.field.clone()).unwrap_or_default()) };
+    let (_, isort) = indexed_plan(fields, indexed, None, Some(&walked))?;
+    Ok((Vec::new(), isort))
+}
+
 /// What a filter or sort needs from the pivot index, or the field that stops it.
 fn indexed_plan(
     fields: &[FieldSpec],
@@ -1142,8 +1216,8 @@ fn indexed_plan(
             let spec = field(&c.field_name).filter(|s| indexed.contains(&s.name)).ok_or_else(|| c.field_name.clone())?;
             let multi = spec.field_type == FieldType::MultiSelect || matches!(spec.field_type, FieldType::Collaborator { allow_multiple: true });
             let supported = match c.operator {
-                FilterOperator::Equals => true,
-                FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty => !multi,
+                FilterOperator::Equals | FilterOperator::In => true,
+                FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty | FilterOperator::Between | FilterOperator::Before | FilterOperator::After => !multi,
                 FilterOperator::Contains | FilterOperator::NotContains => false,
             };
             if !supported {
@@ -1221,13 +1295,15 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         }
     };
     let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
-    let clauses: Vec<_> = query
-        .filter
-        .as_ref()
-        .map(|f| f.clauses.iter().map(|c| (c.field_name.clone(), c.operator, c.value.clone())).collect())
-        .unwrap_or_default();
-    for (name, _, _) in &clauses {
-        check(name)?;
+    let filter = prepared_filter(query.filter.as_ref(), state)?;
+    let tree: Option<Expr> = filter.as_ref().filter(|f| !scaffoldry_engine::is_flat(f)).map(|f| expr_of(&fields, f));
+    let clauses: Vec<_> = if tree.is_some() {
+        Vec::new()
+    } else {
+        filter.as_ref().map(|f| f.clauses.iter().map(|c| (c.field_name.clone(), c.operator, c.value.clone())).collect()).unwrap_or_default()
+    };
+    for c in filter.iter().flat_map(scaffoldry_engine::clauses_of) {
+        check(&c.field_name)?;
     }
     if let Some(sort) = &query.sort {
         check(&sort.field_name)?;
@@ -1249,10 +1325,14 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         }
     }
 
-    let plan = indexed_plan(&fields, &indexed_names(app_slug, &table, state), query.filter.as_ref(), query.sort.as_ref());
+    let indexed = indexed_names(app_slug, &table, state);
+    let plan = match &tree {
+        Some(e) => tree_plan(&fields, &indexed, e, query.sort.as_ref()),
+        None => indexed_plan(&fields, &indexed, filter.as_ref(), query.sort.as_ref()),
+    };
     let has_search = query.search.as_ref().is_some_and(|s| !s.trim().is_empty());
     let mut walk_spec: Option<FieldSpec> = None;
-    let mut rows = if clauses.is_empty() && query.sort.is_none() && !has_search {
+    let mut rows = if clauses.is_empty() && tree.is_none() && query.sort.is_none() && !has_search {
         match &scope {
             // The paging index cannot apply a scope, so a scoped walk goes through the same statement
             // as a filtered one, in the same order.
@@ -1268,6 +1348,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
                         limit: query.limit + 1,
                         scope: Some(plan.clone()),
                         search: None,
+                        expr: None,
                     },
                 )
                 .map_err(ServiceError::Internal)?,
@@ -1276,7 +1357,12 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
                 .map_err(ServiceError::Internal)?,
         }
     } else if let Some((iclauses, isort)) = plan.as_ref().ok().filter(|(c, s)| !c.is_empty() || s.is_some()) {
-        let named: Vec<String> = iclauses.iter().map(|c| c.field.clone()).chain(isort.iter().map(|s| s.field.clone())).collect();
+        let named: Vec<String> = iclauses
+            .iter()
+            .map(|c| c.field.clone())
+            .chain(isort.iter().map(|s| s.field.clone()))
+            .chain(tree.iter().flat_map(|e| e.leaves().into_iter().map(|c| c.field.clone())))
+            .collect();
         if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(ServiceError::Internal)? {
             return Err(ServiceError::IndexBuilding(format!("This field is still being prepared for sorting. It is {percent}% done.")));
         }
@@ -1289,6 +1375,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             limit: query.limit + 1,
             scope: scope.clone(),
             search: query.search.clone(),
+            expr: tree.clone(),
         };
         if let Some((name, column, _)) = crate::repository_index::walk_of(&iq) {
             walk_spec = fields.iter().find(|f| f.name == name).cloned();
@@ -1298,19 +1385,20 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         }
         state.indexed_page(&iq).map_err(ServiceError::Internal)?
     } else {
-        if (!clauses.is_empty() || query.sort.is_some()) && state.table_has_more_than(app_slug, &table, UNINDEXED_ROW_LIMIT).map_err(ServiceError::Internal)? {
+        if (!clauses.is_empty() || tree.is_some() || query.sort.is_some()) && state.table_has_more_than(app_slug, &table, UNINDEXED_ROW_LIMIT).map_err(ServiceError::Internal)? {
             let name = plan.err().unwrap_or_default();
             return Err(ServiceError::BadRequest(format!("{TOO_LARGE} Mark '{name}' as indexed in the app manifest to filter or sort on it.")));
         }
         let q = crate::repository::RecordQuery {
             table_id: table.clone(),
-            any: query.filter.as_ref().is_some_and(|f| f.conjunction == FilterConjunction::Or),
+            any: filter.as_ref().is_some_and(|f| f.conjunction == FilterConjunction::Or),
             clauses,
             sort: query.sort.as_ref().map(|s| (s.field_name.clone(), s.descending)),
             after,
             limit: query.limit + 1,
             scope: scope.clone(),
             search: query.search.clone(),
+            expr: tree.clone(),
         };
         state.query_records(app_slug, &q).map_err(ServiceError::Internal)?
     };
@@ -1530,6 +1618,9 @@ pub fn aggregate_records(
     state: &SharedState,
 ) -> Result<AggregateResult, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
+    if let Some(f) = &query.filter {
+        scaffoldry_engine::check_filter(f).map_err(ServiceError::BadRequest)?;
+    }
     let (fields, table) = table_fields(app_slug, table_id, true, state)?;
     let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
     let indexed = indexed_names(app_slug, &table, state);
@@ -1546,7 +1637,8 @@ pub fn aggregate_records(
             return Err(ServiceError::BadRequest(format!("'{f}' is not in the indexed set")));
         }
         let spec = fields.iter().find(|s| s.name == *f).unwrap();
-        if scaffoldry_engine::index_column(spec.field_type) != scaffoldry_engine::IndexColumn::Num {
+        let any_type = matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty | AggregateFunction::Unique);
+        if !any_type && scaffoldry_engine::index_column(spec.field_type) != scaffoldry_engine::IndexColumn::Num {
             return Err(ServiceError::BadRequest(format!("'{f}' is not a numeric field (must be stored in num)")));
         }
         if hidden.iter().any(|h| h == f) {
@@ -1557,6 +1649,10 @@ pub fn aggregate_records(
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
             });
         }
+    }
+
+    if query.group_by.is_some() && matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty | AggregateFunction::Unique) {
+        return Err(ServiceError::BadRequest(format!("{:?} cannot be grouped. Use count, sum, avg, min or max.", query.function)));
     }
 
     if let Some(ref g) = query.group_by {
@@ -1577,8 +1673,10 @@ pub fn aggregate_records(
     }
 
     let mut iclauses = Vec::new();
-    if let Some(ref filter) = query.filter {
-        for c in &filter.clauses {
+    let mut tree: Option<Expr> = None;
+    let filter = prepared_filter(query.filter.as_ref(), state)?;
+    if let Some(ref filter) = filter {
+        for c in scaffoldry_engine::clauses_of(filter) {
             if hidden.iter().any(|h| h == &c.field_name) {
                 let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == c.field_name);
                 return Err(ServiceError::FieldHidden {
@@ -1587,17 +1685,39 @@ pub fn aggregate_records(
                     remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
                 });
             }
+            if !fields.iter().any(|s| s.name == c.field_name) {
+                return Err(ServiceError::BadRequest(format!("'{}' is not a field of this table", c.field_name)));
+            }
         }
-        let plan_res = indexed_plan(&fields, &indexed, Some(filter), None);
-        match plan_res {
-            Ok((clauses, _)) => iclauses = clauses,
-            Err(name) => return Err(ServiceError::BadRequest(format!("'{name}' must be in the indexed set to filter aggregate"))),
+        if scaffoldry_engine::is_flat(filter) {
+            match indexed_plan(&fields, &indexed, Some(filter), None) {
+                Ok((clauses, _)) => iclauses = clauses,
+                Err(name) => return Err(ServiceError::BadRequest(format!("'{name}' must be in the indexed set to filter aggregate"))),
+            }
+        } else {
+            let e = expr_of(&fields, filter);
+            if let Some(bad) = e.leaves().into_iter().find(|c| !indexed.contains(&c.field) || !leaf_indexable(c)) {
+                return Err(ServiceError::BadRequest(format!("'{}' must be in the indexed set to filter aggregate", bad.field)));
+            }
+            tree = Some(e);
         }
+    }
+
+    let named: Vec<String> = query
+        .field
+        .iter()
+        .chain(query.group_by.iter())
+        .cloned()
+        .chain(iclauses.iter().map(|c| c.field.clone()))
+        .chain(tree.iter().flat_map(|e| e.leaves().into_iter().map(|c| c.field.clone())))
+        .collect();
+    if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(ServiceError::Internal)? {
+        return Err(ServiceError::IndexBuilding(format!("This field is still being prepared. It is {percent}% done.")));
     }
 
     let mut driving_field = query.field.clone();
     if driving_field.is_none() && query.group_by.is_none() {
-        if let Some(first_clause) = iclauses.first() {
+        if let Some(first_clause) = iclauses.first().or_else(|| tree.as_ref().and_then(|e| e.leaves().into_iter().next())) {
             driving_field = Some(first_clause.field.clone());
         } else if let Some(first_idx) = indexed.iter().next() {
             driving_field = Some(first_idx.clone());
@@ -1611,9 +1731,11 @@ pub fn aggregate_records(
         app_slug: app_slug.to_string(),
         table_id: table.clone(),
         function: query.function,
-        field: driving_field,
+        field: query.field.clone(),
+        driver: driving_field,
         group_by: query.group_by.clone(),
         clauses: iclauses,
+        expr: tree,
         scope,
     };
 

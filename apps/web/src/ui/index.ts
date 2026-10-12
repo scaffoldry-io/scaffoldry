@@ -19,3 +19,4 @@ export * from "./UnitLabel";
 export * from "./PersonLabel";
 export * from "./useAsync";
 export * from "./Markdown";
+export * from "./ToneMark";
