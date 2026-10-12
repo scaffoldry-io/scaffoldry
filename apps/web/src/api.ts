@@ -465,6 +465,82 @@ export interface CollaboratorOption {
   active?: boolean;
 }
 
+
+export interface AppView {
+  id: string;
+  app_slug: string;
+  table_id: string | null;
+  name: string;
+  kind: string;
+  ownership: "personal" | "collaborative" | "locked";
+  owner: string | null;
+  config: Record<string, any>;
+  version: number;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface ViewResponse {
+  view: AppView;
+  index_state: string;
+}
+
+export const listViews = (appSlug: string): Promise<{ views: AppView[] }> => {
+  return request(`/apps/${appSlug}/views`);
+};
+
+export const createView = (
+  appSlug: string,
+  payload: {
+    table_id?: string;
+    name: string;
+    kind?: string;
+    ownership?: "personal" | "collaborative" | "locked";
+    config?: Record<string, any>;
+  }
+): Promise<ViewResponse> => {
+  return request(`/apps/${appSlug}/views`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+};
+
+export const updateView = (
+  appSlug: string,
+  viewId: string,
+  payload: {
+    name: string;
+    config: Record<string, any>;
+    version: number;
+  }
+): Promise<ViewResponse> => {
+  return request(`/apps/${appSlug}/views/${viewId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+};
+
+export const deleteView = (
+  appSlug: string,
+  viewId: string
+): Promise<{ deleted: boolean; id: string }> => {
+  return request(`/apps/${appSlug}/views/${viewId}`, {
+    method: "DELETE",
+  });
+};
+
+export const duplicateView = (
+  appSlug: string,
+  viewId: string
+): Promise<ViewResponse> => {
+  return request(`/apps/${appSlug}/views/${viewId}/duplicate`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+};
+
 /** Search the directory for collaborators who can read the app. */
 export const listCollaborators = (
   appSlug: string,
@@ -993,6 +1069,12 @@ export const apiClient = {
       body: JSON.stringify(payload),
     });
   },
+
+  listViews: async (appSlug: string) => listViews(appSlug),
+  createView: async (appSlug: string, payload: Parameters<typeof createView>[1]) => createView(appSlug, payload),
+  updateView: async (appSlug: string, viewId: string, payload: Parameters<typeof updateView>[2]) => updateView(appSlug, viewId, payload),
+  deleteView: async (appSlug: string, viewId: string) => deleteView(appSlug, viewId),
+  duplicateView: async (appSlug: string, viewId: string) => duplicateView(appSlug, viewId),
 };
 
 export const computeSha256 = async (message: string): Promise<string> => {
