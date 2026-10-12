@@ -7,6 +7,7 @@ pub mod jobs;
 pub mod jwt;
 pub mod repository;
 pub mod repository_comments;
+pub mod repository_disclosure;
 pub mod repository_calc;
 pub mod repository_index;
 pub mod repository_links;

@@ -11,6 +11,7 @@ pub mod auth;
 pub mod datasets;
 pub mod discovery;
 pub mod comments;
+pub mod disclosures;
 pub mod history;
 pub mod link_options;
 pub mod calc;
@@ -54,6 +55,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(view_as::router())
         .merge(link_options::router())
         .merge(comments::router())
+        .merge(disclosures::router())
         .merge(datasets::router())
         .merge(framework::router())
         .merge(policy::router())
