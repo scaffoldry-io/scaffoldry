@@ -218,6 +218,100 @@ fn validate_collaborators(
     Ok(())
 }
 
+fn validate_and_normalize_durations_and_datetimes(
+    app_slug: &str,
+    table: &str,
+    data: &mut Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    let map = match data.as_object_mut() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    for field in &fields {
+        match &field.field_type {
+            scaffoldry_engine::FieldType::Duration { .. } => {
+                if let Some(val) = map.get(&field.name).cloned() {
+                    match val {
+                        Value::Null => {}
+                        Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                if i < 0 {
+                                    return Err(ServiceError::BadRequest(format!(
+                                        "Duration field '{}' cannot be negative",
+                                        field.name
+                                    )));
+                                }
+                                map.insert(field.name.clone(), Value::from(i));
+                            } else if let Some(f) = n.as_f64() {
+                                if f < 0.0 {
+                                    return Err(ServiceError::BadRequest(format!(
+                                        "Duration field '{}' cannot be negative",
+                                        field.name
+                                    )));
+                                }
+                                map.insert(field.name.clone(), Value::from(f.round() as i64));
+                            }
+                        }
+                        Value::String(s) => {
+                            if s.trim().is_empty() {
+                                map.insert(field.name.clone(), Value::Null);
+                            } else if let Some(secs) = scaffoldry_engine::duration::parse_duration(&s) {
+                                map.insert(field.name.clone(), Value::from(secs));
+                            } else {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Invalid duration format for field '{}': '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                        _ => {
+                            return Err(ServiceError::BadRequest(format!(
+                                "Field '{}' must be a duration string or number",
+                                field.name
+                            )));
+                        }
+                    }
+                }
+            }
+            scaffoldry_engine::FieldType::DateTime => {
+                if let Some(val) = map.get(&field.name).cloned() {
+                    match val {
+                        Value::Null => {}
+                        Value::String(s) => {
+                            if s.trim().is_empty() {
+                                map.insert(field.name.clone(), Value::Null);
+                            } else if let Some(iso) = scaffoldry_engine::index::parse_instant(&s) {
+                                let normalized = if iso.ends_with("+00:00") {
+                                    format!("{}Z", &iso[..iso.len() - 6])
+                                } else {
+                                    iso
+                                };
+                                map.insert(field.name.clone(), Value::from(normalized));
+                            } else {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Invalid DateTime format for field '{}': '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                        _ => {
+                            return Err(ServiceError::BadRequest(format!(
+                                "Field '{}' must be an ISO DateTime string",
+                                field.name
+                            )));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn validate_long_text(
     app_slug: &str,
     table: &str,
@@ -311,7 +405,7 @@ pub fn create_record(
     let data_payload = &cleaned;
     validate_links(app_slug, None, None, data_payload, state)?;
 
-    let submitted = {
+    let mut submitted = {
         let engine = state
             .engine
             .read()
@@ -335,6 +429,7 @@ pub fn create_record(
     validate_select_options(app_slug, &table, &submitted.data, state)?;
     validate_collaborators(app_slug, &table, &submitted.data, state)?;
     validate_long_text(app_slug, &table, &submitted.data, state)?;
+    validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut submitted.data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
         return Err(outside_scope());
     }
@@ -496,11 +591,12 @@ pub fn update_record(
         map.entry("_table_id".to_string()).or_insert(tid);
     }
 
-    let new_data = strip_lookups(app_slug, &new_data, state);
+    let mut new_data = strip_lookups(app_slug, &new_data, state);
     let table = new_data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     validate_select_options(app_slug, &table, &new_data, state)?;
     validate_collaborators(app_slug, &table, &new_data, state)?;
     validate_long_text(app_slug, &table, &new_data, state)?;
+    validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut new_data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }

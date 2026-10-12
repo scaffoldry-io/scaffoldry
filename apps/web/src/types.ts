@@ -66,7 +66,9 @@ export type FieldType =
   | "Collaborator"
   | "CreatedBy"
   | "LastModifiedBy"
-  | "LongText";
+  | "LongText"
+  | "Duration"
+  | "DateTime";
 
 export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
 
@@ -119,6 +121,7 @@ export interface FieldSpec {
   select_options?: (SelectOption | string)[];
   currency_symbol?: string;
   precision?: number;
+  duration_format?: string;
   notify_on_assign?: boolean;
 }
 

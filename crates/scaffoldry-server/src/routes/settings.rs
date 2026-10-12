@@ -24,6 +24,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "jobs.schedules_disabled",
     "sensitivity.categories",
     "sensitivity.detectors",
+    "platform.timezone",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -39,6 +40,7 @@ static PRESET_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub fn validate_setting(key: &str, value: &Value) -> bool {
     match key {
         "oidc.issuer" | "oidc.audience" => value.is_string(),
+        "platform.timezone" => value.as_str().is_some_and(|s| !s.trim().is_empty()),
         "oidc.jwks" => value.is_object(),
         "cors.allowed_origins" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
@@ -177,6 +179,11 @@ async fn put_setting(
     }
 
     // Update in-memory state
+    if key == "platform.timezone" {
+        if let Some(tz) = payload.as_str() {
+            scaffoldry_engine::formula::set_institution_timezone(tz);
+        }
+    }
     state.settings.write().unwrap().insert(key.clone(), payload.clone());
 
     (StatusCode::OK, Json(json!({ "key": key, "value": payload }))).into_response()

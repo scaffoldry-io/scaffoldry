@@ -315,6 +315,11 @@ impl ServerState {
         if let Some(ref repo) = repository {
             if let Ok(db_settings) = repo.get_platform_settings() {
                 for (k, v) in db_settings {
+                    if k == "platform.timezone" {
+                        if let Some(tz) = v.as_str() {
+                            scaffoldry_engine::formula::set_institution_timezone(tz);
+                        }
+                    }
                     settings_map.insert(k, v);
                 }
             }
@@ -881,6 +886,15 @@ impl ServerState {
 
     pub fn get_scim_user(&self, id: &str) -> Option<ScimUser> {
         self.users.read().ok()?.get(id).cloned()
+    }
+
+    
+    pub fn platform_timezone(&self) -> String {
+        self.settings
+            .read()
+            .ok()
+            .and_then(|s| s.get("platform.timezone").and_then(|v| v.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "UTC".to_string())
     }
 
     pub fn append_ledger_entry(

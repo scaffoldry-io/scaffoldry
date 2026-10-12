@@ -28,8 +28,8 @@ pub enum IndexColumn {
 pub fn index_column(t: FieldType) -> IndexColumn {
     use FieldType::*;
     match t {
-        Number | Currency | Percent | Rating | Autonumber | Count | Rollup | Boolean | Checkbox => IndexColumn::Num,
-        Date | CreatedTime | LastModifiedTime => IndexColumn::Ts,
+        Number | Currency | Percent | Rating | Autonumber | Count | Rollup | Boolean | Checkbox | Duration { .. } => IndexColumn::Num,
+        Date | DateTime | CreatedTime | LastModifiedTime => IndexColumn::Ts,
         // A formula's column follows its result, so this is only the default for a sort on it.
         // A Link is never indexed here. `record_links` holds it.
         Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link | Collaborator { .. } | CreatedBy | LastModifiedBy | LongText => IndexColumn::Txt,
