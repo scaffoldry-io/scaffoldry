@@ -27,6 +27,7 @@ pub struct RecordListQuery {
     pub filter_by_formula: Option<String>,
     pub sort_field: Option<String>,
     pub sort_direction: Option<String>,
+    pub search: Option<String>,
 }
 
 pub fn router() -> Router<SharedState> {
@@ -35,6 +36,10 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/schema", get(get_app_schema))
         .route("/apps/{slug}/tables/{table_id}/schema", get(get_table_schema))
         // Table Records
+        .route(
+            "/apps/{slug}/tables/{table_id}/aggregate",
+            get(aggregate_table_records),
+        )
         .route(
             "/apps/{slug}/tables/{table_id}/records",
             get(list_table_records).post(create_table_record),
@@ -172,6 +177,7 @@ async fn list_table_records(
                 cursor: query.cursor.clone(),
                 max_bytes: None,
                 must_exist: false,
+                search: query.search.clone(),
             },
             &state,
         )
@@ -465,4 +471,65 @@ fn evaluate_formula_filter(record_data: &Value, formula: &str) -> bool {
     }
 
     true
+}
+
+
+// ---------------------------------------------------------------------------
+// TABLE AGGREGATE ENDPOINT (TOTALS & GROUPS)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct AggregateRequestQuery {
+    pub function: String,
+    pub field: Option<String>,
+    pub filter: Option<String>,
+    pub group_by: Option<String>,
+}
+
+async fn aggregate_table_records(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((slug, table_id)): Path<(String, String)>,
+    Query(query): Query<AggregateRequestQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+
+    let func = match query.function.to_lowercase().as_str() {
+        "count" => crate::service::records::AggregateFunction::Count,
+        "sum" => crate::service::records::AggregateFunction::Sum,
+        "avg" => crate::service::records::AggregateFunction::Avg,
+        "min" => crate::service::records::AggregateFunction::Min,
+        "max" => crate::service::records::AggregateFunction::Max,
+        other => return Err(ServiceError::BadRequest(format!("Unknown aggregate function '{other}'")).into_pair()),
+    };
+
+    let filter = if let Some(ref f) = query.filter {
+        if f.trim().is_empty() {
+            None
+        } else {
+            match serde_json::from_str::<scaffoldry_engine::CompoundFilter>(f) {
+                Ok(cf) => Some(cf),
+                Err(e) => return Err(ServiceError::BadRequest(format!("Invalid filter: {e}")).into_pair()),
+            }
+        }
+    } else {
+        None
+    };
+
+    let result = crate::service::records::aggregate_records(
+        &user,
+        &slug,
+        &table_id,
+        crate::service::records::AggregateQuery {
+            function: func,
+            field: query.field,
+            filter,
+            group_by: query.group_by,
+        },
+        &state,
+    )
+    .map_err(ServiceError::into_pair)?;
+
+    Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
 }
