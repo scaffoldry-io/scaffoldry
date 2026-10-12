@@ -4,144 +4,532 @@
   "title": "AppManifest",
   "description": "The data contract of an app: tables, fields, views, relationships, and pages. Written by hand from the Rust types in scaffoldry-engine. validate_manifest enforces the same shape and also the rules JSON Schema cannot express: formulas name real fields, links reach real tables, page grants name real fields, and a grant never writes a computed field.",
   "type": "object",
-  "required": ["slug", "title", "description", "organization_code", "department", "views"],
+  "required": [
+    "slug",
+    "title",
+    "description",
+    "organization_code",
+    "department",
+    "views"
+  ],
   "additionalProperties": false,
   "properties": {
-    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
-    "title": { "type": "string" },
-    "description": { "type": "string" },
-    "organization_code": { "type": "string" },
-    "department": { "type": "string" },
-    "workspace_id": { "type": ["string", "null"] },
-    "herm_capability_id": { "type": ["string", "null"] },
-    "custom_domain": { "type": ["string", "null"] },
-    "custom_domain_verified": { "type": "boolean", "description": "A proposal can never set this to true. Nothing in the platform verifies a domain yet." },
-    "tables": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/table" } },
-    "relationships": { "type": "array", "items": { "$ref": "#/$defs/relationship" } },
-    "views": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/view" } },
-    "ceds_mappings": { "type": "object", "additionalProperties": { "type": "string" } },
-    "pages": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/page" } }
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "organization_code": {
+      "type": "string"
+    },
+    "department": {
+      "type": "string"
+    },
+    "workspace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "herm_capability_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "custom_domain": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "custom_domain_verified": {
+      "type": "boolean",
+      "description": "A proposal can never set this to true. Nothing in the platform verifies a domain yet."
+    },
+    "tables": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/table"
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relationship"
+      }
+    },
+    "views": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/view"
+      }
+    },
+    "ceds_mappings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "pages": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/page"
+      }
+    }
   },
   "$defs": {
-    "fieldName": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
+    "fieldName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,62}$"
+    },
     "fieldType": {
-      "enum": [
-        "Text", "Number", "Date", "Select", "Boolean", "Relation", "Checkbox", "MultiSelect",
-        "Currency", "Percent", "Rating", "Email", "Phone", "Url", "Autonumber", "CreatedTime",
-        "LastModifiedTime", "Lookup", "Count", "Rollup", "Formula", "Link",
-        "Collaborator", "CreatedBy", "LastModifiedBy", "LongText"
+      "oneOf": [
+        {
+          "enum": [
+            "Text",
+            "Number",
+            "Date",
+            "Select",
+            "Boolean",
+            "Relation",
+            "Checkbox",
+            "MultiSelect",
+            "Currency",
+            "Percent",
+            "Rating",
+            "Email",
+            "Phone",
+            "Url",
+            "Autonumber",
+            "CreatedTime",
+            "LastModifiedTime",
+            "Lookup",
+            "Count",
+            "Rollup",
+            "Formula",
+            "Link",
+            "Collaborator",
+            "CreatedBy",
+            "LastModifiedBy",
+            "LongText",
+            "Duration",
+            "DateTime"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Collaborator": {
+              "type": "object",
+              "properties": {
+                "allow_multiple": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "Duration": {
+              "type": "object",
+              "properties": {
+                "format": {
+                  "enum": [
+                    "h:mm",
+                    "h:mm:ss",
+                    "d h",
+                    "days"
+                  ]
+                }
+              }
+            }
+          }
+        }
       ]
     },
     "field": {
       "type": "object",
-      "required": ["name", "label", "field_type", "required", "ferpa_sensitive"],
+      "required": [
+        "name",
+        "label",
+        "field_type",
+        "required",
+        "ferpa_sensitive"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "$ref": "#/$defs/fieldName" },
-        "label": { "type": "string" },
-        "field_type": { "$ref": "#/$defs/fieldType" },
-        "required": { "type": "boolean" },
-        "ferpa_sensitive": { "type": "boolean" },
-        "categories": { "type": "array", "items": { "type": "string" }, "description": "Sensitivity category ids." },
-        "linked_dataset_id": { "type": ["string", "null"] },
-        "linked_field": { "type": ["string", "null"] },
-        "target_table_id": { "type": ["string", "null"] },
-        "target_display_field": { "type": ["string", "null"] },
-        "display_label_override": { "type": ["string", "null"] },
-        "cardinality": { "type": ["string", "null"] },
-        "allow_multiple": { "type": ["boolean", "null"] },
+        "name": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "label": {
+          "type": "string"
+        },
+        "field_type": {
+          "$ref": "#/$defs/fieldType"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "ferpa_sensitive": {
+          "type": "boolean"
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Sensitivity category ids."
+        },
+        "linked_dataset_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "linked_field": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_table_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_display_field": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_label_override": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cardinality": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow_multiple": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "link_filter": {},
-        "formula_expression": { "type": ["string", "null"] },
-        "rollup_function": { "type": ["string", "null"] },
-        "select_options": { "type": "array", "items": { "type": "string" } },
-        "currency_symbol": { "type": ["string", "null"] },
-        "precision": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
-        "indexed": { "type": "boolean", "description": "Sorting and filtering on this field use the pivot index. At most 20 per table. Not on a Lookup." },
-        "link_target_table": { "type": ["string", "null"], "description": "A Link field: the table it points at." },
-        "link_target_app": { "type": ["string", "null"], "description": "A Link field into a dataset app." },
-        "link_cardinality": { "enum": ["One", "Many"], "description": "How many records a Link field holds. Default Many." },
-        "link_related_field": { "type": ["string", "null"], "description": "The Link field on the target table that points back." },
-        "link_on_delete": { "enum": ["Unlink", "Restrict"], "description": "What deleting a linked record does. Default Unlink." },
-        "computed_via": { "type": ["string", "null"], "description": "A Lookup, Rollup, or Count: the Link field of this table it goes through." },
-        "notify_on_assign": { "type": ["boolean", "null"], "description": "Sends the person a notification when added to a record." }
+        "formula_expression": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rollup_function": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "select_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "currency_symbol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "precision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "indexed": {
+          "type": "boolean",
+          "description": "Sorting and filtering on this field use the pivot index. At most 20 per table. Not on a Lookup."
+        },
+        "link_target_table": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Link field: the table it points at."
+        },
+        "link_target_app": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Link field into a dataset app."
+        },
+        "link_cardinality": {
+          "enum": [
+            "One",
+            "Many"
+          ],
+          "description": "How many records a Link field holds. Default Many."
+        },
+        "link_related_field": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The Link field on the target table that points back."
+        },
+        "link_on_delete": {
+          "enum": [
+            "Unlink",
+            "Restrict"
+          ],
+          "description": "What deleting a linked record does. Default Unlink."
+        },
+        "computed_via": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Lookup, Rollup, or Count: the Link field of this table it goes through."
+        },
+        "notify_on_assign": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Sends the person a notification when added to a record."
+        },
+        "duration_format": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "h:mm",
+            "h:mm:ss",
+            "d h",
+            "days",
+            null
+          ]
+        }
       }
     },
     "table": {
       "type": "object",
-      "required": ["id", "name", "slug", "fields"],
+      "required": [
+        "id",
+        "name",
+        "slug",
+        "fields"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "name": { "type": "string" },
-        "slug": { "type": "string" },
-        "description": { "type": ["string", "null"] },
-        "icon": { "type": ["string", "null"] },
-        "fields": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/field" } },
-        "primary_field": { "type": ["string", "null"] },
-        "sample_records": { "type": "array", "items": { "type": "object" } }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "icon": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        },
+        "primary_field": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sample_records": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
     "relationship": {
       "type": "object",
-      "required": ["id", "name", "source_table_id", "target_table_id", "source_field", "target_field", "relationship_type", "display_field"],
+      "required": [
+        "id",
+        "name",
+        "source_table_id",
+        "target_table_id",
+        "source_field",
+        "target_field",
+        "relationship_type",
+        "display_field"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "source_table_id": { "type": "string" },
-        "target_table_id": { "type": "string" },
-        "source_field": { "type": "string" },
-        "target_field": { "type": "string" },
-        "relationship_type": { "type": "string" },
-        "display_field": { "type": "string" }
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source_table_id": {
+          "type": "string"
+        },
+        "target_table_id": {
+          "type": "string"
+        },
+        "source_field": {
+          "type": "string"
+        },
+        "target_field": {
+          "type": "string"
+        },
+        "relationship_type": {
+          "type": "string"
+        },
+        "display_field": {
+          "type": "string"
+        }
       }
     },
     "view": {
       "type": "object",
-      "required": ["id", "title", "view_type", "fields"],
+      "required": [
+        "id",
+        "title",
+        "view_type",
+        "fields"
+      ],
       "description": "Views leave the manifest in views.md phase 1. Until then this shape names only what the validator reads.",
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "table_id": { "type": ["string", "null"] },
-        "title": { "type": "string" },
-        "view_type": { "enum": ["Table", "Grid", "Kanban", "Calendar", "Gallery", "Form", "Dashboard", "Detail"] },
-        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "table_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "view_type": {
+          "enum": [
+            "Table",
+            "Grid",
+            "Kanban",
+            "Calendar",
+            "Gallery",
+            "Form",
+            "Dashboard",
+            "Detail"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        }
       }
     },
     "page": {
       "type": "object",
-      "required": ["id", "title", "kind"],
+      "required": [
+        "id",
+        "title",
+        "kind"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$" },
-        "title": { "type": "string" },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        },
+        "title": {
+          "type": "string"
+        },
         "kind": {
           "oneOf": [
             {
               "type": "object",
-              "required": ["View"],
+              "required": [
+                "View"
+              ],
               "additionalProperties": false,
               "properties": {
                 "View": {
                   "type": "object",
-                  "required": ["view_id"],
+                  "required": [
+                    "view_id"
+                  ],
                   "additionalProperties": false,
-                  "properties": { "view_id": { "type": "string", "minLength": 1 } }
+                  "properties": {
+                    "view_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
                 }
               }
             },
             {
               "type": "object",
-              "required": ["Custom"],
+              "required": [
+                "Custom"
+              ],
               "additionalProperties": false,
               "properties": {
                 "Custom": {
                   "type": "object",
-                  "required": ["source_sha256", "grants"],
+                  "required": [
+                    "source_sha256",
+                    "grants"
+                  ],
                   "additionalProperties": false,
                   "properties": {
-                    "source_sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
-                    "grants": { "type": "array", "items": { "$ref": "#/$defs/grant" } }
+                    "source_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-fA-F]{64}$"
+                    },
+                    "grants": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/grant"
+                      }
+                    }
                   }
                 }
               }
@@ -152,15 +540,36 @@
     },
     "grant": {
       "type": "object",
-      "required": ["table_id"],
+      "required": [
+        "table_id"
+      ],
       "additionalProperties": false,
       "description": "The whole of what a custom page may do to one table. There is no wildcard. A table with no grant is invisible to the page.",
       "properties": {
-        "table_id": { "type": "string", "minLength": 1 },
-        "read": { "type": "array", "items": { "$ref": "#/$defs/fieldName" }, "uniqueItems": true },
-        "write": { "type": "array", "items": { "$ref": "#/$defs/fieldName" }, "uniqueItems": true },
-        "create": { "type": "boolean" },
-        "delete": { "type": "boolean" }
+        "table_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "read": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        },
+        "create": {
+          "type": "boolean"
+        },
+        "delete": {
+          "type": "boolean"
+        }
       }
     }
   }

@@ -1,6 +1,8 @@
 //! Scaffoldry Dynamic Engine and Manifest Renderer (Layer 3)
 
 pub mod access;
+pub mod duration;
+pub use duration::*;
 pub mod automation;
 pub mod detect;
 pub mod graph;
@@ -142,6 +144,12 @@ pub enum FieldType {
     LastModifiedBy,
     /// Plain text up to 100,000 characters, rendered with safe Markdown subset.
     LongText,
+    /// Duration stored as whole seconds in a number.
+    Duration {
+        format: DurationFormat,
+    },
+    /// DateTime stored as a UTC instant.
+    DateTime,
 }
 
 impl FieldType {
@@ -184,6 +192,8 @@ impl serde::Serialize for FieldType {
             FieldType::CreatedBy => serializer.serialize_str("CreatedBy"),
             FieldType::LastModifiedBy => serializer.serialize_str("LastModifiedBy"),
             FieldType::LongText => serializer.serialize_str("LongText"),
+            FieldType::Duration { .. } => serializer.serialize_str("Duration"),
+            FieldType::DateTime => serializer.serialize_str("DateTime"),
         }
     }
 }
@@ -222,10 +232,21 @@ impl<'de> serde::Deserialize<'de> for FieldType {
                 "CreatedBy" => Ok(FieldType::CreatedBy),
                 "LastModifiedBy" => Ok(FieldType::LastModifiedBy),
                 "LongText" => Ok(FieldType::LongText),
+                "Duration" => Ok(FieldType::Duration { format: DurationFormat::HMm }),
+                "DateTime" => Ok(FieldType::DateTime),
                 other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
             },
             serde_json::Value::Object(map) => {
-                if let Some(collab) = map.get("Collaborator") {
+                if let Some(dur) = map.get("Duration") {
+                    let format = match dur {
+                        serde_json::Value::String(s) => DurationFormat::parse(s).unwrap_or_default(),
+                        serde_json::Value::Object(sub) => sub.get("format").and_then(serde_json::Value::as_str).and_then(DurationFormat::parse).unwrap_or_default(),
+                        _ => DurationFormat::HMm,
+                    };
+                    Ok(FieldType::Duration { format })
+                } else if map.contains_key("DateTime") {
+                    Ok(FieldType::DateTime)
+                } else if let Some(collab) = map.get("Collaborator") {
                     let allow_multiple = match collab {
                         serde_json::Value::Bool(b) => *b,
                         serde_json::Value::Object(sub) => sub.get("allow_multiple").and_then(serde_json::Value::as_bool).unwrap_or(false),
@@ -398,6 +419,8 @@ pub struct FieldSpec {
     pub rollup_function: Option<String>,
     #[serde(default, deserialize_with = "deserialize_select_options")]
     pub select_options: Vec<SelectOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_format: Option<String>,
     #[serde(default)]
     pub currency_symbol: Option<String>,
     #[serde(default)]
@@ -515,6 +538,7 @@ impl FieldSpec {
             formula_expression: None,
             rollup_function: None,
             select_options: Vec::new(),
+            duration_format: if let FieldType::Duration { format } = field_type { Some(format.as_str().to_string()) } else { None },
             currency_symbol: None,
             precision: None,
             indexed: false,

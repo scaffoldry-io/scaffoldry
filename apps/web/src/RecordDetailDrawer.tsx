@@ -1,3 +1,5 @@
+import { DurationEditor } from "./DurationEditor";
+import { formatDateTime, parseDateTimeInput, getUserTimezone } from "./utils/durationDatetime";
 import React from "react";
 import { AppTable } from "./types";
 import { LongTextEditor } from "./LongTextEditor";
@@ -184,6 +186,52 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
                           }))
                         }
                       />
+                    ) : field.field_type === "Duration" ? (
+                      <DurationEditor
+                        id={`detail-input-${field.name}`}
+                        label={field.label}
+                        value={
+                          typeof activeDetailRecord[field.name] === "number"
+                            ? (activeDetailRecord[field.name] as number)
+                            : null
+                        }
+                        format={field.duration_format || "h:mm"}
+                        onChange={(val) =>
+                          onUpdateRecordField(
+                            activeDetailRecord.id,
+                            field.name,
+                            val
+                          )
+                        }
+                      />
+                    ) : field.field_type === "DateTime" ? (
+                      <div className="space-y-1">
+                        <input
+                          type="datetime-local"
+                          data-testid={`detail-input-${field.name}`}
+                          defaultValue={
+                            activeDetailRecord[field.name]
+                              ? formatDateTime(String(activeDetailRecord[field.name])).replace(" ", "T").slice(0, 16)
+                              : ""
+                          }
+                          onBlur={(e) => {
+                            const val = e.target.value;
+                            if (!val) {
+                              onUpdateRecordField(activeDetailRecord.id, field.name, null);
+                            } else {
+                              const utcInstant = parseDateTimeInput(val);
+                              if (utcInstant) {
+                                onUpdateRecordField(activeDetailRecord.id, field.name, utcInstant);
+                              }
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-white"
+                        />
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Stored as UTC instant</span>
+                          <span className="font-mono">{getUserTimezone()}</span>
+                        </div>
+                      </div>
                     ) : field.field_type === "Checkbox" ? (
                       <div className="pt-1">
                         <input

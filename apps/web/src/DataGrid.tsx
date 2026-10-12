@@ -1,3 +1,4 @@
+import { formatDuration, formatDateTime } from "./utils/durationDatetime";
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   useReactTable,
@@ -74,6 +75,15 @@ function formatDisplayValue(field: FieldSpec, value: unknown, tables?: AppTable[
     const s = String(value ?? "");
     const firstLine = s.split(/\r?\n/)[0] || "";
     return firstLine;
+  }
+  if (field.field_type === "Duration") {
+    if (value === null || value === undefined || value === "") return "—";
+    const num = Number(value);
+    return isNaN(num) ? String(value) : formatDuration(num, field.duration_format);
+  }
+  if (field.field_type === "DateTime") {
+    if (value === null || value === undefined || value === "") return "—";
+    return formatDateTime(String(value));
   }
   if (value === null || value === undefined || value === "") {
     return "—";

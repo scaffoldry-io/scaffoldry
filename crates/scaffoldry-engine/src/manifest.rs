@@ -35,7 +35,7 @@ pub const ROLLUP_FUNCTIONS: [&str; 6] = ["sum", "avg", "min", "max", "count", "c
 /// True for a field type whose value is stored as a number.
 pub fn is_numeric(t: FieldType) -> bool {
     use FieldType::*;
-    matches!(t, Number | Currency | Percent | Rating | Autonumber | Count | Rollup)
+    matches!(t, Number | Currency | Percent | Rating | Autonumber | Count | Rollup | Duration { .. })
 }
 
 /// Things that still validate but should change. A relationship joins by value, and a link joins by
@@ -105,6 +105,13 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
         }
         for f in &table.fields {
             match f.field_type {
+                                FieldType::Duration { .. } => {
+                    if let Some(ref df) = f.duration_format {
+                        if !matches!(df.as_str(), "h:mm" | "h:mm:ss" | "d h" | "days") {
+                            problems.push(format!("table '{}': field '{}' has invalid duration format '{}'", table.id, f.name, df));
+                        }
+                    }
+                }
                 FieldType::Select | FieldType::MultiSelect => {
                     let mut opt_ids = HashSet::new();
                     let mut opt_labels = HashSet::new();
