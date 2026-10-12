@@ -91,7 +91,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 61 | [field-types.md](field-types.md) | 1 | Select options with ids and colors | **COMPLETED** |
 | 62 | [record-history.md](record-history.md) | 4 | The disclosure log | **COMPLETED** |
 | 63 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by | **COMPLETED** |
-| 64 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer |
+| 64 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer | **COMPLETED** |
 | 65 | [field-types.md](field-types.md) | 4 | Duration and date-time |
 | 66 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
 | 67 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |

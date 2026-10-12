@@ -140,6 +140,8 @@ pub enum FieldType {
     CreatedBy,
     /// Set on every user write.
     LastModifiedBy,
+    /// Plain text up to 100,000 characters, rendered with safe Markdown subset.
+    LongText,
 }
 
 impl FieldType {
@@ -181,6 +183,7 @@ impl serde::Serialize for FieldType {
             FieldType::Collaborator { .. } => serializer.serialize_str("Collaborator"),
             FieldType::CreatedBy => serializer.serialize_str("CreatedBy"),
             FieldType::LastModifiedBy => serializer.serialize_str("LastModifiedBy"),
+            FieldType::LongText => serializer.serialize_str("LongText"),
         }
     }
 }
@@ -218,6 +221,7 @@ impl<'de> serde::Deserialize<'de> for FieldType {
                 "Collaborator" => Ok(FieldType::Collaborator { allow_multiple: false }),
                 "CreatedBy" => Ok(FieldType::CreatedBy),
                 "LastModifiedBy" => Ok(FieldType::LastModifiedBy),
+                "LongText" => Ok(FieldType::LongText),
                 other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
             },
             serde_json::Value::Object(map) => {

@@ -70,6 +70,11 @@ function isReadOnlyField(field?: FieldSpec): boolean {
 }
 
 function formatDisplayValue(field: FieldSpec, value: unknown, tables?: AppTable[]): string {
+  if (field.field_type === "LongText") {
+    const s = String(value ?? "");
+    const firstLine = s.split(/\r?\n/)[0] || "";
+    return firstLine;
+  }
   if (value === null || value === undefined || value === "") {
     return "—";
   }

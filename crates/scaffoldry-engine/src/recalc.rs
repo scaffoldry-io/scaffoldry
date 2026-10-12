@@ -97,7 +97,7 @@ pub fn type_changes(old: &AppManifest, new: &AppManifest) -> Vec<TypeChange> {
 }
 
 fn text_like(t: FieldType) -> bool {
-    matches!(t, FieldType::Text | FieldType::Select | FieldType::Email | FieldType::Phone | FieldType::Url)
+    matches!(t, FieldType::Text | FieldType::Select | FieldType::Email | FieldType::Phone | FieldType::Url | FieldType::LongText)
 }
 
 fn number_like(t: FieldType) -> bool {

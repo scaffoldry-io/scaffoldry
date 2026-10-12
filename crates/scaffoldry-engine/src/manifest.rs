@@ -99,6 +99,9 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
             if f.indexed && f.field_type == FieldType::Lookup {
                 problems.push(format!("table '{}': Lookup field '{}' cannot be indexed", table.id, f.name));
             }
+            if f.indexed && f.field_type == FieldType::LongText {
+                problems.push(format!("table '{}': LongText field '{}' cannot be indexed", table.id, f.name));
+            }
         }
         for f in &table.fields {
             match f.field_type {
@@ -225,6 +228,22 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                             problems.push(format!("view '{}' lists the field '{}', which '{tid}' does not have", view.id, f.name));
                         }
                     }
+                    for s in &view.sort_rules {
+                        if let Some(f) = table.fields.iter().find(|x| x.name == s.field_name) {
+                            if f.field_type == FieldType::LongText {
+                                problems.push(format!("view '{}': LongText field '{}' cannot be used for sort", view.id, s.field_name));
+                            }
+                        }
+                    }
+                    if let Some(filters) = &view.filters {
+                        for c in &filters.clauses {
+                            if let Some(f) = table.fields.iter().find(|x| x.name == c.field_name) {
+                                if f.field_type == FieldType::LongText {
+                                    problems.push(format!("view '{}': LongText field '{}' cannot be used for filter", view.id, c.field_name));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -281,7 +300,7 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                 problems.push(format!("table '{}': access rule '{}' names field '{f_name}', which does not exist", table.id, rule.id));
                 continue;
             };
-            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup) {
+            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup | FieldType::LongText) {
                 problems.push(format!("table '{}': access rule '{}' uses non-indexable field '{f_name}'", table.id, rule.id));
             }
         }
@@ -334,7 +353,7 @@ pub fn detect_access_problems(m: &AppManifest) -> Vec<String> {
                 problems.push(format!("rule '{}': field_missing", rule.id));
                 continue;
             };
-            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup) {
+            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup | FieldType::LongText) {
                 problems.push(format!("rule '{}': unsupported_field", rule.id));
             }
         }

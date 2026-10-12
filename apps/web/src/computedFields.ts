@@ -104,6 +104,7 @@ export function computeFieldValue(
 export function getFieldTypeIcon(type: string): string {
   switch (type) {
     case "Text":
+    case "LongText":
       return "🔤";
     case "Number":
       return "🔢";

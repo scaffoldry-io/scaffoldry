@@ -29,7 +29,7 @@
         "Text", "Number", "Date", "Select", "Boolean", "Relation", "Checkbox", "MultiSelect",
         "Currency", "Percent", "Rating", "Email", "Phone", "Url", "Autonumber", "CreatedTime",
         "LastModifiedTime", "Lookup", "Count", "Rollup", "Formula", "Link",
-        "Collaborator", "CreatedBy", "LastModifiedBy"
+        "Collaborator", "CreatedBy", "LastModifiedBy", "LongText"
       ]
     },
     "field": {

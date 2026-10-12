@@ -32,7 +32,7 @@ pub fn index_column(t: FieldType) -> IndexColumn {
         Date | CreatedTime | LastModifiedTime => IndexColumn::Ts,
         // A formula's column follows its result, so this is only the default for a sort on it.
         // A Link is never indexed here. `record_links` holds it.
-        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link | Collaborator { .. } | CreatedBy | LastModifiedBy => IndexColumn::Txt,
+        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link | Collaborator { .. } | CreatedBy | LastModifiedBy | LongText => IndexColumn::Txt,
     }
 }
 
