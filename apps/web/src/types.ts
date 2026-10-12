@@ -62,7 +62,10 @@ export type FieldType =
   | "Lookup"
   | "Count"
   | "Rollup"
-  | "Formula";
+  | "Formula"
+  | "Collaborator"
+  | "CreatedBy"
+  | "LastModifiedBy";
 
 export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
 
@@ -115,6 +118,7 @@ export interface FieldSpec {
   select_options?: (SelectOption | string)[];
   currency_symbol?: string;
   precision?: number;
+  notify_on_assign?: boolean;
 }
 
 export interface AppView {

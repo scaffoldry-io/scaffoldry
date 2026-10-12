@@ -28,7 +28,8 @@
       "enum": [
         "Text", "Number", "Date", "Select", "Boolean", "Relation", "Checkbox", "MultiSelect",
         "Currency", "Percent", "Rating", "Email", "Phone", "Url", "Autonumber", "CreatedTime",
-        "LastModifiedTime", "Lookup", "Count", "Rollup", "Formula", "Link"
+        "LastModifiedTime", "Lookup", "Count", "Rollup", "Formula", "Link",
+        "Collaborator", "CreatedBy", "LastModifiedBy"
       ]
     },
     "field": {
@@ -61,7 +62,8 @@
         "link_cardinality": { "enum": ["One", "Many"], "description": "How many records a Link field holds. Default Many." },
         "link_related_field": { "type": ["string", "null"], "description": "The Link field on the target table that points back." },
         "link_on_delete": { "enum": ["Unlink", "Restrict"], "description": "What deleting a linked record does. Default Unlink." },
-        "computed_via": { "type": ["string", "null"], "description": "A Lookup, Rollup, or Count: the Link field of this table it goes through." }
+        "computed_via": { "type": ["string", "null"], "description": "A Lookup, Rollup, or Count: the Link field of this table it goes through." },
+        "notify_on_assign": { "type": ["boolean", "null"], "description": "Sends the person a notification when added to a record." }
       }
     },
     "table": {

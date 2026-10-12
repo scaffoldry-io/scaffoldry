@@ -379,7 +379,7 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
             op => {
                 let typed = match c.column {
                     IndexColumn::Num => c.value.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map(IndexedValue::Num),
-                    IndexColumn::Txt => Some(IndexedValue::Txt(c.value.chars().take(128).collect())),
+                    IndexColumn::Txt => Some(IndexedValue::Txt(c.value.to_lowercase().chars().take(128).collect())),
                     IndexColumn::Ts => scaffoldry_engine::parse_instant(&c.value).map(IndexedValue::Ts),
                 };
                 let Some(v) = typed.and_then(|t| value_param(params, &t)) else { return "FALSE".to_string() };

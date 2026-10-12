@@ -419,6 +419,24 @@ export const listLinkOptions = (
   return request(`/apps/${appSlug}/tables/${encodeURIComponent(tableId)}/link-options${query ? `?${query}` : ""}`);
 };
 
+export interface CollaboratorOption {
+  id: string;
+  label: string;
+  email?: string;
+  active?: boolean;
+}
+
+/** Search the directory for collaborators who can read the app. */
+export const listCollaborators = (
+  appSlug: string,
+  q?: string,
+): Promise<{ collaborators: CollaboratorOption[] }> => {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  const query = params.toString();
+  return request(`/apps/${appSlug}/collaborators${query ? `?${query}` : ""}`);
+};
+
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {

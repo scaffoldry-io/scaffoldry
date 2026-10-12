@@ -32,7 +32,7 @@ pub fn index_column(t: FieldType) -> IndexColumn {
         Date | CreatedTime | LastModifiedTime => IndexColumn::Ts,
         // A formula's column follows its result, so this is only the default for a sort on it.
         // A Link is never indexed here. `record_links` holds it.
-        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link => IndexColumn::Txt,
+        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link | Collaborator { .. } | CreatedBy | LastModifiedBy => IndexColumn::Txt,
     }
 }
 
@@ -163,6 +163,16 @@ fn text_of(v: &Value) -> Option<String> {
         Value::String(s) => s.to_lowercase(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
+        Value::Object(map) => {
+            if let Some(actor) = map.get("actor").and_then(Value::as_str) {
+                actor.to_lowercase()
+            } else if let Some(importer) = map.get("importer").and_then(Value::as_str) {
+                importer.to_lowercase()
+            } else {
+                let name = map.get("name").and_then(Value::as_str)?;
+                name.to_lowercase()
+            }
+        }
         _ => return None,
     };
     Some(s.chars().take(MAX_TEXT).collect())

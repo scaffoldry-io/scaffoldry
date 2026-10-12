@@ -105,7 +105,7 @@ pub enum RowDensity {
     ExtraTall,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
     Text,
     Number,
@@ -132,13 +132,112 @@ pub enum FieldType {
     Formula,
     /// A list of record ids, or one id, of records in another table. `record_links` indexes it.
     Link,
+    /// Collaborator stores addresses.
+    Collaborator {
+        allow_multiple: bool,
+    },
+    /// Set at creation to the actor and never changes.
+    CreatedBy,
+    /// Set on every user write.
+    LastModifiedBy,
 }
 
 impl FieldType {
     /// True when the value follows from other values, so nobody writes it.
     pub fn is_computed(self) -> bool {
         use FieldType::*;
-        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime)
+        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime | CreatedBy | LastModifiedBy)
+    }
+}
+
+impl serde::Serialize for FieldType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            FieldType::Text => serializer.serialize_str("Text"),
+            FieldType::Number => serializer.serialize_str("Number"),
+            FieldType::Date => serializer.serialize_str("Date"),
+            FieldType::Select => serializer.serialize_str("Select"),
+            FieldType::Boolean => serializer.serialize_str("Boolean"),
+            FieldType::Relation => serializer.serialize_str("Relation"),
+            FieldType::Checkbox => serializer.serialize_str("Checkbox"),
+            FieldType::MultiSelect => serializer.serialize_str("MultiSelect"),
+            FieldType::Currency => serializer.serialize_str("Currency"),
+            FieldType::Percent => serializer.serialize_str("Percent"),
+            FieldType::Rating => serializer.serialize_str("Rating"),
+            FieldType::Email => serializer.serialize_str("Email"),
+            FieldType::Phone => serializer.serialize_str("Phone"),
+            FieldType::Url => serializer.serialize_str("Url"),
+            FieldType::Autonumber => serializer.serialize_str("Autonumber"),
+            FieldType::CreatedTime => serializer.serialize_str("CreatedTime"),
+            FieldType::LastModifiedTime => serializer.serialize_str("LastModifiedTime"),
+            FieldType::Lookup => serializer.serialize_str("Lookup"),
+            FieldType::Count => serializer.serialize_str("Count"),
+            FieldType::Rollup => serializer.serialize_str("Rollup"),
+            FieldType::Formula => serializer.serialize_str("Formula"),
+            FieldType::Link => serializer.serialize_str("Link"),
+            FieldType::Collaborator { .. } => serializer.serialize_str("Collaborator"),
+            FieldType::CreatedBy => serializer.serialize_str("CreatedBy"),
+            FieldType::LastModifiedBy => serializer.serialize_str("LastModifiedBy"),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FieldType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let val = serde_json::Value::deserialize(deserializer)?;
+        match val {
+            serde_json::Value::String(s) => match s.as_str() {
+                "Text" => Ok(FieldType::Text),
+                "Number" => Ok(FieldType::Number),
+                "Date" => Ok(FieldType::Date),
+                "Select" => Ok(FieldType::Select),
+                "Boolean" => Ok(FieldType::Boolean),
+                "Relation" => Ok(FieldType::Relation),
+                "Checkbox" => Ok(FieldType::Checkbox),
+                "MultiSelect" => Ok(FieldType::MultiSelect),
+                "Currency" => Ok(FieldType::Currency),
+                "Percent" => Ok(FieldType::Percent),
+                "Rating" => Ok(FieldType::Rating),
+                "Email" => Ok(FieldType::Email),
+                "Phone" => Ok(FieldType::Phone),
+                "Url" => Ok(FieldType::Url),
+                "Autonumber" => Ok(FieldType::Autonumber),
+                "CreatedTime" => Ok(FieldType::CreatedTime),
+                "LastModifiedTime" => Ok(FieldType::LastModifiedTime),
+                "Lookup" => Ok(FieldType::Lookup),
+                "Count" => Ok(FieldType::Count),
+                "Rollup" => Ok(FieldType::Rollup),
+                "Formula" => Ok(FieldType::Formula),
+                "Link" => Ok(FieldType::Link),
+                "Collaborator" => Ok(FieldType::Collaborator { allow_multiple: false }),
+                "CreatedBy" => Ok(FieldType::CreatedBy),
+                "LastModifiedBy" => Ok(FieldType::LastModifiedBy),
+                other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
+            },
+            serde_json::Value::Object(map) => {
+                if let Some(collab) = map.get("Collaborator") {
+                    let allow_multiple = match collab {
+                        serde_json::Value::Bool(b) => *b,
+                        serde_json::Value::Object(sub) => sub.get("allow_multiple").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                        _ => false,
+                    };
+                    Ok(FieldType::Collaborator { allow_multiple })
+                } else if map.contains_key("CreatedBy") {
+                    Ok(FieldType::CreatedBy)
+                } else if map.contains_key("LastModifiedBy") {
+                    Ok(FieldType::LastModifiedBy)
+                } else {
+                    Err(serde::de::Error::custom("unknown field type object"))
+                }
+            }
+            _ => Err(serde::de::Error::custom("field type must be string or object")),
+        }
     }
 }
 
@@ -318,6 +417,8 @@ pub struct FieldSpec {
     /// A `Lookup`, `Rollup`, or `Count`: the `Link` field of this table it goes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub computed_via: Option<String>,
+    #[serde(default)]
+    pub notify_on_assign: bool,
 }
 
 /// How many records a link field holds.
@@ -419,6 +520,7 @@ impl FieldSpec {
             link_related_field: None,
             link_on_delete: LinkOnDelete::Unlink,
             computed_via: None,
+            notify_on_assign: false,
         }
     }
 }
