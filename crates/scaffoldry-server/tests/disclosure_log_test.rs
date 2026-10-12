@@ -8,7 +8,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
-use scaffoldry_engine::{AppManifest, AppTable, FieldSpec, FieldType};
+use scaffoldry_engine::{AppManifest, AppTable, AppView, FieldSpec, FieldType, SelectOption, SelectOptionColor, ViewType};
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::admin::ADMIN_ROUTES;
 use scaffoldry_server::service::disclosure::{
@@ -62,6 +62,14 @@ impl Drop for Cleanup {
 }
 
 fn manifest(slug: &str) -> AppManifest {
+    let mut status = FieldSpec::simple("status", "Status", FieldType::Select, false, false);
+    status.select_options = vec![
+        SelectOption { id: "opt_a".into(), label: "A".into(), color: SelectOptionColor::Ok, order: 0 },
+        SelectOption { id: "opt_b".into(), label: "B".into(), color: SelectOptionColor::Warn, order: 1 },
+    ];
+    let mut board = AppView::table("board", "Board", ViewType::Kanban, vec![]);
+    board.table_id = Some("students".to_string());
+    board.kanban_column_field = Some("status".to_string());
     AppManifest {
         slug: slug.to_string(),
         title: "Registrar".to_string(),
@@ -82,12 +90,13 @@ fn manifest(slug: &str) -> AppManifest {
                 FieldSpec::simple("name", "Name", FieldType::Text, false, false),
                 FieldSpec::simple("major", "Major", FieldType::Text, false, false),
                 FieldSpec::simple("student_id", "Student ID", FieldType::Text, false, true),
+                status,
             ],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
         }],
         relationships: vec![],
-        views: vec![],
+        views: vec![board],
         ceds_mappings: Default::default(),
         pages: vec![],
         access: Default::default(),
@@ -155,7 +164,8 @@ async fn world() -> World {
         c.execute(
             "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, table_id, created_at) \
              SELECT $1::text || lpad(g::text, 6, '0'), $1::text, \
-                    jsonb_build_object('_table_id', 'students', 'name', 'student-' || g, 'major', 'Biology', 'student_id', 'S' || lpad(g::text, 6, '0')), \
+                    jsonb_build_object('_table_id', 'students', 'name', 'student-' || g, 'major', 'Biology', 'student_id', 'S' || lpad(g::text, 6, '0')) \
+                    || CASE WHEN g <= 30 THEN jsonb_build_object('status', CASE WHEN g % 2 = 0 THEN 'opt_a' ELSE 'opt_b' END) ELSE '{}'::jsonb END, \
                     '{}'::jsonb, false, 'students', TIMESTAMPTZ '2026-01-01 00:00:00+00' + g * interval '1 millisecond' \
              FROM generate_series(1, $2::bigint) g",
             &[&s, &STUDENTS],
@@ -340,6 +350,31 @@ async fn every_way_an_agent_lists_records_is_logged() {
     let log = entries(&w);
     assert_eq!(log.len(), 3, "the MCP tool: {log:?}");
     assert_eq!((log[2].0.as_str(), log[2].2), ("agent_read", 30));
+}
+
+// 2c. The board view puts every record it shows into stages. An agent fetching it reads those records, so
+//     the read is logged for what came back (30 of the 40 are in a stage), and a person's fetch is not.
+#[tokio::test]
+async fn an_agent_fetching_a_board_is_logged_for_the_records_it_receives() {
+    let w = world().await;
+    let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "get_view_data", "arguments": { "app_slug": w.slug, "view_id": "board" } } });
+
+    let (s, body) = send(&w.app, "POST", "/api/v1/mcp", &w.admin, Some(call.clone())).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(entries(&w).is_empty(), "a person fetching the board writes none");
+
+    let (s, body) = send(&w.app, "POST", "/api/v1/mcp", &w.agent, Some(call)).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let log = entries(&w);
+    assert_eq!(log.len(), 1, "{log:?}");
+    let (kind, actor, count, fields, recipient, _, _) = &log[0];
+    assert_eq!((kind.as_str(), actor.as_str(), *count), ("agent_read", ADMIN, 30), "only records in a stage were returned");
+    assert_eq!(fields, &vec!["student_id".to_string()]);
+    assert_eq!(recipient.as_deref(), Some("Registrar bot"));
+    assert_eq!(record_rows(&w), 30);
 }
 
 // 3. An export of 120,000 records sets records_truncated and keeps the count.
