@@ -278,6 +278,7 @@ fn desc_query(slug: &str) -> IndexedQuery {
         limit: 201,
         app_slug: slug.to_string(),
         scope: None,
+        search: None,
     }
 }
 
@@ -406,6 +407,7 @@ async fn a_filter_on_an_indexed_field_returns_the_predicted_rows_without_scannin
         limit: 201,
         app_slug: w.slug.clone(),
         scope: None,
+        search: None,
     };
     let (sql, params) = build_indexed_sql(&query, IndexPhase::All);
     let plan = repo.explain(&sql, &params).unwrap();

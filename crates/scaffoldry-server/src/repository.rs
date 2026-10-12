@@ -17,7 +17,11 @@ use scaffoldry_core::{
 };
 use scaffoldry_engine::AppManifest;
 use serde_json::Value;
-pub use crate::repository_index::{build_indexed_sql, IndexPhase, IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
+pub use crate::repository_index::{
+    build_aggregate_sql, build_indexed_sql, AggregateFunction,
+    AggregateGroupRow, AggregatePlan, AggregateResultRaw, IndexPhase, IndexedClause, IndexedQuery, IndexedSort,
+    IndexedValue,
+};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, sync_channel, Sender};
 
@@ -35,6 +39,7 @@ const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_ap
 const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
 const SCHEMA_0014: &str = include_str!("../../scaffoldry-core/migrations/0014_record_table_id.sql");
 const SCHEMA_0015: &str = include_str!("../../scaffoldry-core/migrations/0015_record_index.sql");
+const SCHEMA_0016: &str = include_str!("../../scaffoldry-core/migrations/0016_record_search.sql");
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
@@ -449,6 +454,8 @@ pub struct RecordQuery {
     pub limit: usize,
     /// Only the records inside this scope.
     pub scope: Option<ScopePlan>,
+    /// Full-text search string.
+    pub search: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -589,6 +596,13 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
             }
         }
     };
+    let search_clause = match &q.search {
+        Some(s) if !s.trim().is_empty() => {
+            let sp = push(&mut params, SqlParam::Text(s.clone()));
+            format!(" AND search @@ plainto_tsquery('simple', ${sp})")
+        }
+        _ => String::new(),
+    };
     let scope = match &q.scope {
         Some(plan) => {
             let (app, table) = (match &params[0] { SqlParam::Text(t) => t.clone(), _ => String::new() }, q.table_id.clone());
@@ -599,7 +613,7 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){after}{scope} \
+         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){search_clause}{after}{scope} \
          ORDER BY {order} LIMIT ${limit}::bigint"
     );
     (sql, params)
@@ -689,7 +703,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 32] = [
+                        let migrations: [(&str, &str); 33] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -703,6 +717,7 @@ impl PostgresRepository {
                             ("0013_platform_settings.sql", SCHEMA_0013),
                             ("0014_record_table_id.sql", SCHEMA_0014),
                             ("0015_record_index.sql", SCHEMA_0015),
+                            ("0016_record_search.sql", SCHEMA_0016),
                             ("0021_positions.sql", SCHEMA_0021),
                             ("0022_record_created_by.sql", SCHEMA_0022),
                             ("0007_record_version.sql", SCHEMA_0007),
@@ -1310,6 +1325,42 @@ impl PostgresRepository {
     }
 
     /// One page that filters or sorts. Use `list_records_page` when there is neither.
+    pub fn aggregate_records(&self, plan: &AggregatePlan) -> Result<AggregateResultRaw, RepositoryError> {
+        let (sql, params) = build_aggregate_sql(plan);
+        let is_group_by = plan.group_by.is_some();
+        self.with_client(move |client| {
+            let boxed = to_sql_params(params);
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+            if is_group_by {
+                let rows = client.query(&sql, &refs)?;
+                let mut groups = Vec::new();
+                for r in rows {
+                    let key: String = r.get(0);
+                    let val: Option<f64> = r.get(1);
+                    groups.push(AggregateGroupRow {
+                        key,
+                        value: val.unwrap_or(0.0),
+                    });
+                }
+                let has_more = groups.len() > 200;
+                groups.truncate(200);
+                Ok(AggregateResultRaw {
+                    value: None,
+                    groups: Some(groups),
+                    has_more,
+                })
+            } else {
+                let row = client.query_one(&sql, &refs)?;
+                let val: Option<f64> = row.get(0);
+                Ok(AggregateResultRaw {
+                    value: val,
+                    groups: None,
+                    has_more: false,
+                })
+            }
+        })
+    }
+
     pub fn query_records(&self, app_slug: &str, query: &RecordQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_record_query(app_slug, query);
         self.with_client(move |client| {

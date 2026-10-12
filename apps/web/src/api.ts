@@ -419,6 +419,45 @@ export const listLinkOptions = (
   return request(`/apps/${appSlug}/tables/${encodeURIComponent(tableId)}/link-options${query ? `?${query}` : ""}`);
 };
 
+export interface AggregateQueryOptions {
+  function: "count" | "sum" | "avg" | "min" | "max";
+  field?: string;
+  filter?: Record<string, unknown>;
+  groupBy?: string;
+}
+
+export interface AggregateGroup {
+  key: string;
+  group: string;
+  value: number;
+  count?: number;
+}
+
+export interface AggregateResult {
+  function: "count" | "sum" | "avg" | "min" | "max";
+  field?: string;
+  group_by?: string;
+  value?: number;
+  count?: number;
+  groups?: AggregateGroup[];
+  has_more?: boolean;
+}
+
+/** Totals and group counts computed in one statement over the record index. */
+export const aggregateRecords = (
+  appSlug: string,
+  tableId: string,
+  options: AggregateQueryOptions,
+): Promise<AggregateResult> => {
+  const params = new URLSearchParams();
+  params.set("function", options.function);
+  if (options.field) params.set("field", options.field);
+  if (options.groupBy) params.set("group_by", options.groupBy);
+  if (options.filter) params.set("filter", JSON.stringify(options.filter));
+  const query = params.toString();
+  return request(`/apps/${appSlug}/tables/${encodeURIComponent(tableId)}/aggregate${query ? `?${query}` : ""}`);
+};
+
 export interface CollaboratorOption {
   id: string;
   label: string;

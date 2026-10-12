@@ -405,6 +405,7 @@ fn the_statement_holds_no_text_the_caller_sent() {
         after: None,
         limit: 10,
         scope: None,
+        search: None,
     };
     let (sql, params) = build_record_query("app", &q);
     assert!(!sql.contains("DROP") && !sql.contains(hostile), "{sql}");

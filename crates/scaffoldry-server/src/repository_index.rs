@@ -298,6 +298,8 @@ pub struct IndexedQuery {
     pub limit: usize,
     /// Only the records inside this scope.
     pub scope: Option<crate::repository::ScopePlan>,
+    /// Full-text search string.
+    pub search: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,6 +407,13 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
         }
     }
 
+    if let Some(s) = &q.search {
+        if !s.trim().is_empty() {
+            let sp = push(&mut params, SqlParam::Text(s.clone()));
+            wheres.push(format!("r.search @@ plainto_tsquery('simple', ${sp})"));
+        }
+    }
+
     // The cursor and the order.
     let order = match (descending, phase) {
         (false, _) | (_, IndexPhase::All) => {
@@ -448,4 +457,184 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
         wheres.join(" AND ")
     );
     (sql, params)
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Aggregates over record_index
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AggregateFunction {
+    #[default]
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone)]
+pub struct AggregatePlan {
+    pub app_slug: String,
+    pub table_id: String,
+    pub function: AggregateFunction,
+    pub field: Option<String>,
+    pub group_by: Option<String>,
+    pub clauses: Vec<IndexedClause>,
+    pub scope: Option<crate::repository::ScopePlan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AggregateGroupRow {
+    pub key: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AggregateResultRaw {
+    pub value: Option<f64>,
+    pub groups: Option<Vec<AggregateGroupRow>>,
+    pub has_more: bool,
+}
+
+fn push_param(params: &mut Vec<SqlParam>, p: SqlParam) -> usize {
+    params.push(p);
+    params.len()
+}
+
+fn agg_value_param(params: &mut Vec<SqlParam>, v: &IndexedValue) -> Option<String> {
+    match v {
+        IndexedValue::Num(n) => {
+            let n = push_param(params, SqlParam::Float(*n));
+            Some(format!("${n}::float8"))
+        }
+        IndexedValue::Txt(t) => {
+            let n = push_param(params, SqlParam::Text(t.clone()));
+            Some(format!("${n}::text"))
+        }
+        IndexedValue::Ts(t) => {
+            let n = push_param(params, SqlParam::Text(t.clone()));
+            Some(format!("${n}::text::timestamptz"))
+        }
+        IndexedValue::Blank => None,
+    }
+}
+
+fn agg_predicate(params: &mut Vec<SqlParam>, alias: &str, c: &IndexedClause) -> String {
+    let cname = column_name(c.column);
+    let blank = format!("({alias}.num IS NULL AND {alias}.txt IS NULL AND {alias}.ts IS NULL)");
+    match c.op {
+        FilterOperator::IsEmpty => blank,
+        FilterOperator::IsNotEmpty => format!("NOT {blank}"),
+        op => {
+            let typed = match c.column {
+                IndexColumn::Num => c.value.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map(IndexedValue::Num),
+                IndexColumn::Txt => Some(IndexedValue::Txt(c.value.to_lowercase().chars().take(128).collect())),
+                IndexColumn::Ts => scaffoldry_engine::parse_instant(&c.value).map(IndexedValue::Ts),
+            };
+            let Some(v) = typed.and_then(|t| agg_value_param(params, &t)) else { return "FALSE".to_string() };
+            match op {
+                FilterOperator::Equals => format!("{alias}.{cname} = {v}"),
+                FilterOperator::NotEquals => format!("{alias}.{cname} IS DISTINCT FROM {v}"),
+                FilterOperator::GreaterThan => format!("{alias}.{cname} > {v}"),
+                FilterOperator::LessThan => format!("{alias}.{cname} < {v}"),
+                _ => "FALSE".to_string(),
+            }
+        }
+    }
+}
+
+pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
+    let mut params = vec![SqlParam::Text(p.app_slug.clone()), SqlParam::Text(p.table_id.clone())];
+
+    if let Some(ref g) = p.group_by {
+        let gp = push_param(&mut params, SqlParam::Text(g.clone()));
+        let mut wheres = vec![format!("g.app_slug = $1 AND g.table_id = $2 AND g.field = ${gp} AND g.ord = 0")];
+        let group_expr = "COALESCE(g.txt, g.num::text, g.ts::text, '')";
+        let mut join = String::new();
+        let agg_expr = match p.function {
+            AggregateFunction::Count => "COUNT(*)".to_string(),
+            fn_type => {
+                let f_name = p.field.as_ref().expect("field required for non-count aggregate");
+                let fn_sql = match fn_type {
+                    AggregateFunction::Sum => "SUM",
+                    AggregateFunction::Avg => "AVG",
+                    AggregateFunction::Min => "MIN",
+                    AggregateFunction::Max => "MAX",
+                    _ => "COUNT",
+                };
+                if f_name == g {
+                    format!("{fn_sql}(g.num)")
+                } else {
+                    let fp = push_param(&mut params, SqlParam::Text(f_name.clone()));
+                    join = format!(" JOIN record_index f ON f.app_slug = $1 AND f.table_id = $2 AND f.record_id = g.record_id AND f.field = ${fp} AND f.ord = 0");
+                    format!("{fn_sql}(f.num)")
+                }
+            }
+        };
+        for c in &p.clauses {
+            if c.field == *g && !c.multi {
+                wheres.push(agg_predicate(&mut params, "g", c));
+            } else {
+                let cf = push_param(&mut params, SqlParam::Text(c.field.clone()));
+                let pred = agg_predicate(&mut params, "fc", c);
+                wheres.push(format!("EXISTS (SELECT 1 FROM record_index fc WHERE fc.app_slug = $1 AND fc.table_id = $2 AND fc.record_id = g.record_id AND fc.field = ${cf} AND {pred})"));
+            }
+        }
+        let scope_clause = match &p.scope {
+            Some(plan) => plan.clause("g.record_id", &p.app_slug, &p.table_id, &mut params),
+            None => String::new(),
+        };
+        let sql = format!(
+            "SELECT {group_expr} AS grp, {agg_expr}::float8 AS val              FROM record_index g{join}              WHERE {}{scope_clause}              GROUP BY {group_expr}              ORDER BY val DESC NULLS LAST              LIMIT 201",
+            wheres.join(" AND ")
+        );
+        (sql, params)
+    } else {
+        let driving_field = match &p.field {
+            Some(f) => f.clone(),
+            None => {
+                p.clauses.first().map(|c| c.field.clone()).unwrap_or_default()
+            }
+        };
+        let fp = push_param(&mut params, SqlParam::Text(driving_field.clone()));
+        let mut wheres = vec![format!("i.app_slug = $1 AND i.table_id = $2 AND i.field = ${fp} AND i.ord = 0")];
+        let agg_expr = match p.function {
+            AggregateFunction::Count => {
+                if p.field.is_some() {
+                    "COUNT(i.num)".to_string()
+                } else {
+                    "COUNT(*)".to_string()
+                }
+            }
+            AggregateFunction::Sum => "SUM(i.num)".to_string(),
+            AggregateFunction::Avg => "AVG(i.num)".to_string(),
+            AggregateFunction::Min => "MIN(i.num)".to_string(),
+            AggregateFunction::Max => "MAX(i.num)".to_string(),
+        };
+        for c in &p.clauses {
+            if c.field == driving_field && !c.multi {
+                wheres.push(agg_predicate(&mut params, "i", c));
+            } else {
+                let cf = push_param(&mut params, SqlParam::Text(c.field.clone()));
+                let pred = agg_predicate(&mut params, "fc", c);
+                wheres.push(format!("EXISTS (SELECT 1 FROM record_index fc WHERE fc.app_slug = $1 AND fc.table_id = $2 AND fc.record_id = i.record_id AND fc.field = ${cf} AND {pred})"));
+            }
+        }
+        let scope_clause = match &p.scope {
+            Some(plan) => plan.clause("i.record_id", &p.app_slug, &p.table_id, &mut params),
+            None => String::new(),
+        };
+        let default_val = match p.function {
+            AggregateFunction::Count | AggregateFunction::Sum => "COALESCE(val, 0.0)",
+            _ => "val",
+        };
+        let sql = format!(
+            "SELECT {default_val} FROM (SELECT {agg_expr}::float8 AS val FROM record_index i WHERE {}{scope_clause}) sub",
+            wheres.join(" AND ")
+        );
+        (sql, params)
+    }
 }
