@@ -97,6 +97,16 @@ Tests.
 8. An unattached upload older than 24 hours is removed by the job.
 9. Boot refuses a missing files directory.
 
+How it works. The migration is `0051_files.sql`, not `0032`, which is taken. Tests 1 to 9 are in `crates/scaffoldry-server/tests/attachments_test.rs`, with a tenth: a record may only attach a file its writer uploaded, or one it already holds.
+
+- **No new dependency.** The upload body is read as a stream through the `HttpBody` that axum re-exports. The only change to `Cargo.toml` is two features of `tokio` that the server already uses: `fs` and `io-util`.
+- **The type is decided by the first 512 bytes** (`files::sniff`): PNG, JPEG, GIF, WebP, PDF, zip (Word, Excel, PowerPoint when the entry names show it), text, and CSV when the first line has a comma and there is a second line. Programs (`MZ` followed by binary, ELF, Mach-O, shebang, Flash, jar) and pages (`<!doctype`, `<html`, `<script`, `<svg`, `<?xml` and similar) are refused as `file_type_blocked` whatever the name or the claimed type. Anything else is `application/octet-stream`.
+- **A body is checked against its `Content-Length` while it streams.** One that runs past it is cut off, and so is one that runs past the limit. The temporary file is removed on every failure. A request with no `Content-Length` is a 400.
+- **The field value** is a list of `{ref_id, name}`. A write replaces each `name` with the stored one. A file attaches only if the writer uploaded it and no record holds it yet, or if this record already holds it in this field. A file a write drops is let go of (`deleted_at`).
+- **Every refusal on download is the same 404**, so a response never says whether a file exists. The record is read through `get_record`, so scope and column rules apply, and the file counts only if its field is still in the redacted record.
+- **A download reads the whole file into memory.** The limit is 50 MB by default and 500 MB at most. Streaming the body from disk is the next step if operators raise the limit. It needs a stream type that axum does not re-export, so it was left out of this phase rather than adding a crate.
+- **The purge job** (`purge_unattached_files`, hourly) deletes uploads older than 24 hours that no record took, then the blobs nothing refers to. An upload that stores the same bytes at the moment a purge removes their last ref can find the blob gone. The window is one statement wide. Phase 4 closes it with a grace period.
+
 ## Phase 2 — scanning
 
 Add the setting `files.scanner`, an object `{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }` or none, and `files.require_scan` (boolean, default false). Both are in the closed settings list. Neither turns a check off. `require_scan` only makes uploads fail when no scanner answers.

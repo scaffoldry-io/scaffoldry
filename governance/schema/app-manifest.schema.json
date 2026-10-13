@@ -122,7 +122,8 @@
             "LastModifiedBy",
             "LongText",
             "Duration",
-            "DateTime"
+            "DateTime",
+            "Attachment"
           ]
         },
         {

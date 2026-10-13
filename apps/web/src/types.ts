@@ -86,7 +86,8 @@ export type FieldType =
   | "LastModifiedBy"
   | "LongText"
   | "Duration"
-  | "DateTime";
+  | "DateTime"
+  | "Attachment";
 
 export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
 

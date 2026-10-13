@@ -52,6 +52,10 @@ pub const AGENT_RELEASE_EXEMPT: &[(&str, &str)] = &[
     ("service/tools.rs::run_get_record", "Returns one record. One record never passes the threshold, so a single read is not logged."),
     ("service/tools.rs::run_update_record", "Reads one record to apply an update and returns the saved record. One record, below the threshold."),
     (
+        "routes/files.rs::download",
+        "Returns one file of one record, not a list. A download from a sensitive field is logged as `file_download` by this function.",
+    ),
+    (
         "routes/trash.rs::list",
         "Returns each deleted record's id and the value of its primary field, not the record. Not logged. Log it if a primary field can be sensitive.",
     ),

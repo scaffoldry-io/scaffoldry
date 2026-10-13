@@ -73,6 +73,10 @@ export function explainError(e: unknown): ExplainedError {
       return { message: e.reason ?? e.message, next: e.remedy ?? ASK_FOR_ACCESS };
     case "too_large":
       return { message: e.message, next: "Narrow the filter." };
+    case "file_too_large":
+      return { message: e.message, next: "Choose a smaller file, or ask an admin to raise the file size limit." };
+    case "file_type_blocked":
+      return { message: e.message, next: "Save it as a PDF, an image, or a plain document, then upload that." };
     default:
       return e.remedy ? { message: e.message, next: e.remedy } : { message: e.message };
   }

@@ -147,6 +147,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         max_concurrent: 1,
         run: purge_jobs,
     },
+    JobKind {
+        name: "purge_unattached_files",
+        title: "Clearing unused uploads",
+        description: "Deletes files that were uploaded and never added to a record within 24 hours.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: purge_unattached_files,
+    },
 ];
 
 #[derive(Debug, Clone)]
@@ -821,6 +829,12 @@ pub fn purge_jobs(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
         }
     }
     ctx.result(serde_json::json!({ "deleted": deleted }))
+}
+
+/// Deletes uploads no record took within a day, and the blobs nothing refers to. It runs on a schedule.
+pub fn purge_unattached_files(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
+    let removed = crate::files::purge_unattached(ctx.repository(), crate::files::UNATTACHED_HOURS).map_err(JobError::Retry)?;
+    ctx.result(serde_json::json!({ "deleted": removed }))
 }
 
 fn finish(client: &mut Client, job: &ClaimedJob, worker: &str, outcome: Result<Value, JobError>, cfg: &JobConfig) {

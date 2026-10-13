@@ -162,9 +162,19 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "The server is not reachable.", next: "Check the connection and try again." },
       ],
       [
+        "file_too_large",
+        new ApiError(413, "That file is 60 MB. The limit is 50 MB.", { code: "file_too_large" }),
+        { message: "That file is 60 MB. The limit is 50 MB.", next: "Choose a smaller file, or ask an admin to raise the file size limit." },
+      ],
+      [
+        "file_type_blocked",
+        new ApiError(400, "Programs and web pages cannot be uploaded.", { code: "file_type_blocked" }),
+        { message: "Programs and web pages cannot be uploaded.", next: "Save it as a PDF, an image, or a plain document, then upload that." },
+      ],
+      [
         "any other code uses the server's sentence and the body's remedy",
-        new ApiError(422, "The file type is blocked", { code: "file_type_blocked", remedy: "Save it as a PDF." }),
-        { message: "The file type is blocked", next: "Save it as a PDF." },
+        new ApiError(422, "The scanner is down", { code: "scanner_unavailable", remedy: "Try again later." }),
+        { message: "The scanner is down", next: "Try again later." },
       ],
     ];
 
