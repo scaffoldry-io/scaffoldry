@@ -137,6 +137,8 @@ fn seed(slug: &str) -> Duration {
         // VACUUM cannot share a transaction, so each is its own statement.
         c.batch_execute("VACUUM ANALYZE dataset_records").expect("vacuum records");
         c.batch_execute("VACUUM ANALYZE record_index").expect("vacuum index");
+        // A table that has been loaded has been through its checkpoints. Without this the first writes pay for the load.
+        c.batch_execute("CHECKPOINT").expect("checkpoint");
     });
     started.elapsed()
 }
