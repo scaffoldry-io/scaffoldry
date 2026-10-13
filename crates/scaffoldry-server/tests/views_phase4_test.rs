@@ -57,6 +57,59 @@ impl Drop for Cleanup {
     }
 }
 
+/// If a test stalls, say what the database is doing instead of waiting for the runner to give up. A test that blocks on the
+/// database cannot be timed out from inside, so a thread watches the clock, prints every statement that is still running with
+/// its generic plan, and ends the process.
+struct Watchdog(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Watchdog {
+    fn arm(what: &'static str, seconds: u64) -> Self {
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = done.clone();
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+            while std::time::Instant::now() < deadline {
+                if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let report = db(|c| {
+                let rows = c
+                    .query(
+                        "SELECT pid, EXTRACT(EPOCH FROM now() - query_start)::int, state, COALESCE(wait_event_type, ''), COALESCE(wait_event, ''), query \
+                         FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend' AND state <> 'idle' ORDER BY query_start",
+                        &[],
+                    )
+                    .unwrap_or_default();
+                let mut out = String::new();
+                for r in rows {
+                    let (pid, secs, state, wt, we, q): (i32, i32, String, String, String, String) = (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4), r.get(5));
+                    out.push_str(&format!("pid {pid}, {secs} s, {state}, waiting on {wt}/{we}:\n{q}\n"));
+                    if q.trim_start().to_uppercase().starts_with("SELECT") || q.trim_start().to_uppercase().starts_with("INSERT") {
+                        match c.query(&format!("EXPLAIN (GENERIC_PLAN) {q}"), &[]) {
+                            Ok(plan) => out.push_str(&plan.iter().map(|p| p.get::<_, String>(0)).collect::<Vec<_>>().join("\n")),
+                            Err(e) => out.push_str(&format!("(no plan: {e})")),
+                        }
+                        out.push('\n');
+                    }
+                }
+                out
+            });
+            // Straight to stderr: `eprintln!` is captured by the test harness, which would print nothing before the exit.
+            let _ = std::io::Write::write_all(&mut std::io::stderr(), format!("WATCHDOG: {what} ran for {seconds} s. The database is running:\n{report}\n").as_bytes());
+            std::process::exit(101);
+        });
+        Watchdog(done)
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 fn indexed(name: &str, t: FieldType) -> FieldSpec {
     let mut f = FieldSpec::simple(name, name, t, false, false);
     f.indexed = true;
@@ -138,14 +191,16 @@ async fn world(rows: i64) -> World {
             &[&s, &rows],
         )
         .expect("records");
-        index_all(c, &s);
+        index_rows(c, &s, None);
         c.batch_execute("ANALYZE dataset_records").unwrap();
         c.batch_execute("ANALYZE record_index").unwrap();
     });
     World { app: build_app_with_state(state.clone()).expect("router"), state, owner: issue_test_token_and_user(OWNER), _cleanup: Cleanup(slug.clone()), slug }
 }
 
-fn index_all(c: &mut postgres::Client, slug: &str) {
+/// The index rows of the app's records: all of them, or only those whose id starts with one of `prefixes`.
+fn index_rows(c: &mut postgres::Client, slug: &str, prefixes: Option<Vec<&str>>) {
+    let like: Vec<String> = prefixes.unwrap_or_else(|| vec![""]).into_iter().map(|p| format!("{p}%")).collect();
     for (field, col, expr) in [
         ("amount", "num", "(data->>'amount')::float8"),
         ("bucket", "num", "(data->>'bucket')::float8"),
@@ -153,8 +208,8 @@ fn index_all(c: &mut postgres::Client, slug: &str) {
         ("due", "ts", "(data->>'due')::timestamptz"),
     ] {
         c.execute(
-            &format!("INSERT INTO record_index (app_slug, table_id, field, record_id, {col}) SELECT app_slug, 't1', '{field}', id, {expr} FROM dataset_records d WHERE app_slug = $1 AND NOT EXISTS (SELECT 1 FROM record_index x WHERE x.record_id = d.id AND x.field = '{field}')"),
-            &[&slug],
+            &format!("INSERT INTO record_index (app_slug, table_id, field, record_id, {col}) SELECT app_slug, 't1', '{field}', id, {expr} FROM dataset_records WHERE app_slug = $1 AND id LIKE ANY($2)"),
+            &[&slug, &like],
         )
         .expect("index");
     }
@@ -198,6 +253,7 @@ fn equals(field: &str, value: &str) -> String {
 // 1. A summary view over 200,000 rows matches a direct aggregate and has 200 groups at most.
 #[tokio::test]
 async fn a_summary_view_over_200000_rows_matches_a_direct_aggregate_and_holds_200_groups_at_most() {
+    let _dog = Watchdog::arm("a_summary_view_over_200000_rows_matches_a_direct_aggregate_and_holds_200_groups_at_most", 240);
     let _turn = LOCK.lock().await;
     let w = world(200_000).await;
     let view = make_view(
@@ -239,6 +295,7 @@ async fn a_summary_view_over_200000_rows_matches_a_direct_aggregate_and_holds_20
 // 2. A date bucket by month in the institution's time zone puts a record in the right month across a boundary.
 #[tokio::test]
 async fn a_date_bucket_by_month_in_the_institutions_zone_puts_a_record_in_the_right_month() {
+    let _dog = Watchdog::arm("a_date_bucket_by_month_in_the_institutions_zone_puts_a_record_in_the_right_month", 120);
     let w = world(0).await;
     w.state.settings.write().unwrap().insert("platform.timezone".to_string(), json!("America/New_York"));
     let s = w.slug.clone();
@@ -257,7 +314,7 @@ async fn a_date_bucket_by_month_in_the_institutions_zone_puts_a_record_in_the_ri
             )
             .unwrap();
         }
-        index_all(c, &s);
+        index_rows(c, &s, Some(vec!["b-a-", "b-b-", "b-c-", "b-d-", "b-e-"]));
     });
     let keys = |v: &Value| -> Vec<(String, f64)> {
         let mut out: Vec<(String, f64)> = v["groups"].as_array().unwrap().iter().map(|g| (g["key"].as_str().unwrap().to_string(), g["value"].as_f64().unwrap())).collect();
@@ -291,6 +348,7 @@ async fn a_date_bucket_by_month_in_the_institutions_zone_puts_a_record_in_the_ri
 // 3. count_distinct, and a second group_by.
 #[tokio::test]
 async fn count_distinct_and_a_second_group_by_agree_with_the_rows() {
+    let _dog = Watchdog::arm("count_distinct_and_a_second_group_by_agree_with_the_rows", 120);
     let w = world(1_000).await;
     let (s, v) = aggregate(&w, "function=count_distinct&field=status").await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -317,6 +375,7 @@ async fn count_distinct_and_a_second_group_by_agree_with_the_rows() {
 // 4. A summary over a field the person cannot see is refused, and a summary needs a group.
 #[tokio::test]
 async fn a_summary_view_needs_a_group_and_an_aggregate_of_a_field_that_exists() {
+    let _dog = Watchdog::arm("a_summary_view_needs_a_group_and_an_aggregate_of_a_field_that_exists", 120);
     let w = world(10).await;
     for (what, config) in [
         ("no group", json!({ "aggregations": [{ "fn": "count" }] })),
