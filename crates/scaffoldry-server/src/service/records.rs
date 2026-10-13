@@ -220,6 +220,116 @@ fn validate_collaborators(
     Ok(())
 }
 
+/// The attachment fields a write sets: each field, with the ids of the files it lists.
+type Attachments = Vec<(String, Vec<uuid::Uuid>)>;
+
+/// Checks every attachment field in a write. A value is a list of `{ref_id, name}`. Each file must exist in this app,
+/// must not have been let go of, and must be one the writer uploaded and no record holds yet, or one this record
+/// already holds. The names are replaced by the stored ones, so a client cannot rename a file by writing the record.
+fn validate_attachments(
+    caller: &AuthUser,
+    app_slug: &str,
+    table_id: &str,
+    record_id: Option<&str>,
+    data: &mut Value,
+    state: &SharedState,
+) -> Result<Attachments, ServiceError> {
+    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
+    let mut out: Attachments = Vec::new();
+    for field in fields.iter().filter(|f| matches!(f.field_type, FieldType::Attachment { .. })) {
+        let FieldType::Attachment { allow_multiple } = field.field_type else { continue };
+        let Some(val) = data.get(&field.name).cloned() else { continue };
+        let bad = |why: &str| ServiceError::Invalid {
+            message: format!("'{}': {why}", field.label),
+            fields: std::collections::BTreeMap::from([(field.name.clone(), why.to_string())]),
+        };
+        let items = match val {
+            Value::Null => Vec::new(),
+            Value::Array(items) => items,
+            _ => return Err(bad("must be a list of files")),
+        };
+        if !allow_multiple && items.len() > 1 {
+            return Err(bad("holds one file"));
+        }
+        let mut ids: Vec<uuid::Uuid> = Vec::new();
+        for item in &items {
+            let id = item
+                .get("ref_id")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse::<uuid::Uuid>().ok())
+                .ok_or_else(|| bad("each file needs a ref_id from an upload"))?;
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let refs = if ids.is_empty() {
+            Vec::new()
+        } else {
+            let repo = state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Files need PostgreSQL".to_string()))?;
+            repo.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))?
+        };
+        let mut clean: Vec<Value> = Vec::new();
+        for id in &ids {
+            let file = refs.iter().find(|r| r.id == *id).filter(|r| !r.deleted).ok_or_else(|| bad("a file was not found"))?;
+            if file.scan_state == "pending" {
+                return Err(bad("a file is still being scanned"));
+            }
+            let held_here = record_id.is_some() && file.record_id.as_deref() == record_id && file.field.as_deref() == Some(field.name.as_str());
+            let free = !file.attached && file.uploaded_by == caller.eppn;
+            if !held_here && !free {
+                return Err(bad("a file is not yours to attach"));
+            }
+            clean.push(json!({ "ref_id": file.id, "name": file.name, "size": file.size, "media_type": file.media_type }));
+        }
+        if let Some(map) = data.as_object_mut() {
+            map.insert(field.name.clone(), Value::Array(clean));
+        }
+        out.push((field.name.clone(), ids));
+    }
+    Ok(out)
+}
+
+/// The files a record holds in the attachment fields the caller may read, with their size, type and scan state, and
+/// the names of those fields. A field the caller may not read is not named.
+pub fn record_files(caller: &AuthUser, app_slug: &str, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    let record = get_record(caller, app_slug, id, state)?;
+    let table = record.data.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string();
+    let (fields, canonical) = table_fields_lenient(app_slug, &table, state);
+    let hidden = hidden_fields(caller, app_slug, &canonical, &fields, state);
+    let names: Vec<String> = fields
+        .iter()
+        .filter(|f| matches!(f.field_type, FieldType::Attachment { .. }) && !hidden.contains(&f.name))
+        .map(|f| f.name.clone())
+        .collect();
+    let mut ids: Vec<uuid::Uuid> = Vec::new();
+    for name in &names {
+        let listed = record.data.get(name).and_then(Value::as_array).into_iter().flatten();
+        ids.extend(listed.filter_map(|i| i.get("ref_id").and_then(Value::as_str).and_then(|s| s.parse::<uuid::Uuid>().ok())));
+    }
+    let refs = match state.repository.as_deref() {
+        Some(repo) if !ids.is_empty() => repo.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))?,
+        _ => Vec::new(),
+    };
+    let files: Vec<Value> = refs
+        .iter()
+        .filter(|r| !r.deleted && r.record_id.as_deref() == Some(id))
+        .filter_map(|r| {
+            let field = r.field.as_ref().filter(|f| names.contains(f))?;
+            Some(json!({ "ref_id": r.id, "field": field, "name": r.name, "size": r.size, "media_type": r.media_type, "scan_state": r.scan_state }))
+        })
+        .collect();
+    Ok(json!({ "fields": names, "files": files }))
+}
+
+/// Ties the files a write listed to the record, and lets go of the ones it dropped.
+fn attach_attachments(app_slug: &str, table_id: &str, record_id: &str, attachments: &Attachments, state: &SharedState) -> Result<(), ServiceError> {
+    let Some(repo) = state.repository.as_deref() else { return Ok(()) };
+    for (field, ids) in attachments {
+        repo.attach_file_refs(app_slug, table_id, record_id, field, ids).map_err(|e| ServiceError::Internal(format!("Files could not be attached: {e}")))?;
+    }
+    Ok(())
+}
+
 fn validate_and_normalize_durations_and_datetimes(
     app_slug: &str,
     table: &str,
@@ -432,6 +542,7 @@ pub fn create_record(
     validate_collaborators(app_slug, &table, &submitted.data, state)?;
     validate_long_text(app_slug, &table, &submitted.data, state)?;
     validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut submitted.data, state)?;
+    let attachments = validate_attachments(caller, app_slug, &table, None, &mut submitted.data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
         return Err(outside_scope());
     }
@@ -463,6 +574,7 @@ pub fn create_record(
     state
         .insert_record(&record, &ctx)
         .map_err(|e| ServiceError::Internal(format!("Failed to store the record: {e}")))?;
+    attach_attachments(app_slug, &table, &record.id, &attachments, state)?;
 
     let mut record_val = record.data.clone();
     if let Some(map) = record_val.as_object_mut() {
@@ -599,6 +711,7 @@ pub fn update_record(
     validate_collaborators(app_slug, &table, &new_data, state)?;
     validate_long_text(app_slug, &table, &new_data, state)?;
     validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut new_data, state)?;
+    let attachments = validate_attachments(caller, app_slug, &table, Some(id), &mut new_data, state)?;
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }
@@ -635,6 +748,7 @@ pub fn update_record(
         }
         _ => return Err(ServiceError::NotFound(format!("Record '{id}' not found"))),
     };
+    attach_attachments(app_slug, &table, id, &attachments, state)?;
 
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,

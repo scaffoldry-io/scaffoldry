@@ -302,6 +302,29 @@ A summary is a view of `kind: summary` with `group_by` (one or two fields) and `
 - **A row of a summary** opens the grid on its group in an unsaved view whose filter is in the address (`?unsaved=`). Nothing is written to the server.
 - **A chart over a field the person cannot see is not offered.** The schema the server sends leaves a hidden field out, and the aggregate route refuses a hidden field in a group, a measure or a filter.
 
+#### 6.1.6 Attachments (Phase 1)
+
+A file is kept outside the record. The record holds a list of `{ref_id, name}` in an `Attachment` field. The bytes sit on disk at `$SCAFFOLDRY_FILES_DIR/aa/bb/{sha256}`, so the same bytes uploaded twice are one blob and two refs (`files`, `file_refs`, migration `0051`).
+
+- **Upload** (`POST /apps/{slug}/files`) needs write access. The body streams to a temporary name while it is hashed, is stopped at `files.max_mb` (default 50, at most 500), and moves to its hash name once the hash is known. The app's total is held to `files.app_quota_mb` (default 5000).
+- **The type comes from the bytes.** What the client says is never read. Programs, scripts and pages are refused as `file_type_blocked`, by their first bytes or their name (`.exe`, `.html`, `.svg` and the like). Names are cleaned of paths and odd characters.
+- **Download** (`GET /apps/{slug}/records/{id}/files/{ref_id}`) goes through the same record and field checks as a read. Any refusal is one 404. Only PNG, JPEG, GIF and WebP are shown inline. Everything else is `Content-Disposition: attachment`. Every response carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, no-store`.
+- **A download from a sensitive field** writes a `file_download` row to the disclosure log.
+- **An upload no record takes** is removed after 24 hours by the `purge_unattached_files` job. A server with `SCAFFOLDRY_FILES_DIR` set to a missing or read-only directory does not start. With it unset, uploads are off.
+
+#### 6.1.7 Scanning (Attachments Phase 2)
+
+With `files.scanner` set (`{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }`), every upload starts `pending` and one `scan_file` job sends each waiting file to the daemon over its socket. The client is written by hand over `std` (`scan.rs`). A daemon that does not answer in 30 seconds gives `error`.
+
+- **A pending file cannot be attached or downloaded.** `clean`, `error` and `skipped` files can. With no scanner a file is `skipped`, and the Overview says so in a Banner.
+- **An infected file** is removed from disk, every upload of the same bytes is marked deleted, and a `FileInfected` ledger entry names the hash, the signature and the uploader.
+- **`files.require_scan`** makes an upload fail with `scanner_unavailable` (503) when no scanner answers. It never turns a check off.
+- **The Overview** shows whether a scanner is set, whether it answers, the last result, and how many files are in `error` or `skipped`.
+
+#### 6.1.8 Attachments in the app (Phase 3)
+
+A record stores `{ref_id, name, size, media_type}` for each file, so a grid chip shows a name and a size with no second request. `GET /apps/{slug}/records/{id}/files` adds the scan state and names the attachment fields the person may read. The record drawer's editor (`ui/Attachments.tsx`) has a drop target and a `Choose files` button that both work from the keyboard, a list with name, size, type and scan state as text, `Remove`, and a download. Uploads show text and a progress bar with `Cancel`, and an error shows the server's specific message through `explainError`. A field the person may not read leaves no label and no control.
+
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
 In legacy low-code tools, departmental apps become unmaintained legacy liabilities. In Scaffoldry, apps are maintained as version-controlled repositories:

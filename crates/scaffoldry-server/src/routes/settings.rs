@@ -25,6 +25,10 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "sensitivity.categories",
     "sensitivity.detectors",
     "platform.timezone",
+    "files.max_mb",
+    "files.app_quota_mb",
+    "files.scanner",
+    "files.require_scan",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -48,7 +52,11 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "tokens.max_days" | "process.stale_days" => {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
-        "tokens.agent_enabled" => value.is_boolean(),
+        "tokens.agent_enabled" | "files.require_scan" => value.is_boolean(),
+        // No scanner is null. Otherwise `{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }`.
+        "files.scanner" => value.is_null() || crate::scan::Scanner::from_setting(Some(value)).is_some(),
+        "files.max_mb" => value.as_i64().is_some_and(|n| (1..=crate::files::MAX_MAX_MB as i64).contains(&n)),
+        "files.app_quota_mb" => value.as_i64().is_some_and(|n| (1..=10_000_000).contains(&n)),
         "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }

@@ -1,6 +1,6 @@
 //! Scaffoldry API Server Daemon Entrypoint
 
-use scaffoldry_server::{build_app_with_state, jobs, service, state::ServerState};
+use scaffoldry_server::{build_app_with_state, files, jobs, service, state::ServerState};
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -33,6 +33,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("Boot setup token created.");
     }
 
+    // A files directory that is missing or read-only stops the server here, not on the first upload.
+    match files::open_dir() {
+        Ok(Some(dir)) => println!("Files are kept in {}.", dir.display()),
+        Ok(None) => println!("SCAFFOLDRY_FILES_DIR is not set. Uploads are off."),
+        Err(e) => return Err(e.into()),
+    }
+
     let port: u16 = env::var("PORT")
         .unwrap_or_else(|_| "8080".to_string())
         .parse()
@@ -47,6 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Some(repo) if !jobs::JOB_KINDS.is_empty() => {
             // Finished jobs are cleared once a day.
             jobs::register_schedule(repo, "purge_jobs", 24 * 60 * 60)?;
+            // Uploads that no record took are cleared every hour.
+            jobs::register_schedule(repo, "purge_unattached_files", 60 * 60)?;
+            // A safety net for uploads whose scan job could not be queued.
+            jobs::register_schedule(repo, "scan_file", 10 * 60)?;
             Some(jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?)
         }
         _ => None,

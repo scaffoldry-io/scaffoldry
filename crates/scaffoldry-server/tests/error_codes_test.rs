@@ -39,6 +39,9 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::PositionFull("Full".into()), "position_full", StatusCode::CONFLICT),
         (ServiceError::StaleVersion { message: "Stale".into(), version: 4 }, "version_conflict", StatusCode::CONFLICT),
         (ServiceError::TooLarge("Big".into()), "too_large", StatusCode::PAYLOAD_TOO_LARGE),
+        (ServiceError::FileTooLarge("Too big".into()), "file_too_large", StatusCode::PAYLOAD_TOO_LARGE),
+        (ServiceError::FileTypeBlocked("Blocked".into()), "file_type_blocked", StatusCode::BAD_REQUEST),
+        (ServiceError::ScannerUnavailable("No scanner".into()), "scanner_unavailable", StatusCode::SERVICE_UNAVAILABLE),
         (ServiceError::IndexBuilding("Preparing".into()), "index_building", StatusCode::CONFLICT),
         (ServiceError::Calculating("Calculating".into()), "calculating", StatusCode::CONFLICT),
         (ServiceError::QuotaExceeded("Busy".into()), "quota_exceeded", StatusCode::TOO_MANY_REQUESTS),
@@ -69,6 +72,9 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::PositionFull(_)
             | ServiceError::StaleVersion { .. }
             | ServiceError::TooLarge(_)
+            | ServiceError::FileTooLarge(_)
+            | ServiceError::FileTypeBlocked(_)
+            | ServiceError::ScannerUnavailable(_)
             | ServiceError::IndexBuilding(_)
             | ServiceError::Calculating(_)
             | ServiceError::ViewAsReadOnly(_)

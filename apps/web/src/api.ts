@@ -33,6 +33,13 @@ export interface AdminOverviewData {
     oldest_queued_age_secs: number | null;
     failed_last_24h: number;
   };
+  files?: {
+    scanner: { configured: boolean; reachable: boolean; last_result: string | null };
+    error: number;
+    skipped: number;
+    pending: number;
+    infected: number;
+  };
 }
 
 export interface ProposalCheck {
@@ -398,6 +405,89 @@ export const listTrash = (appSlug: string, cursor?: string): Promise<{ entries: 
 /** Brings back one record, or the whole batch when given a delete batch id. */
 export const restoreTrash = (appSlug: string, what: string): Promise<{ restored: number; batch_id: string }> =>
   request(`/apps/${appSlug}/trash/${encodeURIComponent(what)}/restore`, { method: "POST", body: JSON.stringify({}) });
+
+/** A file a record holds in an attachment field, as the record stores it. */
+export interface StoredFile {
+  ref_id: string;
+  name: string;
+  size: number;
+  media_type: string;
+}
+
+/** A file as the record's file list reports it, with its scan state. */
+export interface RecordFile extends StoredFile {
+  field: string;
+  scan_state: "pending" | "clean" | "infected" | "error" | "skipped" | string;
+}
+
+/** The files of a record. `fields` names the attachment fields the person may read, and no others. */
+export interface RecordFiles {
+  fields: string[];
+  files: RecordFile[];
+}
+
+export interface UploadedFile extends StoredFile {
+  scan_state: string;
+}
+
+export const listRecordFiles = (appSlug: string, recordId: string): Promise<RecordFiles> =>
+  request(`/apps/${appSlug}/records/${encodeURIComponent(recordId)}/files`);
+
+/** Downloads a file through the record and field checks. The bytes come back as a Blob. */
+export const fetchRecordFile = async (appSlug: string, recordId: string, refId: string): Promise<Blob> => {
+  const token = getAuthToken();
+  let response: Response;
+  try {
+    response = await fetch(`${getBaseUrl()}/apps/${appSlug}/records/${encodeURIComponent(recordId)}/files/${encodeURIComponent(refId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch (e) {
+    throw new ApiError(0, e instanceof Error ? e.message : "The server is not reachable.");
+  }
+  if (!response.ok) {
+    let details: any = null;
+    try {
+      details = await response.json();
+    } catch {
+      // Not JSON.
+    }
+    throw new ApiError(response.status, details?.error ?? `HTTP ${response.status}`, details);
+  }
+  return response.blob();
+};
+
+export interface UploadOptions {
+  onProgress?: (sent: number, total: number) => void;
+  signal?: AbortSignal;
+}
+
+/** Uploads one file. It uses XMLHttpRequest because `fetch` reports no upload progress. */
+export const uploadRecordFile = (appSlug: string, file: File, opts: UploadOptions = {}): Promise<UploadedFile> =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${getBaseUrl()}/apps/${appSlug}/files`);
+    const token = getAuthToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    // A header holds Latin-1 only, so the name travels percent-encoded.
+    xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      let body: any = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // Not JSON.
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && body) resolve(body as UploadedFile);
+      else reject(new ApiError(xhr.status, body?.error ?? `HTTP ${xhr.status}`, body));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "The server is not reachable."));
+    xhr.onabort = () => reject(new DOMException("The upload was cancelled.", "AbortError"));
+    opts.signal?.addEventListener("abort", () => xhr.abort());
+    xhr.send(file);
+  });
 
 export interface LinkOption {
   id: string;
