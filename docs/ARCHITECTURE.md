@@ -268,11 +268,29 @@ The server does the work. The browser draws what it is sent and never sorts, fil
 
 A view with a sort on an indexed field opens at any row, with the same row scope and column rules as every other read: `GET /apps/{slug}/views/{id}/data?offset=&limit=`, `last=true`, and `count=exact`.
 
-- **Jumps use anchors.** Skipping 500,000 rows with `OFFSET` over 1,000,000 took 3.0 s, and the best form without anchors took 0.4 s and grew with depth (`docs/plans/views.md` has the plans). A `build_anchors` job samples the sort key of every 1,000th row into `view_anchors`. A jump starts at the nearest anchor and skips fewer than 1,000 rows, in about 0.2 s. Until the anchors exist a deep jump still answers, by skipping on the index, and it asks for them. A window may start at row 1,000,000 at most.
+- **Jumps use anchors.** Skipping 500,000 rows with `OFFSET` over 1,000,000 took 3.0 s, and the best form without anchors took 0.4 s and grew with depth (`docs/plans/views.md` has the plans). A `build_anchors` job samples the sort key of every 1,000th row into `view_anchors`. A jump starts at the nearest anchor and skips fewer than 1,000 rows, in about 30 ms. Until the anchors exist a deep jump still answers, by skipping on the index, and it asks for them. A window may start at row 1,000,000 at most.
 - **The order is a total order.** An ascending sort reads the key up with blanks last, then the record id. A descending sort is exactly that reversed. So the last page is the same query reversed, and the rows are flipped back.
 - **Counts say when they gave up.** `count=exact` runs under the count timeout (two seconds). If it runs out, a count capped at 250,000 runs, and the answer is `{ "at_least": 250000 }`, which the screen shows as `Over 250,000 records`. If that also runs out, the answer is `{ "at_least": 0 }`.
 - **A person with a row scope** gets windows and counts over their own scope only. They never use anchors, because their positions are not the table's.
 - **The grid** (`VirtualGrid`, using `@tanstack/react-virtual`) draws the rows in view and a buffer, asks for windows of 200, shows skeleton rows until one arrives, and numbers its rows with `aria-rowcount` and `aria-rowindex`. Browsers stop honoring the height of a scroll area somewhere between 17 and 33 million pixels, and a million rows of 32 pixels is 32 million, so the scroll area is kept to 10 million pixels and the grid keeps its own offset in the list's pixels.
+
+#### 6.1.4 The Measured Size (Row Scale Phase 6)
+
+One table of **1,000,000 rows of thirty fields, five of them indexed,** was measured through the routes, twenty runs of each operation, release build, one PostgreSQL 16 server. CI runs the same test (`million_rows`, `cargo test --release -- --ignored million_rows`) and fails if the slowest of twenty passes its limit or a read scans the records.
+
+| Operation | Median | Slowest | Limit |
+| --- | --- | --- | --- |
+| First page, default order | 13.2 ms | 19.3 ms | 100 ms |
+| A page by cursor near the end | 11.1 ms | 12.5 ms | 100 ms |
+| Sort by an indexed number, a page near the end | 13.4 ms | 21.4 ms | 200 ms |
+| Indexed range filter, 200 of 1,000 matches | 18.6 ms | 20.6 ms | 200 ms |
+| `sum` over the whole table | 388.7 ms | 452.4 ms | 1,500 ms |
+| `count` grouped by a five-value field | 1,007.7 ms | 1,115.7 ms | 1,500 ms |
+| Search for a word in ten rows | 9.3 ms | 12.5 ms | 200 ms |
+| Create one record, five indexed fields | 14.4 ms | 22.2 ms | 50 ms |
+| Update one indexed field | 14.7 ms | 20.2 ms | 50 ms |
+
+The next limit is one PostgreSQL server. The totals are the slowest rows because they read every value of a field, so they grow with the table: a total reads the index, never the records. Nothing was measured above a million rows.
 
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
