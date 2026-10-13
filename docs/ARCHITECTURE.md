@@ -292,6 +292,16 @@ One table of **1,000,000 rows of thirty fields, five of them indexed,** was meas
 
 The next limit is one PostgreSQL server. The totals are the slowest rows because they read every value of a field, so they grow with the table: a total reads the index, never the records. Nothing was measured above a million rows.
 
+#### 6.1.5 Summaries and Charts (Phase 4)
+
+A summary is a view of `kind: summary` with `group_by` (one or two fields) and `aggregations` (`{ field, fn }`, `fn` one of `count`, `sum`, `avg`, `min`, `max`, `count_distinct`). Running it (`GET /apps/{slug}/views/{id}/data`) returns `summary: { columns, groups, has_more }`: a read-only table of at most 200 groups, ordered by key, with a flag when there are more. It releases totals and never records.
+
+- **Each measure is one call to the aggregate route**, ordered by key so every column has the same groups, and the columns are put together by key. The totals and the groups are computed in PostgreSQL over the index. Nothing is counted in Rust.
+- **The aggregate route** gains `bucket` (`day`, `week`, `month`, `quarter`, `year`) for a date `group_by`, `group_by2` for a second group, and `count_distinct` for groups. A bucket is cut in `platform.timezone`, so a record at 23:30 on 31 March in New York is in March, not April. A week opens on Monday and a bucket's key is the date it opens on.
+- **Charts** are SVG written by hand in `apps/web/src/ui/charts/` with no library: bar (grouped or stacked), line and area, pie and donut (12 slices at most, the rest as `Other`), and a stat with a comparison. Each has axis labels and ticks, direct value labels where there is room, a legend as text, a pattern as well as a color for each series, and a `View as table` button that shows the exact data. Points are reachable by keyboard, and a live region says where the arrow keys landed (`March: 42 applications`). A stat says the difference in words (`Up 12 from 30 last term (40%)`).
+- **A row of a summary** opens the grid on its group in an unsaved view whose filter is in the address (`?unsaved=`). Nothing is written to the server.
+- **A chart over a field the person cannot see is not offered.** The schema the server sends leaves a hidden field out, and the aggregate route refuses a hidden field in a group, a measure or a filter.
+
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
 In legacy low-code tools, departmental apps become unmaintained legacy liabilities. In Scaffoldry, apps are maintained as version-controlled repositories:
