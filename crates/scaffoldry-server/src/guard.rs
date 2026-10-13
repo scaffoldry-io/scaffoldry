@@ -57,12 +57,57 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
         let _ = state.update_token_last_used(&hash, now);
     }
 
-    resolve_user(&row.eppn, state)
+    let mut user = resolve_user(&row.eppn, state)?;
+    if row.kind == "viewas" {
+        // The viewer must still resolve. Rights are the target's intersected with theirs.
+        let viewer = row.original_admin.as_deref().and_then(|a| resolve_user(a, state))?;
+        user.view_as_by = Some(Box::new(viewer));
+    }
+    Some(user)
 }
 
-/// How this request reached the server: an agent token or a person, and the batch the caller
-/// named. A bad batch header is refused, not ignored, so a typo cannot split a paste in two.
-pub fn origin(state: &SharedState, headers: &HeaderMap) -> Result<crate::service::history::Origin, ServiceError> {
+/// The stored `viewas` token behind this request, if that is what it carries.
+pub fn view_as_token(state: &SharedState, headers: &HeaderMap) -> Option<crate::state::ApiToken> {
+    let row = state.get_api_token(&hash_token(bearer_token(headers)?))?;
+    (row.kind == "viewas").then_some(row)
+}
+
+/// What a view-as session may reach: reads in its own app, the way out, and the tool endpoint
+/// (where each tool is checked on its own). Everything else is refused before a handler runs.
+fn view_as_gate(row: &crate::state::ApiToken, method: &axum::http::Method, path: &str) -> Option<ServiceError> {
+    use axum::http::Method;
+    if method == Method::POST && matches!(path, "/api/v1/auth/stop-view-as" | "/api/v1/mcp" | "/api/mcp") {
+        return None;
+    }
+    if method != Method::GET && method != Method::HEAD {
+        return Some(ServiceError::ViewAsReadOnly("You are viewing as someone else. This view is read-only.".to_string()));
+    }
+    if path.starts_with("/api/v1/auth/") {
+        return None;
+    }
+    let slug = path.split_once("/apps/").and_then(|(_, rest)| rest.split('/').next());
+    match (slug, row.app_slug.as_deref()) {
+        (Some(asked), Some(allowed)) if asked == allowed => None,
+        _ => Some(ServiceError::forbidden("This view reaches one app only. Exit it to open anything else.")),
+    }
+}
+
+/// The same limits for a tool call: it must read only, and name the app being viewed.
+pub fn view_as_tool_gate(row: &crate::state::ApiToken, name: &str, args: &serde_json::Value) -> Result<(), ServiceError> {
+    if let Some(tool) = crate::service::tools::TOOLS.iter().find(|t| t.name == name) {
+        if !tool.read_only {
+            return Err(ServiceError::ViewAsReadOnly("You are viewing as someone else. This view is read-only.".to_string()));
+        }
+    }
+    if args.get("app_slug").and_then(serde_json::Value::as_str) != row.app_slug.as_deref() {
+        return Err(ServiceError::forbidden("This view reaches one app only. Exit it to open anything else."));
+    }
+    Ok(())
+}
+
+/// Whether this request carries an agent token, and its label. A read has no batch, so a bad batch
+/// header cannot hide the agent: this never refuses.
+pub fn read_origin(state: &SharedState, headers: &HeaderMap) -> crate::service::history::Origin {
     use crate::repository::ActorKind;
     let mut origin = crate::service::history::Origin::user();
     if let Some(row) = bearer_token(headers).and_then(|t| state.get_api_token(&hash_token(t))) {
@@ -71,6 +116,13 @@ pub fn origin(state: &SharedState, headers: &HeaderMap) -> Result<crate::service
             origin.token_label = Some(row.label);
         }
     }
+    origin
+}
+
+/// How this request reached the server: an agent token or a person, and the batch the caller
+/// named. A bad batch header is refused, not ignored, so a typo cannot split a paste in two.
+pub fn origin(state: &SharedState, headers: &HeaderMap) -> Result<crate::service::history::Origin, ServiceError> {
+    let mut origin = read_origin(state, headers);
     if let Some(value) = headers.get("x-scaffoldry-batch") {
         let batch = value
             .to_str()
@@ -105,6 +157,11 @@ pub async fn require_session(
     }
     match session_user(&state, req.headers()) {
         Some(user) => {
+            if let Some(row) = view_as_token(&state, req.headers()) {
+                if let Some(refusal) = view_as_gate(&row, req.method(), req.uri().path()) {
+                    return refusal.into_response();
+                }
+            }
             req.extensions_mut().insert(user);
             next.run(req).await
         }

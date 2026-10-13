@@ -18,6 +18,7 @@ async fn reset_test_db() {
                 TRUNCATE TABLE organizations CASCADE;
                 TRUNCATE TABLE workspaces CASCADE;
                 TRUNCATE TABLE app_manifests CASCADE;
+                TRUNCATE TABLE app_views CASCADE;
                 TRUNCATE TABLE dataset_records CASCADE;
                 TRUNCATE TABLE published_datasets CASCADE;
                 TRUNCATE TABLE dataset_relationships CASCADE;
@@ -1792,6 +1793,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         relationships: vec![],
         views: vec![],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: Default::default(),
     };
     state.engine.write().unwrap().register_manifest(manifest).unwrap();

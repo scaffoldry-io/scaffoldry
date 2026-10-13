@@ -16,7 +16,11 @@ export type FilterOperator =
   | "greater_than"
   | "less_than"
   | "is_empty"
-  | "is_not_empty";
+  | "is_not_empty"
+  | "in"
+  | "between"
+  | "before"
+  | "after";
 
 export type FilterConjunction = "AND" | "OR";
 
@@ -30,6 +34,20 @@ export interface FilterClause {
 export interface CompoundFilter {
   conjunction: FilterConjunction;
   clauses: FilterClause[];
+  /** Nested groups, joined with the clauses by the same conjunction. Two levels below the root at most. */
+  groups?: CompoundFilter[];
+}
+
+/** The fixed set of tones a color rule may use. */
+export type ColorTone = "neutral" | "info" | "success" | "warning" | "danger";
+
+export interface ColorRule {
+  id: string;
+  label: string;
+  when: CompoundFilter;
+  tone: ColorTone;
+  target: "row" | "field";
+  field?: string;
 }
 
 export type SortDirection = "asc" | "desc";
@@ -62,7 +80,14 @@ export type FieldType =
   | "Lookup"
   | "Count"
   | "Rollup"
-  | "Formula";
+  | "Formula"
+  | "Collaborator"
+  | "CreatedBy"
+  | "LastModifiedBy"
+  | "LongText"
+  | "Duration"
+  | "DateTime"
+  | "Attachment";
 
 export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
 
@@ -70,6 +95,30 @@ export interface LinkFilter {
   field: string;
   operator: "equals" | "not_equals" | "contains" | "greater_than" | "less_than";
   value: string;
+}
+
+export type SelectOptionColor =
+  | "neutral"
+  | "ok"
+  | "warn"
+  | "bad"
+  | "info"
+  | "accent1"
+  | "accent2"
+  | "accent3";
+
+export interface SelectOption {
+  id: string;
+  label: string;
+  color?: SelectOptionColor;
+  order?: number;
+}
+
+export function normalizeSelectOption(opt: SelectOption | string, idx: number = 0): SelectOption {
+  if (typeof opt === "string") {
+    return { id: opt, label: opt, color: "neutral", order: idx };
+  }
+  return opt;
 }
 
 export interface FieldSpec {
@@ -88,9 +137,11 @@ export interface FieldSpec {
   link_filter?: LinkFilter;
   formula_expression?: string;
   rollup_function?: "sum" | "avg" | "min" | "max" | "count" | "concat";
-  select_options?: string[];
+  select_options?: (SelectOption | string)[];
   currency_symbol?: string;
   precision?: number;
+  duration_format?: string;
+  notify_on_assign?: boolean;
 }
 
 export interface AppView {
@@ -110,6 +161,10 @@ export interface AppView {
   hidden_columns?: string[];
   frozen_through?: string;
   column_summary?: [string, string][];
+  /** Up to three fields to group by, outermost first. The server computes the groups. */
+  group_by?: string[];
+  /** Up to ten rules that tone a row or a field. */
+  color_rules?: ColorRule[];
 }
 
 export interface Collaborator {
@@ -179,6 +234,29 @@ export interface AppTable {
   relationships?: TableRelationship[];
 }
 
+export interface AccessRowRule {
+  id: string;
+  table_id: string;
+  ops: ("Read" | "Create" | "Update" | "Delete")[];
+  visible_when: any;
+  except_roles: string[];
+  message?: string;
+}
+
+export interface AccessColumnRule {
+  id: string;
+  table_id: string;
+  fields: string[];
+  mode: "Hide" | "Mask";
+  except_roles: string[];
+  message?: string;
+}
+
+export interface AccessManifest {
+  rows: AccessRowRule[];
+  columns: AccessColumnRule[];
+}
+
 export interface AppManifest {
   slug: string;
   title: string;
@@ -196,6 +274,7 @@ export interface AppManifest {
   collaborators?: Collaborator[];
   status?: "Published" | "Collaborating" | "Draft";
   workspace_id?: string;
+  access?: AccessManifest;
 }
 
 export interface Workspace {

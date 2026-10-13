@@ -1,0 +1,10 @@
+{
+  "heavy": [
+    "access_scope_test",
+    "calc_recalc_test",
+    "index_jobs_test",
+    "views_phase2_test",
+    "views_phase3_test",
+    "views_phase4_test"
+  ]
+}

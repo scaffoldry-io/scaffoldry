@@ -1,3 +1,4 @@
+import { formatDuration, formatDateTime } from "./utils/durationDatetime";
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   useReactTable,
@@ -7,6 +8,7 @@ import {
 } from "@tanstack/react-table";
 import { FieldSpec, RowDensity, FieldType, AppView, AppTable } from "./types";
 import { explainError } from "./ui/explainError";
+import { AttachmentChips, type AttachedFile } from "./ui/Attachments";
 
 export type CellAddr = { recordId: string; fieldName: string };
 
@@ -60,6 +62,10 @@ const READ_ONLY_TYPES = new Set<FieldType>([
   "Autonumber",
   "CreatedTime",
   "LastModifiedTime",
+  "CreatedBy",
+  "LastModifiedBy",
+  // Files are added in the record drawer.
+  "Attachment",
 ]);
 
 function isReadOnlyField(field?: FieldSpec): boolean {
@@ -68,6 +74,20 @@ function isReadOnlyField(field?: FieldSpec): boolean {
 }
 
 function formatDisplayValue(field: FieldSpec, value: unknown, tables?: AppTable[]): string {
+  if (field.field_type === "LongText") {
+    const s = String(value ?? "");
+    const firstLine = s.split(/\r?\n/)[0] || "";
+    return firstLine;
+  }
+  if (field.field_type === "Duration") {
+    if (value === null || value === undefined || value === "") return "—";
+    const num = Number(value);
+    return isNaN(num) ? String(value) : formatDuration(num, field.duration_format);
+  }
+  if (field.field_type === "DateTime") {
+    if (value === null || value === undefined || value === "") return "—";
+    return formatDateTime(String(value));
+  }
   if (value === null || value === undefined || value === "") {
     return "—";
   }
@@ -108,8 +128,40 @@ function formatDisplayValue(field: FieldSpec, value: unknown, tables?: AppTable[
     const num = Number(value);
     return isNaN(num) ? String(value) : num.toLocaleString();
   }
+  if (field.field_type === "Select" && field.select_options) {
+    const match = field.select_options.find((o) => (typeof o === "string" ? o : o.id) === String(value));
+    if (match) {
+      return typeof match === "string" ? match : match.label;
+    }
+  }
+  if (field.field_type === "MultiSelect" && field.select_options) {
+    const rawIds = Array.isArray(value) ? value : [String(value)];
+    const labels = rawIds.map((id) => {
+      const match = field.select_options?.find((o) => (typeof o === "string" ? o : o.id) === String(id));
+      return match ? (typeof match === "string" ? match : match.label) : String(id);
+    });
+    return labels.join(", ");
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const obj = value as Record<string, any>;
+    if (obj.name && obj.email) return `${obj.name} <${obj.email}>`;
+    if (obj.name) return obj.name;
+    if (obj.label) return obj.label;
+    if (obj.importer) return `Import (${obj.importer})`;
+    if (obj.actor) return obj.actor;
+    return JSON.stringify(obj);
+  }
   if (Array.isArray(value)) {
-    return value.join(", ");
+    return value
+      .map((v) => {
+        if (typeof v === "object" && v !== null) {
+          const obj = v as Record<string, any>;
+          if (obj.name && obj.email) return `${obj.name} <${obj.email}>`;
+          return obj.name || obj.label || obj.actor || obj.email || JSON.stringify(obj);
+        }
+        return String(v);
+      })
+      .join(", ");
   }
   return String(value);
 }
@@ -1236,11 +1288,14 @@ export function DataGrid({
                           className="w-full px-1.5 py-0.5 text-xs rounded border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
                         >
                           <option value="">Select...</option>
-                          {(field.select_options || []).map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
+                          {(field.select_options || []).map((rawOpt) => {
+                            const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                            return (
+                              <option key={opt.id} value={opt.id}>
+                                {opt.label}
+                              </option>
+                            );
+                          })}
                         </select>
                       ) : field.field_type === "MultiSelect" && isCellEditing && multiSelectOpen ? (
                         /* MultiSelect Popover */
@@ -1252,11 +1307,12 @@ export function DataGrid({
                             <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 pb-1 border-b border-slate-100 dark:border-slate-700">
                               {field.label}
                             </div>
-                            {(field.select_options || []).map((opt) => {
-                              const checked = draftMultiSelect.includes(opt);
+                            {(field.select_options || []).map((rawOpt) => {
+                              const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                              const checked = draftMultiSelect.includes(opt.id);
                               return (
                                 <label
-                                  key={opt}
+                                  key={opt.id}
                                   className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50 p-1 rounded"
                                 >
                                   <input
@@ -1264,16 +1320,16 @@ export function DataGrid({
                                     checked={checked}
                                     onChange={(e) => {
                                       if (e.target.checked) {
-                                        setDraftMultiSelect((prev) => [...prev, opt]);
+                                        setDraftMultiSelect((prev) => [...prev, opt.id]);
                                       } else {
                                         setDraftMultiSelect((prev) =>
-                                          prev.filter((o) => o !== opt)
+                                          prev.filter((o) => o !== opt.id)
                                         );
                                       }
                                     }}
                                     className="rounded text-blue-600"
                                   />
-                                  <span>{opt}</span>
+                                  <span>{opt.label}</span>
                                 </label>
                               );
                             })}
@@ -1467,6 +1523,8 @@ export function DataGrid({
                             );
                           })()}
                         </div>
+                      ) : field.field_type === "Attachment" ? (
+                        <AttachmentChips value={Array.isArray(cellVal) ? (cellVal as AttachedFile[]) : []} />
                       ) : (
                         /* Non-editing display */
                         <div className="flex items-center justify-between text-slate-800 dark:text-slate-200 min-h-[1.25rem]">

@@ -1,11 +1,21 @@
 //! Scaffoldry Dynamic Engine and Manifest Renderer (Layer 3)
 
 pub mod access;
+pub mod duration;
+pub use duration::*;
+pub mod filter_tree;
+pub use filter_tree::{check_filter, clauses_of, instant_of, is_flat, list_of, range_of, relative_range, resolve_relative_dates, valid_zone, MAX_FILTER_CLAUSES, MAX_FILTER_DEPTH};
 pub mod automation;
 pub mod detect;
+pub mod graph;
 pub mod index;
 pub mod manifest;
+pub mod recalc;
 pub mod sensitivity;
+pub mod formula;
+pub use formula::*;
+pub use scaffoldry_core::access::AccessManifest;
+pub use manifest::detect_access_problems;
 
 pub use automation::*;
 pub use index::{index_column, index_rows, index_value, indexed_fields, parse_instant, IndexColumn, IndexCols, MAX_INDEXED_FIELDS};
@@ -56,6 +66,15 @@ pub enum FilterOperator {
     LessThan,
     IsEmpty,
     IsNotEmpty,
+    /// The cell is one of a list: a JSON array or a comma list.
+    In,
+    /// The cell is from `low` to `high`, both inside: `10..20`, `2026-01-01..2026-01-31`, or a relative date
+    /// such as `last_7_days` on a date field.
+    Between,
+    /// A date before the value.
+    Before,
+    /// A date after the value.
+    After,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +95,9 @@ pub struct FilterClause {
 pub struct CompoundFilter {
     pub conjunction: FilterConjunction,
     pub clauses: Vec<FilterClause>,
+    /// Nested groups, joined with the clauses by the same conjunction. A group nests two levels below the root.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<CompoundFilter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +121,7 @@ pub enum RowDensity {
     ExtraTall,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
     Text,
     Number,
@@ -126,14 +148,269 @@ pub enum FieldType {
     Formula,
     /// A list of record ids, or one id, of records in another table. `record_links` indexes it.
     Link,
+    /// Collaborator stores addresses.
+    Collaborator {
+        allow_multiple: bool,
+    },
+    /// Set at creation to the actor and never changes.
+    CreatedBy,
+    /// Set on every user write.
+    LastModifiedBy,
+    /// Plain text up to 100,000 characters, rendered with safe Markdown subset.
+    LongText,
+    /// Duration stored as whole seconds in a number.
+    Duration {
+        format: DurationFormat,
+    },
+    /// DateTime stored as a UTC instant.
+    DateTime,
+    /// Files kept outside the record. The value is a list of `{ref_id, name}`.
+    Attachment {
+        allow_multiple: bool,
+    },
 }
 
 impl FieldType {
     /// True when the value follows from other values, so nobody writes it.
     pub fn is_computed(self) -> bool {
         use FieldType::*;
-        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime)
+        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime | CreatedBy | LastModifiedBy)
     }
+}
+
+impl serde::Serialize for FieldType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            FieldType::Text => serializer.serialize_str("Text"),
+            FieldType::Number => serializer.serialize_str("Number"),
+            FieldType::Date => serializer.serialize_str("Date"),
+            FieldType::Select => serializer.serialize_str("Select"),
+            FieldType::Boolean => serializer.serialize_str("Boolean"),
+            FieldType::Relation => serializer.serialize_str("Relation"),
+            FieldType::Checkbox => serializer.serialize_str("Checkbox"),
+            FieldType::MultiSelect => serializer.serialize_str("MultiSelect"),
+            FieldType::Currency => serializer.serialize_str("Currency"),
+            FieldType::Percent => serializer.serialize_str("Percent"),
+            FieldType::Rating => serializer.serialize_str("Rating"),
+            FieldType::Email => serializer.serialize_str("Email"),
+            FieldType::Phone => serializer.serialize_str("Phone"),
+            FieldType::Url => serializer.serialize_str("Url"),
+            FieldType::Autonumber => serializer.serialize_str("Autonumber"),
+            FieldType::CreatedTime => serializer.serialize_str("CreatedTime"),
+            FieldType::LastModifiedTime => serializer.serialize_str("LastModifiedTime"),
+            FieldType::Lookup => serializer.serialize_str("Lookup"),
+            FieldType::Count => serializer.serialize_str("Count"),
+            FieldType::Rollup => serializer.serialize_str("Rollup"),
+            FieldType::Formula => serializer.serialize_str("Formula"),
+            FieldType::Link => serializer.serialize_str("Link"),
+            FieldType::Collaborator { .. } => serializer.serialize_str("Collaborator"),
+            FieldType::CreatedBy => serializer.serialize_str("CreatedBy"),
+            FieldType::LastModifiedBy => serializer.serialize_str("LastModifiedBy"),
+            FieldType::LongText => serializer.serialize_str("LongText"),
+            FieldType::Duration { .. } => serializer.serialize_str("Duration"),
+            FieldType::DateTime => serializer.serialize_str("DateTime"),
+            FieldType::Attachment { .. } => serializer.serialize_str("Attachment"),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FieldType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let val = serde_json::Value::deserialize(deserializer)?;
+        match val {
+            serde_json::Value::String(s) => match s.as_str() {
+                "Text" => Ok(FieldType::Text),
+                "Number" => Ok(FieldType::Number),
+                "Date" => Ok(FieldType::Date),
+                "Select" => Ok(FieldType::Select),
+                "Boolean" => Ok(FieldType::Boolean),
+                "Relation" => Ok(FieldType::Relation),
+                "Checkbox" => Ok(FieldType::Checkbox),
+                "MultiSelect" => Ok(FieldType::MultiSelect),
+                "Currency" => Ok(FieldType::Currency),
+                "Percent" => Ok(FieldType::Percent),
+                "Rating" => Ok(FieldType::Rating),
+                "Email" => Ok(FieldType::Email),
+                "Phone" => Ok(FieldType::Phone),
+                "Url" => Ok(FieldType::Url),
+                "Autonumber" => Ok(FieldType::Autonumber),
+                "CreatedTime" => Ok(FieldType::CreatedTime),
+                "LastModifiedTime" => Ok(FieldType::LastModifiedTime),
+                "Lookup" => Ok(FieldType::Lookup),
+                "Count" => Ok(FieldType::Count),
+                "Rollup" => Ok(FieldType::Rollup),
+                "Formula" => Ok(FieldType::Formula),
+                "Link" => Ok(FieldType::Link),
+                "Collaborator" => Ok(FieldType::Collaborator { allow_multiple: false }),
+                "CreatedBy" => Ok(FieldType::CreatedBy),
+                "LastModifiedBy" => Ok(FieldType::LastModifiedBy),
+                "LongText" => Ok(FieldType::LongText),
+                "Duration" => Ok(FieldType::Duration { format: DurationFormat::HMm }),
+                "DateTime" => Ok(FieldType::DateTime),
+                "Attachment" => Ok(FieldType::Attachment { allow_multiple: true }),
+                other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
+            },
+            serde_json::Value::Object(map) => {
+                if let Some(dur) = map.get("Duration") {
+                    let format = match dur {
+                        serde_json::Value::String(s) => DurationFormat::parse(s).unwrap_or_default(),
+                        serde_json::Value::Object(sub) => sub.get("format").and_then(serde_json::Value::as_str).and_then(DurationFormat::parse).unwrap_or_default(),
+                        _ => DurationFormat::HMm,
+                    };
+                    Ok(FieldType::Duration { format })
+                } else if map.contains_key("DateTime") {
+                    Ok(FieldType::DateTime)
+                } else if let Some(collab) = map.get("Collaborator") {
+                    let allow_multiple = match collab {
+                        serde_json::Value::Bool(b) => *b,
+                        serde_json::Value::Object(sub) => sub.get("allow_multiple").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                        _ => false,
+                    };
+                    Ok(FieldType::Collaborator { allow_multiple })
+                } else if let Some(att) = map.get("Attachment") {
+                    let allow_multiple = match att {
+                        serde_json::Value::Bool(b) => *b,
+                        serde_json::Value::Object(sub) => sub.get("allow_multiple").and_then(serde_json::Value::as_bool).unwrap_or(true),
+                        _ => true,
+                    };
+                    Ok(FieldType::Attachment { allow_multiple })
+                } else if map.contains_key("CreatedBy") {
+                    Ok(FieldType::CreatedBy)
+                } else if map.contains_key("LastModifiedBy") {
+                    Ok(FieldType::LastModifiedBy)
+                } else {
+                    Err(serde::de::Error::custom("unknown field type object"))
+                }
+            }
+            _ => Err(serde::de::Error::custom("field type must be string or object")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectOptionColor {
+    #[default]
+    Neutral,
+    Ok,
+    Warn,
+    Bad,
+    Info,
+    Accent1,
+    Accent2,
+    Accent3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectOption {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub color: SelectOptionColor,
+    #[serde(default)]
+    pub order: i32,
+}
+
+pub fn deserialize_select_options<'de, D>(deserializer: D) -> Result<Vec<SelectOption>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(items) => {
+            let mut result = Vec::new();
+            for (idx, item) in items.into_iter().enumerate() {
+                if let serde_json::Value::String(s) = item {
+                    let clean: String = s
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                        .collect();
+                    let trimmed = clean.trim_matches('_');
+                    let slug = if trimmed.is_empty() { format!("opt_{idx}") } else { format!("opt_{trimmed}") };
+                    result.push(SelectOption {
+                        id: slug,
+                        label: s,
+                        color: SelectOptionColor::Neutral,
+                        order: idx as i32,
+                    });
+                } else {
+                    let opt: SelectOption = serde_json::from_value(item).map_err(serde::de::Error::custom)?;
+                    result.push(opt);
+                }
+            }
+            Ok(result)
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanStage {
+    pub id: String,
+    pub label: String,
+    pub color: SelectOptionColor,
+    pub records: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanViewData {
+    pub column_field: String,
+    pub stages: Vec<KanbanStage>,
+}
+
+pub fn group_by_select(
+    manifest: &AppManifest,
+    view: &AppView,
+    records: &[serde_json::Value],
+) -> Option<KanbanViewData> {
+    let col_name = view.kanban_column_field.as_deref().or(view.group_by_field.as_deref())?;
+    let table_id = view.table_id.as_deref();
+    let table = manifest.tables.iter().find(|t| table_id.is_none_or(|tid| t.id == tid || t.slug == tid))?;
+    let field = table.fields.iter().find(|f| f.name == col_name)?;
+    if !matches!(field.field_type, FieldType::Select | FieldType::MultiSelect) {
+        return None;
+    }
+
+    let mut stages: Vec<KanbanStage> = field
+        .select_options
+        .iter()
+        .map(|opt| KanbanStage {
+            id: opt.id.clone(),
+            label: opt.label.clone(),
+            color: opt.color,
+            records: Vec::new(),
+        })
+        .collect();
+
+    for r in records {
+        let val = r.get(col_name).or_else(|| r.get("data").and_then(|d| d.get(col_name)));
+        if let Some(v) = val {
+            if let Some(id_str) = v.as_str() {
+                if let Some(stage) = stages.iter_mut().find(|s| s.id == id_str) {
+                    stage.records.push(r.clone());
+                }
+            } else if let Some(arr) = v.as_array() {
+                for item in arr {
+                    if let Some(id_str) = item.as_str() {
+                        if let Some(stage) = stages.iter_mut().find(|s| s.id == id_str) {
+                            stage.records.push(r.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some(KanbanViewData {
+        column_field: col_name.to_string(),
+        stages,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,8 +444,10 @@ pub struct FieldSpec {
     pub formula_expression: Option<String>,
     #[serde(default)]
     pub rollup_function: Option<String>,
-    #[serde(default)]
-    pub select_options: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_select_options")]
+    pub select_options: Vec<SelectOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_format: Option<String>,
     #[serde(default)]
     pub currency_symbol: Option<String>,
     #[serde(default)]
@@ -192,6 +471,8 @@ pub struct FieldSpec {
     /// A `Lookup`, `Rollup`, or `Count`: the `Link` field of this table it goes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub computed_via: Option<String>,
+    #[serde(default)]
+    pub notify_on_assign: bool,
 }
 
 /// How many records a link field holds.
@@ -284,6 +565,7 @@ impl FieldSpec {
             formula_expression: None,
             rollup_function: None,
             select_options: Vec::new(),
+            duration_format: if let FieldType::Duration { format } = field_type { Some(format.as_str().to_string()) } else { None },
             currency_symbol: None,
             precision: None,
             indexed: false,
@@ -293,585 +575,9 @@ impl FieldSpec {
             link_related_field: None,
             link_on_delete: LinkOnDelete::Unlink,
             computed_via: None,
+            notify_on_assign: false,
         }
     }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-enum FormulaToken {
-    Number(f64),
-    String(String),
-    Field(String),
-    Ident(String),
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    Eq,
-    NotEq,
-    Lt,
-    LtEq,
-    Gt,
-    GtEq,
-    LParen,
-    RParen,
-    Comma,
-}
-
-fn tokenize_formula(input: &str) -> Option<Vec<FormulaToken>> {
-    let mut tokens = Vec::new();
-    let chars: Vec<char> = input.chars().collect();
-    let n = chars.len();
-    let mut i = 0;
-
-    while i < n {
-        let ch = chars[i];
-        if ch.is_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        if ch == '{' {
-            let mut close = None;
-            for (j, c) in chars.iter().enumerate().take(n).skip(i + 1) {
-                if *c == '}' {
-                    close = Some(j);
-                    break;
-                }
-            }
-            let close_idx = close?;
-            let field_name: String = chars[(i + 1)..close_idx].iter().collect();
-            tokens.push(FormulaToken::Field(field_name));
-            i = close_idx + 1;
-            continue;
-        }
-
-        if ch == '"' || ch == '\'' {
-            let quote = ch;
-            i += 1;
-            let mut s = String::new();
-            let mut closed = false;
-            while i < n {
-                if chars[i] == quote {
-                    closed = true;
-                    i += 1;
-                    break;
-                }
-                if chars[i] == '\\' && i + 1 < n {
-                    i += 1;
-                    s.push(chars[i]);
-                    i += 1;
-                } else {
-                    s.push(chars[i]);
-                    i += 1;
-                }
-            }
-            if !closed {
-                return None;
-            }
-            tokens.push(FormulaToken::String(s));
-            continue;
-        }
-
-        if ch.is_ascii_digit() || (ch == '.' && i + 1 < n && chars[i + 1].is_ascii_digit()) {
-            let start = i;
-            while i < n && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                i += 1;
-            }
-            let s: String = chars[start..i].iter().collect();
-            let num: f64 = s.parse().ok()?;
-            tokens.push(FormulaToken::Number(num));
-            continue;
-        }
-
-        if ch.is_ascii_alphabetic() || ch == '_' {
-            let start = i;
-            while i < n && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
-                i += 1;
-            }
-            let s: String = chars[start..i].iter().collect();
-            tokens.push(FormulaToken::Ident(s));
-            continue;
-        }
-
-        if ch == '!' && i + 1 < n && chars[i + 1] == '=' {
-            tokens.push(FormulaToken::NotEq);
-            i += 2;
-            continue;
-        }
-        if ch == '<' && i + 1 < n && chars[i + 1] == '=' {
-            tokens.push(FormulaToken::LtEq);
-            i += 2;
-            continue;
-        }
-        if ch == '>' && i + 1 < n && chars[i + 1] == '=' {
-            tokens.push(FormulaToken::GtEq);
-            i += 2;
-            continue;
-        }
-        if ch == '<' && i + 1 < n && chars[i + 1] == '>' {
-            tokens.push(FormulaToken::NotEq);
-            i += 2;
-            continue;
-        }
-
-        match ch {
-            '+' => tokens.push(FormulaToken::Plus),
-            '-' => tokens.push(FormulaToken::Minus),
-            '*' => tokens.push(FormulaToken::Star),
-            '/' => tokens.push(FormulaToken::Slash),
-            '=' => tokens.push(FormulaToken::Eq),
-            '<' => tokens.push(FormulaToken::Lt),
-            '>' => tokens.push(FormulaToken::Gt),
-            '(' => tokens.push(FormulaToken::LParen),
-            ')' => tokens.push(FormulaToken::RParen),
-            ',' => tokens.push(FormulaToken::Comma),
-            _ => return None,
-        }
-        i += 1;
-    }
-
-    Some(tokens)
-}
-
-struct FormulaParser<'a> {
-    tokens: Vec<FormulaToken>,
-    pos: usize,
-    depth: usize,
-    record: &'a Value,
-}
-
-impl<'a> FormulaParser<'a> {
-    fn new(tokens: Vec<FormulaToken>, record: &'a Value) -> Self {
-        Self {
-            tokens,
-            pos: 0,
-            depth: 0,
-            record,
-        }
-    }
-
-    fn peek(&self) -> Option<&FormulaToken> {
-        self.tokens.get(self.pos)
-    }
-
-    fn advance(&mut self) -> Option<FormulaToken> {
-        if self.pos < self.tokens.len() {
-            let tok = self.tokens[self.pos].clone();
-            self.pos += 1;
-            Some(tok)
-        } else {
-            None
-        }
-    }
-
-    fn is_truthy(val: &Value) -> bool {
-        match val {
-            Value::Null => false,
-            Value::Bool(b) => *b,
-            Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
-            Value::String(s) => !s.is_empty(),
-            Value::Array(a) => !a.is_empty(),
-            Value::Object(o) => !o.is_empty(),
-        }
-    }
-
-    fn to_number(val: &Value) -> Option<f64> {
-        match val {
-            Value::Number(n) => n.as_f64(),
-            Value::String(s) => s.trim().parse::<f64>().ok(),
-            _ => None,
-        }
-    }
-
-    fn parse(&mut self) -> Value {
-        match self.expr() {
-            Ok(v) => v,
-            Err(_) => Value::Null,
-        }
-    }
-
-    fn check_depth(&mut self) -> Result<(), ()> {
-        self.depth += 1;
-        if self.depth > 32 {
-            Err(())
-        } else {
-            Ok(())
-        }
-    }
-
-    fn dec_depth(&mut self) {
-        if self.depth > 0 {
-            self.depth -= 1;
-        }
-    }
-
-    fn expr(&mut self) -> Result<Value, ()> {
-        self.or_expr()
-    }
-
-    fn or_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let mut left = self.and_expr()?;
-        while let Some(FormulaToken::Ident(name)) = self.peek() {
-            if name.eq_ignore_ascii_case("OR") {
-                self.advance();
-                let right = self.and_expr()?;
-                let b = Self::is_truthy(&left) || Self::is_truthy(&right);
-                left = Value::Bool(b);
-            } else {
-                break;
-            }
-        }
-        self.dec_depth();
-        Ok(left)
-    }
-
-    fn and_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let mut left = self.not_expr()?;
-        while let Some(FormulaToken::Ident(name)) = self.peek() {
-            if name.eq_ignore_ascii_case("AND") {
-                self.advance();
-                let right = self.not_expr()?;
-                let b = Self::is_truthy(&left) && Self::is_truthy(&right);
-                left = Value::Bool(b);
-            } else {
-                break;
-            }
-        }
-        self.dec_depth();
-        Ok(left)
-    }
-
-    fn not_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let res = if let Some(FormulaToken::Ident(name)) = self.peek() {
-            if name.eq_ignore_ascii_case("NOT") {
-                self.advance();
-                let inner = self.not_expr()?;
-                Value::Bool(!Self::is_truthy(&inner))
-            } else {
-                self.cmp_expr()?
-            }
-        } else {
-            self.cmp_expr()?
-        };
-        self.dec_depth();
-        Ok(res)
-    }
-
-    fn cmp_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let left = self.add_expr()?;
-        let res = match self.peek() {
-            Some(FormulaToken::Eq)
-            | Some(FormulaToken::NotEq)
-            | Some(FormulaToken::Lt)
-            | Some(FormulaToken::LtEq)
-            | Some(FormulaToken::Gt)
-            | Some(FormulaToken::GtEq) => {
-                let op = self.advance().unwrap();
-                let right = self.add_expr()?;
-                self.compare(&left, &right, &op)
-            }
-            _ => left,
-        };
-        self.dec_depth();
-        Ok(res)
-    }
-
-    fn compare(&self, left: &Value, right: &Value, op: &FormulaToken) -> Value {
-        let (num_l, num_r) = (Self::to_number(left), Self::to_number(right));
-        if let (Some(nl), Some(nr)) = (num_l, num_r) {
-            let b = match op {
-                FormulaToken::Eq => nl == nr,
-                FormulaToken::NotEq => nl != nr,
-                FormulaToken::Lt => nl < nr,
-                FormulaToken::LtEq => nl <= nr,
-                FormulaToken::Gt => nl > nr,
-                FormulaToken::GtEq => nl >= nr,
-                _ => false,
-            };
-            return Value::Bool(b);
-        }
-
-        let sl = match left {
-            Value::String(s) => s.as_str(),
-            Value::Null => "",
-            _ => "",
-        };
-        let sr = match right {
-            Value::String(s) => s.as_str(),
-            Value::Null => "",
-            _ => "",
-        };
-
-        let b = match op {
-            FormulaToken::Eq => left == right || sl == sr,
-            FormulaToken::NotEq => left != right && sl != sr,
-            FormulaToken::Lt => sl < sr,
-            FormulaToken::LtEq => sl <= sr,
-            FormulaToken::Gt => sl > sr,
-            FormulaToken::GtEq => sl >= sr,
-            _ => false,
-        };
-        Value::Bool(b)
-    }
-
-    fn add_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let mut left = self.mul_expr()?;
-        while let Some(tok) = self.peek() {
-            match tok {
-                FormulaToken::Plus => {
-                    self.advance();
-                    let right = self.mul_expr()?;
-                    if left.is_string() || right.is_string() {
-                        let mut s = String::new();
-                        if let Some(str_l) = left.as_str() {
-                            s.push_str(str_l);
-                        } else if !left.is_null() {
-                            s.push_str(&left.to_string());
-                        }
-                        if let Some(str_r) = right.as_str() {
-                            s.push_str(str_r);
-                        } else if !right.is_null() {
-                            s.push_str(&right.to_string());
-                        }
-                        left = Value::from(s);
-                    } else if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
-                        left = Value::from(nl + nr);
-                    } else {
-                        left = Value::Null;
-                    }
-                }
-                FormulaToken::Minus => {
-                    self.advance();
-                    let right = self.mul_expr()?;
-                    if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
-                        left = Value::from(nl - nr);
-                    } else {
-                        left = Value::Null;
-                    }
-                }
-                _ => break,
-            }
-        }
-        self.dec_depth();
-        Ok(left)
-    }
-
-    fn mul_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let mut left = self.unary_expr()?;
-        while let Some(tok) = self.peek() {
-            match tok {
-                FormulaToken::Star => {
-                    self.advance();
-                    let right = self.unary_expr()?;
-                    if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
-                        left = Value::from(nl * nr);
-                    } else {
-                        left = Value::Null;
-                    }
-                }
-                FormulaToken::Slash => {
-                    self.advance();
-                    let right = self.unary_expr()?;
-                    if let (Some(nl), Some(nr)) = (Self::to_number(&left), Self::to_number(&right)) {
-                        if nr == 0.0 {
-                            left = Value::Null;
-                        } else {
-                            left = Value::from(nl / nr);
-                        }
-                    } else {
-                        left = Value::Null;
-                    }
-                }
-                _ => break,
-            }
-        }
-        self.dec_depth();
-        Ok(left)
-    }
-
-    fn unary_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let res = match self.peek() {
-            Some(FormulaToken::Minus) => {
-                self.advance();
-                let inner = self.unary_expr()?;
-                if let Some(n) = Self::to_number(&inner) {
-                    Value::from(-n)
-                } else {
-                    Value::Null
-                }
-            }
-            _ => self.primary_expr()?,
-        };
-        self.dec_depth();
-        Ok(res)
-    }
-
-    fn primary_expr(&mut self) -> Result<Value, ()> {
-        self.check_depth()?;
-        let res = match self.advance() {
-            Some(FormulaToken::Number(n)) => Value::from(n),
-            Some(FormulaToken::String(s)) => Value::from(s),
-            Some(FormulaToken::Field(field)) => {
-                self.record.get(&field).cloned().unwrap_or(Value::Null)
-            }
-            Some(FormulaToken::LParen) => {
-                let inner = self.expr()?;
-                if let Some(FormulaToken::RParen) = self.advance() {
-                    inner
-                } else {
-                    return Err(());
-                }
-            }
-            Some(FormulaToken::Ident(name)) => {
-                if let Some(FormulaToken::LParen) = self.peek() {
-                    self.advance();
-                    let mut args = Vec::new();
-                    if let Some(FormulaToken::RParen) = self.peek() {
-                        self.advance();
-                    } else {
-                        args.push(self.expr()?);
-                        while let Some(FormulaToken::Comma) = self.peek() {
-                            self.advance();
-                            args.push(self.expr()?);
-                        }
-                        if let Some(FormulaToken::RParen) = self.advance() {
-                        } else {
-                            return Err(());
-                        }
-                    }
-                    self.call_func(&name.to_ascii_uppercase(), &args)
-                } else {
-                    Value::Null
-                }
-            }
-            _ => Value::Null,
-        };
-        self.dec_depth();
-        Ok(res)
-    }
-
-    fn call_func(&self, name: &str, args: &[Value]) -> Value {
-        match name {
-            "IF" => {
-                let cond = args.first().unwrap_or(&Value::Null);
-                if Self::is_truthy(cond) {
-                    args.get(1).cloned().unwrap_or(Value::Null)
-                } else {
-                    args.get(2).cloned().unwrap_or(Value::Null)
-                }
-            }
-            "AND" => {
-                if args.is_empty() {
-                    Value::Null
-                } else {
-                    Value::Bool(args.iter().all(Self::is_truthy))
-                }
-            }
-            "OR" => {
-                if args.is_empty() {
-                    Value::Null
-                } else {
-                    Value::Bool(args.iter().any(Self::is_truthy))
-                }
-            }
-            "NOT" => {
-                if args.is_empty() {
-                    Value::Null
-                } else {
-                    Value::Bool(!Self::is_truthy(&args[0]))
-                }
-            }
-            "ROUND" => {
-                if let Some(n) = args.first().and_then(Self::to_number) {
-                    let digits = args.get(1).and_then(Self::to_number).unwrap_or(0.0) as i32;
-                    let factor = 10f64.powi(digits);
-                    let rounded = (n * factor).round() / factor;
-                    Value::from(rounded)
-                } else {
-                    Value::Null
-                }
-            }
-            "ABS" => {
-                if let Some(n) = args.first().and_then(Self::to_number) {
-                    Value::from(n.abs())
-                } else {
-                    Value::Null
-                }
-            }
-            "CONCAT" => {
-                let mut s = String::new();
-                for a in args {
-                    if !a.is_null() {
-                        if let Some(str_val) = a.as_str() {
-                            s.push_str(str_val);
-                        } else if let Some(n) = a.as_f64() {
-                            s.push_str(&n.to_string());
-                        } else if let Some(b) = a.as_bool() {
-                            s.push_str(&b.to_string());
-                        }
-                    }
-                }
-                Value::from(s)
-            }
-            "LEN" => {
-                let val = args.first().unwrap_or(&Value::Null);
-                if val.is_null() {
-                    Value::from(0)
-                } else if let Some(s) = val.as_str() {
-                    Value::from(s.len())
-                } else {
-                    Value::from(val.to_string().len())
-                }
-            }
-            "BLANK" => Value::Null,
-            "ISBLANK" => {
-                let val = args.first().unwrap_or(&Value::Null);
-                let is_blank = val.is_null() || (val.as_str().map(|s| s.is_empty()).unwrap_or(false));
-                Value::Bool(is_blank)
-            }
-            _ => Value::Null,
-        }
-    }
-}
-
-/// The field names a formula uses, or `None` when it does not parse.
-pub fn formula_field_refs(expression: &str) -> Option<Vec<String>> {
-    let tokens = tokenize_formula(expression)?;
-    Some(
-        tokens
-            .into_iter()
-            .filter_map(|t| match t {
-                FormulaToken::Field(name) => Some(name),
-                _ => None,
-            })
-            .collect(),
-    )
-}
-
-pub fn evaluate_formula(expression: &str, record: &Value) -> Value {
-    let expr = expression.trim();
-    if expr.is_empty() || expr.len() > 500 {
-        return Value::Null;
-    }
-
-    if let Some(tokens) = tokenize_formula(expr) {
-        let mut parser = FormulaParser::new(tokens, record);
-        parser.parse()
-    } else {
-        Value::Null
-    }
-}
-
-pub fn parse_operand(op: &str, record: &Value) -> Value {
-    evaluate_formula(op, record)
 }
 
 pub fn compute_field_value(
@@ -1003,8 +709,102 @@ pub struct AppView {
     pub hidden_columns: Vec<String>,
     #[serde(default)]
     pub frozen_through: Option<String>,
+    /// Each field's footer choice: `(field, function)`. The functions are in `FOOTER_FUNCTIONS`.
     #[serde(default)]
     pub column_summary: Vec<(String, String)>,
+    /// Up to three fields to group by, outermost first. Computed by the server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_by: Vec<String>,
+    /// Up to ten rules that tone a row or a field when a filter matches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub color_rules: Vec<ColorRule>,
+    /// A summary view's measures: one column for each, computed over each group of `group_by`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aggregations: Vec<Aggregation>,
+}
+
+/// What a summary view computes for each group. `count` needs no field. Every other function needs one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Aggregation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(rename = "fn")]
+    pub function: String,
+}
+
+/// The functions a summary view may use. They are the functions the aggregate route can group.
+pub const SUMMARY_FUNCTIONS: [&str; 6] = ["count", "sum", "avg", "min", "max", "count_distinct"];
+pub const MAX_SUMMARY_GROUPS: usize = 2;
+pub const MAX_AGGREGATIONS: usize = 8;
+
+impl Aggregation {
+    /// The column heading: `count`, `sum of amount`, `distinct status`.
+    pub fn label(&self) -> String {
+        let field = self.field.as_deref().unwrap_or("");
+        match self.function.as_str() {
+            "count" => "count".to_string(),
+            "count_distinct" => format!("distinct {field}"),
+            "avg" => format!("average of {field}"),
+            "min" => format!("smallest {field}"),
+            "max" => format!("largest {field}"),
+            other => format!("{other} of {field}"),
+        }
+    }
+}
+
+/// The footer choices a field may have.
+pub const FOOTER_FUNCTIONS: [&str; 8] = ["count", "filled", "empty", "unique", "sum", "avg", "min", "max"];
+pub const MAX_GROUP_LEVELS: usize = 3;
+pub const MAX_COLOR_RULES: usize = 10;
+
+/// The fixed set of tones. A tone shows as a color, an icon and the rule's label. Never as color alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tone {
+    Neutral,
+    Info,
+    Success,
+    Warning,
+    Danger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorTarget {
+    Row,
+    Field,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColorRule {
+    pub id: String,
+    pub label: String,
+    pub when: CompoundFilter,
+    pub tone: Tone,
+    pub target: ColorTarget,
+    /// The field a `field` rule colors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+/// A rule that matched a row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AppliedTone {
+    pub id: String,
+    pub label: String,
+    pub tone: Tone,
+    pub target: ColorTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+/// The rules that match a record, in the order the view lists them.
+pub fn tones_of(record: &Value, rules: &[ColorRule]) -> Vec<AppliedTone> {
+    rules
+        .iter()
+        .filter(|r| matches_filter(record, &r.when))
+        .map(|r| AppliedTone { id: r.id.clone(), label: r.label.clone(), tone: r.tone, target: r.target, field: r.field.clone() })
+        .collect()
 }
 
 impl AppView {
@@ -1031,17 +831,31 @@ impl AppView {
             hidden_columns: Vec::new(),
             frozen_through: None,
             column_summary: Vec::new(),
+            group_by: Vec::new(),
+            color_rules: Vec::new(),
+            aggregations: Vec::new(),
         }
     }
 }
 
 pub fn matches_filter(record: &Value, filter: &CompoundFilter) -> bool {
-    if filter.clauses.is_empty() {
+    if filter.clauses.is_empty() && filter.groups.is_empty() {
         return true;
     }
+    let clauses = filter.clauses.iter().map(|c| matches_clause(record, c));
+    let groups = filter.groups.iter().map(|g| matches_filter(record, g));
     match filter.conjunction {
-        FilterConjunction::And => filter.clauses.iter().all(|c| matches_clause(record, c)),
-        FilterConjunction::Or => filter.clauses.iter().any(|c| matches_clause(record, c)),
+        FilterConjunction::And => clauses.chain(groups).all(|m| m),
+        FilterConjunction::Or => clauses.chain(groups).any(|m| m),
+    }
+}
+
+fn cell_text(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::Bool(b)) => b.to_string(),
+        _ => String::new(),
     }
 }
 
@@ -1122,6 +936,33 @@ pub fn matches_clause(record: &Value, clause: &FilterClause) -> bool {
                 _ => false,
             }
         }
+        FilterOperator::In => {
+            let wanted: Vec<String> = list_of(&clause.value).into_iter().map(|v| v.to_lowercase()).collect();
+            match cell_val {
+                Some(Value::Array(items)) => items.iter().any(|i| wanted.contains(&cell_text(Some(i)).to_lowercase())),
+                other => wanted.contains(&cell_text(other).to_lowercase()),
+            }
+        }
+        FilterOperator::Between => match range_of(&clause.value) {
+            None => false,
+            Some((low, high)) => {
+                if let (Some(n), Ok(a), Ok(b)) = (cell_val.and_then(Value::as_f64), low.parse::<f64>(), high.parse::<f64>()) {
+                    return a <= n && n <= b;
+                }
+                match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(low), instant_of(high)) {
+                    (Some(t), Some(a), Some(b)) => a <= t && t <= b,
+                    _ => false,
+                }
+            }
+        },
+        FilterOperator::Before => match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(&clause.value)) {
+            (Some(t), Some(limit)) => t < limit,
+            _ => false,
+        },
+        FilterOperator::After => match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(&clause.value)) {
+            (Some(t), Some(limit)) => t > limit,
+            _ => false,
+        },
     }
 }
 
@@ -1184,6 +1025,8 @@ pub struct AppManifest {
     pub ceds_mappings: HashMap<String, String>,
     #[serde(default)]
     pub pages: Vec<AppPage>,
+    #[serde(default)]
+    pub access: AccessManifest,
 }
 
 /// A screen of an app: a built-in view, or a custom page an agent wrote.

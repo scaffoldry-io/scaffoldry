@@ -38,7 +38,27 @@ pub struct UserFields {
 
 pub fn find_by_user_name(state: &SharedState, user_name: &str) -> Option<ScimUser> {
     let users = state.users.read().unwrap_or_else(|p| p.into_inner());
-    users.values().find(|u| u.user_name.eq_ignore_ascii_case(user_name)).cloned()
+    users.values().find(|u| {
+        u.user_name.eq_ignore_ascii_case(user_name)
+            || u.emails.iter().any(|e| {
+                e.get("value")
+                    .and_then(Value::as_str)
+                    .is_some_and(|v| v.eq_ignore_ascii_case(user_name))
+            })
+    }).cloned()
+}
+
+pub fn render_collaborator(addr: &str, state: &SharedState) -> String {
+    if let Some(user) = find_by_user_name(state, addr) {
+        let name = display_name(&user);
+        if !user.active {
+            format!("{name} (no longer active)")
+        } else {
+            format!("{name} <{}>", user.user_name)
+        }
+    } else {
+        addr.to_string()
+    }
 }
 
 pub fn find_by_id(state: &SharedState, id: &str) -> Option<ScimUser> {
@@ -528,4 +548,60 @@ pub fn may_manage_appointment(
         return true;
     }
     scoped_affiliation == "unit_admin" && crate::service::organizations::unit_in_scope(&org_caller, unit, orgs, roles)
+}
+
+pub fn list_app_collaborators(
+    app_slug: &str,
+    query: &str,
+    state: &SharedState,
+) -> Result<Vec<Value>, ServiceError> {
+    let q = query.trim().to_lowercase();
+    let mut all_users: Vec<ScimUser> = if let Some(ref repo) = state.repository {
+        repo.list_scim_users().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if let Ok(mem) = state.users.read() {
+        for u in mem.values() {
+            if !all_users.iter().any(|existing| existing.user_name.eq_ignore_ascii_case(&u.user_name)) {
+                all_users.push(u.clone());
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for u in all_users {
+        if !u.active || u.admin_hold {
+            continue;
+        }
+        let d_name = display_name(&u);
+        let user_email = email(&u);
+        let user_name = u.user_name.clone();
+
+        if !q.is_empty() {
+            let matches_q = d_name.to_lowercase().contains(&q)
+                || user_email.to_lowercase().contains(&q)
+                || user_name.to_lowercase().contains(&q);
+            if !matches_q {
+                continue;
+            }
+        }
+
+        if let Some(candidate) = crate::service::identity::resolve_user(&user_name, state) {
+            if crate::service::access::authorize_app(&candidate, app_slug, crate::service::access::AppAction::Read, state).is_ok() {
+                out.push(serde_json::json!({
+                    "id": user_name,
+                    "label": d_name,
+                    "email": user_email,
+                }));
+            }
+        }
+    }
+
+    out.sort_by(|a, b| {
+        let la = a.get("label").and_then(Value::as_str).unwrap_or("");
+        let lb = b.get("label").and_then(Value::as_str).unwrap_or("");
+        la.cmp(lb)
+    });
+    Ok(out)
 }

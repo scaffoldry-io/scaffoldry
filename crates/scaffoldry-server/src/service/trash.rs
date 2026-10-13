@@ -107,6 +107,8 @@ pub fn list_trash(caller: &AuthUser, app_slug: &str, limit: Option<usize>, curso
     let more = rows.len() > limit;
     rows.truncate(limit);
     let next_cursor = if more { rows.last().map(cursor_of) } else { None };
+    // A deleted record the caller could not read is left out. A page can come back short.
+    rows.retain(|r| crate::service::scope::allows(caller, app_slug, &r.record, scaffoldry_core::access::RowOp::Read, state));
     // The person sees what they could see before the deletion.
     let redacted = redact_records(caller, app_slug, rows.iter().map(|r| r.record.clone()).collect(), state);
     let entries = rows.iter().zip(redacted.iter()).map(|(row, red)| shown(row, red, state)).collect();
@@ -118,6 +120,10 @@ pub fn restore(caller: &AuthUser, origin: &Origin, app_slug: &str, selector: &st
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
     let repo = repo(state)?;
     let rows = repo.trashed_by_selector(app_slug, selector, keep_days(state)).map_err(internal)?;
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|r| crate::service::scope::allows(caller, app_slug, &r.record, scaffoldry_core::access::RowOp::Update, state))
+        .collect();
     if rows.is_empty() {
         return Err(ServiceError::NotFound("Nothing in trash matches that".to_string()));
     }

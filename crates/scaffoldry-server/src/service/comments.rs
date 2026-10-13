@@ -34,10 +34,11 @@ fn hide(err: ServiceError) -> ServiceError {
     }
 }
 
-fn find(app_slug: &str, record_id: &str, state: &SharedState) -> Result<DatasetRecord, ServiceError> {
+fn find(caller: &AuthUser, app_slug: &str, record_id: &str, state: &SharedState) -> Result<DatasetRecord, ServiceError> {
     state
         .find_record(app_slug, record_id)
         .map_err(internal)?
+        .filter(|r| crate::service::scope::allows(caller, app_slug, r, scaffoldry_core::access::RowOp::Read, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{record_id}' not found")))
 }
 
@@ -65,7 +66,7 @@ fn reader(address: &str, app_slug: &str, state: &SharedState) -> Option<AuthUser
     let workspace = state.engine.read().ok()?.resolve_by_slug(app_slug)?.workspace_id.clone()?;
     let member = crate::service::members::people_records(&workspace, state).into_iter().find(|m| m.eppn.eq_ignore_ascii_case(address));
     let user = match member {
-        Some(m) => AuthUser { eppn: m.eppn, name: m.name, role_title: m.role, affiliation: m.scoped_affiliation, department: m.department },
+        Some(m) => AuthUser { eppn: m.eppn, name: m.name, role_title: m.role, affiliation: m.scoped_affiliation, department: m.department, view_as_by: None, },
         None => crate::service::identity::resolve_user(address, state)?,
     };
     authorize_app(&user, app_slug, AppAction::Read, state).ok().map(|_| user)
@@ -110,14 +111,14 @@ fn shown(row: &CommentRow, state: &SharedState) -> Value {
 
 pub fn list_comments(caller: &AuthUser, app_slug: &str, record_id: &str, state: &SharedState) -> Result<Value, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state).map_err(hide)?;
-    find(app_slug, record_id, state)?;
+    find(caller, app_slug, record_id, state)?;
     let rows = repo(state)?.list_comments(app_slug, record_id, PAGE).map_err(internal)?;
     Ok(json!({ "comments": rows.iter().map(|r| shown(r, state)).collect::<Vec<_>>() }))
 }
 
 pub fn post_comment(caller: &AuthUser, origin: &Origin, app_slug: &str, record_id: &str, payload: &Value, state: &SharedState) -> Result<Value, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Comment, state)?;
-    let record = find(app_slug, record_id, state)?;
+    let record = find(caller, app_slug, record_id, state)?;
     let body = check_body(payload.get("body").and_then(Value::as_str))?;
     let repo = repo(state)?;
     let parent_id = match payload.get("parent_id").and_then(Value::as_str) {
@@ -170,7 +171,7 @@ pub fn edit_comment(caller: &AuthUser, origin: &Origin, app_slug: &str, id: &str
     let row = changeable(caller, app_slug, id, false, state)?;
     let body = check_body(payload.get("body").and_then(Value::as_str))?;
     let mentions = kept_mentions(&body, app_slug, state);
-    let record = find(app_slug, &row.record_id, state)?;
+    let record = find(caller, app_slug, &row.record_id, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &record.data, state);
     let saved = repo(state)?
         .edit_comment(app_slug, row.id, &body, &mentions, &ctx)
@@ -182,7 +183,7 @@ pub fn edit_comment(caller: &AuthUser, origin: &Origin, app_slug: &str, id: &str
 pub fn remove_comment(caller: &AuthUser, origin: &Origin, app_slug: &str, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state).map_err(hide)?;
     let row = changeable(caller, app_slug, id, true, state)?;
-    let record = find(app_slug, &row.record_id, state)?;
+    let record = find(caller, app_slug, &row.record_id, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &record.data, state);
     let saved = repo(state)?
         .remove_comment(app_slug, row.id, &ctx)

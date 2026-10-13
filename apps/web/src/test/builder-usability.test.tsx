@@ -8,11 +8,11 @@ import { PublishedAppView } from "../PublishedAppView";
 import { StandaloneIntakeForm } from "../StandaloneIntakeForm";
 import { AdminDesk } from "../AdminDesk";
 import { RegisteredApp, AppTable } from "../types";
+import { apiClient } from "../api";
 import {
   applyCompoundFilter,
   applyMultiSort,
   computeFieldValue,
-  evaluateClientFormula,
   getFieldTypeIcon,
   groupRecordsByField,
 } from "../computedFields";
@@ -250,31 +250,6 @@ describe("PublishedAppView Standalone Runtime Usability", () => {
 });
 
 describe("Milestone 1: Rich Field Types & Computed Field Engine Usability", () => {
-  it("evaluates in-memory formulas with token substitution and arithmetic", () => {
-    const record = {
-      budget: 500000,
-      spent: 120000,
-      rate: 0.2,
-      first_name: "Ada",
-      last_name: "Lovelace",
-      title: "",
-    };
-
-    expect(evaluateClientFormula("{budget}", record)).toBe(500000);
-    expect(evaluateClientFormula("{budget} * 0.20", record)).toBe(100000);
-    expect(evaluateClientFormula("{budget} / 10", record)).toBe(50000);
-    expect(evaluateClientFormula("{budget} - {spent}", record)).toBe(380000);
-    expect(evaluateClientFormula('{first_name} + " " + {last_name}', record)).toBe("Ada Lovelace");
-    expect(evaluateClientFormula("{budget} - {spent} * {rate}", record)).toBe(476000);
-    expect(evaluateClientFormula("({budget} - {spent}) * {rate}", record)).toBe(76000);
-    expect(evaluateClientFormula("IF({spent} > 100000, {budget} - {spent}, 0)", record)).toBe(380000);
-    expect(evaluateClientFormula('IF(ISBLANK({title}), "untitled", {title})', record)).toBe("untitled");
-    expect(evaluateClientFormula("ROUND({budget} * {rate}, 0)", record)).toBe(100000);
-    expect(evaluateClientFormula("AND({spent} > 0, {budget} > {spent})", record)).toBe(true);
-    expect(evaluateClientFormula("{missing}", record)).toBeNull();
-    expect(evaluateClientFormula("{budget} / 0", record)).toBeNull();
-  });
-
   it("computes relational lookups, counts, and rollups across tables reactively", () => {
     const sampleTables: AppTable[] = [
       {
@@ -1107,7 +1082,16 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       expect(screen.getAllByText("Field 15").length).toBeGreaterThan(0);
     });
 
-    it("renders evaluateClientFormula output for Formula field in builder grid", () => {
+    it("formula editor shows preview result and shows message with caret for syntax error", async () => {
+      const previewSpy = vi.spyOn(apiClient, "previewFormula");
+      previewSpy.mockResolvedValueOnce({
+        valid: true,
+        result: 45000,
+        problems: [],
+        error: null,
+        error_pos: null,
+      });
+
       render(
         <AppBuilder
           app={mockApp}
@@ -1126,13 +1110,35 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       // Edit formula expression to "{budget} * 0.10"
       const formulaInput = screen.getByTestId("formula-expression-input");
       fireEvent.change(formulaInput, { target: { value: "{budget} * 0.10" } });
-      fireEvent.click(screen.getByTestId("save-formula-btn"));
 
-      // Formula expression should be displayed under the header
+      await waitFor(() => {
+        expect(screen.getByTestId("formula-preview-result")).toHaveTextContent("Preview: 45000");
+      });
+
+      // Save formula
+      fireEvent.click(screen.getByTestId("save-formula-btn"));
       expect(screen.getByTestId("formula-expression-indirect_cost")).toHaveTextContent("{budget} * 0.10");
 
-      // Grid should re-evaluate and display 5,000 for APP-001 (450,000 * 0.10)
-      expect(screen.getByText("$45,000")).toBeInTheDocument();
+      // Re-open column options to test syntax error
+      fireEvent.click(menuBtn);
+      previewSpy.mockResolvedValueOnce({
+        valid: false,
+        result: null,
+        problems: [{ message: "Expected closing parenthesis ')'", position: 10 }],
+        error: "Expected closing parenthesis ')'",
+        error_pos: 10,
+      });
+
+      const formulaInput2 = screen.getByTestId("formula-expression-input");
+      fireEvent.change(formulaInput2, { target: { value: "{budget} * (" } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("formula-syntax-error")).toBeInTheDocument();
+        expect(screen.getByTestId("formula-error-message")).toHaveTextContent("Expected closing parenthesis ')'");
+        expect(screen.getByTestId("formula-error-caret")).toHaveTextContent("^");
+      });
+
+      previewSpy.mockRestore();
     });
 
     it("renames field, preserving key when data exists and updating key when empty", () => {

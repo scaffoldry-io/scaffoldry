@@ -1,8 +1,11 @@
 //! Sovereign Tabular Record Service Layer with Cedar Policy Enforcement
 
+pub use crate::repository_index::AggregateFunction;
 use scaffoldry_engine::HostRouter;
 
+use crate::service::scope;
 use crate::service::ServiceError;
+use scaffoldry_core::access::RowOp;
 use crate::service::access::{authorize_app, AppAction};
 use crate::service::history::{write_ctx, Origin};
 use crate::state::{AuthUser, DatasetRecord, SharedState};
@@ -10,8 +13,9 @@ use chrono::Utc;
 use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::TriggerEvent;
 use crate::repository::{IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
-use scaffoldry_engine::{AutomationEngine, CompoundFilter, EngineError, FieldSpec, FilterConjunction, FilterOperator, IndexColumn};
-use serde_json::Value;
+use crate::repository_index::Expr;
+use scaffoldry_engine::{AppManifest, AutomationEngine, CompoundFilter, EngineError, FieldSpec, FieldType, FilterConjunction, FilterOperator, IndexColumn};
+use serde_json::{json, Value};
 
 /// True when `field` of the record's table holds one record.
 fn mirror_is_one(app_slug: &str, record: &DatasetRecord, field: &str, state: &SharedState) -> bool {
@@ -93,6 +97,392 @@ fn validate_links(app_slug: &str, id: Option<&str>, current: Option<&Value>, dat
     }
 }
 
+
+fn validate_select_options(
+    app_slug: &str,
+    table_id: &str,
+    data: &Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let manifest = state
+        .get_app_manifest(app_slug)
+        .or_else(|| state.engine.read().ok().and_then(|e| e.resolve_by_slug(app_slug).cloned()));
+    let Some(manifest) = manifest else { return Ok(()); };
+    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id || t.slug == table_id) else {
+        return Ok(());
+    };
+    for field in &table.fields {
+        match field.field_type {
+            FieldType::Select => {
+                if field.select_options.is_empty() {
+                    continue;
+                }
+                if let Some(val) = data.get(&field.name) {
+                    if !val.is_null() {
+                        if let Some(s) = val.as_str() {
+                            if !s.is_empty() && !field.select_options.iter().any(|o| o.id == s) {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Field '{}' has invalid option id '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            FieldType::MultiSelect => {
+                if field.select_options.is_empty() {
+                    continue;
+                }
+                if let Some(val) = data.get(&field.name) {
+                    if !val.is_null() {
+                        if let Some(arr) = val.as_array() {
+                            for item in arr {
+                                if let Some(s) = item.as_str() {
+                                    if !s.is_empty() && !field.select_options.iter().any(|o| o.id == s) {
+                                        return Err(ServiceError::BadRequest(format!(
+                                            "Field '{}' has invalid option id '{}'",
+                                            field.name, s
+                                        )));
+                                    }
+                                }
+                            }
+                        } else if let Some(s) = val.as_str() {
+                            if !s.is_empty() && !field.select_options.iter().any(|o| o.id == s) {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Field '{}' has invalid option id '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+
+fn validate_collaborators(
+    app_slug: &str,
+    table_id: &str,
+    data: &Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let manifest = state
+        .get_app_manifest(app_slug)
+        .or_else(|| state.engine.read().ok().and_then(|e| e.resolve_by_slug(app_slug).cloned()));
+    let Some(manifest) = manifest else { return Ok(()); };
+    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id || t.slug == table_id) else {
+        return Ok(());
+    };
+    for field in &table.fields {
+        if let FieldType::Collaborator { allow_multiple } = field.field_type {
+            let Some(val) = data.get(&field.name) else { continue };
+            if val.is_null() { continue };
+            let addresses: Vec<&str> = match val {
+                Value::String(s) => if s.trim().is_empty() { vec![] } else { vec![s.as_str()] },
+                Value::Array(arr) => {
+                    if !allow_multiple && arr.len() > 1 {
+                        return Err(ServiceError::BadRequest(format!(
+                            "Field '{}' only allows a single collaborator, but {} were provided",
+                            field.name, arr.len()
+                        )));
+                    }
+                    arr.iter().filter_map(Value::as_str).collect()
+                }
+                _ => return Err(ServiceError::BadRequest(format!(
+                    "Field '{}' must be an address string or list of addresses", field.name
+                ))),
+            };
+            for addr in addresses {
+                let user = crate::service::people::find_by_user_name(state, addr);
+                let Some(user) = user else {
+                    return Err(ServiceError::BadRequest(format!(
+                        "Unknown collaborator address: '{addr}'"
+                    )));
+                };
+                if user.admin_hold {
+                    return Err(ServiceError::BadRequest(format!(
+                        "Collaborator '{addr}' is on administrative hold"
+                    )));
+                }
+                if !user.active {
+                    return Err(ServiceError::BadRequest(format!(
+                        "Collaborator '{addr}' is inactive"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The attachment fields a write sets: each field, with the ids of the files it lists.
+type Attachments = Vec<(String, Vec<uuid::Uuid>)>;
+
+/// Checks every attachment field in a write. A value is a list of `{ref_id, name}`. Each file must exist in this app,
+/// must not have been let go of, and must be one the writer uploaded and no record holds yet, or one this record
+/// already holds. The names are replaced by the stored ones, so a client cannot rename a file by writing the record.
+fn validate_attachments(
+    caller: &AuthUser,
+    app_slug: &str,
+    table_id: &str,
+    record_id: Option<&str>,
+    data: &mut Value,
+    state: &SharedState,
+) -> Result<Attachments, ServiceError> {
+    let (fields, _) = table_fields_lenient(app_slug, table_id, state);
+    let mut out: Attachments = Vec::new();
+    for field in fields.iter().filter(|f| matches!(f.field_type, FieldType::Attachment { .. })) {
+        let FieldType::Attachment { allow_multiple } = field.field_type else { continue };
+        let Some(val) = data.get(&field.name).cloned() else { continue };
+        let bad = |why: &str| ServiceError::Invalid {
+            message: format!("'{}': {why}", field.label),
+            fields: std::collections::BTreeMap::from([(field.name.clone(), why.to_string())]),
+        };
+        let items = match val {
+            Value::Null => Vec::new(),
+            Value::Array(items) => items,
+            _ => return Err(bad("must be a list of files")),
+        };
+        if !allow_multiple && items.len() > 1 {
+            return Err(bad("holds one file"));
+        }
+        let mut ids: Vec<uuid::Uuid> = Vec::new();
+        for item in &items {
+            let id = item
+                .get("ref_id")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse::<uuid::Uuid>().ok())
+                .ok_or_else(|| bad("each file needs a ref_id from an upload"))?;
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let refs = if ids.is_empty() {
+            Vec::new()
+        } else {
+            let repo = state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Files need PostgreSQL".to_string()))?;
+            repo.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))?
+        };
+        let mut clean: Vec<Value> = Vec::new();
+        for id in &ids {
+            let file = refs.iter().find(|r| r.id == *id).filter(|r| !r.deleted).ok_or_else(|| bad("a file was not found"))?;
+            if file.scan_state == "pending" {
+                return Err(bad("a file is still being scanned"));
+            }
+            let held_here = record_id.is_some() && file.record_id.as_deref() == record_id && file.field.as_deref() == Some(field.name.as_str());
+            let free = !file.attached && file.uploaded_by == caller.eppn;
+            if !held_here && !free {
+                return Err(bad("a file is not yours to attach"));
+            }
+            clean.push(json!({ "ref_id": file.id, "name": file.name, "size": file.size, "media_type": file.media_type }));
+        }
+        if let Some(map) = data.as_object_mut() {
+            map.insert(field.name.clone(), Value::Array(clean));
+        }
+        out.push((field.name.clone(), ids));
+    }
+    Ok(out)
+}
+
+/// The files a record holds in the attachment fields the caller may read, with their size, type and scan state, and
+/// the names of those fields. A field the caller may not read is not named.
+pub fn record_files(caller: &AuthUser, app_slug: &str, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    let record = get_record(caller, app_slug, id, state)?;
+    let table = record.data.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string();
+    let (fields, canonical) = table_fields_lenient(app_slug, &table, state);
+    let hidden = hidden_fields(caller, app_slug, &canonical, &fields, state);
+    let names: Vec<String> = fields
+        .iter()
+        .filter(|f| matches!(f.field_type, FieldType::Attachment { .. }) && !hidden.contains(&f.name))
+        .map(|f| f.name.clone())
+        .collect();
+    let mut ids: Vec<uuid::Uuid> = Vec::new();
+    for name in &names {
+        let listed = record.data.get(name).and_then(Value::as_array).into_iter().flatten();
+        ids.extend(listed.filter_map(|i| i.get("ref_id").and_then(Value::as_str).and_then(|s| s.parse::<uuid::Uuid>().ok())));
+    }
+    let refs = match state.repository.as_deref() {
+        Some(repo) if !ids.is_empty() => repo.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))?,
+        _ => Vec::new(),
+    };
+    let files: Vec<Value> = refs
+        .iter()
+        .filter(|r| !r.deleted && r.record_id.as_deref() == Some(id))
+        .filter_map(|r| {
+            let field = r.field.as_ref().filter(|f| names.contains(f))?;
+            Some(json!({ "ref_id": r.id, "field": field, "name": r.name, "size": r.size, "media_type": r.media_type, "scan_state": r.scan_state }))
+        })
+        .collect();
+    Ok(json!({ "fields": names, "files": files }))
+}
+
+/// Ties the files a write listed to the record, and lets go of the ones it dropped.
+fn attach_attachments(app_slug: &str, table_id: &str, record_id: &str, attachments: &Attachments, state: &SharedState) -> Result<(), ServiceError> {
+    let Some(repo) = state.repository.as_deref() else { return Ok(()) };
+    for (field, ids) in attachments {
+        repo.attach_file_refs(app_slug, table_id, record_id, field, ids).map_err(|e| ServiceError::Internal(format!("Files could not be attached: {e}")))?;
+    }
+    Ok(())
+}
+
+fn validate_and_normalize_durations_and_datetimes(
+    app_slug: &str,
+    table: &str,
+    data: &mut Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    let map = match data.as_object_mut() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    for field in &fields {
+        match &field.field_type {
+            scaffoldry_engine::FieldType::Duration { .. } => {
+                if let Some(val) = map.get(&field.name).cloned() {
+                    match val {
+                        Value::Null => {}
+                        Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                if i < 0 {
+                                    return Err(ServiceError::BadRequest(format!(
+                                        "Duration field '{}' cannot be negative",
+                                        field.name
+                                    )));
+                                }
+                                map.insert(field.name.clone(), Value::from(i));
+                            } else if let Some(f) = n.as_f64() {
+                                if f < 0.0 {
+                                    return Err(ServiceError::BadRequest(format!(
+                                        "Duration field '{}' cannot be negative",
+                                        field.name
+                                    )));
+                                }
+                                map.insert(field.name.clone(), Value::from(f.round() as i64));
+                            }
+                        }
+                        Value::String(s) => {
+                            if s.trim().is_empty() {
+                                map.insert(field.name.clone(), Value::Null);
+                            } else if let Some(secs) = scaffoldry_engine::duration::parse_duration(&s) {
+                                map.insert(field.name.clone(), Value::from(secs));
+                            } else {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Invalid duration format for field '{}': '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                        _ => {
+                            return Err(ServiceError::BadRequest(format!(
+                                "Field '{}' must be a duration string or number",
+                                field.name
+                            )));
+                        }
+                    }
+                }
+            }
+            scaffoldry_engine::FieldType::DateTime => {
+                if let Some(val) = map.get(&field.name).cloned() {
+                    match val {
+                        Value::Null => {}
+                        Value::String(s) => {
+                            if s.trim().is_empty() {
+                                map.insert(field.name.clone(), Value::Null);
+                            } else if let Some(iso) = scaffoldry_engine::index::parse_instant(&s) {
+                                let normalized = if iso.ends_with("+00:00") {
+                                    format!("{}Z", &iso[..iso.len() - 6])
+                                } else {
+                                    iso
+                                };
+                                map.insert(field.name.clone(), Value::from(normalized));
+                            } else {
+                                return Err(ServiceError::BadRequest(format!(
+                                    "Invalid DateTime format for field '{}': '{}'",
+                                    field.name, s
+                                )));
+                            }
+                        }
+                        _ => {
+                            return Err(ServiceError::BadRequest(format!(
+                                "Field '{}' must be an ISO DateTime string",
+                                field.name
+                            )));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_long_text(
+    app_slug: &str,
+    table: &str,
+    data: &Value,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    let (fields, _) = table_fields_lenient(app_slug, table, state);
+    for field in fields.iter().filter(|f| f.field_type == scaffoldry_engine::FieldType::LongText) {
+        if let Some(val) = data.get(&field.name) {
+            match val {
+                Value::Null => {}
+                Value::String(s) => {
+                    if s.chars().count() > 100_000 {
+                        return Err(ServiceError::BadRequest(format!(
+                            "Field '{}' exceeds the 100,000 character limit",
+                            field.name
+                        )));
+                    }
+                }
+                _ => return Err(ServiceError::BadRequest(format!(
+                    "Field '{}' must be a text string",
+                    field.name
+                ))),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_actor_value(actor: &str, kind: crate::repository::ActorKind, token_label: Option<&str>, state: &SharedState) -> Value {
+    use crate::repository::ActorKind;
+    let user = crate::service::people::find_by_user_name(state, actor);
+    let user_name = user.as_ref().map(crate::service::people::display_name);
+    let (name, detail) = match kind {
+        ActorKind::User | ActorKind::Guest => (user_name.unwrap_or_else(|| actor.to_string()), token_label.map(str::to_string)),
+        ActorKind::Agent => (user_name.unwrap_or_else(|| actor.to_string()), token_label.map(str::to_string)),
+        ActorKind::Automation => ("Automation".to_string(), token_label.map(str::to_string).or_else(|| Some(actor.to_string()))),
+        ActorKind::Import => ("Import".to_string(), token_label.map(str::to_string)),
+        ActorKind::Sync => ("Sync".to_string(), token_label.map(str::to_string).or_else(|| Some(actor.to_string()))),
+        ActorKind::System => ("System".to_string(), token_label.map(str::to_string)),
+    };
+    let kind_str = match kind {
+        ActorKind::User => "User",
+        ActorKind::Agent => "Agent",
+        ActorKind::Automation => "Automation",
+        ActorKind::Import => "Import",
+        ActorKind::Sync => "Sync",
+        ActorKind::System => "System",
+        ActorKind::Guest => "Guest",
+    };
+    json!({
+        "actor": actor,
+        "importer": actor,
+        "kind": kind_str,
+        "name": name,
+        "detail": detail,
+    })
+}
+
 pub fn create_record(
     caller: &AuthUser,
     origin: &Origin,
@@ -127,7 +517,7 @@ pub fn create_record(
     let data_payload = &cleaned;
     validate_links(app_slug, None, None, data_payload, state)?;
 
-    let submitted = {
+    let mut submitted = {
         let engine = state
             .engine
             .read()
@@ -147,10 +537,32 @@ pub fn create_record(
             })?
     };
 
+    let table = submitted.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    validate_select_options(app_slug, &table, &submitted.data, state)?;
+    validate_collaborators(app_slug, &table, &submitted.data, state)?;
+    validate_long_text(app_slug, &table, &submitted.data, state)?;
+    validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut submitted.data, state)?;
+    let attachments = validate_attachments(caller, app_slug, &table, None, &mut submitted.data, state)?;
+    if !scope::allows_data(caller, app_slug, &table, &submitted.data, RowOp::Create, state) {
+        return Err(outside_scope());
+    }
+    check_read_only(caller, app_slug, &table, &submitted.data, None, state)?;
+
+    let (fields, _) = table_fields_lenient(app_slug, &table, state);
+    let mut final_data = submitted.data;
+    if let Some(map) = final_data.as_object_mut() {
+        let actor_val = format_actor_value(&caller.eppn, origin.kind, origin.token_label.as_deref(), state);
+        for f in &fields {
+            if f.field_type == FieldType::CreatedBy || f.field_type == FieldType::LastModifiedBy {
+                map.insert(f.name.clone(), actor_val.clone());
+            }
+        }
+    }
+
     let record = DatasetRecord {
         id: submitted.id.to_string(),
         app_slug: app_slug.to_string(),
-        data: submitted.data,
+        data: final_data,
         ceds_mapping: submitted.ceds_mapping,
         is_ferpa_sensitive: submitted.is_ferpa_sensitive,
         created_at: Utc::now().to_rfc3339(),
@@ -162,6 +574,7 @@ pub fn create_record(
     state
         .insert_record(&record, &ctx)
         .map_err(|e| ServiceError::Internal(format!("Failed to store the record: {e}")))?;
+    attach_attachments(app_slug, &table, &record.id, &attachments, state)?;
 
     let mut record_val = record.data.clone();
     if let Some(map) = record_val.as_object_mut() {
@@ -184,6 +597,49 @@ pub fn create_record(
     Ok(final_record)
 }
 
+/// Fields the caller may not change that a write sets. On create, any value counts. On update, a
+/// value that differs from the stored one counts, so sending a record back unchanged is not a write.
+fn check_read_only(caller: &AuthUser, app_slug: &str, table: &str, new_data: &Value, stored: Option<&Value>, state: &SharedState) -> Result<(), ServiceError> {
+    let denied = crate::service::scope::field_visibility_of(caller, app_slug, table, state).read_only;
+    let touched: Vec<&scaffoldry_core::access::Denial> = denied
+        .iter()
+        .filter(|d| {
+            let new = new_data.get(&d.field).filter(|v| !v.is_null() && *v != "");
+            match stored {
+                None => new.is_some(),
+                Some(old) => new != old.get(&d.field).filter(|v| !v.is_null() && *v != ""),
+            }
+        })
+        .collect();
+    let Some(first) = touched.first() else { return Ok(()) };
+    let names: Vec<String> = touched.iter().map(|d| d.field.clone()).collect();
+    Err(ServiceError::FieldReadOnly {
+        message: format!("You cannot change {}.", names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join(", ")),
+        fields: names,
+        reason: first.reason.clone(),
+        remedy: first.remedy.clone(),
+    })
+}
+
+/// A copy of the manifest without the fields the caller may not see, so nothing tells them they exist.
+pub fn without_hidden_fields(caller: &AuthUser, app_slug: &str, manifest: &mut AppManifest, state: &SharedState) {
+    for table in &mut manifest.tables {
+        let hidden = hidden_fields(caller, app_slug, &table.id, &table.fields, state);
+        if hidden.is_empty() {
+            continue;
+        }
+        table.fields.retain(|f| !hidden.contains(&f.name));
+        for view in manifest.views.iter_mut().filter(|v| v.table_id.as_deref() == Some(table.id.as_str())) {
+            view.fields.retain(|f| !hidden.contains(&f.name));
+        }
+    }
+}
+
+/// A write that would leave a record outside the person's own scope. It names no row and no rule.
+fn outside_scope() -> ServiceError {
+    ServiceError::forbidden("You cannot save a record that is outside the rows you have access to.")
+}
+
 pub fn list_records(
     caller: &AuthUser,
     app_slug: &str,
@@ -191,6 +647,7 @@ pub fn list_records(
 ) -> Result<Vec<DatasetRecord>, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     let rows = state.list_app_records(app_slug).map_err(ServiceError::Internal)?;
+    let rows = scope::retain_readable(caller, app_slug, rows, state);
     Ok(redact_records(caller, app_slug, rows, state))
 }
 
@@ -204,6 +661,7 @@ pub fn get_record(
     let record = state
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
+        .filter(|r| scope::allows(caller, app_slug, r, RowOp::Read, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
     Ok(redact_records(caller, app_slug, vec![record], state).remove(0))
 }
@@ -230,6 +688,7 @@ pub fn update_record(
     let current = state
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
+        .filter(|r| scope::allows(caller, app_slug, r, RowOp::Update, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
 
     let mut new_data = match payload.get("data") {
@@ -246,8 +705,35 @@ pub fn update_record(
         map.entry("_table_id".to_string()).or_insert(tid);
     }
 
-    let new_data = strip_lookups(app_slug, &new_data, state);
+    let mut new_data = strip_lookups(app_slug, &new_data, state);
+    let table = new_data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    validate_select_options(app_slug, &table, &new_data, state)?;
+    validate_collaborators(app_slug, &table, &new_data, state)?;
+    validate_long_text(app_slug, &table, &new_data, state)?;
+    validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut new_data, state)?;
+    let attachments = validate_attachments(caller, app_slug, &table, Some(id), &mut new_data, state)?;
+    if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
+        return Err(outside_scope());
+    }
+    check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
+
+    let (fields, _) = table_fields_lenient(app_slug, &table, state);
+    let mut final_new_data = new_data;
+    if let Some(map) = final_new_data.as_object_mut() {
+        let actor_val = format_actor_value(&caller.eppn, origin.kind, origin.token_label.as_deref(), state);
+        for f in &fields {
+            if f.field_type == FieldType::CreatedBy {
+                if let Some(old_val) = current.data.get(&f.name) {
+                    map.insert(f.name.clone(), old_val.clone());
+                }
+            } else if f.field_type == FieldType::LastModifiedBy {
+                map.insert(f.name.clone(), actor_val.clone());
+            }
+        }
+    }
+    let new_data = final_new_data;
+
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
     let (outcome, saved) = state
         .save_record_checked(app_slug, id, &new_data, expected_version, &ctx)
@@ -262,6 +748,7 @@ pub fn update_record(
         }
         _ => return Err(ServiceError::NotFound(format!("Record '{id}' not found"))),
     };
+    attach_attachments(app_slug, &table, id, &attachments, state)?;
 
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,
@@ -313,6 +800,9 @@ pub fn delete_record(
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    if !scope::allows(caller, app_slug, &current, RowOp::Delete, state) {
+        return Err(ServiceError::NotFound(format!("Record '{id}' not found")));
+    }
     check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     if state.remove_record(app_slug, id, &ctx).map_err(ServiceError::Internal)? {
@@ -337,6 +827,9 @@ pub fn delete_record_checked(
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
+    if !scope::allows(caller, app_slug, &current, RowOp::Delete, state) {
+        return Err(ServiceError::NotFound(format!("Record '{id}' not found")));
+    }
     check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     match state.remove_record_checked(app_slug, id, version, &ctx).map_err(ServiceError::Internal)? {
@@ -356,6 +849,7 @@ pub fn delete_record_checked(
 pub const UNINDEXED_ROW_LIMIT: i64 = 10_000;
 pub const TOO_LARGE: &str = "This table is too large to filter or sort on a field that is not indexed.";
 
+#[derive(Clone)]
 pub struct SortSpec {
     pub field_name: String,
     pub descending: bool,
@@ -371,9 +865,24 @@ pub struct PageQuery {
     pub max_bytes: Option<usize>,
     /// True makes a table the manifest does not name a `NotFound`.
     pub must_exist: bool,
+    /// Full-text search string.
+    pub search: Option<String>,
+}
+
+/// Says in a page's response which fields are being calculated again and how far along they are:
+/// `field_states: { "status": "calculating" }` and `field_progress: { "status": 63 }`. A page with
+/// nothing calculating has neither key.
+pub fn add_field_states(body: &mut Value, calculating: &[(String, i64)]) {
+    if calculating.is_empty() {
+        return;
+    }
+    body["field_states"] = Value::Object(calculating.iter().map(|(f, _)| (f.clone(), Value::String("calculating".to_string()))).collect());
+    body["field_progress"] = Value::Object(calculating.iter().map(|(f, p)| (f.clone(), Value::from(*p))).collect());
 }
 
 pub struct RecordPage {
+    /// Fields of the table that are being calculated again, each with the percent done.
+    pub calculating: Vec<(String, i64)>,
     pub records: Vec<DatasetRecord>,
     pub next_cursor: Option<String>,
 }
@@ -477,26 +986,9 @@ pub(crate) fn indexed_fields_of(app_slug: &str, table_id: &str, state: &SharedSt
 /// The `Link` fields of a table, each with the field that mirrors it on the other table. Every write
 /// keeps their `record_links` rows current and mirrors the two-way ones.
 pub(crate) fn link_specs_of(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<crate::repository_links::LinkSpec> {
-    use scaffoldry_engine::{FieldType, HostRouter, LinkCardinality};
     let Ok(engine) = state.engine.read() else { return Vec::new() };
     let Some(manifest) = engine.resolve_by_slug(app_slug) else { return Vec::new() };
-    let Some(table) = manifest.tables.iter().find(|t| t.id == table_id) else { return Vec::new() };
-    table
-        .fields
-        .iter()
-        .filter(|f| f.field_type == FieldType::Link)
-        .map(|f| {
-            let mirror = f.link_related_field.as_deref().and_then(|name| {
-                let target = manifest.tables.iter().find(|t| Some(t.id.as_str()) == f.link_target_table.as_deref())?;
-                target.fields.iter().find(|x| x.name == name)
-            });
-            crate::repository_links::LinkSpec {
-                field: f.name.clone(),
-                related: mirror.map(|m| m.name.clone()),
-                related_one: mirror.is_some_and(|m| m.link_cardinality == LinkCardinality::One),
-            }
-        })
-        .collect()
+    crate::repository_links::link_specs_in(manifest, table_id)
 }
 
 /// The link fields, on any table of the app, that refuse the delete of a record of `table_id` while
@@ -584,7 +1076,39 @@ pub(crate) fn formula_specs_of(app_slug: &str, table_id: &str, state: &SharedSta
             at_write.push((f.name.clone(), expression));
         }
     }
+    // Each runs after everything it reads, whatever order the fields were declared in.
+    let order = calc_order(app_slug, table_id, state);
+    let rank = |name: &str| order.iter().position(|x| x == name).unwrap_or(usize::MAX);
+    at_write.sort_by_key(|(name, _)| rank(name));
+    at_read.sort_by_key(|(name, _)| rank(name));
     (at_write, at_read)
+}
+
+/// The fields of a table in the order they must be computed. Empty when the app is unknown or has a cycle,
+/// which the manifest validator refuses before an app is stored.
+fn calc_order(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
+    let Ok(engine) = state.engine.read() else { return Vec::new() };
+    let Some(manifest) = engine.resolve_by_slug(app_slug) else { return Vec::new() };
+    scaffoldry_engine::graph::build_graph(manifest).map(|g| g.order(table_id)).unwrap_or_default()
+}
+
+/// What every table of the app needs when one of its records is recomputed because another changed.
+pub(crate) fn calc_tables_of(app_slug: &str, state: &SharedState) -> std::sync::Arc<std::collections::HashMap<String, crate::repository_links::TableCalc>> {
+    use scaffoldry_engine::HostRouter;
+    let ids: Vec<String> = state
+        .engine
+        .read()
+        .ok()
+        .and_then(|e| e.resolve_by_slug(app_slug).map(|m| m.tables.iter().map(|t| t.id.clone()).collect()))
+        .unwrap_or_default();
+    let tables = ids
+        .into_iter()
+        .map(|id| {
+            let calc = crate::repository_links::TableCalc { formulas: formula_specs_of(app_slug, &id, state).0, index_fields: indexed_fields_of(app_slug, &id, state) };
+            (id, calc)
+        })
+        .collect();
+    std::sync::Arc::new(tables)
 }
 
 /// A lookup is never stored: it is added to the rows of a page when they are read. A value a caller sends
@@ -653,29 +1177,50 @@ fn fill_lookups(caller: &AuthUser, app_slug: &str, rows: &mut [DatasetRecord], s
 /// The names of a table's indexed fields: marked, used by a view, or joined on.
 fn indexed_names(app_slug: &str, table_id: &str, state: &SharedState) -> std::collections::BTreeSet<String> {
     let Ok(engine) = state.engine.read() else { return Default::default() };
-    engine.resolve_by_slug(app_slug).map(|m| scaffoldry_engine::indexed_fields(m, table_id)).unwrap_or_default()
+    let mut names = engine.resolve_by_slug(app_slug).map(|m| scaffoldry_engine::indexed_fields(m, table_id)).unwrap_or_default();
+    drop(engine);
+    // A field a row rule reads is indexed, so the rule compiles to the index.
+    names.extend(crate::service::scope::rule_fields(app_slug, table_id, state));
+    names
 }
 
-fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
-    if !is_viewer(caller, app_slug, state) {
-        return Vec::new();
-    }
+/// The names of a table's fields that are effective-sensitive: marked in the manifest, or made so by a
+/// label or a category. The disclosure log writes an entry only when a release includes one.
+pub(crate) fn sensitive_fields_of(app_slug: &str, table: &str, state: &SharedState) -> Vec<String> {
+    let Ok((fields, canonical)) = table_fields(app_slug, table, false, state) else { return Vec::new() };
     let categories = state.sensitivity_categories();
     let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
     fields
         .iter()
         .filter(|f| {
-            let label = labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone()));
+            let label = labels.get(&(app_slug.to_string(), canonical.clone(), f.name.clone()));
             scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected
         })
         .map(|f| f.name.clone())
         .collect()
 }
 
+fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
+    // The app's column rules hold a field back from any member they name. The viewer rule hides
+    // sensitive fields from a viewer. A field either rule hides is hidden.
+    let mut hidden = crate::service::scope::field_visibility_of(caller, app_slug, table, state).hidden_names();
+    if is_viewer(caller, app_slug, state) {
+        let categories = state.sensitivity_categories();
+        let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
+        for f in fields {
+            let label = labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone()));
+            if scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected && !hidden.contains(&f.name) {
+                hidden.push(f.name.clone());
+            }
+        }
+    }
+    hidden
+}
+
 /// Removes, from each row, the fields the caller may not read. Rows of the same table share one
 /// lookup.
 pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRecord>, state: &SharedState) -> Vec<DatasetRecord> {
-    if !is_viewer(caller, app_slug, state) {
+    if !is_viewer(caller, app_slug, state) && crate::service::scope::column_rules_of(app_slug, state).is_empty() {
         return rows;
     }
     let mut by_table: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
@@ -695,6 +1240,78 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
     rows
 }
 
+/// A filter ready to run, with each relative date resolved to a range in the institution's zone at
+/// this moment. A filter with no clause is no filter.
+pub fn prepared_filter(filter: Option<&CompoundFilter>, state: &SharedState) -> Result<Option<CompoundFilter>, ServiceError> {
+    let Some(f) = filter else { return Ok(None) };
+    if scaffoldry_engine::clauses_of(f).is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(scaffoldry_engine::resolve_relative_dates(f, chrono::Utc::now(), &state.platform_timezone())))
+}
+
+fn is_multi(spec: &FieldSpec) -> bool {
+    spec.field_type == scaffoldry_engine::FieldType::MultiSelect || matches!(spec.field_type, scaffoldry_engine::FieldType::Collaborator { allow_multiple: true })
+}
+
+/// A filter tree with typed leaves. A clause that names a field the table lacks reads as no clause here. The caller
+/// has already refused that.
+pub fn expr_of(fields: &[FieldSpec], f: &CompoundFilter) -> Expr {
+    let mut kids: Vec<Expr> = Vec::new();
+    for c in &f.clauses {
+        let needs_value = !matches!(c.operator, FilterOperator::IsEmpty | FilterOperator::IsNotEmpty);
+        match fields.iter().find(|s| s.name == c.field_name) {
+            // The older evaluator treats a clause with no value as true. So does this.
+            Some(_) if needs_value && c.value.trim().is_empty() => kids.push(Expr::And(Vec::new())),
+            Some(spec) => kids.push(Expr::Leaf(IndexedClause {
+                field: c.field_name.clone(),
+                column: scaffoldry_engine::index_column(spec.field_type),
+                multi: is_multi(spec),
+                op: c.operator,
+                value: c.value.clone(),
+            })),
+            None => kids.push(Expr::And(Vec::new())),
+        }
+    }
+    kids.extend(f.groups.iter().map(|g| expr_of(fields, g)));
+    match f.conjunction {
+        FilterConjunction::And => Expr::And(kids),
+        FilterConjunction::Or => Expr::Or(kids),
+    }
+}
+
+/// Whether the index can answer one leaf.
+fn leaf_indexable(c: &IndexedClause) -> bool {
+    match c.op {
+        FilterOperator::Equals | FilterOperator::In => true,
+        FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty | FilterOperator::Between | FilterOperator::Before | FilterOperator::After => !c.multi,
+        FilterOperator::Contains | FilterOperator::NotContains => false,
+    }
+}
+
+/// What a filter tree needs from the index: the sort its pages walk, or the field that stops it. With no sort given,
+/// the pages walk the first single-valued field the tree names.
+fn tree_plan(
+    fields: &[FieldSpec],
+    indexed: &std::collections::BTreeSet<String>,
+    expr: &Expr,
+    sort: Option<&SortSpec>,
+) -> Result<(Vec<IndexedClause>, Option<IndexedSort>), String> {
+    let leaves = expr.leaves();
+    for c in &leaves {
+        if !indexed.contains(&c.field) || !leaf_indexable(c) {
+            return Err(c.field.clone());
+        }
+    }
+    let walked = match sort {
+        Some(s) => Some(s.clone()),
+        None => leaves.iter().find(|c| !c.multi).map(|c| SortSpec { field_name: c.field.clone(), descending: false }),
+    };
+    let Some(walked) = walked else { return Err(leaves.first().map(|c| c.field.clone()).unwrap_or_default()) };
+    let (_, isort) = indexed_plan(fields, indexed, None, Some(&walked))?;
+    Ok((Vec::new(), isort))
+}
+
 /// What a filter or sort needs from the pivot index, or the field that stops it.
 fn indexed_plan(
     fields: &[FieldSpec],
@@ -711,10 +1328,10 @@ fn indexed_plan(
         }
         for c in &f.clauses {
             let spec = field(&c.field_name).filter(|s| indexed.contains(&s.name)).ok_or_else(|| c.field_name.clone())?;
-            let multi = spec.field_type == FieldType::MultiSelect;
+            let multi = spec.field_type == FieldType::MultiSelect || matches!(spec.field_type, FieldType::Collaborator { allow_multiple: true });
             let supported = match c.operator {
-                FilterOperator::Equals => true,
-                FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty => !multi,
+                FilterOperator::Equals | FilterOperator::In => true,
+                FilterOperator::NotEquals | FilterOperator::GreaterThan | FilterOperator::LessThan | FilterOperator::IsEmpty | FilterOperator::IsNotEmpty | FilterOperator::Between | FilterOperator::Before | FilterOperator::After => !multi,
                 FilterOperator::Contains | FilterOperator::NotContains => false,
             };
             if !supported {
@@ -736,7 +1353,7 @@ fn indexed_plan(
     let sort = match sort {
         None => None,
         Some(s) => {
-            let spec = field(&s.field_name).filter(|f| indexed.contains(&f.name) && f.field_type != FieldType::MultiSelect).ok_or_else(|| s.field_name.clone())?;
+            let spec = field(&s.field_name).filter(|f| indexed.contains(&f.name) && f.field_type != FieldType::MultiSelect && !matches!(f.field_type, FieldType::Collaborator { allow_multiple: true })).ok_or_else(|| s.field_name.clone())?;
             Some(IndexedSort { field: s.field_name.clone(), column: scaffoldry_engine::index_column(spec.field_type), descending: s.descending })
         }
     };
@@ -774,20 +1391,33 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     let (fields, table) = table_fields(app_slug, &query.table_id, query.must_exist, state)?;
     let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
+    let calculating: Vec<(String, i64)> = state.repository.as_deref().and_then(|r| r.calc_states(app_slug, &table).ok()).unwrap_or_default();
     let check = |name: &str| -> Result<(), ServiceError> {
-        if fields.iter().any(|f| f.name == name) && !hidden.iter().any(|h| h == name) {
-            Ok(())
-        } else {
+        if !fields.iter().any(|f| f.name == name) {
             Err(ServiceError::BadRequest(format!("'{name}' is not a field of this table")))
+        } else if let Some((_, percent)) = calculating.iter().find(|(f, _)| f == name).filter(|_| !hidden.iter().any(|h| h == name)) {
+            Err(ServiceError::Calculating(format!("This field is still being calculated. It is {percent}% done.")))
+        } else if hidden.iter().any(|h| h == name) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == name);
+            Err(ServiceError::FieldHidden {
+                message: format!("You cannot filter or sort on '{name}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{name}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            })
+        } else {
+            Ok(())
         }
     };
-    let clauses: Vec<_> = query
-        .filter
-        .as_ref()
-        .map(|f| f.clauses.iter().map(|c| (c.field_name.clone(), c.operator, c.value.clone())).collect())
-        .unwrap_or_default();
-    for (name, _, _) in &clauses {
-        check(name)?;
+    let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
+    let filter = prepared_filter(query.filter.as_ref(), state)?;
+    let tree: Option<Expr> = filter.as_ref().filter(|f| !scaffoldry_engine::is_flat(f)).map(|f| expr_of(&fields, f));
+    let clauses: Vec<_> = if tree.is_some() {
+        Vec::new()
+    } else {
+        filter.as_ref().map(|f| f.clauses.iter().map(|c| (c.field_name.clone(), c.operator, c.value.clone())).collect()).unwrap_or_default()
+    };
+    for c in filter.iter().flat_map(scaffoldry_engine::clauses_of) {
+        check(&c.field_name)?;
     }
     if let Some(sort) = &query.sort {
         check(&sort.field_name)?;
@@ -795,14 +1425,58 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     let after = query.cursor.as_deref().map(decode_cursor).transpose()?;
     let sort_field = query.sort.as_ref().map(|s| s.field_name.clone());
 
-    let plan = indexed_plan(&fields, &indexed_names(app_slug, &table, state), query.filter.as_ref(), query.sort.as_ref());
+    if query.search.as_ref().is_some_and(|s| !s.trim().is_empty()) {
+        let sensitive_hidden = is_viewer(caller, app_slug, state) && {
+            let categories = state.sensitivity_categories();
+            let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
+            fields.iter().any(|f| {
+                let label = labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone()));
+                scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected
+            })
+        };
+        if sensitive_hidden {
+            return Err(ServiceError::BadRequest("Search is not available on this table for your role.".to_string()));
+        }
+    }
+
+    let indexed = indexed_names(app_slug, &table, state);
+    let plan = match &tree {
+        Some(e) => tree_plan(&fields, &indexed, e, query.sort.as_ref()),
+        None => indexed_plan(&fields, &indexed, filter.as_ref(), query.sort.as_ref()),
+    };
+    let has_search = query.search.as_ref().is_some_and(|s| !s.trim().is_empty());
     let mut walk_spec: Option<FieldSpec> = None;
-    let mut rows = if clauses.is_empty() && query.sort.is_none() {
-        state
-            .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
-            .map_err(ServiceError::Internal)?
+    let mut rows = if clauses.is_empty() && tree.is_none() && query.sort.is_none() && !has_search {
+        match &scope {
+            // The paging index cannot apply a scope, so a scoped walk goes through the same statement
+            // as a filtered one, in the same order.
+            Some(plan) => state
+                .query_records(
+                    app_slug,
+                    &crate::repository::RecordQuery {
+                        table_id: table.clone(),
+                        any: false,
+                        clauses: Vec::new(),
+                        sort: None,
+                        after,
+                        limit: query.limit + 1,
+                        scope: Some(plan.clone()),
+                        search: None,
+                        expr: None,
+                    },
+                )
+                .map_err(ServiceError::Internal)?,
+            None => state
+                .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
+                .map_err(ServiceError::Internal)?,
+        }
     } else if let Some((iclauses, isort)) = plan.as_ref().ok().filter(|(c, s)| !c.is_empty() || s.is_some()) {
-        let named: Vec<String> = iclauses.iter().map(|c| c.field.clone()).chain(isort.iter().map(|s| s.field.clone())).collect();
+        let named: Vec<String> = iclauses
+            .iter()
+            .map(|c| c.field.clone())
+            .chain(isort.iter().map(|s| s.field.clone()))
+            .chain(tree.iter().flat_map(|e| e.leaves().into_iter().map(|c| c.field.clone())))
+            .collect();
         if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(ServiceError::Internal)? {
             return Err(ServiceError::IndexBuilding(format!("This field is still being prepared for sorting. It is {percent}% done.")));
         }
@@ -813,6 +1487,10 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             sort: isort.clone(),
             after: None,
             limit: query.limit + 1,
+            scope: scope.clone(),
+            search: query.search.clone(),
+            expr: tree.clone(),
+            offset: 0,
         };
         if let Some((name, column, _)) = crate::repository_index::walk_of(&iq) {
             walk_spec = fields.iter().find(|f| f.name == name).cloned();
@@ -822,17 +1500,20 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         }
         state.indexed_page(&iq).map_err(ServiceError::Internal)?
     } else {
-        if state.table_has_more_than(app_slug, &table, UNINDEXED_ROW_LIMIT).map_err(ServiceError::Internal)? {
+        if (!clauses.is_empty() || tree.is_some() || query.sort.is_some()) && state.table_has_more_than(app_slug, &table, UNINDEXED_ROW_LIMIT).map_err(ServiceError::Internal)? {
             let name = plan.err().unwrap_or_default();
             return Err(ServiceError::BadRequest(format!("{TOO_LARGE} Mark '{name}' as indexed in the app manifest to filter or sort on it.")));
         }
         let q = crate::repository::RecordQuery {
             table_id: table.clone(),
-            any: query.filter.as_ref().is_some_and(|f| f.conjunction == FilterConjunction::Or),
+            any: filter.as_ref().is_some_and(|f| f.conjunction == FilterConjunction::Or),
             clauses,
             sort: query.sort.as_ref().map(|s| (s.field_name.clone(), s.descending)),
             after,
             limit: query.limit + 1,
+            scope: scope.clone(),
+            search: query.search.clone(),
+            expr: tree.clone(),
         };
         state.query_records(app_slug, &q).map_err(ServiceError::Internal)?
     };
@@ -862,7 +1543,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         rows.last().map(|r| encode_cursor(r, sort_field.as_deref()))
     };
     fill_lookups(caller, app_slug, &mut rows, state);
-    Ok(RecordPage { records: redact_records(caller, app_slug, rows, state), next_cursor })
+    Ok(RecordPage { records: redact_records(caller, app_slug, rows, state), next_cursor, calculating })
 }
 
 /// Who triggered an automation: their identity and their stored department.
@@ -937,6 +1618,7 @@ fn run_automations_in(
                 role_title: String::new(),
                 affiliation: aff_str.to_string(),
                 department: actor.department.to_string(),
+        view_as_by: None,
             };
             let resource = scaffoldry_policy::entities::Resource::Record(scaffoldry_policy::entities::RecordCtx {
                 app_slug: app_slug.to_string(),
@@ -1000,4 +1682,444 @@ fn version_required(message: &str) -> ServiceError {
         message: message.to_string(),
         fields: std::collections::BTreeMap::from([("version".to_string(), "required".to_string())]),
     }
+}
+
+
+// ---------------------------------------------------------------------------------------------
+// Aggregate records (Totals & Groups)
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AggregateGroup {
+    pub key: String,
+    /// The key of the second group, when the request had one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key2: Option<String>,
+    pub group: String,
+    pub value: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AggregateResult {
+    pub function: AggregateFunction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_by2: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub groups: Option<Vec<AggregateGroup>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more: Option<bool>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct AggregateQuery {
+    pub function: AggregateFunction,
+    pub field: Option<String>,
+    pub filter: Option<CompoundFilter>,
+    pub group_by: Option<String>,
+    /// A second field to group by, inside the first.
+    #[serde(default)]
+    pub group_by2: Option<String>,
+    /// `day`, `week`, `month`, `quarter` or `year`, for a date `group_by`, in the institution's zone.
+    #[serde(default)]
+    pub bucket: Option<String>,
+    /// Order the groups by key, so every measure of one table has the same groups.
+    #[serde(default)]
+    pub order_by_key: bool,
+}
+
+pub const BUCKETS: [&str; 5] = ["day", "week", "month", "quarter", "year"];
+
+pub fn aggregate_records(
+    caller: &AuthUser,
+    app_slug: &str,
+    table_id: &str,
+    query: AggregateQuery,
+    state: &SharedState,
+) -> Result<AggregateResult, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::Read, state)?;
+    if let Some(f) = &query.filter {
+        scaffoldry_engine::check_filter(f).map_err(ServiceError::BadRequest)?;
+    }
+    let (fields, table) = table_fields(app_slug, table_id, true, state)?;
+    let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
+    let indexed = indexed_names(app_slug, &table, state);
+
+    if query.function != AggregateFunction::Count && query.field.is_none() {
+        return Err(ServiceError::BadRequest(format!("'field' is required for {:?} aggregate", query.function)));
+    }
+
+    if let Some(ref f) = query.field {
+        if !fields.iter().any(|s| s.name == *f) {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not a field of this table")));
+        }
+        if !indexed.contains(f) {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not in the indexed set")));
+        }
+        let spec = fields.iter().find(|s| s.name == *f).unwrap();
+        let any_type = matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty | AggregateFunction::Unique);
+        if !any_type && scaffoldry_engine::index_column(spec.field_type) != scaffoldry_engine::IndexColumn::Num {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not a numeric field (must be stored in num)")));
+        }
+        if hidden.iter().any(|h| h == f) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *f);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot aggregate on '{f}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{f}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+
+    if query.group_by.is_some() && matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty) {
+        return Err(ServiceError::BadRequest(format!("{:?} cannot be grouped. Use count, count_distinct, sum, avg, min or max.", query.function)));
+    }
+
+    if let Some(ref g) = query.group_by {
+        if !fields.iter().any(|s| s.name == *g) {
+            return Err(ServiceError::BadRequest(format!("'{g}' is not a field of this table")));
+        }
+        if !indexed.contains(g) {
+            return Err(ServiceError::BadRequest(format!("'{g}' is not in the indexed set")));
+        }
+        if hidden.iter().any(|h| h == g) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *g);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot group by '{g}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{g}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+
+    if query.group_by2.is_some() && query.group_by.is_none() {
+        return Err(ServiceError::BadRequest("group_by2 needs group_by".to_string()));
+    }
+    if let Some(ref g2) = query.group_by2 {
+        if query.group_by.as_ref() == Some(g2) {
+            return Err(ServiceError::BadRequest("group_by2 must be a different field from group_by".to_string()));
+        }
+        if !fields.iter().any(|s| s.name == *g2) {
+            return Err(ServiceError::BadRequest(format!("'{g2}' is not a field of this table")));
+        }
+        if !indexed.contains(g2) {
+            return Err(ServiceError::BadRequest(format!("'{g2}' is not in the indexed set")));
+        }
+        if hidden.iter().any(|h| h == g2) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *g2);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot group by '{g2}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{g2}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+    let bucket = match (&query.bucket, &query.group_by) {
+        (None, _) => None,
+        (Some(_), None) => return Err(ServiceError::BadRequest("bucket needs group_by".to_string())),
+        (Some(unit), Some(g)) => {
+            if !BUCKETS.contains(&unit.as_str()) {
+                return Err(ServiceError::BadRequest(format!("bucket must be one of {}", BUCKETS.join(", "))));
+            }
+            let is_date = fields.iter().find(|f| f.name == *g).is_some_and(|f| scaffoldry_engine::index_column(f.field_type) == IndexColumn::Ts);
+            if !is_date {
+                return Err(ServiceError::BadRequest(format!("'{g}' is not a date, so it cannot be put in {unit}s")));
+            }
+            Some(crate::repository_index::Bucket { unit: unit.clone(), zone: scaffoldry_engine::valid_zone(&state.platform_timezone()) })
+        }
+    };
+
+    let mut iclauses = Vec::new();
+    let mut tree: Option<Expr> = None;
+    let filter = prepared_filter(query.filter.as_ref(), state)?;
+    if let Some(ref filter) = filter {
+        for c in scaffoldry_engine::clauses_of(filter) {
+            if hidden.iter().any(|h| h == &c.field_name) {
+                let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == c.field_name);
+                return Err(ServiceError::FieldHidden {
+                    message: format!("You cannot filter on '{}' because you cannot see it.", c.field_name),
+                    reason: rule.as_ref().map_or_else(|| format!("'{}' is hidden from you.", c.field_name), |d| d.reason.clone()),
+                    remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                });
+            }
+            if !fields.iter().any(|s| s.name == c.field_name) {
+                return Err(ServiceError::BadRequest(format!("'{}' is not a field of this table", c.field_name)));
+            }
+        }
+        if scaffoldry_engine::is_flat(filter) {
+            match indexed_plan(&fields, &indexed, Some(filter), None) {
+                Ok((clauses, _)) => iclauses = clauses,
+                Err(name) => return Err(ServiceError::BadRequest(format!("'{name}' must be in the indexed set to filter aggregate"))),
+            }
+        } else {
+            let e = expr_of(&fields, filter);
+            if let Some(bad) = e.leaves().into_iter().find(|c| !indexed.contains(&c.field) || !leaf_indexable(c)) {
+                return Err(ServiceError::BadRequest(format!("'{}' must be in the indexed set to filter aggregate", bad.field)));
+            }
+            tree = Some(e);
+        }
+    }
+
+    let named: Vec<String> = query
+        .field
+        .iter()
+        .chain(query.group_by.iter())
+        .cloned()
+        .chain(iclauses.iter().map(|c| c.field.clone()))
+        .chain(tree.iter().flat_map(|e| e.leaves().into_iter().map(|c| c.field.clone())))
+        .collect();
+    if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(ServiceError::Internal)? {
+        return Err(ServiceError::IndexBuilding(format!("This field is still being prepared. It is {percent}% done.")));
+    }
+
+    let mut driving_field = query.field.clone();
+    if driving_field.is_none() && query.group_by.is_none() {
+        if let Some(first_clause) = iclauses.first().or_else(|| tree.as_ref().and_then(|e| e.leaves().into_iter().next())) {
+            driving_field = Some(first_clause.field.clone());
+        } else if let Some(first_idx) = indexed.iter().next() {
+            driving_field = Some(first_idx.clone());
+        } else {
+            return Err(ServiceError::BadRequest("Table has no indexed fields to aggregate".to_string()));
+        }
+    }
+
+    let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
+    let plan = crate::repository_index::AggregatePlan {
+        app_slug: app_slug.to_string(),
+        table_id: table.clone(),
+        function: query.function,
+        field: query.field.clone(),
+        driver: driving_field,
+        group_by: query.group_by.clone(),
+        group_by2: query.group_by2.clone(),
+        bucket,
+        order_by_key: query.order_by_key,
+        clauses: iclauses,
+        expr: tree,
+        scope,
+    };
+
+    let raw = state.aggregate_records(&plan).map_err(ServiceError::Internal)?;
+    let result = match query.group_by {
+        Some(g) => {
+            let groups: Vec<AggregateGroup> = raw.groups.unwrap_or_default().into_iter().map(|grp| AggregateGroup {
+                group: grp.key.clone(),
+                key: grp.key,
+                key2: grp.key2,
+                value: grp.value,
+                count: if query.function == AggregateFunction::Count { Some(grp.value) } else { None },
+            }).collect();
+            AggregateResult {
+                function: query.function,
+                field: query.field,
+                group_by: Some(g),
+                group_by2: query.group_by2.clone(),
+                bucket: query.bucket.clone(),
+                value: None,
+                count: None,
+                groups: Some(groups),
+                has_more: Some(raw.has_more),
+                more: Some(raw.has_more),
+            }
+        }
+        None => {
+            let val = raw.value.unwrap_or(0.0);
+            AggregateResult {
+                function: query.function,
+                field: query.field,
+                group_by: None,
+                group_by2: None,
+                bucket: None,
+                value: Some(val),
+                count: if query.function == AggregateFunction::Count { Some(val) } else { None },
+                groups: None,
+                has_more: None,
+                more: None,
+            }
+        }
+    };
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Windows and counts (views phase 3)
+// ---------------------------------------------------------------------------------------------
+
+/// What a window of a view asks for.
+pub struct WindowQuery {
+    pub table_id: String,
+    pub filter: Option<CompoundFilter>,
+    pub sort: Option<SortSpec>,
+    /// Rows to skip from the front, up to `MAX_WINDOW_OFFSET`.
+    pub offset: usize,
+    pub limit: usize,
+    /// The last `limit` rows, in order. `offset` is ignored.
+    pub reverse: bool,
+    /// The view, so its anchors can be used. A caller with a row scope never uses anchors.
+    pub view_id: Option<uuid::Uuid>,
+}
+
+pub struct WindowPage {
+    pub records: Vec<DatasetRecord>,
+    /// How the rows were found: `offset` (skipped on the index), `anchor` (started at the nearest anchor), or `reverse`.
+    pub strategy: &'static str,
+}
+
+pub enum RowCount {
+    Exact(i64),
+    AtLeast(i64),
+}
+
+/// The walk of a view: its order and filter, checked and compiled, with the caller's scope.
+struct Walk {
+    query: IndexedQuery,
+    spec: crate::repository_index::AnchorSpec,
+}
+
+fn walk_of(caller: &AuthUser, app_slug: &str, q: &WindowQuery, state: &SharedState) -> Result<Walk, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::Read, state)?;
+    let (fields, table) = table_fields(app_slug, &q.table_id, true, state)?;
+    let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
+    let filter = prepared_filter(q.filter.as_ref(), state)?;
+    let names: Vec<&str> = filter.iter().flat_map(scaffoldry_engine::clauses_of).map(|c| c.field_name.as_str()).chain(q.sort.iter().map(|s| s.field_name.as_str())).collect();
+    for name in names {
+        if !fields.iter().any(|f| f.name == name) {
+            return Err(ServiceError::BadRequest(format!("'{name}' is not a field of this table")));
+        }
+        if hidden.iter().any(|h| h == name) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == name);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot filter or sort on '{name}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{name}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+    let indexed = indexed_names(app_slug, &table, state);
+    let expr = filter.as_ref().map(|f| expr_of(&fields, f));
+    let planned = match &expr {
+        Some(e) => tree_plan(&fields, &indexed, e, q.sort.as_ref()),
+        None => indexed_plan(&fields, &indexed, None, q.sort.as_ref()),
+    };
+    let (clauses, sort) = planned.map_err(|name| ServiceError::BadRequest(format!("'{name}' must be in the indexed set to open this view in a window")))?;
+    let sort = sort.ok_or_else(|| ServiceError::BadRequest("Sort the view by an indexed field to open it in a window.".to_string()))?;
+    let mut named: Vec<String> = vec![sort.field.clone()];
+    named.extend(expr.iter().flat_map(|e| e.leaves().into_iter().map(|c| c.field.clone())));
+    if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(internal)? {
+        return Err(ServiceError::IndexBuilding(format!("This field is still being prepared for sorting. It is {percent}% done.")));
+    }
+    let spec = crate::repository_index::AnchorSpec {
+        app_slug: app_slug.to_string(),
+        table_id: table.clone(),
+        view_id: q.view_id.unwrap_or_default(),
+        sort: sort.clone(),
+        clauses: clauses.clone(),
+        expr: expr.clone(),
+    };
+    let query = IndexedQuery {
+        app_slug: app_slug.to_string(),
+        table_id: table.clone(),
+        clauses,
+        sort: Some(sort),
+        after: None,
+        limit: q.limit,
+        scope: crate::service::scope::plan_of(caller, app_slug, &table, state),
+        search: None,
+        expr,
+        offset: 0,
+    };
+    Ok(Walk { query, spec })
+}
+
+fn internal(e: impl std::fmt::Display) -> ServiceError {
+    ServiceError::Internal(e.to_string())
+}
+
+fn repo_of(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
+    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Windows need PostgreSQL".to_string()))
+}
+
+/// Asks for the anchors of a view to be built. A repeat while one is queued or running is the same job. A person at
+/// their job quota just waits for the next request.
+fn ask_for_anchors(caller: &AuthUser, spec: &crate::repository_index::AnchorSpec, state: &SharedState) {
+    let Some(repo) = state.repository.as_deref() else { return };
+    let key = format!("build_anchors:{}:{}", spec.view_id, spec.hash());
+    if let Ok(payload) = serde_json::to_value(spec) {
+        let _ = crate::jobs::enqueue(repo, "build_anchors", payload, &caller.eppn, Some(&key));
+    }
+}
+
+/// How old anchors may be before a request asks for new ones, in seconds.
+const ANCHOR_REFRESH_SECS: f64 = 300.0;
+
+/// One window of a view, over the person's own scope.
+pub fn window_page(caller: &AuthUser, app_slug: &str, q: WindowQuery, state: &SharedState) -> Result<WindowPage, ServiceError> {
+    use crate::repository_index::{ANCHOR_STEP, MAX_WINDOW_OFFSET};
+    if q.offset > MAX_WINDOW_OFFSET {
+        return Err(ServiceError::BadRequest(format!("A window may start at row {MAX_WINDOW_OFFSET} at most. Sort or filter to reach a row beyond it.")));
+    }
+    let walk = walk_of(caller, app_slug, &q, state)?;
+    let repo = repo_of(state)?;
+    let column = walk.query.sort.as_ref().map(|s| s.column).unwrap_or(IndexColumn::Num);
+    let mut iq = walk.query.clone();
+    let (strategy, mut rows) = if q.reverse {
+        ("reverse", repo.indexed_window(&iq, true).map_err(internal)?.into_iter().rev().collect::<Vec<_>>())
+    } else {
+        let anchored = q.view_id.is_some() && iq.scope.is_none() && q.offset >= 2 * ANCHOR_STEP;
+        let hash = walk.spec.hash();
+        let found = match (anchored, q.view_id) {
+            (true, Some(view)) => {
+                let age = repo.anchors_built(view, &hash).map_err(internal)?;
+                if age.is_none_or(|a| a > ANCHOR_REFRESH_SECS) {
+                    ask_for_anchors(caller, &walk.spec, state);
+                }
+                repo.nearest_anchor(view, &hash, q.offset).map_err(internal)?
+            }
+            _ => None,
+        };
+        match found {
+            Some((position, cursor)) => {
+                let after = if cursor.is_null() {
+                    None
+                } else {
+                    let key = cursor.get("key").cloned();
+                    let id = cursor.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                    Some(indexed_after(&crate::repository::RecordCursor { created_at: String::new(), id, key }, column)?)
+                };
+                iq.after = after;
+                iq.offset = q.offset - position;
+                ("anchor", repo.indexed_window(&iq, false).map_err(internal)?)
+            }
+            None => {
+                iq.offset = q.offset;
+                ("offset", repo.indexed_window(&iq, false).map_err(internal)?)
+            }
+        }
+    };
+    fill_lookups(caller, app_slug, &mut rows, state);
+    Ok(WindowPage { records: redact_records(caller, app_slug, rows, state), strategy })
+}
+
+/// How many rows a view holds for this person. The exact count runs under the server's count timeout (two seconds). If
+/// that runs out, the answer is `at least`, up to 250,000.
+pub fn count_rows(caller: &AuthUser, app_slug: &str, q: WindowQuery, state: &SharedState) -> Result<RowCount, ServiceError> {
+    let walk = walk_of(caller, app_slug, &q, state)?;
+    let ms = state.count_timeout_ms.load(std::sync::atomic::Ordering::SeqCst);
+    Ok(match repo_of(state)?.count_window(&walk.query, ms).map_err(internal)? {
+        crate::repository_index::Counted::Exact(n) => RowCount::Exact(n),
+        crate::repository_index::Counted::AtLeast(n) => RowCount::AtLeast(n),
+    })
 }

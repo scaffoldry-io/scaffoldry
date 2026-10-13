@@ -10,6 +10,7 @@ pub mod organizations;
 pub mod records;
 pub mod access;
 pub mod comments;
+pub mod disclosure;
 pub mod workspaces;
 pub mod identity;
 pub mod admin;
@@ -19,8 +20,12 @@ pub mod positions;
 pub mod processes;
 pub mod proposals;
 pub mod tools;
+pub mod calc;
+pub mod view_as;
+pub mod views;
 pub mod link_options;
 pub mod members;
+pub mod scope;
 pub mod trash;
 pub mod undo;
 
@@ -61,6 +66,7 @@ pub const ERROR_CODES: &[&str] = &[
     "view_as_read_only",
     "share_not_allowed",
     "archived",
+    "too_many_indexes",
 ];
 
 #[derive(Debug, Clone)]
@@ -87,12 +93,30 @@ pub enum ServiceError {
     /// A save named a version that is no longer the stored one. `version` is the current one.
     StaleVersion { message: String, version: i32 },
     TooLarge(String),
+    /// An upload is longer than `files.max_mb`.
+    FileTooLarge(String),
+    /// An upload is an executable, a script, or a page, by its bytes or by its name.
+    FileTypeBlocked(String),
+    /// Uploads need a scan and no scanner answers.
+    ScannerUnavailable(String),
     /// A sort or filter names a field whose index is still being built.
     IndexBuilding(String),
     /// An undo found records that have changed since the batch. `conflicts` lists them.
     UndoConflict { message: String, conflicts: Vec<Value> },
     /// A rule the app set stops the change, such as a delete while records still link to the record.
     ConstraintViolated(String),
+    /// A filter or sort names a field whose values are being calculated again.
+    Calculating(String),
+    /// A person or the server has too much queued work. They can try again when it clears.
+    QuotaExceeded(String),
+    /// A view-as session tried to change something. View-as only reads.
+    ViewAsReadOnly(String),
+    /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
+    FieldHidden { message: String, reason: String, remedy: String },
+    /// A table may index 20 fields. `unused` lists the indexed fields no view uses, which can go.
+    TooManyIndexes { message: String, unused: Vec<String> },
+    /// A write names fields the person may not change.
+    FieldReadOnly { message: String, fields: Vec<String>, reason: String, remedy: String },
     Internal(String),
 }
 
@@ -129,11 +153,13 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::BadRequest(_) | Self::Invalid { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
-            Self::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+            Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::ScannerUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -148,8 +174,17 @@ impl ServiceError {
             Self::Conflict(_) | Self::StaleVersion { .. } => "version_conflict",
             Self::PositionFull(_) => "position_full",
             Self::TooLarge(_) => "too_large",
+            Self::FileTooLarge(_) => "file_too_large",
+            Self::FileTypeBlocked(_) => "file_type_blocked",
+            Self::ScannerUnavailable(_) => "scanner_unavailable",
             Self::IndexBuilding(_) => "index_building",
+            Self::Calculating(_) => "calculating",
+            Self::QuotaExceeded(_) => "quota_exceeded",
+            Self::ViewAsReadOnly(_) => "view_as_read_only",
             Self::ConstraintViolated(_) => "constraint_violated",
+            Self::FieldHidden { .. } => "field_hidden",
+            Self::TooManyIndexes { .. } => "too_many_indexes",
+            Self::FieldReadOnly { .. } => "field_read_only",
             Self::UndoConflict { .. } => "undo_conflict",
             Self::Internal(_) => "internal",
         }
@@ -163,10 +198,16 @@ impl ServiceError {
             | Self::Conflict(msg)
             | Self::PositionFull(msg)
             | Self::TooLarge(msg)
+            | Self::FileTooLarge(msg)
+            | Self::FileTypeBlocked(msg)
+            | Self::ScannerUnavailable(msg)
             | Self::IndexBuilding(msg)
+            | Self::Calculating(msg)
+            | Self::QuotaExceeded(msg)
+            | Self::ViewAsReadOnly(msg)
             | Self::ConstraintViolated(msg)
             | Self::Internal(msg) => msg,
-            Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
+            Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }
     }
 
@@ -191,6 +232,18 @@ impl ServiceError {
             }
             Self::UndoConflict { conflicts, .. } => {
                 body.insert("conflicts".to_string(), Value::Array(conflicts.clone()));
+            }
+            Self::TooManyIndexes { unused, .. } => {
+                body.insert("unused".to_string(), serde_json::to_value(unused).unwrap_or(Value::Null));
+            }
+            Self::FieldHidden { reason, remedy, .. } => {
+                body.insert("reason".to_string(), Value::String(reason.clone()));
+                body.insert("remedy".to_string(), Value::String(remedy.clone()));
+            }
+            Self::FieldReadOnly { fields, reason, remedy, .. } => {
+                body.insert("fields".to_string(), serde_json::to_value(fields.iter().map(|f| (f.clone(), "read_only".to_string())).collect::<BTreeMap<_, _>>()).unwrap_or(Value::Null));
+                body.insert("reason".to_string(), Value::String(reason.clone()));
+                body.insert("remedy".to_string(), Value::String(remedy.clone()));
             }
             _ => {}
         }

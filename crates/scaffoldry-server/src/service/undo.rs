@@ -79,6 +79,7 @@ pub fn restore_record(
     let current = state
         .find_record(app_slug, id)
         .map_err(internal)?
+        .filter(|r| crate::service::scope::allows(caller, app_slug, r, scaffoldry_core::access::RowOp::Update, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
     let entries = repo(state)?.record_entries(app_slug, id).map_err(internal)?;
     if !entries.iter().any(|e| i64::from(e.version) == to_version) {
@@ -123,6 +124,9 @@ pub fn restore_record(
     }
 
     let data = Value::Object(data);
+    if !crate::service::scope::allows_data(caller, app_slug, &table, &data, scaffoldry_core::access::RowOp::Update, state) {
+        return Err(ServiceError::forbidden("You cannot save a record that is outside the rows you have access to."));
+    }
     let mut ctx = write_ctx(&caller.eppn, origin, app_slug, &data, state);
     ctx.action = Some("restore");
     let (outcome, saved) = state.save_record_checked(app_slug, id, &data, expected, &ctx).map_err(internal)?;

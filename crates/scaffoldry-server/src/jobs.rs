@@ -40,6 +40,9 @@ pub enum JobsError {
     Conflict(String),
     #[error("Not found: {0}")]
     NotFound(String),
+    /// A limit on queued or running jobs. The text is a plain sentence for the person.
+    #[error("{0}")]
+    Quota(String),
 }
 
 /// What a handler returns when it does not succeed.
@@ -61,6 +64,10 @@ impl From<postgres::Error> for JobError {
 
 pub struct JobKind {
     pub name: &'static str,
+    /// A plain name for a person, such as `Recalculating a field`.
+    pub title: &'static str,
+    /// One plain sentence that says what the job does.
+    pub description: &'static str,
     pub max_attempts: i32,
     pub max_concurrent: usize,
     pub run: fn(&JobCtx, Value) -> Result<Value, JobError>,
@@ -68,8 +75,94 @@ pub struct JobKind {
 
 /// Every kind of job this server can run. Later briefs add one entry each.
 pub static JOB_KINDS: &[JobKind] = &[
-    JobKind { name: "build_index", max_attempts: 3, max_concurrent: 2, run: crate::index_jobs::build_index },
-    JobKind { name: "recompute_flags", max_attempts: 3, max_concurrent: 1, run: crate::index_jobs::recompute_flags },
+    JobKind {
+        name: "build_index",
+        title: "Preparing a sort or filter",
+        description: "Builds the lookup that makes sorting and filtering this field fast.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::index_jobs::build_index,
+    },
+    JobKind {
+        name: "build_anchors",
+        title: "Preparing a long list",
+        description: "Marks every thousandth row of a view so that jumping to any row of a very large table is fast.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::index_jobs::build_anchors,
+    },
+    JobKind {
+        name: "recompute_flags",
+        title: "Updating sensitivity flags",
+        description: "Works out again which records hold sensitive content after a label changes.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::index_jobs::recompute_flags,
+    },
+    JobKind {
+        name: "recalc_owners",
+        title: "Updating linked totals",
+        description: "Recalculates the totals and formulas on records that link to a changed record.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::calc_jobs::recalc_owners,
+    },
+    JobKind {
+        name: "recalc_field",
+        title: "Recalculating a field",
+        description: "Writes a calculated field's values again after its definition changed.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::calc_jobs::recalc_field,
+    },
+    JobKind {
+        name: "convert_preview",
+        title: "Checking a type change",
+        description: "Counts what would change or be lost if a field changed type, without changing anything.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::calc_jobs::convert_preview,
+    },
+    JobKind {
+        name: "convert_field",
+        title: "Changing a field's type",
+        description: "Converts every value in a field to its new type and records the change in history.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::calc_jobs::convert_field,
+    },
+    JobKind {
+        name: "convert_select_options",
+        title: "Converting select options",
+        description: "Converts legacy string values in select fields to option IDs.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::calc_jobs::convert_select_options,
+    },
+    JobKind {
+        name: "purge_jobs",
+        title: "Clearing old job records",
+        description: "Deletes finished jobs after 30 days and failed jobs after 90 days.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: purge_jobs,
+    },
+    JobKind {
+        name: "scan_file",
+        title: "Scanning a file",
+        description: "Sends an uploaded file to the virus scanner and records the result.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: scan_file,
+    },
+    JobKind {
+        name: "purge_unattached_files",
+        title: "Clearing unused uploads",
+        description: "Deletes files that were uploaded and never added to a record within 24 hours.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: purge_unattached_files,
+    },
 ];
 
 #[derive(Debug, Clone)]
@@ -107,6 +200,9 @@ impl Default for JobConfig {
 pub struct Job {
     pub id: Uuid,
     pub kind: String,
+    /// The kind's plain name. A kind this server does not know reads back under its own name.
+    pub title: String,
+    pub description: String,
     pub state: String,
     pub progress_done: i64,
     pub progress_total: Option<i64>,
@@ -124,10 +220,22 @@ pub struct Job {
 const JOB_COLUMNS: &str = "id, kind, state, progress_done, progress_total, result, error, log, attempts, \
      cancel_requested, created_by, created_at::text, started_at::text, finished_at::text";
 
+/// The plain name and sentence for a kind.
+pub fn describe_kind(kind: &str) -> (String, String) {
+    match JOB_KINDS.iter().find(|k| k.name == kind) {
+        Some(k) => (k.title.to_string(), k.description.to_string()),
+        None => (kind.to_string(), String::new()),
+    }
+}
+
 fn job_from_row(row: &postgres::Row) -> Job {
+    let kind: String = row.get(1);
+    let (title, description) = describe_kind(&kind);
     Job {
         id: row.get(0),
-        kind: row.get(1),
+        kind,
+        title,
+        description,
         state: row.get(2),
         progress_done: row.get(3),
         progress_total: row.get(4),
@@ -160,8 +268,72 @@ pub fn check_clean(value: &Value) -> Result<(), String> {
     }
 }
 
+/// The most jobs one person may have queued or running.
+const DEFAULT_USER_LIMIT: i64 = 5;
+/// The most jobs the whole server may have queued.
+const DEFAULT_QUEUE_LIMIT: i64 = 500;
+
+fn limit(variable: &str, default: i64) -> i64 {
+    std::env::var(variable).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+/// A plain sentence when `created_by` may not add a job, or `None`. The limits can be raised with
+/// `SCAFFOLDRY_JOB_LIMIT_PER_USER` and `SCAFFOLDRY_JOB_LIMIT_QUEUED`.
+fn over_quota<C: postgres::GenericClient>(c: &mut C, created_by: &str) -> Result<Option<String>, postgres::Error> {
+    let per_user = limit("SCAFFOLDRY_JOB_LIMIT_PER_USER", DEFAULT_USER_LIMIT);
+    let queued_limit = limit("SCAFFOLDRY_JOB_LIMIT_QUEUED", DEFAULT_QUEUE_LIMIT);
+    let mine: i64 = c
+        .query_one("SELECT count(*) FROM jobs WHERE created_by = $1 AND state IN ('queued', 'running')", &[&created_by])?
+        .get(0);
+    if mine >= per_user {
+        return Ok(Some(format!(
+            "You already have {per_user} jobs waiting or running. Wait for one to finish, or cancel one."
+        )));
+    }
+    let queued: i64 = c.query_one("SELECT count(*) FROM jobs WHERE state = 'queued'", &[]).map(|r| r.get(0))?;
+    if queued >= queued_limit {
+        return Ok(Some("The server is busy with queued work. Try again in a few minutes.".to_string()));
+    }
+    Ok(None)
+}
+
+/// Adds a job, or returns the live job that holds the dedupe key. `Err(message)` is a limit. A job
+/// that already holds the key is returned before the limits are checked, because it is not a new job.
+fn insert_job<C: postgres::GenericClient>(
+    c: &mut C,
+    kind: &str,
+    payload: &Value,
+    created_by: &str,
+    key: Option<&str>,
+) -> Result<Result<Uuid, String>, postgres::Error> {
+    for _ in 0..3 {
+        if let Some(k) = key {
+            let live = c.query_opt("SELECT id FROM jobs WHERE dedupe_key = $1 AND state IN ('queued', 'running')", &[&k])?;
+            if let Some(row) = live {
+                return Ok(Ok(row.get(0)));
+            }
+        }
+        if let Some(refusal) = over_quota(c, created_by)? {
+            return Ok(Err(refusal));
+        }
+        let id = Uuid::new_v4();
+        let inserted = c.query_opt(
+            "INSERT INTO jobs (id, kind, payload, created_by, dedupe_key) VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('queued', 'running') \
+             DO NOTHING RETURNING id",
+            &[&id, &kind, payload, &created_by, &key],
+        )?;
+        if let Some(row) = inserted {
+            return Ok(Ok(row.get(0)));
+        }
+        // Another insert took the key between the read and the write. Read again.
+    }
+    Ok(Err("The job could not be added. Try again.".to_string()))
+}
+
 /// The one way to create a job. With a `dedupe_key`, a queued or running job that holds the
-/// key is returned instead of a new one.
+/// key is returned instead of a new one. A person with 5 jobs queued or running, or a server with
+/// 500 queued, is refused with `JobsError::Quota`.
 pub fn enqueue(
     repo: &PostgresRepository,
     kind: &str,
@@ -173,31 +345,8 @@ pub fn enqueue(
     let kind = kind.to_string();
     let created_by = created_by.to_string();
     let key = dedupe_key.map(str::to_string);
-    Ok(repo.with_client(move |c| {
-        for _ in 0..3 {
-            let id = Uuid::new_v4();
-            let inserted = c.query_opt(
-                "INSERT INTO jobs (id, kind, payload, created_by, dedupe_key) VALUES ($1, $2, $3, $4, $5) \
-                 ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('queued', 'running') \
-                 DO NOTHING RETURNING id",
-                &[&id, &kind, &payload, &created_by, &key],
-            )?;
-            if let Some(row) = inserted {
-                return Ok(row.get::<_, Uuid>(0));
-            }
-            if let Some(k) = &key {
-                let live = c.query_opt(
-                    "SELECT id FROM jobs WHERE dedupe_key = $1 AND state IN ('queued', 'running')",
-                    &[k],
-                )?;
-                if let Some(row) = live {
-                    return Ok(row.get::<_, Uuid>(0));
-                }
-            }
-            // The holder finished between the insert and the read. Try again.
-        }
-        Err(RepositoryError::NotFound("could not enqueue the job".to_string()))
-    })?)
+    let outcome = repo.with_client(move |c| Ok(insert_job(c, &kind, &payload, &created_by, key.as_deref())?))?;
+    outcome.map_err(JobsError::Quota)
 }
 
 /// `enqueue` inside the caller's transaction, so the job exists if and only if the transaction commits.
@@ -209,22 +358,7 @@ pub(crate) fn enqueue_in_tx(
     dedupe_key: Option<&str>,
 ) -> Result<Uuid, RepositoryError> {
     check_clean(payload).map_err(RepositoryError::NotFound)?;
-    let id = Uuid::new_v4();
-    let key = dedupe_key.map(str::to_string);
-    let inserted = tx.query_opt(
-        "INSERT INTO jobs (id, kind, payload, created_by, dedupe_key) VALUES ($1, $2, $3, $4, $5) \
-         ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('queued', 'running') \
-         DO NOTHING RETURNING id",
-        &[&id, &kind, payload, &created_by, &key],
-    )?;
-    if let Some(row) = inserted {
-        return Ok(row.get(0));
-    }
-    let live = tx.query_one(
-        "SELECT id FROM jobs WHERE dedupe_key = $1 AND state IN ('queued', 'running')",
-        &[&key],
-    )?;
-    Ok(live.get(0))
+    insert_job(tx, kind, payload, created_by, dedupe_key)?.map_err(RepositoryError::Quota)
 }
 
 pub fn get_job(repo: &PostgresRepository, id: Uuid) -> Result<Option<Job>, JobsError> {
@@ -395,6 +529,9 @@ pub fn retry_job(repo: &PostgresRepository, id: Uuid) -> Result<Job, JobsError> 
 pub struct AdminJobRow {
     pub id: Uuid,
     pub kind: String,
+    /// The kind's plain name and sentence, for the panel.
+    pub title: String,
+    pub description: String,
     pub owner: String,
     pub state: String,
     pub progress: Option<f64>,
@@ -443,9 +580,13 @@ pub fn list_admin_jobs(
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
+            let kind: String = r.get(1);
+            let (title, description) = describe_kind(&kind);
             out.push(AdminJobRow {
                 id: r.get(0),
-                kind: r.get(1),
+                kind,
+                title,
+                description,
                 owner: r.get(2),
                 state: r.get(3),
                 progress,
@@ -583,6 +724,11 @@ pub struct JobCtx {
 }
 
 impl JobCtx {
+    /// The id of the job this context runs.
+    pub fn job_id(&self) -> Uuid {
+        self.id
+    }
+
     fn into_client(self) -> Client {
         self.client.into_inner()
     }
@@ -658,6 +804,66 @@ impl JobCtx {
         check_clean(&value).map_err(JobError::Permanent)?;
         Ok(value)
     }
+}
+
+/// How long a finished job is kept, and how long a failed one is.
+const KEEP_FINISHED_DAYS: i32 = 30;
+const KEEP_FAILED_DAYS: i32 = 90;
+const PURGE_BATCH: i64 = 1000;
+
+/// Deletes finished jobs older than 30 days and failed jobs older than 90. It runs on a schedule.
+pub fn purge_jobs(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
+    let repo = ctx.repository();
+    let mut deleted: i64 = 0;
+    loop {
+        if ctx.cancelled()? {
+            return Err(JobError::Cancelled);
+        }
+        let n = repo
+            .with_client(move |c| {
+                Ok(c.execute(
+                    "DELETE FROM jobs WHERE id IN ( \
+                       SELECT id FROM jobs \
+                       WHERE (state IN ('done', 'cancelled') AND finished_at < NOW() - make_interval(days => $1)) \
+                          OR (state = 'failed' AND finished_at < NOW() - make_interval(days => $2)) \
+                       LIMIT $3)",
+                    &[&KEEP_FINISHED_DAYS, &KEEP_FAILED_DAYS, &PURGE_BATCH],
+                )?)
+            })
+            .map_err(|e| JobError::Retry(e.to_string()))? as i64;
+        deleted += n;
+        if n < PURGE_BATCH {
+            break;
+        }
+    }
+    ctx.result(serde_json::json!({ "deleted": deleted }))
+}
+
+/// Scans uploads. With `{ "ref_id": ... }` it scans that one. With no payload, which is how the schedule and every
+/// upload start it, it scans every upload that waits. One job at a time does this, so a person's uploads never meet
+/// the per-person limit on jobs.
+pub fn scan_file(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    if let Some(raw) = payload.get("ref_id") {
+        let ref_id = raw.as_str().and_then(|s| s.parse::<Uuid>().ok()).ok_or_else(|| JobError::Permanent("ref_id is not an id".to_string()))?;
+        let state = crate::scan::scan_file(ctx.repository(), ref_id).map_err(JobError::Retry)?;
+        return ctx.result(serde_json::json!({ "scan_state": state }));
+    }
+    let mut cancelled = false;
+    let done = crate::scan::scan_pending(ctx.repository(), 1000, || {
+        cancelled = ctx.cancelled().unwrap_or(false);
+        cancelled
+    })
+    .map_err(JobError::Retry)?;
+    if cancelled {
+        return Err(JobError::Cancelled);
+    }
+    ctx.result(serde_json::json!({ "scanned": done }))
+}
+
+/// Deletes uploads no record took within a day, and the blobs nothing refers to. It runs on a schedule.
+pub fn purge_unattached_files(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
+    let removed = crate::files::purge_unattached(ctx.repository(), crate::files::UNATTACHED_HOURS).map_err(JobError::Retry)?;
+    ctx.result(serde_json::json!({ "deleted": removed }))
 }
 
 fn finish(client: &mut Client, job: &ClaimedJob, worker: &str, outcome: Result<Value, JobError>, cfg: &JobConfig) {

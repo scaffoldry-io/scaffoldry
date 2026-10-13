@@ -39,8 +39,25 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::PositionFull("Full".into()), "position_full", StatusCode::CONFLICT),
         (ServiceError::StaleVersion { message: "Stale".into(), version: 4 }, "version_conflict", StatusCode::CONFLICT),
         (ServiceError::TooLarge("Big".into()), "too_large", StatusCode::PAYLOAD_TOO_LARGE),
+        (ServiceError::FileTooLarge("Too big".into()), "file_too_large", StatusCode::PAYLOAD_TOO_LARGE),
+        (ServiceError::FileTypeBlocked("Blocked".into()), "file_type_blocked", StatusCode::BAD_REQUEST),
+        (ServiceError::ScannerUnavailable("No scanner".into()), "scanner_unavailable", StatusCode::SERVICE_UNAVAILABLE),
         (ServiceError::IndexBuilding("Preparing".into()), "index_building", StatusCode::CONFLICT),
+        (ServiceError::Calculating("Calculating".into()), "calculating", StatusCode::CONFLICT),
+        (ServiceError::QuotaExceeded("Busy".into()), "quota_exceeded", StatusCode::TOO_MANY_REQUESTS),
+        (ServiceError::TooManyIndexes { message: "Too many".into(), unused: vec!["a".into()] }, "too_many_indexes", StatusCode::BAD_REQUEST),
+        (ServiceError::ViewAsReadOnly("Read only".into()), "view_as_read_only", StatusCode::FORBIDDEN),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
+        (
+            ServiceError::FieldHidden { message: "Hidden".into(), reason: "A rule hides it".into(), remedy: "Ask an owner".into() },
+            "field_hidden",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            ServiceError::FieldReadOnly { message: "Read only".into(), fields: vec!["gpa".into()], reason: "A rule".into(), remedy: "Ask an owner".into() },
+            "field_read_only",
+            StatusCode::FORBIDDEN,
+        ),
         (ServiceError::UndoConflict { message: "Moved on".into(), conflicts: vec![] }, "undo_conflict", StatusCode::CONFLICT),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];
@@ -55,8 +72,17 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::PositionFull(_)
             | ServiceError::StaleVersion { .. }
             | ServiceError::TooLarge(_)
+            | ServiceError::FileTooLarge(_)
+            | ServiceError::FileTypeBlocked(_)
+            | ServiceError::ScannerUnavailable(_)
             | ServiceError::IndexBuilding(_)
+            | ServiceError::Calculating(_)
+            | ServiceError::ViewAsReadOnly(_)
+            | ServiceError::QuotaExceeded(_)
+            | ServiceError::TooManyIndexes { .. }
             | ServiceError::ConstraintViolated(_)
+            | ServiceError::FieldHidden { .. }
+            | ServiceError::FieldReadOnly { .. }
             | ServiceError::UndoConflict { .. }
             | ServiceError::Internal(_) => {}
         }

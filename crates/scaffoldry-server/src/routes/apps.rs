@@ -28,6 +28,8 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/automations/simulate", post(simulate_app_automation))
         .route("/apps/{slug}/processes", get(list_app_processes))
         .route("/apps/{slug}/processes/{id}/decide", post(decide_app_process))
+        .route("/apps/{slug}/access/preview", post(preview_app_access))
+        .route("/apps/{slug}/collaborators", get(list_app_collaborators))
 }
 
 async fn create_app_in_workspace(
@@ -415,10 +417,13 @@ async fn list_app_processes(
             let _ = state.persist_process_instance(inst.clone());
         }
     }
+    // An instance on a record the caller cannot read is left out.
+    let record_ids: Vec<String> = all.iter().map(|i| i.record_id.clone()).collect();
+    let readable = crate::service::scope::readable_ids(&user, &slug, &record_ids, &state);
     let filtered: Vec<Value> = all
         .iter()
         .filter(|inst| {
-            if inst.app_slug != slug {
+            if inst.app_slug != slug || !readable.contains(&inst.record_id) {
                 return false;
             }
             if let Some(ref st) = query.status {
@@ -460,4 +465,44 @@ async fn decide_app_process(
         .map_err(|_| ServiceError::internal("The decision stopped before it finished").into_pair())?
         .map(Json)
         .map_err(ServiceError::into_pair)
+}
+
+
+async fn preview_app_access(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Json(payload): Json<crate::service::scope::AccessPreviewInput>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+
+    let output = crate::service::scope::preview_access(&user, &slug, payload, &state)
+        .map_err(ServiceError::into_pair)?;
+
+    Ok((StatusCode::OK, Json(serde_json::to_value(output).unwrap())))
+}
+
+
+#[derive(Debug, Deserialize, Default)]
+struct CollaboratorQuery {
+    q: Option<String>,
+}
+
+async fn list_app_collaborators(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Query(params): Query<CollaboratorQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers)
+        .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+
+    authorize_app(&user, &slug, AppAction::Read, &state)
+        .map_err(ServiceError::into_pair)?;
+
+    let collabs = crate::service::people::list_app_collaborators(&slug, params.q.as_deref().unwrap_or(""), &state)
+        .map_err(ServiceError::into_pair)?;
+
+    Ok(Json(json!({ "collaborators": collabs })))
 }

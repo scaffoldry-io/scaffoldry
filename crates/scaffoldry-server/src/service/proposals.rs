@@ -9,7 +9,7 @@ use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::standards::ceds::CedsElement;
 use scaffoldry_core::workflow::describe_rule;
 use scaffoldry_core::{AutomationRule, StepKind};
-use scaffoldry_engine::{effective_ferpa_sensitive, validate_manifest, AppManifest, FieldSpec, HostRouter, PageKind};
+use scaffoldry_engine::{effective_ferpa_sensitive, validate_manifest, AppManifest, FieldSpec, FieldType, HostRouter, PageKind};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -129,6 +129,9 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
             out.push(format!("Page \"{}\" is added.", page.title));
             out.extend(grant_sentences(proposal, &page.title, &page.kind));
         }
+        for rule in &proposal.access.rows {
+            out.push(scaffoldry_core::access::rule_sentence(rule));
+        }
         return out;
     };
     if proposal.title != live.title {
@@ -200,6 +203,18 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
             out.push(format!("Page \"{}\" is removed.", x.title));
         }
     }
+    for rule in &proposal.access.rows {
+        match live.access.rows.iter().find(|r| r.id == rule.id) {
+            None => out.push(format!("Access rule \"{}\" is added: {}", rule.id, scaffoldry_core::access::rule_sentence(rule))),
+            Some(old) if old != rule => out.push(format!("Access rule \"{}\" is changed: {}", rule.id, scaffoldry_core::access::rule_sentence(rule))),
+            _ => {}
+        }
+    }
+    for old in &live.access.rows {
+        if !proposal.access.rows.iter().any(|r| r.id == old.id) {
+            out.push(format!("Access rule \"{}\" is removed.", old.id));
+        }
+    }
     if out.is_empty() {
         out.push("No change to tables, fields, views, or pages.".to_string());
     }
@@ -238,6 +253,39 @@ struct ManifestPart {
     manifest: AppManifest,
     checks: Vec<Value>,
     sources: Vec<(String, String)>,
+}
+
+
+fn count_records_using_option(
+    app_slug: &str,
+    table_id: &str,
+    field_name: &str,
+    field_type: FieldType,
+    option_id: &str,
+    state: &SharedState,
+) -> i64 {
+    let Some(repo) = state.repository.as_deref() else {
+        return 0;
+    };
+    let app = app_slug.to_string();
+    let table = table_id.to_string();
+    let field = field_name.to_string();
+    let opt = option_id.to_string();
+    let is_multi = field_type == FieldType::MultiSelect;
+    repo.with_client(move |c| {
+        let count: i64 = if is_multi {
+            c.query_one(
+                "SELECT count(*) FROM dataset_records                  WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL                    AND (data->$3 ? $4 OR data->>$3 = $4)",
+                &[&app, &table, &field, &opt],
+            )?.get(0)
+        } else {
+            c.query_one(
+                "SELECT count(*) FROM dataset_records                  WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL                    AND data->>$3 = $4",
+                &[&app, &table, &field, &opt],
+            )?.get(0)
+        };
+        Ok(count)
+    }).unwrap_or(0)
 }
 
 fn check_manifest_part(
@@ -327,8 +375,41 @@ fn check_manifest_part(
                     for lf in &lt.fields {
                         if !t.fields.iter().any(|f| f.name == lf.name) {
                             loss.push(format!("field '{}' of table '{}' is removed", lf.name, lt.name));
+                        } else if matches!(lf.field_type, FieldType::Select | FieldType::MultiSelect) {
+                            if let Some(f) = t.fields.iter().find(|f| f.name == lf.name) {
+                                for live_opt in &lf.select_options {
+                                    if !f.select_options.iter().any(|o| o.id == live_opt.id) {
+                                        let count = count_records_using_option(&manifest.slug, &lt.id, &lf.name, lf.field_type, &live_opt.id, state);
+                                        if count > 0 {
+                                            loss.push(format!("option '{}' of field '{}' in table '{}' is removed and used by {} records", live_opt.label, lf.name, lt.name, count));
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+    // A field changes type: every value that would become blank is data lost. The owner runs a preview
+    // first, and its result is attached to this check.
+    let mut previews: Vec<Value> = Vec::new();
+    if let (Some(l), true) = (live, records_exist(&manifest.slug, state)) {
+        for change in scaffoldry_engine::recalc::type_changes(l, &manifest) {
+            let what = format!("field '{}' of table '{}'", change.field, change.table_id);
+            if !scaffoldry_engine::recalc::conversion_supported(change.from, change.to) {
+                loss.push(format!("{what} cannot change from {:?} to {:?}", change.from, change.to));
+                continue;
+            }
+            match repo.latest_convert_preview(&manifest.slug, &change.table_id, &change.field, change.to).map_err(internal)? {
+                None => loss.push(format!("{what} changes type and no preview was run. POST /apps/{}/fields/convert-preview first", manifest.slug)),
+                Some(result) => {
+                    let blanks = result["blanks"].as_i64().unwrap_or(0);
+                    if blanks > 0 {
+                        loss.push(format!("{blanks} values of {what} would become blank"));
+                    }
+                    previews.push(result);
                 }
             }
         }
@@ -353,13 +434,51 @@ fn check_manifest_part(
         }
     }
 
+    let mut data_loss = check("data_loss", loss);
+    if !previews.is_empty() {
+        data_loss["previews"] = Value::Array(previews);
+    }
+
+    let access_problems = scaffoldry_engine::detect_access_problems(&manifest);
+    let mut loosened = Vec::new();
+    if let Some(l) = live {
+        for old in &l.access.rows {
+            match manifest.access.rows.iter().find(|r| r.id == old.id) {
+                None => loosened.push(format!("rule '{}' was removed", old.id)),
+                Some(new_r) => {
+                    if new_r.visible_when != old.visible_when
+                        || new_r.ops != old.ops
+                        || new_r.except_roles != old.except_roles
+                    {
+                        loosened.push(format!("rule '{}' was changed", new_r.id));
+                    }
+                }
+            }
+        }
+        for old in &l.access.columns {
+            match manifest.access.columns.iter().find(|r| r.id == old.id) {
+                None => loosened.push(format!("column rule '{}' was removed", old.id)),
+                Some(new_r) => {
+                    if new_r.fields != old.fields
+                        || new_r.mode != old.mode
+                        || new_r.unless != old.unless
+                    {
+                        loosened.push(format!("column rule '{}' was changed", new_r.id));
+                    }
+                }
+            }
+        }
+    }
+
     let checks = vec![
         check("schema", vec![]),
         check("sensitivity", sensitivity_problems),
-        check("data_loss", loss),
+        data_loss,
         check("page_source", vec![]),
         check("page_sensitivity", page_problems),
         warn("relationships", scaffoldry_engine::manifest_warnings(&manifest)),
+        warn("access_rules", access_problems),
+        check("access_loosened", loosened),
     ];
     Ok(ManifestPart { manifest, checks, sources: provided.into_iter().collect() })
 }
@@ -648,12 +767,18 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
                 }
             }
-            match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| ServiceError::Internal(format!("The approval was not kept: {e}")))? {
+            match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| match e {
+                // The approval would start more background work than the person may have. Nothing was kept.
+                crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
+                other => ServiceError::Internal(format!("The approval was not kept: {other}")),
+            })? {
                 Approval::Approved(done) => {
                     state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
                     if let Some(m) = &row.manifest {
                         let manifest: AppManifest = serde_json::from_value(m.clone()).map_err(internal)?;
-                        state.engine.write().map_err(internal)?.register_manifest(manifest).map_err(internal)?;
+                        state.register_runtime_manifest(manifest.clone()).map_err(internal)?;
+                        crate::service::scope::set_rules(&row.app_slug, manifest.access.rows, state);
+                        crate::service::scope::set_column_rules(&row.app_slug, manifest.access.columns, state);
                     }
                     if !done.rules.is_empty() {
                         crate::service::processes::reload_rules(state, &row.app_slug);

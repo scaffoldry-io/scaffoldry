@@ -117,14 +117,69 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "This field is still being prepared for sorting. It is 40% done.", next: "Try again in a few minutes." },
       ],
       [
+        "field_hidden shows the rule's reason and who to ask",
+        new ApiError(403, "You cannot filter or sort on 'gpa' because you cannot see it.", {
+          code: "field_hidden",
+          reason: "Financial details are visible to the scholarship office only.",
+          remedy: "Ask the scholarship office, or an owner of this workspace.",
+        }),
+        { message: "Financial details are visible to the scholarship office only.", next: "Ask the scholarship office, or an owner of this workspace." },
+      ],
+      [
+        "field_read_only without a reason falls back to the sentence and the access step",
+        new ApiError(403, "You cannot change 'name'.", { code: "field_read_only" }),
+        { message: "You cannot change 'name'.", next: "Ask a workspace owner or an administrator if you need access." },
+      ],
+      [
+        "calculating",
+        new ApiError(409, "This field is still being calculated. It is 63% done.", { code: "calculating" }),
+        { message: "This field is still being calculated. It is 63% done.", next: "Try again when it has finished." },
+      ],
+      [
+        "quota_exceeded",
+        new ApiError(429, "You already have 5 jobs waiting or running. Wait for one to finish, or cancel one.", { code: "quota_exceeded" }),
+        {
+          message: "You already have 5 jobs waiting or running. Wait for one to finish, or cancel one.",
+          next: "Wait for your background work to finish, or cancel some of it, then try again.",
+        },
+      ],
+      [
+        "too_many_indexes",
+        new ApiError(400, "This table already indexes 20 fields.", { code: "too_many_indexes", unused: ["kept01", "kept02", "kept03", "kept04"] }),
+        {
+          message: "This table already indexes 20 fields.",
+          next: "Ask an admin to stop indexing a field no view uses, such as kept01, kept02, kept03.",
+        },
+      ],
+      [
+        "view_as_read_only",
+        new ApiError(403, "You are viewing as someone else. This view is read-only.", { code: "view_as_read_only" }),
+        { message: "You are viewing as someone else. This view is read-only.", next: "Exit the view to make changes." },
+      ],
+      [
         "status 0",
         new ApiError(0, "Failed to fetch"),
         { message: "The server is not reachable.", next: "Check the connection and try again." },
       ],
       [
+        "file_too_large",
+        new ApiError(413, "That file is 60 MB. The limit is 50 MB.", { code: "file_too_large" }),
+        { message: "That file is 60 MB. The limit is 50 MB.", next: "Choose a smaller file, or ask an admin to raise the file size limit." },
+      ],
+      [
+        "file_type_blocked",
+        new ApiError(400, "Programs and web pages cannot be uploaded.", { code: "file_type_blocked" }),
+        { message: "Programs and web pages cannot be uploaded.", next: "Save it as a PDF, an image, or a plain document, then upload that." },
+      ],
+      [
+        "scanner_unavailable",
+        new ApiError(503, "Files cannot be uploaded now. The virus scanner is not answering.", { code: "scanner_unavailable" }),
+        { message: "Files cannot be uploaded right now.", next: "Try again in a few minutes, or ask an admin to check the virus scanner." },
+      ],
+      [
         "any other code uses the server's sentence and the body's remedy",
-        new ApiError(422, "The file type is blocked", { code: "file_type_blocked", remedy: "Save it as a PDF." }),
-        { message: "The file type is blocked", next: "Save it as a PDF." },
+        new ApiError(422, "The vault is sealed", { code: "master_key_missing", remedy: "Try again later." }),
+        { message: "The vault is sealed", next: "Try again later." },
       ],
     ];
 

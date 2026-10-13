@@ -18,7 +18,7 @@ pub const MAX_INDEXED_FIELDS: usize = 20;
 pub type IndexCols = (Option<f64>, Option<String>, Option<String>);
 
 /// Which column a field's values go in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IndexColumn {
     Num,
     Txt,
@@ -28,11 +28,11 @@ pub enum IndexColumn {
 pub fn index_column(t: FieldType) -> IndexColumn {
     use FieldType::*;
     match t {
-        Number | Currency | Percent | Rating | Autonumber | Count | Rollup | Boolean | Checkbox => IndexColumn::Num,
-        Date | CreatedTime | LastModifiedTime => IndexColumn::Ts,
+        Number | Currency | Percent | Rating | Autonumber | Count | Rollup | Boolean | Checkbox | Duration { .. } => IndexColumn::Num,
+        Date | DateTime | CreatedTime | LastModifiedTime => IndexColumn::Ts,
         // A formula's column follows its result, so this is only the default for a sort on it.
         // A Link is never indexed here. `record_links` holds it.
-        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link => IndexColumn::Txt,
+        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link | Collaborator { .. } | CreatedBy | LastModifiedBy | LongText | Attachment { .. } => IndexColumn::Txt,
     }
 }
 
@@ -44,8 +44,12 @@ pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
     for view in m.views.iter().filter(|v| v.table_id.as_deref() == Some(table_id)) {
         out.extend(view.sort_rules.iter().map(|r| r.field_name.clone()));
         if let Some(filter) = &view.filters {
-            out.extend(filter.clauses.iter().map(|c| c.field_name.clone()));
+            out.extend(crate::clauses_of(filter).into_iter().map(|c| c.field_name.clone()));
         }
+        // Groups and footers are computed over the index.
+        out.extend(view.group_by.iter().cloned());
+        out.extend(view.column_summary.iter().map(|(field, _)| field.clone()));
+        out.extend(view.aggregations.iter().filter_map(|a| a.field.clone()));
     }
     for r in &m.relationships {
         if r.source_table_id == table_id {
@@ -70,6 +74,11 @@ pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
             }
         }
     }
+    // Fields used in access row rules join the indexed set.
+    for rule in m.access.rows.iter().filter(|r| r.table_id == table_id) {
+        out.extend(rule.visible_when.fields());
+    }
+
     // A name that is not a field of the table is not indexed. `validate_manifest` reports it.
     out.retain(|name| table.fields.iter().any(|f| &f.name == name));
     out
@@ -158,6 +167,16 @@ fn text_of(v: &Value) -> Option<String> {
         Value::String(s) => s.to_lowercase(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
+        Value::Object(map) => {
+            if let Some(actor) = map.get("actor").and_then(Value::as_str) {
+                actor.to_lowercase()
+            } else if let Some(importer) = map.get("importer").and_then(Value::as_str) {
+                importer.to_lowercase()
+            } else {
+                let name = map.get("name").and_then(Value::as_str)?;
+                name.to_lowercase()
+            }
+        }
         _ => return None,
     };
     Some(s.chars().take(MAX_TEXT).collect())

@@ -18,6 +18,7 @@ async fn reset_test_db() {
                 TRUNCATE TABLE organizations CASCADE;
                 TRUNCATE TABLE workspaces CASCADE;
                 TRUNCATE TABLE app_manifests CASCADE;
+                TRUNCATE TABLE app_views CASCADE;
                 TRUNCATE TABLE dataset_records CASCADE;
                 TRUNCATE TABLE published_datasets CASCADE;
                 TRUNCATE TABLE dataset_relationships CASCADE;
@@ -233,6 +234,7 @@ async fn test_mcp_record_tools_allow_and_deny_by_department() {
             relationships: vec![],
             views: vec![],
             pages: vec![],
+        access: Default::default(),
             ceds_mappings: std::collections::HashMap::new(),
         };
         let mut engine = state_for_setup.engine.write().unwrap();

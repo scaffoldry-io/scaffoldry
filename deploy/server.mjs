@@ -20,15 +20,21 @@ const MIME_TYPES = {
   ".woff2": "font/woff2",
 };
 
+// The files that may be served, listed once at startup: request path -> file on disk.
+// A request only picks an entry from this list. Its text never becomes a file path.
+const INDEX_PATH = path.join(DIST_DIR, "index.html");
+const FILES = new Map();
+for (const rel of fs.readdirSync(DIST_DIR, { recursive: true })) {
+  const abs = path.join(DIST_DIR, rel);
+  if (fs.statSync(abs).isFile()) {
+    FILES.set("/" + rel.split(path.sep).join("/"), abs);
+  }
+}
+
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split("?")[0];
-  const indexPath = path.join(DIST_DIR, "index.html");
-  // Resolve first, then refuse anything outside the web root (for example "/../x").
-  let filePath = path.resolve(DIST_DIR, "." + (urlPath === "/" ? "/index.html" : urlPath));
-
-  if (!filePath.startsWith(DIST_DIR + path.sep) || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-    filePath = indexPath;
-  }
+  // Anything that is not a listed file gets the app shell, so client-side routes work.
+  const filePath = FILES.get(urlPath) ?? INDEX_PATH;
 
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME_TYPES[ext] || "application/octet-stream";

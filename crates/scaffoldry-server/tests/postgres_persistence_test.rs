@@ -189,6 +189,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         relationships: vec![],
         views: vec![],
         pages: vec![],
+        access: Default::default(),
             ceds_mappings: std::collections::HashMap::new(),
     };
     state.persist_app_manifest(manifest.clone()).expect("Persist manifest");
@@ -342,6 +343,7 @@ fn test_workspace_service_persists_to_second_server_state() {
         role_title: "Central Admin".to_string(),
         affiliation: "central_admin".to_string(),
         department: "Central IT".to_string(),
+        view_as_by: None,
     };
 
     let payload = scaffoldry_server::service::workspaces::CreateWorkspacePayload {

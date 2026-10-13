@@ -13,8 +13,29 @@ permissions:
   contents: read
   pull-requests: read
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  # Line tables keep panic backtraces readable. Full debug info makes the test binaries several times larger.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
+  # Branch protection requires a check named `validate`. This job is that check: it passes only
+  # when the two groups of jobs below pass. See docs/operations/build-agent.md.
   validate:
+    needs: [checks, rust, million-rows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every group passed
+        run: |
+          echo "checks: ${{ needs.checks.result }}"
+          echo "rust: ${{ needs.rust.result }}"
+          echo "million-rows: ${{ needs.million-rows.result }}"
+          test "${{ needs.checks.result }}" = success && test "${{ needs.rust.result }}" = success && test "${{ needs.million-rows.result }}" = success
+
+  # The governance gates and the web app. They need no Rust and no database.
+  checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -32,11 +53,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install jsonschema
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -46,11 +62,6 @@ jobs:
       - name: Verify Compose configuration
         run: |
           docker compose -f deploy/docker-compose.yml config
-
-      - name: Start PostgreSQL container
-        run: |
-          docker compose -f deploy/docker-compose.yml up -d postgres
-          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
 
       - name: Hard Gate - Skills & Doctrine Audit
         run: |
@@ -88,14 +99,99 @@ jobs:
         run: |
           python3 governance/scripts/audit-architecture.py
 
-      - name: Hard Gate - Rust Monorepo Test & Clippy
-        run: |
-          # The tests share one database and the process environment, so they run one at a time.
-          cargo test -- --test-threads=1
-          cargo clippy --all-targets -- -D warnings
-
       - name: Hard Gate - Web Unit Tests & Build
         run: |
           npm ci
           npm test
           npm run build
+
+  # The Rust tests share one database and the process environment, so each runner runs its tests one
+  # at a time. The heavy tests (governance/rust-heavy-tests.json) run on their own runner, in parallel
+  # with the rest, each with its own database. Every test file is in exactly one group.
+  rust:
+    runs-on: ubuntu-latest
+    # A hung test would hold the check, and the pull request with it, for the six hours GitHub allows. The slowest group takes about fifteen minutes.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [light, heavy]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Dependencies only. The workspace crates are cleaned out before the cache is saved, so the
+      # cache stays small and never holds a stale build of this repository's own code.
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ matrix.group }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.group }}-${{ runner.os }}-
+
+      - name: Start PostgreSQL container
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d postgres
+          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
+
+      - name: Hard Gate - Rust Tests (${{ matrix.group }})
+        run: |
+          args="$(python3 governance/scripts/rust-test-groups.py ${{ matrix.group }})"
+          cargo test --workspace $args -- --test-threads=1
+
+      - name: Hard Gate - Rust Doc Tests
+        if: matrix.group == 'light'
+        run: cargo test --workspace --doc -- --test-threads=1
+
+      - name: Hard Gate - Clippy
+        if: matrix.group == 'light'
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Drop this repository's own build output before the cache is saved
+        run: cargo clean -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server
+
+  # The million-row proof (docs/plans/row-scale.md phase 6). It seeds 1,000,000 rows of thirty fields, five indexed, runs each
+  # of nine operations twenty times through the routes, and fails if the slowest passes its limit or a read scans a table. If a
+  # limit fails here and the plan is right, the limit does not move: paste the plan and the timings into the record and stop.
+  million-rows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-million-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-million-${{ runner.os }}-
+
+      - name: Start PostgreSQL container
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d postgres
+          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
+
+      - name: Hard Gate - Million Rows
+        run: cargo test --release -p scaffoldry-server --test million_rows_test -- --ignored million_rows --nocapture --test-threads=1
+
+      - name: Drop this repository's own build output before the cache is saved
+        run: cargo clean --release -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server

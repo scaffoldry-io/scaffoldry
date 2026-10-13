@@ -90,6 +90,7 @@ async fn fixture() -> Fixture {
             custom_domain_verified: false,
             views: vec![AppView::table("main", "Main", ViewType::Table, fields())],
             pages: vec![],
+        access: Default::default(),
             ceds_mappings: Default::default(),
             tables: vec![AppTable {
                 id: "t1".to_string(),
@@ -403,6 +404,8 @@ fn the_statement_holds_no_text_the_caller_sent() {
         sort: Some((hostile.to_string(), true)),
         after: None,
         limit: 10,
+        scope: None,
+        search: None, expr: None,
     };
     let (sql, params) = build_record_query("app", &q);
     assert!(!sql.contains("DROP") && !sql.contains(hostile), "{sql}");

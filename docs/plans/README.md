@@ -64,20 +64,20 @@ People, units, positions, rules, proposals, and a data model with real links, hi
 | 41 | [links.md](links.md) | 2 | Two-way links, and what delete does to them | **COMPLETED** |
 | 42 | [links.md](links.md) | 3 | Lookup, rollup, and count through links | **COMPLETED** |
 | 43 | [row-scale.md](row-scale.md) | 3 | Computed values are written, not recomputed, using links | **COMPLETED** |
-| 44 | [calc-graph.md](calc-graph.md) | 1 | One formula evaluator, in Rust, with a preview route |
-| 45 | [calc-graph.md](calc-graph.md) | 2 | A dependency graph with cycle detection and ordered recalculation |
+| 44 | [calc-graph.md](calc-graph.md) | 1 | One formula evaluator, in Rust, with a preview route | **COMPLETED** |
+| 45 | [calc-graph.md](calc-graph.md) | 2 | A dependency graph with cycle detection and ordered recalculation | **COMPLETED** |
 | 46 | [mcp-apps.md](mcp-apps.md) | 4a | Process definitions and every direct app change are proposals. A Proposals screen exists | **COMPLETED** |
 | 47 | [mcp-apps.md](mcp-apps.md) | 5 | An agent lists and decides waiting process steps | **COMPLETED** |
 | 48 | [record-history.md](record-history.md) | 2 | Undo and restore | **COMPLETED** |
 | 49 | [record-history.md](record-history.md) | 3 | Comments, mentions, and the commenter role | **COMPLETED** |
 | 50 | [lifecycle.md](lifecycle.md) | 1 | Delete moves a record to trash. Restore brings it back with its links | **COMPLETED** |
-| 51 | [links.md](links.md) | 4 | A link picker that respects access |
+| 51 | [links.md](links.md) | 4 | A link picker that respects access | **COMPLETED** |
 | 52 | [access-rules.md](access-rules.md) | 1 | Share with groups, units, and positions. One `member_role` function | **COMPLETED** |
 | 53 | [access-rules.md](access-rules.md) | 2 | Rules as data, one row scope, and a SQL and Rust equivalence test | **COMPLETED** |
-| 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column |
-| 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy |
-| 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected |
-| 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only |
+| 54 | [access-rules.md](access-rules.md) | 3 | Every path applies the scope. No filtering or sorting on a hidden column | **COMPLETED** |
+| 55 | [access-rules.md](access-rules.md) | 4 | Column rules and denials with a reason and a remedy | **COMPLETED** |
+| 56 | [access-rules.md](access-rules.md) | 5 | Rules authored by proposal, with a preview of who is affected | **COMPLETED** |
+| 57 | [access-rules.md](access-rules.md) | 6 | View as another user, read-only | **COMPLETED** |
 
 ### Wave 1b — proof of the data model, one source of truth, and who decides
 
@@ -87,8 +87,8 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 
 | Order | Brief | Phase | What is true after it | Status |
 | --- | --- | --- | --- | --- |
-| 58 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
-| 59 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |
+| 58 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search | **COMPLETED** |
+| 59 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
 | 60 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | |
 | 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | |
 | 62 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
@@ -110,22 +110,22 @@ Fields, files, views, import and export, and the million-row proof. A department
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 74 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run |
+| 74 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run | **COMPLETED** |
 | 75 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` |
-| 76 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator |
-| 77 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
-| 78 | [record-history.md](record-history.md) | 4 | The disclosure log |
-| 79 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by |
-| 80 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer |
-| 81 | [field-types.md](field-types.md) | 4 | Duration and date-time |
-| 82 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |
-| 83 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules |
-| 84 | [views.md](views.md) | 3 | A million rows in a window. Needs `@tanstack/react-virtual` |
-| 85 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts |
+| 76 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator | **COMPLETED** |
+| 77 | [field-types.md](field-types.md) | 1 | Select options with ids and colors | **COMPLETED** |
+| 78 | [record-history.md](record-history.md) | 4 | The disclosure log | **COMPLETED** |
+| 79 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by | **COMPLETED** |
+| 80 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer | **COMPLETED** |
+| 81 | [field-types.md](field-types.md) | 4 | Duration and date-time | **COMPLETED** |
+| 82 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked | **COMPLETED** |
+| 83 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules | **COMPLETED** |
+| 84 | [views.md](views.md) | 3 | A million rows in a window. Uses `@tanstack/react-virtual`, approved by Johann (MIT) | **COMPLETED** |
+| 85 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts | **COMPLETED** |
 | 86 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
-| 87 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers |
-| 88 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon |
-| 89 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app |
+| 87 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers | **COMPLETED** |
+| 88 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon | **COMPLETED** |
+| 89 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app | **COMPLETED** |
 | 90 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures |
 | 91 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal |
 | 92 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had |
@@ -280,7 +280,7 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0058_flow_state.sql` | workflows phase 3 |
 | `0059_content_findings.sql` | sensitive content phase 2. Also creates `authorized_stores` and adds `data_labels.categories` |
 | `0060_attachment_content_scan.sql` | sensitive content phase 3 |
-| `0061_attachments.sql` | attachments phase 1. It was `0032` until lifecycle phase 1 took that number |
+| `0061_attachments.sql` | attachments phase 1. Shipped as `0051_files.sql`, with `0052_file_scans.sql` for phase 2. Migrations up to `0052` are taken on disk, so a number below that in this list is a plan, not a free number: use the next free one |
 | `0062_cache_versions.sql` | stateless server phase 1 |
 | `0063_people_indexes.sql` | stateless server phase 2, only if a measured query needs an index |
 | `0064_policy_library.sql` | policy library phase 1 |

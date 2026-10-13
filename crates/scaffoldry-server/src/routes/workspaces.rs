@@ -496,6 +496,7 @@ async fn impact_workspace_guards(
             role_title: collab.role.clone(),
             affiliation: collab.scoped_affiliation.split('@').next().unwrap_or("member").to_string(),
             department: collab.department.clone(),
+        view_as_by: None,
         });
         let princ = principal_ctx_for(&collab_user, &state);
 
@@ -593,6 +594,7 @@ async fn test_workspace_guards(
         role_title: "Member".to_string(),
         affiliation: "member".to_string(),
         department: ws.department.clone(),
+        view_as_by: None,
     });
     let princ = principal_ctx_for(&target_user, &state);
 

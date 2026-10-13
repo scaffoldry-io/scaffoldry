@@ -176,6 +176,7 @@ async fn create_token(
         expires_at,
         last_used_at: None,
         revoked_at: None,
+        app_slug: None,
     };
 
     if let Err(e) = state.persist_api_token(&new_token) {
@@ -306,6 +307,7 @@ async fn impersonate_user(
         expires_at,
         last_used_at: None,
         revoked_at: None,
+        app_slug: None,
     };
 
     // Append immutable audit entry to cryptographic decision ledger

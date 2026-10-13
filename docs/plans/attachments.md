@@ -97,6 +97,16 @@ Tests.
 8. An unattached upload older than 24 hours is removed by the job.
 9. Boot refuses a missing files directory.
 
+How it works. The migration is `0051_files.sql`, not `0032`, which is taken. Tests 1 to 9 are in `crates/scaffoldry-server/tests/attachments_test.rs`, with a tenth: a record may only attach a file its writer uploaded, or one it already holds.
+
+- **No new dependency.** The upload body is read as a stream through the `HttpBody` that axum re-exports. The only change to `Cargo.toml` is two features of `tokio` that the server already uses: `fs` and `io-util`.
+- **The type is decided by the first 512 bytes** (`files::sniff`): PNG, JPEG, GIF, WebP, PDF, zip (Word, Excel, PowerPoint when the entry names show it), text, and CSV when the first line has a comma and there is a second line. Programs (`MZ` followed by binary, ELF, Mach-O, shebang, Flash, jar) and pages (`<!doctype`, `<html`, `<script`, `<svg`, `<?xml` and similar) are refused as `file_type_blocked` whatever the name or the claimed type. Anything else is `application/octet-stream`.
+- **A body is checked against its `Content-Length` while it streams.** One that runs past it is cut off, and so is one that runs past the limit. The temporary file is removed on every failure. A request with no `Content-Length` is a 400.
+- **The field value** is a list of `{ref_id, name}`. A write replaces each `name` with the stored one. A file attaches only if the writer uploaded it and no record holds it yet, or if this record already holds it in this field. A file a write drops is let go of (`deleted_at`).
+- **Every refusal on download is the same 404**, so a response never says whether a file exists. The record is read through `get_record`, so scope and column rules apply, and the file counts only if its field is still in the redacted record.
+- **A download reads the whole file into memory.** The limit is 50 MB by default and 500 MB at most. Streaming the body from disk is the next step if operators raise the limit. It needs a stream type that axum does not re-export, so it was left out of this phase rather than adding a crate.
+- **The purge job** (`purge_unattached_files`, hourly) deletes uploads older than 24 hours that no record took, then the blobs nothing refers to. An upload that stores the same bytes at the moment a purge removes their last ref can find the blob gone. The window is one statement wide. Phase 4 closes it with a grace period.
+
 ## Phase 2 — scanning
 
 Add the setting `files.scanner`, an object `{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }` or none, and `files.require_scan` (boolean, default false). Both are in the closed settings list. Neither turns a check off. `require_scan` only makes uploads fail when no scanner answers.
@@ -118,6 +128,16 @@ Tests, with a fake scanner on a temporary socket that speaks the protocol and a 
 5. The EICAR test string, sent through the fake scanner's matching rule, is treated as infected. (The real daemon is not run in tests.)
 6. The Overview reports the scanner state.
 
+How it works. Tests 1 to 6 are in `crates/scaffoldry-server/tests/attachments_scan_test.rs`. Migration `0052_file_scans.sql` adds `file_refs.scanned_at`, so the Overview can name the last result.
+
+- **The protocol** is in `scan.rs`, about 60 lines over `std::os::unix::net::UnixStream`: `zINSTREAM\0`, chunks of 64 KiB each with a four-byte length, a zero length, and one answer line. `zPING\0` is the reachability check. The 30-second timeout is `SCAFFOLDRY_SCAN_TIMEOUT_MS` (default 30000) so a test can shorten it.
+- **One job scans everything that waits.** The brief says a job per file. The per-person limit on jobs is five, so a person who uploads six files at once would have had the sixth fail. An upload now queues one `scan_file` job under `scanner@scaffoldry.internal` with the dedupe key `scan_pending_files`. The job scans every `pending` upload, oldest first. A schedule runs it every ten minutes as a safety net for an upload whose job could not be queued. `{ "ref_id": ... }` scans one file.
+- **`pending` blocks.** A write that lists a pending file is a 400. A download of one is the usual 404.
+- **`error` and `skipped` files attach and download.** `require_scan` governs uploads only. The Overview counts both so an admin can see them.
+- **An infected file** marks every upload of the same bytes `infected` and deleted, removes the blob, and writes a `FileInfected` ledger entry (new decision type, OSCAL control `SI-03`) whose rationale names the file, the hash, the signature and the uploader. A record that listed one of those files still lists it, and the file can no longer be downloaded.
+- **`require_scan`** pings the scanner before any byte is kept. No scanner set, or one that does not answer, is a 503 `scanner_unavailable`.
+- **Departure: the uploader is not told.** The brief says to notify the uploader. Notifications (row 91) are not built yet, so there is nothing to send to. The ledger entry names the uploader. Notifications phase 4, "every producer is wired", is where this producer belongs.
+
 ## Phase 3 — in the app
 
 From the kit.
@@ -134,6 +154,15 @@ Tests (vitest, `fetch` stubbed).
 3. A `Not scanned` marker is text.
 4. Removing a file removes the chip and sends the update.
 5. A hidden attachment field renders nothing.
+
+How it works. Tests 1 to 5 are in `apps/web/src/test/attachments.test.tsx`, with tests for the grid chips, the size words, the download, and the gallery cover. Server tests for what the UI needs are in `attachments_test.rs`.
+
+- **The record stores more than the brief says.** A write now stores `{ref_id, name, size, media_type}` for each file, taken from the stored upload, never from the client. A grid chip needs no second request. The scan state changes, so it is not stored.
+- **`GET /apps/{slug}/records/{id}/files`** returns `{ fields, files }`: the attachment fields the person may read, and each file in them with its scan state. A field the person may not read is not named. The editor renders nothing until this answers, and nothing after it leaves the field out. The drawer skips the field's frame as well, so no label is left behind.
+- **Progress uses `XMLHttpRequest`.** `fetch` reports no upload progress. The tests stub `uploadRecordFile` instead of `fetch`. The file name travels percent-encoded in `X-File-Name`, because a header holds Latin-1 only, and the server decodes it.
+- **Downloads and covers load through `fetch` with the bearer token** and a blob URL, since an `<a href>` cannot carry the token. A file that is still scanning has a disabled `Download`.
+- **The grid cell is read-only.** Files are added and removed in the record drawer. The drawer takes the app's slug as a new prop.
+- **The gallery cover** is the first image in the first attachment field, in the builder's gallery view.
 
 ## Phase 4 — retention, backups, and cleanup
 

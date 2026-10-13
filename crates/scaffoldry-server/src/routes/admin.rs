@@ -192,6 +192,10 @@ async fn get_overview(
                 "entry_count": ledger_count,
                 "head_hash": head_hash,
             },
+            "files": crate::scan::overview(
+                state.repository.as_deref(),
+                state.settings.read().ok().and_then(|s| s.get("files.scanner").cloned()).as_ref(),
+            ),
             "jobs": {
                 "queue_depth": jobs_overview.queue_depth,
                 "oldest_queued_age_secs": jobs_overview.oldest_queued_age_secs,

@@ -69,6 +69,18 @@ fn coded_tool_error(code: &str, message: &str) -> Value {
     })
 }
 
+/// The same for a `ServiceError`, with the `reason` and `remedy` of a denial when it has them.
+fn service_tool_error(err: &crate::service::ServiceError) -> Value {
+    let mut value = coded_tool_error(err.code(), err.message());
+    let body = err.body();
+    for key in ["reason", "remedy", "fields"] {
+        if let Some(v) = body.get(key) {
+            value["structuredContent"][key] = v.clone();
+        }
+    }
+    value
+}
+
 /// POST /api/v1/mcp - JSON-RPC 2.0 MCP Request Handler
 async fn handle_mcp_request(
     State(state): State<SharedState>,
@@ -113,6 +125,12 @@ async fn handle_mcp_request(
     // A notification carries no id. The server does not answer it.
     if req.id.is_none() {
         return StatusCode::ACCEPTED.into_response();
+    }
+
+    // A view-as session reaches the tools and nothing else here.
+    if crate::guard::view_as_token(&state, &headers).is_some() && !["initialize", "ping", "tools/list", "tools/call"].contains(&req.method.as_str()) {
+        let err = crate::service::ServiceError::forbidden("This view reaches one app only. Exit it to open anything else.");
+        return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: None, error: Some(JsonRpcError { code: -32001, message: err.message().to_string(), data: None }) });
     }
 
     match req.method.as_str() {
@@ -176,6 +194,12 @@ async fn handle_mcp_request(
             let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
+            if let Some(row) = crate::guard::view_as_token(&state, &headers) {
+                if let Err(err) = crate::guard::view_as_tool_gate(&row, &tool_name, &args) {
+                    return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(service_tool_error(&err)), error: None });
+                }
+            }
+
             // A tool does database work, so it runs off the async threads.
             let origin = match crate::guard::origin(&state, &headers) {
                 Ok(o) => o,
@@ -192,7 +216,7 @@ async fn handle_mcp_request(
                     "structuredContent": value,
                     "content": [{ "type": "text", "text": serde_json::to_string(&value).unwrap_or_default() }]
                 }),
-                Ok(Err(err)) => coded_tool_error(err.code(), err.message()),
+                Ok(Err(err)) => service_tool_error(&err),
                 Err(_) => tool_error("The tool stopped before it answered"),
             };
             rpc(JsonRpcResponse {

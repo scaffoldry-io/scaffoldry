@@ -100,6 +100,7 @@ fn manifest(slug: &str, views: Vec<AppView>) -> AppManifest {
         views,
         ceds_mappings: Default::default(),
         pages: vec![],
+        access: Default::default(),
     }
 }
 
@@ -276,6 +277,10 @@ fn desc_query(slug: &str) -> IndexedQuery {
         after: None,
         limit: 201,
         app_slug: slug.to_string(),
+        scope: None,
+        search: None,
+        expr: None,
+        offset: 0,
     }
 }
 
@@ -403,6 +408,10 @@ async fn a_filter_on_an_indexed_field_returns_the_predicted_rows_without_scannin
         after: None,
         limit: 201,
         app_slug: w.slug.clone(),
+        scope: None,
+        search: None,
+        expr: None,
+        offset: 0,
     };
     let (sql, params) = build_indexed_sql(&query, IndexPhase::All);
     let plan = repo.explain(&sql, &params).unwrap();
