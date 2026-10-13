@@ -369,6 +369,7 @@ async fn million_rows() {
         clauses: vec![],
         expr: None,
         scope: None,
+        ..Default::default()
     };
     let (sql, params) = build_aggregate_sql(&agg(AggregateFunction::Sum, Some("amount"), None));
     plans.push(("sum over the whole table", plan_of(&w, &sql, &params)));

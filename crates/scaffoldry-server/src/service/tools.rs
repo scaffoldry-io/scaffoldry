@@ -1238,10 +1238,12 @@ fn schema_aggregate_records() -> Value {
         "properties": {
             "app_slug": { "type": "string", "description": "Application slug identifier" },
             "table_id": { "type": "string", "description": "Table id or slug from describe_app" },
-            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "filled", "empty", "unique"], "description": "Aggregate function. filled, empty and unique work on a field of any type" },
+            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "Aggregate function. count_distinct (alias unique), filled and empty work on a field of any type" },
             "field": { "type": "string", "description": "Numeric field to aggregate (required unless function is count)" },
             "filter": { "type": "object", "description": "Optional filter on indexed fields" },
-            "group_by": { "type": "string", "description": "Optional indexed field to group by" }
+            "group_by": { "type": "string", "description": "Optional indexed field to group by" },
+            "group_by2": { "type": "string", "description": "Optional second indexed field to group by, inside the first" },
+            "bucket": { "type": "string", "enum": ["day", "week", "month", "quarter", "year"], "description": "Groups a date group_by into days, weeks (from Monday), months, quarters or years in the institution's time zone" }
         },
         "required": ["app_slug", "table_id", "function"]
     })
@@ -1256,6 +1258,8 @@ struct AggregateRecordsArgs {
     field: Option<String>,
     filter: Option<scaffoldry_engine::CompoundFilter>,
     group_by: Option<String>,
+    group_by2: Option<String>,
+    bucket: Option<String>,
 }
 
 fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1268,7 +1272,7 @@ fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state
         "max" => records::AggregateFunction::Max,
         "filled" => records::AggregateFunction::Filled,
         "empty" => records::AggregateFunction::Empty,
-        "unique" => records::AggregateFunction::Unique,
+        "unique" | "count_distinct" => records::AggregateFunction::Unique,
         other => return Err(ServiceError::BadRequest(format!("Unknown aggregate function '{other}'"))),
     };
     let res = records::aggregate_records(
@@ -1280,6 +1284,9 @@ fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state
             field: args.field,
             filter: args.filter,
             group_by: args.group_by,
+            group_by2: args.group_by2,
+            bucket: args.bucket,
+            order_by_key: false,
         },
         state,
     )?;

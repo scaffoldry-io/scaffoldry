@@ -1417,9 +1417,11 @@ impl PostgresRepository {
                 let mut groups = Vec::new();
                 for r in rows {
                     let key: String = r.get(0);
-                    let val: Option<f64> = r.get(1);
+                    let key2: Option<String> = r.get(1);
+                    let val: Option<f64> = r.get(2);
                     groups.push(AggregateGroupRow {
                         key,
+                        key2,
                         value: val.unwrap_or(0.0),
                     });
                 }

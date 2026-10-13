@@ -4,7 +4,7 @@ pub mod access;
 pub mod duration;
 pub use duration::*;
 pub mod filter_tree;
-pub use filter_tree::{check_filter, clauses_of, instant_of, is_flat, list_of, range_of, relative_range, resolve_relative_dates, MAX_FILTER_CLAUSES, MAX_FILTER_DEPTH};
+pub use filter_tree::{check_filter, clauses_of, instant_of, is_flat, list_of, range_of, relative_range, resolve_relative_dates, valid_zone, MAX_FILTER_CLAUSES, MAX_FILTER_DEPTH};
 pub mod automation;
 pub mod detect;
 pub mod graph;
@@ -705,6 +705,38 @@ pub struct AppView {
     /// Up to ten rules that tone a row or a field when a filter matches.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub color_rules: Vec<ColorRule>,
+    /// A summary view's measures: one column for each, computed over each group of `group_by`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aggregations: Vec<Aggregation>,
+}
+
+/// What a summary view computes for each group. `count` needs no field. Every other function needs one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Aggregation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(rename = "fn")]
+    pub function: String,
+}
+
+/// The functions a summary view may use. They are the functions the aggregate route can group.
+pub const SUMMARY_FUNCTIONS: [&str; 6] = ["count", "sum", "avg", "min", "max", "count_distinct"];
+pub const MAX_SUMMARY_GROUPS: usize = 2;
+pub const MAX_AGGREGATIONS: usize = 8;
+
+impl Aggregation {
+    /// The column heading: `count`, `sum of amount`, `distinct status`.
+    pub fn label(&self) -> String {
+        let field = self.field.as_deref().unwrap_or("");
+        match self.function.as_str() {
+            "count" => "count".to_string(),
+            "count_distinct" => format!("distinct {field}"),
+            "avg" => format!("average of {field}"),
+            "min" => format!("smallest {field}"),
+            "max" => format!("largest {field}"),
+            other => format!("{other} of {field}"),
+        }
+    }
 }
 
 /// The footer choices a field may have.
@@ -788,6 +820,7 @@ impl AppView {
             column_summary: Vec::new(),
             group_by: Vec::new(),
             color_rules: Vec::new(),
+            aggregations: Vec::new(),
         }
     }
 }

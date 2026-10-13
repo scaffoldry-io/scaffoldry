@@ -83,6 +83,11 @@ fn zone(tz: &str) -> chrono_tz::Tz {
     tz.parse().unwrap_or(chrono_tz::UTC)
 }
 
+/// The zone's name if it is a zone, and `UTC` if it is not, so a bad setting never reaches a statement.
+pub fn valid_zone(tz: &str) -> String {
+    if tz.parse::<chrono_tz::Tz>().is_ok() { tz.to_string() } else { "UTC".to_string() }
+}
+
 fn midnight(tz: chrono_tz::Tz, day: NaiveDate) -> DateTime<Utc> {
     let local = day.and_hms_opt(0, 0, 0).expect("midnight exists");
     match tz.from_local_datetime(&local) {

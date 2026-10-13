@@ -89,12 +89,27 @@ fn used_fields(config: &Value) -> BTreeSet<String> {
     if let Some(levels) = config.get("group_by").and_then(Value::as_array) {
         out.extend(levels.iter().filter_map(Value::as_str).map(str::to_string));
     }
+    if let Some(aggs) = config.get("aggregations").and_then(Value::as_array) {
+        out.extend(aggs.iter().filter_map(|a| a.get("field").and_then(Value::as_str)).map(str::to_string));
+    }
     for key in ["kanban_column_field", "group_by_field", "calendar_date_field"] {
         if let Some(f) = config.get(key).and_then(Value::as_str) {
             out.insert(f.to_string());
         }
     }
     out
+}
+
+/// A summary view groups by one or two fields and computes at least one measure for each group.
+fn valid_summary(config: &Value) -> Result<(), ServiceError> {
+    let groups = config.get("group_by").and_then(Value::as_array).map_or(0, Vec::len);
+    if groups == 0 || groups > scaffoldry_engine::MAX_SUMMARY_GROUPS {
+        return Err(ServiceError::BadRequest(format!("A summary groups by 1 to {} fields", scaffoldry_engine::MAX_SUMMARY_GROUPS)));
+    }
+    if config.get("aggregations").and_then(Value::as_array).is_none_or(Vec::is_empty) {
+        return Err(ServiceError::BadRequest("A summary needs at least one aggregation".to_string()));
+    }
+    Ok(())
 }
 
 /// A view that names a field the caller cannot see is refused, the way a sort or filter on it is. Using a
@@ -278,6 +293,9 @@ pub fn create(caller: &AuthUser, app_slug: &str, body: CreateBody, state: &Share
     }
     let config = body.config.unwrap_or_else(|| json!({}));
     valid_config(&config)?;
+    if body.kind == "summary" {
+        valid_summary(&config)?;
+    }
     authorize_change(caller, app_slug, &ownership, true, state)?;
     let table_id = body.table_id.as_deref().map(|t| canonical_table(&runtime_manifest(state, app_slug)?, t)).transpose()?;
     if let Some(table) = &table_id {
@@ -335,6 +353,9 @@ pub fn update(caller: &AuthUser, app_slug: &str, id: Uuid, body: UpdateBody, sta
     authorize_change(caller, app_slug, &current.ownership, is_owner(&current, caller), state)?;
     let name = valid_name(body.name.as_deref().unwrap_or(&current.name))?;
     valid_config(&body.config)?;
+    if current.kind == "summary" {
+        valid_summary(&body.config)?;
+    }
     if let Some(table) = &current.table_id {
         check_visible(caller, app_slug, table, &body.config, state)?;
     }
@@ -459,7 +480,7 @@ fn footers(caller: &AuthUser, app_slug: &str, table_id: &str, view: &scaffoldry_
             caller,
             app_slug,
             table_id,
-            records::AggregateQuery { function: func, field: uses_field.then(|| field.clone()), filter: view.filters.clone(), group_by: None },
+            records::AggregateQuery { function: func, field: uses_field.then(|| field.clone()), filter: view.filters.clone(), group_by: None, ..Default::default() },
             state,
         )?;
         out.insert(field.clone(), json!({ "function": function, "value": result.value }));
@@ -475,6 +496,9 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
     let view = materialize(&stored).ok_or_else(|| ServiceError::BadRequest("config is not a view".to_string()))?;
     let table_id = view.table_id.clone().ok_or_else(|| ServiceError::BadRequest("This view is not over a table".to_string()))?;
     check_runnable(caller, app_slug, &view, state)?;
+    if stored.kind == "summary" {
+        return run_summary(caller, app_slug, &stored, &view, &table_id, state);
+    }
 
     let levels: Vec<String> = if view.group_by.is_empty() { view.group_by_field.iter().cloned().collect() } else { view.group_by.clone() };
     if query.group_path.len() > levels.len() {
@@ -492,7 +516,7 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
             caller,
             app_slug,
             &table_id,
-            records::AggregateQuery { function: records::AggregateFunction::Count, field: None, filter, group_by: Some(levels[level].clone()) },
+            records::AggregateQuery { function: records::AggregateFunction::Count, field: None, filter, group_by: Some(levels[level].clone()), ..Default::default() },
             state,
         )?;
         let mut items: Vec<Value> = result.groups.unwrap_or_default().into_iter().map(|g| json!({ "key": g.key, "count": g.value })).collect();
@@ -577,4 +601,56 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
         body["footers"] = f;
     }
     Ok(body)
+}
+
+/// A summary view: its groups, and one column for each measure. Each measure is one call to the aggregate route, ordered by
+/// key so every column has the same groups, and the rows are put together by key. At most 200 groups, and a flag when there
+/// are more. A summary is read-only: it releases totals, never records.
+fn run_summary(caller: &AuthUser, app_slug: &str, stored: &StoredView, view: &scaffoldry_engine::AppView, table_id: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    use records::AggregateFunction as F;
+    let groups = &view.group_by;
+    let mut columns: Vec<String> = groups.clone();
+    columns.extend(view.aggregations.iter().map(scaffoldry_engine::Aggregation::label));
+    // Each group is its keys and then one value for each measure.
+    let mut rows: Vec<(Vec<String>, Vec<Value>)> = Vec::new();
+    let mut has_more = false;
+    for (i, a) in view.aggregations.iter().enumerate() {
+        let function = match a.function.as_str() {
+            "count" => F::Count,
+            "sum" => F::Sum,
+            "avg" => F::Avg,
+            "min" => F::Min,
+            "max" => F::Max,
+            "count_distinct" => F::Unique,
+            other => return Err(ServiceError::BadRequest(format!("'{other}' is not an aggregation"))),
+        };
+        let result = records::aggregate_records(
+            caller,
+            app_slug,
+            table_id,
+            records::AggregateQuery {
+                function,
+                field: a.field.clone(),
+                filter: view.filters.clone(),
+                group_by: groups.first().cloned(),
+                group_by2: groups.get(1).cloned(),
+                order_by_key: true,
+                ..Default::default()
+            },
+            state,
+        )?;
+        let found = result.groups.unwrap_or_default();
+        let keys = |g: &records::AggregateGroup| -> Vec<String> { std::iter::once(g.key.clone()).chain(g.key2.clone()).collect() };
+        if i == 0 {
+            has_more = result.has_more.unwrap_or(false);
+            rows = found.iter().map(|g| (keys(g), vec![json!(g.value)])).collect();
+        } else {
+            let by_key: std::collections::HashMap<Vec<String>, f64> = found.iter().map(|g| (keys(g), g.value)).collect();
+            for (key, values) in &mut rows {
+                values.push(by_key.get(key).map_or(Value::Null, |v| json!(v)));
+            }
+        }
+    }
+    let groups: Vec<Value> = rows.into_iter().map(|(key, values)| json!({ "key": key, "values": values })).collect();
+    Ok(json!({ "view_id": stored.id, "summary": { "columns": columns, "groups": groups, "has_more": has_more } }))
 }

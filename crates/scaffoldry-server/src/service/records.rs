@@ -1578,6 +1578,9 @@ fn version_required(message: &str) -> ServiceError {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AggregateGroup {
     pub key: String,
+    /// The key of the second group, when the request had one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key2: Option<String>,
     pub group: String,
     pub value: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1591,6 +1594,10 @@ pub struct AggregateResult {
     pub field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_by2: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1609,7 +1616,18 @@ pub struct AggregateQuery {
     pub field: Option<String>,
     pub filter: Option<CompoundFilter>,
     pub group_by: Option<String>,
+    /// A second field to group by, inside the first.
+    #[serde(default)]
+    pub group_by2: Option<String>,
+    /// `day`, `week`, `month`, `quarter` or `year`, for a date `group_by`, in the institution's zone.
+    #[serde(default)]
+    pub bucket: Option<String>,
+    /// Order the groups by key, so every measure of one table has the same groups.
+    #[serde(default)]
+    pub order_by_key: bool,
 }
+
+pub const BUCKETS: [&str; 5] = ["day", "week", "month", "quarter", "year"];
 
 pub fn aggregate_records(
     caller: &AuthUser,
@@ -1652,8 +1670,8 @@ pub fn aggregate_records(
         }
     }
 
-    if query.group_by.is_some() && matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty | AggregateFunction::Unique) {
-        return Err(ServiceError::BadRequest(format!("{:?} cannot be grouped. Use count, sum, avg, min or max.", query.function)));
+    if query.group_by.is_some() && matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty) {
+        return Err(ServiceError::BadRequest(format!("{:?} cannot be grouped. Use count, count_distinct, sum, avg, min or max.", query.function)));
     }
 
     if let Some(ref g) = query.group_by {
@@ -1672,6 +1690,43 @@ pub fn aggregate_records(
             });
         }
     }
+
+    if query.group_by2.is_some() && query.group_by.is_none() {
+        return Err(ServiceError::BadRequest("group_by2 needs group_by".to_string()));
+    }
+    if let Some(ref g2) = query.group_by2 {
+        if query.group_by.as_ref() == Some(g2) {
+            return Err(ServiceError::BadRequest("group_by2 must be a different field from group_by".to_string()));
+        }
+        if !fields.iter().any(|s| s.name == *g2) {
+            return Err(ServiceError::BadRequest(format!("'{g2}' is not a field of this table")));
+        }
+        if !indexed.contains(g2) {
+            return Err(ServiceError::BadRequest(format!("'{g2}' is not in the indexed set")));
+        }
+        if hidden.iter().any(|h| h == g2) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *g2);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot group by '{g2}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{g2}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+    let bucket = match (&query.bucket, &query.group_by) {
+        (None, _) => None,
+        (Some(_), None) => return Err(ServiceError::BadRequest("bucket needs group_by".to_string())),
+        (Some(unit), Some(g)) => {
+            if !BUCKETS.contains(&unit.as_str()) {
+                return Err(ServiceError::BadRequest(format!("bucket must be one of {}", BUCKETS.join(", "))));
+            }
+            let is_date = fields.iter().find(|f| f.name == *g).is_some_and(|f| scaffoldry_engine::index_column(f.field_type) == IndexColumn::Ts);
+            if !is_date {
+                return Err(ServiceError::BadRequest(format!("'{g}' is not a date, so it cannot be put in {unit}s")));
+            }
+            Some(crate::repository_index::Bucket { unit: unit.clone(), zone: scaffoldry_engine::valid_zone(&state.platform_timezone()) })
+        }
+    };
 
     let mut iclauses = Vec::new();
     let mut tree: Option<Expr> = None;
@@ -1735,6 +1790,9 @@ pub fn aggregate_records(
         field: query.field.clone(),
         driver: driving_field,
         group_by: query.group_by.clone(),
+        group_by2: query.group_by2.clone(),
+        bucket,
+        order_by_key: query.order_by_key,
         clauses: iclauses,
         expr: tree,
         scope,
@@ -1746,6 +1804,7 @@ pub fn aggregate_records(
             let groups: Vec<AggregateGroup> = raw.groups.unwrap_or_default().into_iter().map(|grp| AggregateGroup {
                 group: grp.key.clone(),
                 key: grp.key,
+                key2: grp.key2,
                 value: grp.value,
                 count: if query.function == AggregateFunction::Count { Some(grp.value) } else { None },
             }).collect();
@@ -1753,6 +1812,8 @@ pub fn aggregate_records(
                 function: query.function,
                 field: query.field,
                 group_by: Some(g),
+                group_by2: query.group_by2.clone(),
+                bucket: query.bucket.clone(),
                 value: None,
                 count: None,
                 groups: Some(groups),
@@ -1766,6 +1827,8 @@ pub fn aggregate_records(
                 function: query.function,
                 field: query.field,
                 group_by: None,
+                group_by2: None,
+                bucket: None,
                 value: Some(val),
                 count: if query.function == AggregateFunction::Count { Some(val) } else { None },
                 groups: None,

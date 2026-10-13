@@ -116,6 +116,7 @@ fn test_view_spec_serialization_with_all_view_types() {
         column_summary: vec![],
         group_by: vec![],
         color_rules: vec![],
+        aggregations: vec![],
     };
 
     let serialized = serde_json::to_string(&view).expect("Serialize AppView");
