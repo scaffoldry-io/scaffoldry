@@ -279,6 +279,7 @@ async fn a_nested_filter_returns_the_right_rows_and_its_plan_has_no_sequential_s
             leaf("amount", IndexColumn::Num, GreaterThan, "5"),
             Expr::Or(vec![leaf("status", IndexColumn::Txt, Equals, "s1"), leaf("status", IndexColumn::Txt, Equals, "s2")]),
         ])),
+        offset: 0,
     };
     let (sql, params) = build_indexed_sql(&q, IndexPhase::All);
     let plan = w.state.repository.as_deref().unwrap().explain(&sql, &params).unwrap();

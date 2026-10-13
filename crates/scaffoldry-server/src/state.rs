@@ -202,6 +202,9 @@ pub struct ServerState {
     pub access_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::RowRule>>>,
     /// The stored views of each app (`app_views`). The engine runs each app's manifest with these merged in.
     pub app_views: RwLock<HashMap<String, Vec<crate::repository_views::StoredView>>>,
+    /// How long an exact row count may run, in milliseconds, before the answer becomes `at least`. Two seconds unless
+    /// `SCAFFOLDRY_COUNT_TIMEOUT_MS` says otherwise. A test lowers it to make a count time out.
+    pub count_timeout_ms: std::sync::atomic::AtomicU64,
     /// Column rules by app slug, kept the same way.
     pub column_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::ColumnRule>>>,
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
@@ -499,6 +502,7 @@ impl ServerState {
             groups: RwLock::new(groups),
             access_rules: RwLock::new(HashMap::new()),
             app_views: RwLock::new(app_views_cache),
+            count_timeout_ms: std::sync::atomic::AtomicU64::new(std::env::var("SCAFFOLDRY_COUNT_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(2_000)),
             column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
@@ -1203,6 +1207,7 @@ impl ServerState {
             groups: RwLock::new(groups),
             access_rules: RwLock::new(HashMap::new()),
             app_views: RwLock::new(HashMap::new()),
+            count_timeout_ms: std::sync::atomic::AtomicU64::new(2_000),
             column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),

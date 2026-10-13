@@ -121,6 +121,23 @@ Johann has said yes to `@tanstack/react-virtual` (MIT, on the licence whitelist)
 3. The last page. Jump to end runs the same query with the order reversed and flips the result.
 4. The grid renders only visible rows with a buffer, fetches windows of 200, shows skeleton rows while a window loads, and keeps `aria-rowcount` and `aria-rowindex` correct. Page Down, Page Up, Ctrl+Home, and Ctrl+End work. Dragging the scrollbar to the middle loads that window.
 
+### Measured: the `OFFSET` skip over 1,000,000 rows
+
+Measured on the development database (PostgreSQL 16, parallel workers on) with 1,000,000 records and one index row per record. The ordering is `amount`, a number with one distinct value per row. Each figure is `EXPLAIN (ANALYZE, BUFFERS)` of the page statement, warm unless noted.
+
+| Statement | `OFFSET` | Time | Plan |
+| --- | --- | --- | --- |
+| The page statement as it was (index join records, `OFFSET` after the join) | 500,000 | 3.0 s warm (6.5 s cold) | `Parallel Index Scan` on `idx_record_index_num`, then 500,616 lookups on `dataset_records_pkey`, `Gather Merge`. Uses the index, and joins every row it skips |
+| The same, near the end | 999,800 | 2.1 s | `Parallel Seq Scan` on both tables |
+| Skip on the index alone, fetch the 200 records after | 500,000 | 0.41 to 0.47 s | `Index Scan` on `idx_record_index_num` for 500,200 entries, then 200 lookups on `dataset_records_pkey` |
+| **Anchor**: start at the nearest of 1,000 anchors, skip at most 999 | any | 0.19 s measured through the whole HTTP request | Index scan of at most 1,200 entries, then 200 lookups |
+
+Neither plain `OFFSET` meets the 300 ms limit, and the index-only form grows with the offset, so the strategy is **anchors**. The first row of the table is the plan to beat: the index is used and it is still 3 seconds, because the cost is the number of rows skipped.
+
+How it works. `build_anchors` is a job. It walks the view's order over the index once and stores, for each row whose position is a multiple of 1,000, the key of the row before it (`view_anchors`, migration `0050`, not `0047` as the brief says, which is taken). A second table, `view_anchor_builds`, holds a hash of the order and filter the anchors were built for, and the row count. A jump to row `p` finds the greatest anchor at or before `p`, reads the window after its key, and skips `p` minus the anchor's position, which is under 1,000.
+
+What an anchor does not know. Anchors are a sample of a moment. Rows added or removed after the build move later rows, so a jump can land a few rows from where a fresh count would put it. A request asks for a rebuild when the anchors are missing, built for a different order, or more than five minutes old. A person whose rows are limited by a row rule never uses anchors, because their positions are not the table's: they skip on the index inside their own scope, and their sets are smaller.
+
 Tests.
 
 1. The measured `OFFSET` result is pasted. The chosen strategy passes its latency limit at 1,000,000 rows.

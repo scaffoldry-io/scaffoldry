@@ -391,6 +391,15 @@ pub struct RunQuery {
     /// The key of the group chosen at each level so far. An empty string is the group with no value.
     #[serde(default)]
     pub group_path: Vec<String>,
+    /// Open the view at this row instead of at a cursor. Needs a sort on an indexed field.
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// The last rows of the view, in order.
+    #[serde(default)]
+    pub last: bool,
+    /// `exact` asks for the row count, which says `at_least` when it runs out of time.
+    #[serde(default)]
+    pub count: Option<String>,
 }
 
 /// The view's filter, narrowed to one group.
@@ -499,22 +508,42 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
     }
 
     let sort = view.sort_rules.first().map(|r| records::SortSpec { field_name: r.field_name.clone(), descending: r.direction == scaffoldry_engine::SortDirection::Desc });
-    let page = records::list_page(
-        caller,
-        app_slug,
-        records::PageQuery {
-            table_id: table_id.clone(),
-            filter,
-            sort,
-            limit: query.limit.unwrap_or(100).clamp(1, 1000),
-            cursor: query.cursor,
-            max_bytes: None,
-            must_exist: true,
-            search: None,
-        },
-        state,
-    )?;
-    crate::service::disclosure::record_agent_read(caller, origin, app_slug, Some(&table_id), &page.records, state)?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let count = match query.count.as_deref() {
+        None => None,
+        Some("exact") => {
+            let counted = records::count_rows(
+                caller,
+                app_slug,
+                records::WindowQuery { table_id: table_id.clone(), filter: filter.clone(), sort: sort.clone(), offset: 0, limit: 1, reverse: false, view_id: Some(stored.id) },
+                state,
+            )?;
+            Some(match counted {
+                records::RowCount::Exact(n) => json!({ "value": n, "exact": true }),
+                records::RowCount::AtLeast(n) => json!({ "at_least": n }),
+            })
+        }
+        Some(other) => return Err(ServiceError::BadRequest(format!("count must be 'exact', not '{other}'"))),
+    };
+    let (mut rows, next_cursor, window) = if query.offset.is_some() || query.last {
+        let offset = query.offset.unwrap_or(0);
+        let page = records::window_page(
+            caller,
+            app_slug,
+            records::WindowQuery { table_id: table_id.clone(), filter, sort, offset, limit, reverse: query.last, view_id: Some(stored.id) },
+            state,
+        )?;
+        (page.records, None, Some(json!({ "offset": if query.last { Value::Null } else { json!(offset) }, "strategy": page.strategy })))
+    } else {
+        let page = records::list_page(
+            caller,
+            app_slug,
+            records::PageQuery { table_id: table_id.clone(), filter, sort, limit, cursor: query.cursor, max_bytes: None, must_exist: true, search: None },
+            state,
+        )?;
+        (page.records, page.next_cursor, None)
+    };
+    crate::service::disclosure::record_agent_read(caller, origin, app_slug, Some(&table_id), &rows, state)?;
 
     // A rule that reads a field the person cannot see is dropped for them, so a tone never says what they may not know.
     let (now, zone) = (chrono::Utc::now(), state.platform_timezone());
@@ -526,7 +555,6 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
         })
         .map(|r| scaffoldry_engine::ColorRule { when: scaffoldry_engine::resolve_relative_dates(&r.when, now, &zone), ..r.clone() })
         .collect();
-    let mut rows = page.records;
     if !rules.is_empty() {
         for row in &mut rows {
             let tones = scaffoldry_engine::tones_of(&row.data, &rules);
@@ -538,7 +566,13 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
         }
     }
 
-    let mut body = json!({ "view_id": stored.id, "records": rows, "next_cursor": page.next_cursor, "group_path": query.group_path });
+    let mut body = json!({ "view_id": stored.id, "records": rows, "next_cursor": next_cursor, "group_path": query.group_path });
+    if let Some(w) = window {
+        body["window"] = w;
+    }
+    if let Some(c) = count {
+        body["count"] = c;
+    }
     if let Some(f) = footer {
         body["footers"] = f;
     }

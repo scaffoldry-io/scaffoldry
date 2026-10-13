@@ -1376,6 +1376,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             scope: scope.clone(),
             search: query.search.clone(),
             expr: tree.clone(),
+            offset: 0,
         };
         if let Some((name, column, _)) = crate::repository_index::walk_of(&iq) {
             walk_spec = fields.iter().find(|f| f.name == name).cloned();
@@ -1774,4 +1775,174 @@ pub fn aggregate_records(
         }
     };
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Windows and counts (views phase 3)
+// ---------------------------------------------------------------------------------------------
+
+/// What a window of a view asks for.
+pub struct WindowQuery {
+    pub table_id: String,
+    pub filter: Option<CompoundFilter>,
+    pub sort: Option<SortSpec>,
+    /// Rows to skip from the front, up to `MAX_WINDOW_OFFSET`.
+    pub offset: usize,
+    pub limit: usize,
+    /// The last `limit` rows, in order. `offset` is ignored.
+    pub reverse: bool,
+    /// The view, so its anchors can be used. A caller with a row scope never uses anchors.
+    pub view_id: Option<uuid::Uuid>,
+}
+
+pub struct WindowPage {
+    pub records: Vec<DatasetRecord>,
+    /// How the rows were found: `offset` (skipped on the index), `anchor` (started at the nearest anchor), or `reverse`.
+    pub strategy: &'static str,
+}
+
+pub enum RowCount {
+    Exact(i64),
+    AtLeast(i64),
+}
+
+/// The walk of a view: its order and filter, checked and compiled, with the caller's scope.
+struct Walk {
+    query: IndexedQuery,
+    spec: crate::repository_index::AnchorSpec,
+}
+
+fn walk_of(caller: &AuthUser, app_slug: &str, q: &WindowQuery, state: &SharedState) -> Result<Walk, ServiceError> {
+    authorize_app(caller, app_slug, AppAction::Read, state)?;
+    let (fields, table) = table_fields(app_slug, &q.table_id, true, state)?;
+    let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
+    let filter = prepared_filter(q.filter.as_ref(), state)?;
+    let names: Vec<&str> = filter.iter().flat_map(scaffoldry_engine::clauses_of).map(|c| c.field_name.as_str()).chain(q.sort.iter().map(|s| s.field_name.as_str())).collect();
+    for name in names {
+        if !fields.iter().any(|f| f.name == name) {
+            return Err(ServiceError::BadRequest(format!("'{name}' is not a field of this table")));
+        }
+        if hidden.iter().any(|h| h == name) {
+            let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == name);
+            return Err(ServiceError::FieldHidden {
+                message: format!("You cannot filter or sort on '{name}' because you cannot see it."),
+                reason: rule.as_ref().map_or_else(|| format!("'{name}' is hidden from you."), |d| d.reason.clone()),
+                remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+            });
+        }
+    }
+    let indexed = indexed_names(app_slug, &table, state);
+    let expr = filter.as_ref().map(|f| expr_of(&fields, f));
+    let planned = match &expr {
+        Some(e) => tree_plan(&fields, &indexed, e, q.sort.as_ref()),
+        None => indexed_plan(&fields, &indexed, None, q.sort.as_ref()),
+    };
+    let (clauses, sort) = planned.map_err(|name| ServiceError::BadRequest(format!("'{name}' must be in the indexed set to open this view in a window")))?;
+    let sort = sort.ok_or_else(|| ServiceError::BadRequest("Sort the view by an indexed field to open it in a window.".to_string()))?;
+    let mut named: Vec<String> = vec![sort.field.clone()];
+    named.extend(expr.iter().flat_map(|e| e.leaves().into_iter().map(|c| c.field.clone())));
+    if let Some(percent) = state.index_building_percent(app_slug, &table, &named).map_err(internal)? {
+        return Err(ServiceError::IndexBuilding(format!("This field is still being prepared for sorting. It is {percent}% done.")));
+    }
+    let spec = crate::repository_index::AnchorSpec {
+        app_slug: app_slug.to_string(),
+        table_id: table.clone(),
+        view_id: q.view_id.unwrap_or_default(),
+        sort: sort.clone(),
+        clauses: clauses.clone(),
+        expr: expr.clone(),
+    };
+    let query = IndexedQuery {
+        app_slug: app_slug.to_string(),
+        table_id: table.clone(),
+        clauses,
+        sort: Some(sort),
+        after: None,
+        limit: q.limit,
+        scope: crate::service::scope::plan_of(caller, app_slug, &table, state),
+        search: None,
+        expr,
+        offset: 0,
+    };
+    Ok(Walk { query, spec })
+}
+
+fn internal(e: impl std::fmt::Display) -> ServiceError {
+    ServiceError::Internal(e.to_string())
+}
+
+fn repo_of(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
+    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Windows need PostgreSQL".to_string()))
+}
+
+/// Asks for the anchors of a view to be built. A repeat while one is queued or running is the same job. A person at
+/// their job quota just waits for the next request.
+fn ask_for_anchors(caller: &AuthUser, spec: &crate::repository_index::AnchorSpec, state: &SharedState) {
+    let Some(repo) = state.repository.as_deref() else { return };
+    let key = format!("build_anchors:{}:{}", spec.view_id, spec.hash());
+    if let Ok(payload) = serde_json::to_value(spec) {
+        let _ = crate::jobs::enqueue(repo, "build_anchors", payload, &caller.eppn, Some(&key));
+    }
+}
+
+/// How old anchors may be before a request asks for new ones, in seconds.
+const ANCHOR_REFRESH_SECS: f64 = 300.0;
+
+/// One window of a view, over the person's own scope.
+pub fn window_page(caller: &AuthUser, app_slug: &str, q: WindowQuery, state: &SharedState) -> Result<WindowPage, ServiceError> {
+    use crate::repository_index::{ANCHOR_STEP, MAX_WINDOW_OFFSET};
+    if q.offset > MAX_WINDOW_OFFSET {
+        return Err(ServiceError::BadRequest(format!("A window may start at row {MAX_WINDOW_OFFSET} at most. Sort or filter to reach a row beyond it.")));
+    }
+    let walk = walk_of(caller, app_slug, &q, state)?;
+    let repo = repo_of(state)?;
+    let column = walk.query.sort.as_ref().map(|s| s.column).unwrap_or(IndexColumn::Num);
+    let mut iq = walk.query.clone();
+    let (strategy, mut rows) = if q.reverse {
+        ("reverse", repo.indexed_window(&iq, true).map_err(internal)?.into_iter().rev().collect::<Vec<_>>())
+    } else {
+        let anchored = q.view_id.is_some() && iq.scope.is_none() && q.offset >= 2 * ANCHOR_STEP;
+        let hash = walk.spec.hash();
+        let found = match (anchored, q.view_id) {
+            (true, Some(view)) => {
+                let age = repo.anchors_built(view, &hash).map_err(internal)?;
+                if age.is_none_or(|a| a > ANCHOR_REFRESH_SECS) {
+                    ask_for_anchors(caller, &walk.spec, state);
+                }
+                repo.nearest_anchor(view, &hash, q.offset).map_err(internal)?
+            }
+            _ => None,
+        };
+        match found {
+            Some((position, cursor)) => {
+                let after = if cursor.is_null() {
+                    None
+                } else {
+                    let key = cursor.get("key").cloned();
+                    let id = cursor.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                    Some(indexed_after(&crate::repository::RecordCursor { created_at: String::new(), id, key }, column)?)
+                };
+                iq.after = after;
+                iq.offset = q.offset - position;
+                ("anchor", repo.indexed_window(&iq, false).map_err(internal)?)
+            }
+            None => {
+                iq.offset = q.offset;
+                ("offset", repo.indexed_window(&iq, false).map_err(internal)?)
+            }
+        }
+    };
+    fill_lookups(caller, app_slug, &mut rows, state);
+    Ok(WindowPage { records: redact_records(caller, app_slug, rows, state), strategy })
+}
+
+/// How many rows a view holds for this person. The exact count runs under the server's count timeout (two seconds). If
+/// that runs out, the answer is `at least`, up to 250,000.
+pub fn count_rows(caller: &AuthUser, app_slug: &str, q: WindowQuery, state: &SharedState) -> Result<RowCount, ServiceError> {
+    let walk = walk_of(caller, app_slug, &q, state)?;
+    let ms = state.count_timeout_ms.load(std::sync::atomic::Ordering::SeqCst);
+    Ok(match repo_of(state)?.count_window(&walk.query, ms).map_err(internal)? {
+        crate::repository_index::Counted::Exact(n) => RowCount::Exact(n),
+        crate::repository_index::Counted::AtLeast(n) => RowCount::AtLeast(n),
+    })
 }

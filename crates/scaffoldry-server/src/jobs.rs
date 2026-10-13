@@ -84,6 +84,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::index_jobs::build_index,
     },
     JobKind {
+        name: "build_anchors",
+        title: "Preparing a long list",
+        description: "Marks every thousandth row of a view so that jumping to any row of a very large table is fast.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::index_jobs::build_anchors,
+    },
+    JobKind {
         name: "recompute_flags",
         title: "Updating sensitivity flags",
         description: "Works out again which records hold sensitive content after a label changes.",
