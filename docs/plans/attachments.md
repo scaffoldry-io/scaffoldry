@@ -128,6 +128,16 @@ Tests, with a fake scanner on a temporary socket that speaks the protocol and a 
 5. The EICAR test string, sent through the fake scanner's matching rule, is treated as infected. (The real daemon is not run in tests.)
 6. The Overview reports the scanner state.
 
+How it works. Tests 1 to 6 are in `crates/scaffoldry-server/tests/attachments_scan_test.rs`. Migration `0052_file_scans.sql` adds `file_refs.scanned_at`, so the Overview can name the last result.
+
+- **The protocol** is in `scan.rs`, about 60 lines over `std::os::unix::net::UnixStream`: `zINSTREAM\0`, chunks of 64 KiB each with a four-byte length, a zero length, and one answer line. `zPING\0` is the reachability check. The 30-second timeout is `SCAFFOLDRY_SCAN_TIMEOUT_MS` (default 30000) so a test can shorten it.
+- **One job scans everything that waits.** The brief says a job per file. The per-person limit on jobs is five, so a person who uploads six files at once would have had the sixth fail. An upload now queues one `scan_file` job under `scanner@scaffoldry.internal` with the dedupe key `scan_pending_files`. The job scans every `pending` upload, oldest first. A schedule runs it every ten minutes as a safety net for an upload whose job could not be queued. `{ "ref_id": ... }` scans one file.
+- **`pending` blocks.** A write that lists a pending file is a 400. A download of one is the usual 404.
+- **`error` and `skipped` files attach and download.** `require_scan` governs uploads only. The Overview counts both so an admin can see them.
+- **An infected file** marks every upload of the same bytes `infected` and deleted, removes the blob, and writes a `FileInfected` ledger entry (new decision type, OSCAL control `SI-03`) whose rationale names the file, the hash, the signature and the uploader. A record that listed one of those files still lists it, and the file can no longer be downloaded.
+- **`require_scan`** pings the scanner before any byte is kept. No scanner set, or one that does not answer, is a 503 `scanner_unavailable`.
+- **Departure: the uploader is not told.** The brief says to notify the uploader. Notifications (row 91) are not built yet, so there is nothing to send to. The ledger entry names the uploader. Notifications phase 4, "every producer is wired", is where this producer belongs.
+
 ## Phase 3 — in the app
 
 From the kit.

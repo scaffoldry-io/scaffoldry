@@ -271,6 +271,9 @@ fn validate_attachments(
         let mut clean: Vec<Value> = Vec::new();
         for id in &ids {
             let file = refs.iter().find(|r| r.id == *id).filter(|r| !r.deleted).ok_or_else(|| bad("a file was not found"))?;
+            if file.scan_state == "pending" {
+                return Err(bad("a file is still being scanned"));
+            }
             let held_here = record_id.is_some() && file.record_id.as_deref() == record_id && file.field.as_deref() == Some(field.name.as_str());
             let free = !file.attached && file.uploaded_by == caller.eppn;
             if !held_here && !free {

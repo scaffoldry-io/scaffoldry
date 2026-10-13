@@ -18,10 +18,11 @@ pub struct FileRef {
     pub uploaded_by: String,
     pub attached: bool,
     pub deleted: bool,
+    pub scan_state: String,
 }
 
 const REF_COLUMNS: &str = "r.id, r.sha256, f.size, f.media_type, r.app_slug, r.table_id, r.record_id, r.field, r.name, r.uploaded_by, \
-    r.attached_at IS NOT NULL, r.deleted_at IS NOT NULL";
+    r.attached_at IS NOT NULL, r.deleted_at IS NOT NULL, r.scan_state";
 
 fn ref_of(r: &postgres::Row) -> FileRef {
     FileRef {
@@ -37,6 +38,7 @@ fn ref_of(r: &postgres::Row) -> FileRef {
         uploaded_by: r.get(9),
         attached: r.get(10),
         deleted: r.get(11),
+        scan_state: r.get(12),
     }
 }
 
@@ -49,6 +51,8 @@ pub struct NewRef<'a> {
     pub app_slug: &'a str,
     pub name: &'a str,
     pub uploaded_by: &'a str,
+    /// `pending` when a scan is queued, `skipped` when there is no scanner.
+    pub scan_state: &'a str,
 }
 
 impl PostgresRepository {
@@ -68,13 +72,14 @@ impl PostgresRepository {
     /// Records an upload: the blob if it is new, and a ref to it.
     pub fn insert_file_ref(&self, new: NewRef<'_>) -> Result<(), RepositoryError> {
         let (id, size) = (new.id, new.size);
+        let scan_state = new.scan_state.to_string();
         let (sha, media, app, name, by) = (new.sha256.to_string(), new.media_type.to_string(), new.app_slug.to_string(), new.name.to_string(), new.uploaded_by.to_string());
         self.with_client(move |c| {
             let mut tx = c.transaction()?;
             tx.execute("INSERT INTO files (sha256, size, media_type) VALUES ($1, $2, $3) ON CONFLICT (sha256) DO NOTHING", &[&sha, &size, &media])?;
             tx.execute(
-                "INSERT INTO file_refs (id, sha256, app_slug, name, uploaded_by) VALUES ($1, $2, $3, $4, $5)",
-                &[&id, &sha, &app, &name, &by],
+                "INSERT INTO file_refs (id, sha256, app_slug, name, uploaded_by, scan_state) VALUES ($1, $2, $3, $4, $5, $6)",
+                &[&id, &sha, &app, &name, &by, &scan_state],
             )?;
             tx.commit()?;
             Ok(())
@@ -138,6 +143,60 @@ impl PostgresRepository {
                 .collect();
             tx.commit()?;
             Ok((removed, orphans))
+        })
+    }
+
+    /// One ref by id, in any app and any state. The scanner reads it.
+    pub fn file_ref_any(&self, id: Uuid) -> Result<Option<FileRef>, RepositoryError> {
+        self.with_client(move |c| {
+            let sql = format!("SELECT {REF_COLUMNS} FROM file_refs r JOIN files f ON f.sha256 = r.sha256 WHERE r.id = $1");
+            Ok(c.query_opt(&sql, &[&id])?.as_ref().map(ref_of))
+        })
+    }
+
+    /// Sets the scan result of an upload that is still `pending`.
+    pub fn set_scan_state(&self, id: Uuid, state: &str) -> Result<(), RepositoryError> {
+        let state = state.to_string();
+        self.with_client(move |c| {
+            c.execute("UPDATE file_refs SET scan_state = $2, scanned_at = NOW() WHERE id = $1 AND scan_state = 'pending'", &[&id, &state])?;
+            Ok(())
+        })
+    }
+
+    /// Marks every upload of these bytes infected and let go of, so no record can hold or serve them.
+    pub fn mark_sha_infected(&self, sha256: &str) -> Result<(), RepositoryError> {
+        let sha = sha256.to_string();
+        self.with_client(move |c| {
+            c.execute(
+                "UPDATE file_refs SET scan_state = 'infected', scanned_at = NOW(), deleted_at = COALESCE(deleted_at, NOW()) WHERE sha256 = $1",
+                &[&sha],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// How many uploads are in each scan state.
+    pub fn scan_counts(&self) -> Result<std::collections::HashMap<String, i64>, RepositoryError> {
+        self.with_client(|c| {
+            Ok(c.query("SELECT scan_state, COUNT(*) FROM file_refs GROUP BY scan_state", &[])?
+                .iter()
+                .map(|r| (r.get::<_, String>(0), r.get::<_, i64>(1)))
+                .collect())
+        })
+    }
+
+    /// The result of the most recent scan.
+    pub fn last_scan_result(&self) -> Result<Option<String>, RepositoryError> {
+        self.with_client(|c| Ok(c.query_opt("SELECT scan_state FROM file_refs WHERE scanned_at IS NOT NULL ORDER BY scanned_at DESC LIMIT 1", &[])?.map(|r| r.get(0))))
+    }
+
+    /// The oldest uploads that wait for a scan.
+    pub fn pending_scan_ids(&self, limit: i64) -> Result<Vec<Uuid>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query("SELECT id FROM file_refs WHERE scan_state = 'pending' ORDER BY uploaded_at LIMIT $1", &[&limit])?
+                .iter()
+                .map(|r| r.get(0))
+                .collect())
         })
     }
 }

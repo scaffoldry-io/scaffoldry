@@ -33,6 +33,13 @@ export interface AdminOverviewData {
     oldest_queued_age_secs: number | null;
     failed_last_24h: number;
   };
+  files?: {
+    scanner: { configured: boolean; reachable: boolean; last_result: string | null };
+    error: number;
+    skipped: number;
+    pending: number;
+    infected: number;
+  };
 }
 
 export interface ProposalCheck {

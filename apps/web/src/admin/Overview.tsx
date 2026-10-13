@@ -1,4 +1,4 @@
-import { useAsync, ErrorState, Skeleton, PageHeader } from "../ui";
+import { useAsync, ErrorState, Skeleton, PageHeader, Banner } from "../ui";
 import { apiClient, type AdminOverviewData } from "../api";
 
 export function Overview() {
@@ -262,6 +262,44 @@ export function Overview() {
                 </span>
               </div>
             </div>
+          </div>
+        )}
+        {/* FILE SCANNER CARD */}
+        {data.files && (
+          <div
+            data-testid="admin-overview-files-card"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all space-y-3"
+          >
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              File scanning
+            </span>
+            {!data.files.scanner.configured ? (
+              <Banner kind="warning">No virus scanner is set up. Uploaded files are not scanned.</Banner>
+            ) : !data.files.scanner.reachable ? (
+              <Banner kind="error">The virus scanner is not answering. New files wait for a scan.</Banner>
+            ) : null}
+            <dl className="space-y-2 text-xs">
+              <div className="flex justify-between">
+                <dt className="text-slate-600 dark:text-slate-400">Scanner</dt>
+                <dd className="font-medium text-slate-900 dark:text-slate-100" data-testid="overview-scanner-state">
+                  {!data.files.scanner.configured ? "Not set up" : data.files.scanner.reachable ? "Reachable" : "Not reachable"}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-slate-600 dark:text-slate-400">Last result</dt>
+                <dd className="font-medium text-slate-900 dark:text-slate-100" data-testid="overview-scanner-last">
+                  {data.files.scanner.last_result ?? "None yet"}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-slate-600 dark:text-slate-400">Files with a scan error</dt>
+                <dd className="font-mono font-semibold text-slate-900 dark:text-slate-100" data-testid="overview-files-error">{data.files.error}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-slate-600 dark:text-slate-400">Files not scanned</dt>
+                <dd className="font-mono font-semibold text-slate-900 dark:text-slate-100" data-testid="overview-files-skipped">{data.files.skipped}</dd>
+              </div>
+            </dl>
           </div>
         )}
       </div>

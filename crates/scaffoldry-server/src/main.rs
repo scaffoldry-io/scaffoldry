@@ -56,6 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             jobs::register_schedule(repo, "purge_jobs", 24 * 60 * 60)?;
             // Uploads that no record took are cleared every hour.
             jobs::register_schedule(repo, "purge_unattached_files", 60 * 60)?;
+            // A safety net for uploads whose scan job could not be queued.
+            jobs::register_schedule(repo, "scan_file", 10 * 60)?;
             Some(jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?)
         }
         _ => None,

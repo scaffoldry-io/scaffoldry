@@ -97,6 +97,8 @@ pub enum ServiceError {
     FileTooLarge(String),
     /// An upload is an executable, a script, or a page, by its bytes or by its name.
     FileTypeBlocked(String),
+    /// Uploads need a scan and no scanner answers.
+    ScannerUnavailable(String),
     /// A sort or filter names a field whose index is still being built.
     IndexBuilding(String),
     /// An undo found records that have changed since the batch. `conflicts` lists them.
@@ -157,6 +159,7 @@ impl ServiceError {
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::ScannerUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -173,6 +176,7 @@ impl ServiceError {
             Self::TooLarge(_) => "too_large",
             Self::FileTooLarge(_) => "file_too_large",
             Self::FileTypeBlocked(_) => "file_type_blocked",
+            Self::ScannerUnavailable(_) => "scanner_unavailable",
             Self::IndexBuilding(_) => "index_building",
             Self::Calculating(_) => "calculating",
             Self::QuotaExceeded(_) => "quota_exceeded",
@@ -196,6 +200,7 @@ impl ServiceError {
             | Self::TooLarge(msg)
             | Self::FileTooLarge(msg)
             | Self::FileTypeBlocked(msg)
+            | Self::ScannerUnavailable(msg)
             | Self::IndexBuilding(msg)
             | Self::Calculating(msg)
             | Self::QuotaExceeded(msg)
