@@ -174,7 +174,12 @@ async fn world(rows: i64) -> World {
     }
 }
 
-/// The index rows of every record of the app that has none.
+/// The index rows of every record of the app, leaving the rows a write has already made.
+///
+/// This once guarded each insert with `NOT EXISTS` over `record_index`. With stale statistics the planner chose a
+/// nested loop for that anti-join, which scans the index once for each of 200,000 records and does not finish. It did
+/// this on CI only, and not every run, because it needs index rows of the same field left by another app. The primary
+/// key skips the rows that exist, and the planner has no choice to make.
 fn index_all(c: &mut postgres::Client, slug: &str) {
     for (field, col, expr) in [
         ("amount", "num", "(data->>'amount')::float8"),
@@ -183,7 +188,7 @@ fn index_all(c: &mut postgres::Client, slug: &str) {
         ("due", "ts", "(data->>'due')::timestamptz"),
     ] {
         c.execute(
-            &format!("INSERT INTO record_index (app_slug, table_id, field, record_id, {col}) SELECT app_slug, 't1', '{field}', id, {expr} FROM dataset_records d WHERE app_slug = $1 AND NOT EXISTS (SELECT 1 FROM record_index x WHERE x.record_id = d.id AND x.field = '{field}')"),
+            &format!("INSERT INTO record_index (app_slug, table_id, field, record_id, {col}) SELECT app_slug, 't1', '{field}', id, {expr} FROM dataset_records d WHERE app_slug = $1 ON CONFLICT DO NOTHING"),
             &[&slug],
         )
         .expect("index");
