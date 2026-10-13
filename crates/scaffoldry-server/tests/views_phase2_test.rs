@@ -428,6 +428,7 @@ async fn a_footer_sum_over_200000_rows_is_correct_and_runs_as_one_statement() {
         clauses: vec![],
         expr: None,
         scope: None,
+        ..Default::default()
     };
     let (sql, params) = build_aggregate_sql(&plan);
     assert_eq!(sql.matches("SELECT").count(), 2, "one statement: the sum, in a wrapper that turns no rows into zero\n{sql}");

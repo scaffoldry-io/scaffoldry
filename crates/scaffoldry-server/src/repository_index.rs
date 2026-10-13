@@ -805,7 +805,28 @@ pub enum AggregateFunction {
     Unique,
 }
 
+/// A date field grouped into days, weeks, months, quarters or years, in the institution's zone.
 #[derive(Debug, Clone)]
+pub struct Bucket {
+    /// `day`, `week` (opens Monday), `month`, `quarter` or `year`. Anything else reads as `day`.
+    pub unit: String,
+    /// An IANA zone name. The caller has checked it is one.
+    pub zone: String,
+}
+
+impl Bucket {
+    fn sql_unit(&self) -> &'static str {
+        match self.unit.as_str() {
+            "week" => "week",
+            "month" => "month",
+            "quarter" => "quarter",
+            "year" => "year",
+            _ => "day",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct AggregatePlan {
     pub app_slug: String,
     pub table_id: String,
@@ -814,6 +835,12 @@ pub struct AggregatePlan {
     /// The field whose rows the statement walks when `field` is not given.
     pub driver: Option<String>,
     pub group_by: Option<String>,
+    /// A second field to group by, inside the first.
+    pub group_by2: Option<String>,
+    /// Groups the first field, a date, by day, week, month, quarter or year.
+    pub bucket: Option<Bucket>,
+    /// Order the groups by key, which gives the same groups for every measure. Otherwise the biggest value comes first.
+    pub order_by_key: bool,
     pub clauses: Vec<IndexedClause>,
     /// A filter tree, joined with AND to the clauses.
     pub expr: Option<Expr>,
@@ -823,6 +850,8 @@ pub struct AggregatePlan {
 #[derive(Debug, Clone)]
 pub struct AggregateGroupRow {
     pub key: String,
+    /// The key of the second group, when there is one.
+    pub key2: Option<String>,
     pub value: f64,
 }
 
@@ -945,25 +974,45 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
     if let Some(ref g) = p.group_by {
         let gp = push_param(&mut params, SqlParam::Text(g.clone()));
         let mut wheres = vec![format!("g.app_slug = $1 AND g.table_id = $2 AND g.field = ${gp} AND g.ord = 0")];
-        let group_expr = "COALESCE(g.txt, g.num::text, to_char(g.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), '')";
+        // The key of a group as text, whatever column the field is in. A date is its instant in UTC unless it is bucketed.
+        let key = |alias: &str| format!("COALESCE({alias}.txt, {alias}.num::text, to_char({alias}.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), '')");
+        let group_expr = match &p.bucket {
+            Some(b) => {
+                let tz = push_param(&mut params, SqlParam::Text(b.zone.clone()));
+                format!("COALESCE(to_char(date_trunc('{}', g.ts AT TIME ZONE ${tz}::text), 'YYYY-MM-DD'), '')", b.sql_unit())
+            }
+            None => key("g"),
+        };
         let mut join = String::new();
+        let group2_expr = match &p.group_by2 {
+            Some(g2) => {
+                let g2p = push_param(&mut params, SqlParam::Text(g2.clone()));
+                join.push_str(&format!(" JOIN record_index g2 ON g2.app_slug = $1 AND g2.table_id = $2 AND g2.record_id = g.record_id AND g2.field = ${g2p} AND g2.ord = 0"));
+                key("g2")
+            }
+            None => "NULL::text".to_string(),
+        };
         let agg_expr = match p.function {
             AggregateFunction::Count => "COUNT(*)".to_string(),
             fn_type => {
                 let f_name = p.field.as_ref().expect("field required for non-count aggregate");
-                let fn_sql = match fn_type {
-                    AggregateFunction::Sum => "SUM",
-                    AggregateFunction::Avg => "AVG",
-                    AggregateFunction::Min => "MIN",
-                    AggregateFunction::Max => "MAX",
-                    _ => "COUNT",
-                };
-                if f_name == g {
-                    format!("{fn_sql}(g.num)")
+                // The measured field is one of the groups, or else it is joined.
+                let alias = if f_name == g {
+                    "g"
+                } else if p.group_by2.as_ref() == Some(f_name) {
+                    "g2"
                 } else {
                     let fp = push_param(&mut params, SqlParam::Text(f_name.clone()));
-                    join = format!(" JOIN record_index f ON f.app_slug = $1 AND f.table_id = $2 AND f.record_id = g.record_id AND f.field = ${fp} AND f.ord = 0");
-                    format!("{fn_sql}(f.num)")
+                    join.push_str(&format!(" JOIN record_index f ON f.app_slug = $1 AND f.table_id = $2 AND f.record_id = g.record_id AND f.field = ${fp} AND f.ord = 0"));
+                    "f"
+                };
+                match fn_type {
+                    AggregateFunction::Sum => format!("SUM({alias}.num)"),
+                    AggregateFunction::Avg => format!("AVG({alias}.num)"),
+                    AggregateFunction::Min => format!("MIN({alias}.num)"),
+                    AggregateFunction::Max => format!("MAX({alias}.num)"),
+                    AggregateFunction::Unique => format!("COUNT(DISTINCT {})", key(alias)),
+                    _ => format!("COUNT({alias}.num)"),
                 }
             }
         };
@@ -983,8 +1032,9 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
             Some(plan) => plan.clause("g.record_id", &p.app_slug, &p.table_id, &mut params),
             None => String::new(),
         };
+        let order = if p.order_by_key { "ORDER BY 1, 2" } else { "ORDER BY val DESC NULLS LAST" };
         let sql = format!(
-            "SELECT {group_expr} AS grp, {agg_expr}::float8 AS val              FROM record_index g{join}              WHERE {}{scope_clause}              GROUP BY {group_expr}              ORDER BY val DESC NULLS LAST              LIMIT 201",
+            "SELECT {group_expr} AS grp, {group2_expr} AS grp2, {agg_expr}::float8 AS val FROM record_index g{join} WHERE {}{scope_clause} GROUP BY 1, 2 {order} LIMIT 201",
             wheres.join(" AND ")
         );
         (sql, params)

@@ -110,6 +110,8 @@ jobs:
   # with the rest, each with its own database. Every test file is in exactly one group.
   rust:
     runs-on: ubuntu-latest
+    # A hung test would hold the check, and the pull request with it, for the six hours GitHub allows. The slowest group takes about fifteen minutes.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -163,6 +165,7 @@ jobs:
   # limit fails here and the plan is right, the limit does not move: paste the plan and the timings into the record and stop.
   million-rows:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

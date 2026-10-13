@@ -271,6 +271,19 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                             problems.push(format!("view '{}': '{function}' is not a footer choice. Use one of {}", view.id, crate::FOOTER_FUNCTIONS.join(", ")));
                         }
                     }
+                    if view.aggregations.len() > crate::MAX_AGGREGATIONS {
+                        problems.push(format!("view '{}' has {} aggregations, and {} is the most", view.id, view.aggregations.len(), crate::MAX_AGGREGATIONS));
+                    }
+                    for a in &view.aggregations {
+                        if !crate::SUMMARY_FUNCTIONS.contains(&a.function.as_str()) {
+                            problems.push(format!("view '{}': '{}' is not an aggregation. Use one of {}", view.id, a.function, crate::SUMMARY_FUNCTIONS.join(", ")));
+                        }
+                        match a.field.as_deref() {
+                            None if a.function != "count" => problems.push(format!("view '{}': {} needs a field", view.id, a.function)),
+                            Some(f) if !has(f) => problems.push(format!("view '{}' totals the field '{f}', which '{tid}' does not have", view.id)),
+                            _ => {}
+                        }
+                    }
                     if view.color_rules.len() > crate::MAX_COLOR_RULES {
                         problems.push(format!("view '{}' has {} color rules, and {} is the most", view.id, view.color_rules.len(), crate::MAX_COLOR_RULES));
                     }

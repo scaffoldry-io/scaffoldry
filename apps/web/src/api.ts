@@ -557,6 +557,8 @@ export interface ViewData {
   window?: { offset: number | null; strategy: "offset" | "anchor" | "reverse" };
   /** Present when `count: "exact"` was asked for. `at_least` means the count ran out of time. */
   count?: { value: number; exact: true } | { at_least: number };
+  /** Present for a summary view: its groups and one value for each measure, 200 groups at most. */
+  summary?: { columns: string[]; groups: { key: string[]; values: (number | null)[] }[]; has_more: boolean };
 }
 
 /**

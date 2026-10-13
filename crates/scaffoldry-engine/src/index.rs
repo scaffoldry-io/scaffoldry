@@ -49,6 +49,7 @@ pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
         // Groups and footers are computed over the index.
         out.extend(view.group_by.iter().cloned());
         out.extend(view.column_summary.iter().map(|(field, _)| field.clone()));
+        out.extend(view.aggregations.iter().filter_map(|a| a.field.clone()));
     }
     for r in &m.relationships {
         if r.source_table_id == table_id {

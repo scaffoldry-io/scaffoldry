@@ -484,6 +484,8 @@ pub struct AggregateRequestQuery {
     pub field: Option<String>,
     pub filter: Option<String>,
     pub group_by: Option<String>,
+    pub group_by2: Option<String>,
+    pub bucket: Option<String>,
 }
 
 async fn aggregate_table_records(
@@ -503,7 +505,7 @@ async fn aggregate_table_records(
         "max" => crate::service::records::AggregateFunction::Max,
         "filled" => crate::service::records::AggregateFunction::Filled,
         "empty" => crate::service::records::AggregateFunction::Empty,
-        "unique" => crate::service::records::AggregateFunction::Unique,
+        "unique" | "count_distinct" => crate::service::records::AggregateFunction::Unique,
         other => return Err(ServiceError::BadRequest(format!("Unknown aggregate function '{other}'")).into_pair()),
     };
 
@@ -529,6 +531,9 @@ async fn aggregate_table_records(
             field: query.field,
             filter,
             group_by: query.group_by,
+            group_by2: query.group_by2,
+            bucket: query.bucket,
+            order_by_key: false,
         },
         &state,
     )
