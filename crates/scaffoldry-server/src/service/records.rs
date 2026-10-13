@@ -279,7 +279,7 @@ fn validate_attachments(
             if !held_here && !free {
                 return Err(bad("a file is not yours to attach"));
             }
-            clean.push(json!({ "ref_id": file.id, "name": file.name }));
+            clean.push(json!({ "ref_id": file.id, "name": file.name, "size": file.size, "media_type": file.media_type }));
         }
         if let Some(map) = data.as_object_mut() {
             map.insert(field.name.clone(), Value::Array(clean));
@@ -287,6 +287,38 @@ fn validate_attachments(
         out.push((field.name.clone(), ids));
     }
     Ok(out)
+}
+
+/// The files a record holds in the attachment fields the caller may read, with their size, type and scan state, and
+/// the names of those fields. A field the caller may not read is not named.
+pub fn record_files(caller: &AuthUser, app_slug: &str, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    let record = get_record(caller, app_slug, id, state)?;
+    let table = record.data.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string();
+    let (fields, canonical) = table_fields_lenient(app_slug, &table, state);
+    let hidden = hidden_fields(caller, app_slug, &canonical, &fields, state);
+    let names: Vec<String> = fields
+        .iter()
+        .filter(|f| matches!(f.field_type, FieldType::Attachment { .. }) && !hidden.contains(&f.name))
+        .map(|f| f.name.clone())
+        .collect();
+    let mut ids: Vec<uuid::Uuid> = Vec::new();
+    for name in &names {
+        let listed = record.data.get(name).and_then(Value::as_array).into_iter().flatten();
+        ids.extend(listed.filter_map(|i| i.get("ref_id").and_then(Value::as_str).and_then(|s| s.parse::<uuid::Uuid>().ok())));
+    }
+    let refs = match state.repository.as_deref() {
+        Some(repo) if !ids.is_empty() => repo.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))?,
+        _ => Vec::new(),
+    };
+    let files: Vec<Value> = refs
+        .iter()
+        .filter(|r| !r.deleted && r.record_id.as_deref() == Some(id))
+        .filter_map(|r| {
+            let field = r.field.as_ref().filter(|f| names.contains(f))?;
+            Some(json!({ "ref_id": r.id, "field": field, "name": r.name, "size": r.size, "media_type": r.media_type, "scan_state": r.scan_state }))
+        })
+        .collect();
+    Ok(json!({ "fields": names, "files": files }))
 }
 
 /// Ties the files a write listed to the record, and lets go of the ones it dropped.

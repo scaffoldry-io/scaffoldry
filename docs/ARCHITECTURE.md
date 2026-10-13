@@ -321,6 +321,10 @@ With `files.scanner` set (`{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" 
 - **`files.require_scan`** makes an upload fail with `scanner_unavailable` (503) when no scanner answers. It never turns a check off.
 - **The Overview** shows whether a scanner is set, whether it answers, the last result, and how many files are in `error` or `skipped`.
 
+#### 6.1.8 Attachments in the app (Phase 3)
+
+A record stores `{ref_id, name, size, media_type}` for each file, so a grid chip shows a name and a size with no second request. `GET /apps/{slug}/records/{id}/files` adds the scan state and names the attachment fields the person may read. The record drawer's editor (`ui/Attachments.tsx`) has a drop target and a `Choose files` button that both work from the keyboard, a list with name, size, type and scan state as text, `Remove`, and a download. Uploads show text and a progress bar with `Cancel`, and an error shows the server's specific message through `explainError`. A field the person may not read leaves no label and no control.
+
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
 In legacy low-code tools, departmental apps become unmaintained legacy liabilities. In Scaffoldry, apps are maintained as version-controlled repositories:

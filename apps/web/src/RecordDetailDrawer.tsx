@@ -3,6 +3,7 @@ import { formatDateTime, parseDateTimeInput, getUserTimezone } from "./utils/dur
 import React from "react";
 import { AppTable } from "./types";
 import { LongTextEditor } from "./LongTextEditor";
+import { AttachmentField, type AttachedFile } from "./ui/Attachments";
 import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
 
 export interface RecordDetailDrawerProps {
@@ -10,6 +11,8 @@ export interface RecordDetailDrawerProps {
   onClose: () => void;
   activeTable: AppTable;
   tables: AppTable[];
+  /** The app the records belong to. Attachments need it to upload and download. */
+  appSlug?: string;
   setTables: React.Dispatch<React.SetStateAction<AppTable[]>>;
   onUpdateRecordField: (recordId: string, fieldName: string, value: any) => void;
   onDuplicateRecord: (recordId: string) => void;
@@ -21,6 +24,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
   onClose,
   activeTable,
   tables,
+  appSlug,
   setTables,
   onUpdateRecordField,
   onDuplicateRecord,
@@ -128,6 +132,20 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {activeTable.fields.map((field) => {
+                // An attachment field draws its own frame, so a field the person may not read leaves no trace.
+                if (field.field_type === "Attachment") {
+                  return appSlug ? (
+                    <AttachmentField
+                      key={field.name}
+                      appSlug={appSlug}
+                      recordId={activeDetailRecord.id}
+                      fieldName={field.name}
+                      label={field.label}
+                      value={Array.isArray(activeDetailRecord[field.name]) ? (activeDetailRecord[field.name] as AttachedFile[]) : []}
+                      onChange={(next) => onUpdateRecordField(activeDetailRecord.id, field.name, next)}
+                    />
+                  ) : null;
+                }
                 const isComputed = [
                   "Formula",
                   "Lookup",

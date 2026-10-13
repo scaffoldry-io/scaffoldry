@@ -155,6 +155,15 @@ Tests (vitest, `fetch` stubbed).
 4. Removing a file removes the chip and sends the update.
 5. A hidden attachment field renders nothing.
 
+How it works. Tests 1 to 5 are in `apps/web/src/test/attachments.test.tsx`, with tests for the grid chips, the size words, the download, and the gallery cover. Server tests for what the UI needs are in `attachments_test.rs`.
+
+- **The record stores more than the brief says.** A write now stores `{ref_id, name, size, media_type}` for each file, taken from the stored upload, never from the client. A grid chip needs no second request. The scan state changes, so it is not stored.
+- **`GET /apps/{slug}/records/{id}/files`** returns `{ fields, files }`: the attachment fields the person may read, and each file in them with its scan state. A field the person may not read is not named. The editor renders nothing until this answers, and nothing after it leaves the field out. The drawer skips the field's frame as well, so no label is left behind.
+- **Progress uses `XMLHttpRequest`.** `fetch` reports no upload progress. The tests stub `uploadRecordFile` instead of `fetch`. The file name travels percent-encoded in `X-File-Name`, because a header holds Latin-1 only, and the server decodes it.
+- **Downloads and covers load through `fetch` with the bearer token** and a blob URL, since an `<a href>` cannot carry the token. A file that is still scanning has a disabled `Download`.
+- **The grid cell is read-only.** Files are added and removed in the record drawer. The drawer takes the app's slug as a new prop.
+- **The gallery cover** is the first image in the first attachment field, in the builder's gallery view.
+
 ## Phase 4 — retention, backups, and cleanup
 
 1. A reference removed from a record, or a record that is purged (`lifecycle.md`), marks its `file_refs` row deleted. A scheduled job, `purge_orphan_blobs`, deletes a blob when no live reference remains and none was created in the last 24 hours, and writes a ledger entry with the count only.

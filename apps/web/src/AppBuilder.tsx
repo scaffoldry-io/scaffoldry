@@ -23,6 +23,7 @@ import { WorkflowBuilder } from "./WorkflowBuilder";
 import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
 import { DataShapingToolbar } from "./DataShapingToolbar";
 import { RecordDetailDrawer } from "./RecordDetailDrawer";
+import { AttachmentCover, type AttachedFile } from "./ui/Attachments";
 import { CsvImportModal } from "./CsvImportModal";
 import { AddViewModal } from "./AddViewModal";
 import { CreateTableModal } from "./CreateTableModal";
@@ -1569,11 +1570,20 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                             data-testid={`gallery-card-${rec.id}`}
                             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs hover:border-blue-400 transition-all flex flex-col"
                           >
-                            <div className="h-20 bg-linear-to-r from-blue-600/20 via-purple-600/20 to-emerald-600/20 p-3 flex items-start justify-between">
-                              <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 font-bold text-slate-700 dark:text-slate-300">
+                            <div className="relative h-20 bg-linear-to-r from-blue-600/20 via-purple-600/20 to-emerald-600/20 p-3 flex items-start justify-between">
+                              {(() => {
+                                const att = activeTable.fields.find((f) => f.field_type === "Attachment");
+                                const files = att && Array.isArray(rec[att.name]) ? (rec[att.name] as AttachedFile[]) : [];
+                                return files.length ? (
+                                  <div className="absolute inset-0 overflow-hidden">
+                                    <AttachmentCover appSlug={app.slug} recordId={String(rec.id)} value={files} />
+                                  </div>
+                                ) : null;
+                              })()}
+                              <span className="relative font-mono text-[10px] px-2 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 font-bold text-slate-700 dark:text-slate-300">
                                 {rec.id}
                               </span>
-                              <div className="flex items-center gap-1.5">
+                              <div className="relative flex items-center gap-1.5">
                                 <span
                                   className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                                     rec.status === "Approved"
@@ -2271,6 +2281,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   onClose={() => setSelectedRecordId(null)}
                   activeTable={activeTable}
                   tables={tables}
+                  appSlug={app.slug}
                   setTables={setTables}
                   onUpdateRecordField={handleUpdateRecordField}
                   onDuplicateRecord={handleDuplicateRecord}

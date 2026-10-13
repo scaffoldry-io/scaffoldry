@@ -74,6 +74,24 @@ pub fn quota_bytes(state: &SharedState) -> u64 {
     setting_mb(state, "files.app_quota_mb", DEFAULT_QUOTA_MB).max(1) * 1024 * 1024
 }
 
+/// A header value with its `%XX` escapes undone. A browser sends the name this way because a header holds Latin-1 only.
+pub fn percent_decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        if bytes[i] == b'%' && i + 2 < bytes.len() && hex(bytes[i + 1]).is_some() && hex(bytes[i + 2]).is_some() {
+            out.push((hex(bytes[i + 1]).unwrap() * 16 + hex(bytes[i + 2]).unwrap()) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
 /// A file name with its path, control characters, and odd characters taken out.
 pub fn clean_name(raw: &str) -> String {
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("");

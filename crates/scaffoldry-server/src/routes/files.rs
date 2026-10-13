@@ -22,6 +22,7 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         // The body is read as a stream and stopped at `files.max_mb`, so the general body limit does not apply.
         .route("/apps/{slug}/files", post(upload).layer(DefaultBodyLimit::disable()))
+        .route("/apps/{slug}/records/{id}/files", get(list))
         .route("/apps/{slug}/records/{id}/files/{ref_id}", get(download))
 }
 
@@ -46,7 +47,7 @@ async fn upload(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse().ok())
         .ok_or_else(|| pair(ServiceError::BadRequest("Content-Length is required for an upload.".to_string())))?;
-    let name = files::clean_name(&headers.get("x-file-name").map(|v| String::from_utf8_lossy(v.as_bytes()).to_string()).unwrap_or_default());
+    let name = files::clean_name(&files::percent_decode(&headers.get("x-file-name").map(|v| String::from_utf8_lossy(v.as_bytes()).to_string()).unwrap_or_default()));
     if files::blocked_name(&name) {
         return Err(pair(ServiceError::FileTypeBlocked(format!("'{name}' is a program or a web page. Programs and web pages cannot be uploaded."))));
     }
@@ -101,6 +102,13 @@ async fn upload(
         let _ = crate::jobs::enqueue(repo, "scan_file", json!({}), "scanner@scaffoldry.internal", Some("scan_pending_files"));
     }
     Ok((StatusCode::CREATED, Json(json!({ "ref_id": ref_id, "name": name, "size": stored.size, "media_type": stored.media_type, "scan_state": scan_state }))))
+}
+
+/// The files of a record: the attachment fields the person may read, and each file with its scan state.
+async fn list(State(state): State<SharedState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| pair(ServiceError::unauthorized("Unauthorized")))?;
+    authorize_app(&user, &slug, crate::service::access::AppAction::Read, &state).map_err(pair)?;
+    crate::service::records::record_files(&user, &slug, &id, &state).map(Json).map_err(pair)
 }
 
 fn not_found() -> Response {
