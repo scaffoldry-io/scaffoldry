@@ -27,7 +27,7 @@ pub struct ProposeInput {
 }
 
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
-    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Proposals need PostgreSQL".to_string()))
+    Ok(&*state.repository)
 }
 
 fn internal(e: impl std::fmt::Display) -> ServiceError {
@@ -234,10 +234,7 @@ fn live_version(slug: &str, state: &SharedState) -> Result<Option<i32>, ServiceE
 }
 
 fn records_exist(slug: &str, state: &SharedState) -> bool {
-    match state.repository.as_deref() {
-        Some(r) => r.count_records_by_app_slugs(&[slug.to_string()]).map(|m| m.get(slug).copied().unwrap_or(0) > 0).unwrap_or(false),
-        None => state.count_app_records(slug).map(|n| n > 0).unwrap_or(false),
-    }
+    { let r = &state.repository; r.count_records_by_app_slugs(&[slug.to_string()]).map(|m| m.get(slug).copied().unwrap_or(0) > 0).unwrap_or(false) }
 }
 
 /// The caller's role in the workspace, lowercase. A Platform Admin counts as an admin.
@@ -264,9 +261,7 @@ fn count_records_using_option(
     option_id: &str,
     state: &SharedState,
 ) -> i64 {
-    let Some(repo) = state.repository.as_deref() else {
-        return 0;
-    };
+    let repo = &state.repository;
     let app = app_slug.to_string();
     let table = table_id.to_string();
     let field = field_name.to_string();

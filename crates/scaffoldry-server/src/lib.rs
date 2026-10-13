@@ -2,6 +2,7 @@
 
 pub mod files;
 pub mod guard;
+pub mod cache;
 pub mod calc_jobs;
 pub mod index_jobs;
 pub mod jobs;
@@ -21,6 +22,7 @@ pub mod routes;
 pub mod scan;
 pub mod service;
 pub mod state;
+pub mod testing;
 
 use axum::Router;
 pub use state::{ServerState, SharedState};
@@ -76,9 +78,25 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
         ]);
 
     let router = routes::api_router(state.clone())
-        .layer(axum::middleware::from_fn_with_state(state, guard::require_session))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), guard::require_session))
+        // The first thing every request does. A request is answered from what the database says now.
+        .layer(axum::middleware::from_fn_with_state(state, refresh_state))
         .layer(cors)
         .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .layer(tower_http::trace::TraceLayer::new_for_http());
     Ok(router)
+}
+
+/// Brings this instance up to date with the database before the request is looked at. When the database cannot be
+/// read the request fails with `storage_unavailable`, and the next one tries again.
+async fn refresh_state(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match state.refresh() {
+        Ok(()) => next.run(request).await,
+        Err(e) => service::ServiceError::StorageUnavailable(format!("The server cannot read its database: {e}")).into_response(),
+    }
 }

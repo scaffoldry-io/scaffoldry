@@ -1,9 +1,12 @@
+mod common;
+
 use uuid::Uuid;
 use scaffoldry_server::service::organizations::{unit_in_scope, OrgCaller};
 use scaffoldry_server::state::{OrganizationNode, RoleRow};
 
 #[test]
 fn test_organization_scope_rules() {
+    let _db = common::TestDb::new();
     let root_id = Uuid::new_v4();
     let college_id = Uuid::new_v4();
     let dept_physics_id = Uuid::new_v4();

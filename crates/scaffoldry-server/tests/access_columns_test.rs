@@ -3,6 +3,8 @@
 //! `gpa` is hidden from everyone but an admin. `name` is read-only for everyone but an admin.
 //! `awards.amount` is hidden the same way, so a lookup of it must not carry it either.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -23,8 +25,7 @@ const ADMIN: &str = "jordan.lee@state.edu";
 const MESSAGE: &str = "Financial details are visible to the scholarship office only.";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 struct Cleanup(String);
@@ -197,6 +198,7 @@ async fn student(w: &World) -> (String, String) {
 //    It is present for a person in `unless` and for a Platform Admin.
 #[tokio::test]
 async fn a_hidden_field_is_absent_for_a_restricted_person_and_present_for_the_exempt() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (student, _) = student(&w).await;
     let base = format!("/api/v1/apps/{}", w.slug);
@@ -225,6 +227,7 @@ async fn a_hidden_field_is_absent_for_a_restricted_person_and_present_for_the_ex
 // 2. A filter or sort on a hidden field is field_hidden, with a reason and a remedy.
 #[tokio::test]
 async fn a_filter_or_sort_on_a_hidden_field_is_refused() {
+    let _db = common::TestDb::new();
     let w = world().await;
     student(&w).await;
     let probe = json!({ "conjunction": "And", "clauses": [{ "id": "c", "field_name": "gpa", "operator": "GreaterThan", "value": "3" }] });
@@ -241,6 +244,7 @@ async fn a_filter_or_sort_on_a_hidden_field_is_refused() {
 // 3. A write to a read-only field is field_read_only and names it.
 #[tokio::test]
 async fn a_write_to_a_read_only_field_is_refused_naming_it() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (student, _) = student(&w).await;
     let base = format!("/api/v1/apps/{}/records/{student}", w.slug);
@@ -264,6 +268,7 @@ async fn a_write_to_a_read_only_field_is_refused_naming_it() {
 // 4. A rule's message is the reason. A generated remedy names who can help.
 #[tokio::test]
 async fn the_message_is_the_reason_and_the_remedy_names_who_to_ask() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let probe = json!({ "conjunction": "And", "clauses": [{ "id": "c", "field_name": "gpa", "operator": "GreaterThan", "value": "3" }] });
     let r = tool(&w, &w.ann, "list_records", json!({ "app_slug": w.slug, "table_id": "students", "filter": probe })).await;
@@ -284,6 +289,7 @@ async fn the_message_is_the_reason_and_the_remedy_names_who_to_ask() {
 // 5. A lookup through a link never returns a hidden field of the target table.
 #[tokio::test]
 async fn a_lookup_never_returns_a_hidden_field_of_the_target() {
+    let _db = common::TestDb::new();
     let w = world().await;
     student(&w).await;
     // Lookups are filled when a page is read.
@@ -299,6 +305,7 @@ async fn a_lookup_never_returns_a_hidden_field_of_the_target() {
 // 6. A Platform Admin always sees everything, even when the rule excepts no one.
 #[tokio::test]
 async fn a_platform_admin_is_never_held_back() {
+    let _db = common::TestDb::new();
     let none = vec![ColumnRule { id: "all".into(), table_id: "students".into(), fields: vec!["gpa".into(), "name".into()], mode: ColumnMode::Hidden, unless: Who::default(), message: None }];
     let w = world_with(none).await;
     let (student, _) = student(&w).await;
@@ -315,6 +322,7 @@ async fn a_platform_admin_is_never_held_back() {
 // The rules serialize in the shape the published schema describes.
 #[test]
 fn a_column_rule_round_trips_in_the_schema_shape() {
+    let _db = common::TestDb::new();
     let schema: Value = serde_json::from_str(&std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../governance/schema/access-column-rules.schema.json")).unwrap()).unwrap();
     let required = schema["items"]["required"].as_array().unwrap();
     for rule in rules() {

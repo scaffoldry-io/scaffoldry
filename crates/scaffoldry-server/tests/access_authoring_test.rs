@@ -1,5 +1,7 @@
 //! Phase 5: Access rules authoring, approval, problem checks, and preview endpoint.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -9,10 +11,8 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const WORKSPACE: &str = "ws-physics-optics";
 const OWNER: &str = "einstein@physics.state.edu";
@@ -111,7 +111,7 @@ fn sample_manifest(slug: &str, rows: Vec<RowRule>) -> Value {
 // 2. Removing a rule raises access_loosened. The proposer cannot approve. Another admin can. Adding a rule does not raise it.
 #[tokio::test]
 async fn removing_a_rule_raises_access_loosened_requiring_second_person() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let rule1 = RowRule {
@@ -215,7 +215,7 @@ async fn removing_a_rule_raises_access_loosened_requiring_second_person() {
 // 4. The preview returns counts matching a direct row_scope count and never returns row data.
 #[tokio::test]
 async fn access_preview_returns_counts_matching_row_scope_and_never_rows() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     // Create app and seed some records

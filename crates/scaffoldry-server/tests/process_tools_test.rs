@@ -1,6 +1,8 @@
 //! MCP apps phase 5: the business process desk is reachable from an agent. The same cases as the
 //! REST process tests, run through `tools/call`.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -10,11 +12,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const WORKSPACE: &str = "ws-physics-optics";
 const OWNER: &str = "einstein@physics.state.edu";
@@ -105,7 +105,7 @@ async fn world() -> (World, String, String) {
 
 #[tokio::test]
 async fn list_waiting_decisions_shows_what_the_caller_may_decide_and_nothing_else() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (w, instance, _) = world().await;
     let (err, mine) = tool(&w.app, &w.owner, "list_waiting_decisions", json!({})).await;
     assert!(!err, "{mine}");
@@ -119,7 +119,7 @@ async fn list_waiting_decisions_shows_what_the_caller_may_decide_and_nothing_els
 
 #[tokio::test]
 async fn decide_process_applies_the_step_and_an_instance_cannot_be_decided_twice() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (w, instance, record_id) = world().await;
     let args = |d: &str| json!({ "app_slug": w.slug, "instance_id": instance, "decision": d });
 
@@ -139,7 +139,7 @@ async fn decide_process_applies_the_step_and_an_instance_cannot_be_decided_twice
 
 #[tokio::test]
 async fn decide_process_refuses_a_caller_who_cannot_read_the_app_and_a_bad_decision() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (w, instance, _) = world().await;
     let (err, _) = tool(&w.app, &w.outsider, "decide_process", json!({ "app_slug": w.slug, "instance_id": instance, "decision": "approve" })).await;
     assert!(err, "no read access to the app");
@@ -152,7 +152,7 @@ async fn decide_process_refuses_a_caller_who_cannot_read_the_app_and_a_bad_decis
 
 #[tokio::test]
 async fn the_rest_route_and_the_tool_decide_the_same_way() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (w, instance, record_id) = world().await;
     let (s, body) = rest(&w.app, "POST", &format!("/api/v1/apps/{}/processes/{}/decide", w.slug, instance.replace(':', "%3A")), &w.editor, Some(json!({ "decision": "approve" }))).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "{body}");

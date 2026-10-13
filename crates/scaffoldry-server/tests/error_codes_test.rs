@@ -1,5 +1,7 @@
 //! UX standards phase 2: every error has a code, and a denial names the policy that made it.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse;
@@ -42,6 +44,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::FileTooLarge("Too big".into()), "file_too_large", StatusCode::PAYLOAD_TOO_LARGE),
         (ServiceError::FileTypeBlocked("Blocked".into()), "file_type_blocked", StatusCode::BAD_REQUEST),
         (ServiceError::ScannerUnavailable("No scanner".into()), "scanner_unavailable", StatusCode::SERVICE_UNAVAILABLE),
+        (ServiceError::StorageUnavailable("No database".into()), "storage_unavailable", StatusCode::SERVICE_UNAVAILABLE),
         (ServiceError::IndexBuilding("Preparing".into()), "index_building", StatusCode::CONFLICT),
         (ServiceError::Calculating("Calculating".into()), "calculating", StatusCode::CONFLICT),
         (ServiceError::QuotaExceeded("Busy".into()), "quota_exceeded", StatusCode::TOO_MANY_REQUESTS),
@@ -75,6 +78,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::FileTooLarge(_)
             | ServiceError::FileTypeBlocked(_)
             | ServiceError::ScannerUnavailable(_)
+            | ServiceError::StorageUnavailable(_)
             | ServiceError::IndexBuilding(_)
             | ServiceError::Calculating(_)
             | ServiceError::ViewAsReadOnly(_)
@@ -92,6 +96,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
 
 #[tokio::test]
 async fn every_service_error_variant_serializes_with_a_code_from_the_closed_list() {
+    let _db = common::TestDb::new();
     for (error, code, status) in samples() {
         let (got_status, body) = body_of(error.into_response()).await;
         assert_eq!(got_status, status);
@@ -103,6 +108,7 @@ async fn every_service_error_variant_serializes_with_a_code_from_the_closed_list
 
 #[tokio::test]
 async fn invalid_input_names_the_bad_fields_and_only_it_does() {
+    let _db = common::TestDb::new();
     let (_, body) = body_of(
         ServiceError::Invalid {
             message: "Fix the form".into(),
@@ -120,6 +126,7 @@ async fn invalid_input_names_the_bad_fields_and_only_it_does() {
 
 #[tokio::test]
 async fn a_forbidden_error_carries_the_policy_that_decided() {
+    let _db = common::TestDb::new();
     let error = ServiceError::Forbidden {
         message: "Not allowed".into(),
         reasons: vec!["policy11".into()],
@@ -134,8 +141,8 @@ async fn a_forbidden_error_carries_the_policy_that_decided() {
 
 #[tokio::test]
 async fn a_cedar_denial_over_http_holds_the_policy_id_and_a_description() {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string());
+    let _db = common::TestDb::new();
+    let db_url = scaffoldry_server::testing::database_url();
     tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&db_url, postgres::NoTls) {
             let _ = client.batch_execute(
@@ -176,6 +183,7 @@ async fn a_cedar_denial_over_http_holds_the_policy_id_and_a_description() {
 /// It catches `json!({"error"`, `json!({ "error"`, and the spelling split across lines.
 #[test]
 fn no_handler_builds_error_json_by_hand() {
+    let _db = common::TestDb::new();
     fn hand_built(text: &str) -> Vec<usize> {
         let mut found = Vec::new();
         let mut from = 0;

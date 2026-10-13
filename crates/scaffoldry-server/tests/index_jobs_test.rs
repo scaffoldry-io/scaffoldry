@@ -2,6 +2,8 @@
 //!
 //! Each test fills a private app with generated rows and deletes them when it ends.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -15,19 +17,16 @@ use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 const ROWS: i64 = 200_000;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -246,7 +245,7 @@ async fn tool_full(w: &World, name: &str, args: Value) -> Value {
 // 1. The approval returns at once and leaves `building`. The job then builds every row.
 #[tokio::test]
 async fn approving_an_indexed_field_on_a_big_table_returns_at_once_and_a_job_builds_the_index() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let took = approve_sort_on_score(&w, ROWS).await;
     println!("jobs: the approval returned in {took:?} on {ROWS} rows");
@@ -267,7 +266,7 @@ async fn approving_an_indexed_field_on_a_big_table_returns_at_once_and_a_job_bui
 // 2. A sort on a building field is refused with a percent. After the job it works.
 #[tokio::test]
 async fn a_sort_on_a_building_field_is_refused_with_a_percent_and_works_after_the_job() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     approve_sort_on_score(&w, SMALL).await;
     let id = job_of(&w.slug, "score");
@@ -290,7 +289,7 @@ async fn a_sort_on_a_building_field_is_refused_with_a_percent_and_works_after_th
 // 3. A record written during the build has its index row at once, and the job leaves it alone.
 #[tokio::test]
 async fn a_record_written_during_the_build_keeps_its_row_and_the_job_does_not_touch_it() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     approve_sort_on_score(&w, SMALL).await;
     let written = create(&w, json!({ "score": 7_000_000, "plain_text": "new" })).await;
@@ -315,7 +314,7 @@ async fn a_record_written_during_the_build_keeps_its_row_and_the_job_does_not_to
 // 4. A worker that died halfway: the job resumes from its checkpoint and the index is complete.
 #[tokio::test]
 async fn a_killed_build_resumes_from_its_checkpoint_with_no_duplicate_rows() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     approve_sort_on_score(&w, SMALL).await;
     let repo = repo();
@@ -370,7 +369,7 @@ async fn a_killed_build_resumes_from_its_checkpoint_with_no_duplicate_rows() {
 // 5. A raised label protects a read at once. The job then catches the stored flags up.
 #[tokio::test]
 async fn a_raised_label_protects_a_read_before_the_flag_job_has_run() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill(&w.slug, 200);
     let viewer = issue_test_token_and_user(VIEWER);

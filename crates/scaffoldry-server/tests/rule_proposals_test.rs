@@ -2,6 +2,8 @@
 //!
 //! Each test uses its own app slug, so the tests share the database without touching anyone's rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -11,11 +13,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 /// An Internal workspace.
 const WORKSPACE: &str = "ws-physics-optics";
@@ -24,8 +24,7 @@ const EDITOR: &str = "editor.test@physics.state.edu";
 const OTHER_ADMIN: &str = "jordan.lee@state.edu";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -167,7 +166,7 @@ fn check<'a>(result: &'a Value, name: &str) -> &'a Value {
 // 1. A rules-only proposal leaves the live rules alone. Approving makes version 1 live.
 #[tokio::test]
 async fn a_rules_only_proposal_changes_nothing_until_approved_and_then_writes_version_one() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let rule_id = format!("r-{}", &Uuid::new_v4().to_string()[..8]);
@@ -202,7 +201,7 @@ async fn a_rules_only_proposal_changes_nothing_until_approved_and_then_writes_ve
 // 2. A rule that sets a sensitive field is flagged.
 #[tokio::test]
 async fn a_rule_that_sets_a_sensitive_field_needs_a_second_person() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, true).await;
     let (err, p) = propose_rules(&w, &w.owner, vec![service_rule(&format!("r-{}", &Uuid::new_v4().to_string()[..8]), "Approved")]).await;
@@ -218,7 +217,7 @@ async fn a_rule_that_sets_a_sensitive_field_needs_a_second_person() {
 // 3. The direct route: 201 when clean, 202 when flagged.
 #[tokio::test]
 async fn posting_a_rule_is_201_when_clean_and_202_when_flagged() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let rule_id = format!("r-{}", &Uuid::new_v4().to_string()[..8]);
@@ -246,7 +245,7 @@ async fn posting_a_rule_is_201_when_clean_and_202_when_flagged() {
 // 4. A webhook step is 400 with the step id, and stores no proposal.
 #[tokio::test]
 async fn a_webhook_step_is_refused_with_its_id_and_stores_no_proposal() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let base_rows = proposal_rows(&w.slug);
@@ -261,7 +260,7 @@ async fn a_webhook_step_is_refused_with_its_id_and_stores_no_proposal() {
 // 5. A rule naming a field that does not exist is 400 and names the field.
 #[tokio::test]
 async fn a_rule_naming_a_missing_field_is_refused_and_names_it() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let mut rule = service_rule(&format!("r-{}", &Uuid::new_v4().to_string()[..8]), "Approved");
@@ -274,7 +273,7 @@ async fn a_rule_naming_a_missing_field_is_refused_and_names_it() {
 // 6. Two proposals for one rule on one base version.
 #[tokio::test]
 async fn the_second_approval_for_one_rule_version_is_refused_and_superseded() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let rule_id = format!("r-{}", &Uuid::new_v4().to_string()[..8]);
@@ -292,7 +291,7 @@ async fn the_second_approval_for_one_rule_version_is_refused_and_superseded() {
 // 7. An instance keeps the version it started under.
 #[tokio::test]
 async fn a_waiting_instance_is_decided_by_the_version_it_started_under() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let rule_id = format!("r-{}", &Uuid::new_v4().to_string()[..8]);
@@ -326,7 +325,7 @@ async fn a_waiting_instance_is_decided_by_the_version_it_started_under() {
 // 8. The direct update of an app.
 #[tokio::test]
 async fn updating_an_app_is_forbidden_for_an_editor_and_writes_one_proposal_and_one_ledger_entry_for_an_owner() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let (_, current) = rest(&w.app, "GET", &format!("/api/v1/apps/{}", w.slug), &w.owner, None).await;
@@ -361,7 +360,7 @@ async fn updating_an_app_is_forbidden_for_an_editor_and_writes_one_proposal_and_
 // 9. A proposal cannot verify a domain.
 #[tokio::test]
 async fn a_proposal_that_sets_custom_domain_verified_is_refused() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let mut m = manifest(&w.slug, false);
@@ -382,7 +381,7 @@ async fn a_proposal_that_sets_custom_domain_verified_is_refused() {
 // 11. A user task with no approver today saves with a warning.
 #[tokio::test]
 async fn a_user_task_that_resolves_to_nobody_saves_with_a_warning() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let mut rule = task_rule(&format!("r-{}", &Uuid::new_v4().to_string()[..8]), "Admitted");
@@ -399,7 +398,7 @@ async fn a_user_task_that_resolves_to_nobody_saves_with_a_warning() {
 
 #[tokio::test]
 async fn a_rule_that_sets_what_its_own_condition_reads_on_every_update_warns_of_a_loop() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let mut rule = service_rule(&format!("r-{}", &Uuid::new_v4().to_string()[..8]), "Approved");
@@ -412,7 +411,7 @@ async fn a_rule_that_sets_what_its_own_condition_reads_on_every_update_warns_of_
 
 #[tokio::test]
 async fn the_proposals_routes_list_get_and_decide_and_the_overview_counts_pending() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, false).await;
     let (_, p) = propose_rules(&w, &w.owner, vec![service_rule(&format!("r-{}", &Uuid::new_v4().to_string()[..8]), "Approved")]).await;

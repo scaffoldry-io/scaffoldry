@@ -3,6 +3,8 @@
 //! The big-table tests fill a private app with generated rows, then delete them. The app slug is
 //! fresh each run, so the tests share the database without touching anyone's data.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -14,18 +16,15 @@ use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const ROWS: i64 = 200_000;
 const SEEDED_APP: &str = "physics-admissions-review";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// Runs direct database work on its own thread. The synchronous client cannot start inside the
@@ -94,7 +93,7 @@ async fn seeded() -> (Arc<ServerState>, Router, String) {
 // 1. The column follows the JSON.
 #[tokio::test]
 async fn a_record_created_with_a_table_id_has_it_in_the_column() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let table = format!("rs-{}", &Uuid::new_v4().to_string()[..8]);
     let (s, created) = call(&app, "POST", &format!("/api/v1/apps/{SEEDED_APP}/tables/{table}/records"), &token, Some(json!({ "data": { "title": "Tagged" } }))).await;
@@ -117,7 +116,7 @@ async fn a_record_created_with_a_table_id_has_it_in_the_column() {
 
 #[tokio::test]
 async fn existing_rows_are_backfilled_from_the_json() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (state, _app, _token) = seeded().await;
     let _ = state;
     let slug = format!("rowscale-bf-{}", &Uuid::new_v4().to_string()[..8]);
@@ -144,7 +143,7 @@ async fn existing_rows_are_backfilled_from_the_json() {
 // 2. Paging walks the table in (created_at, id) order with no repeats.
 #[tokio::test]
 async fn paging_by_cursor_yields_distinct_rows_in_created_at_then_id_order() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (state, _app, _token) = seeded().await;
     let slug = format!("rowscale-{}", &Uuid::new_v4().to_string()[..8]);
     let _cleanup = Cleanup(slug.clone());
@@ -179,7 +178,7 @@ async fn paging_by_cursor_yields_distinct_rows_in_created_at_then_id_order() {
 // 3. The statements do not scan the table.
 #[tokio::test]
 async fn the_page_statements_hold_no_sequential_scan() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, _app, _token) = seeded().await;
     let slug = format!("rowscale-{}", &Uuid::new_v4().to_string()[..8]);
     let _cleanup = Cleanup(slug.clone());
@@ -211,7 +210,7 @@ async fn the_page_statements_hold_no_sequential_scan() {
 // 4. A page from the middle comes back fast.
 #[tokio::test]
 async fn a_page_from_the_middle_of_the_table_returns_in_under_200_ms() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (state, _app, _token) = seeded().await;
     let slug = format!("rowscale-{}", &Uuid::new_v4().to_string()[..8]);
     let _cleanup = Cleanup(slug.clone());
@@ -236,7 +235,7 @@ async fn a_page_from_the_middle_of_the_table_returns_in_under_200_ms() {
 // The REST list is a page with a cursor, and carries no total.
 #[tokio::test]
 async fn the_table_list_route_pages_by_cursor_without_a_total() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let table = format!("rs-{}", &Uuid::new_v4().to_string()[..8]);
     let mut ids = Vec::new();

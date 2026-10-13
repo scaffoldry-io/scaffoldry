@@ -2,6 +2,8 @@
 //!
 //! Each test uses its own app slug, so the tests share the database without touching anyone's rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -12,11 +14,9 @@ use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 /// An Internal workspace.
 const WORKSPACE: &str = "ws-physics-optics";
@@ -25,8 +25,7 @@ const EDITOR: &str = "editor.test@physics.state.edu";
 const OTHER_ADMIN: &str = "jordan.lee@state.edu";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -165,7 +164,7 @@ fn ledger_entries_for(proposal: &str) -> i64 {
 // 1. A proposal changes no live app.
 #[tokio::test]
 async fn proposing_leaves_the_live_app_unchanged() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let (v0, before) = live_version(&w).await;
@@ -185,7 +184,7 @@ async fn proposing_leaves_the_live_app_unchanged() {
 // 2. Approving writes the manifest, raises the version by one, and adds one ledger entry.
 #[tokio::test]
 async fn approving_writes_the_manifest_raises_the_version_and_adds_one_ledger_entry() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let (v0, _) = live_version(&w).await;
@@ -211,7 +210,7 @@ async fn approving_writes_the_manifest_raises_the_version_and_adds_one_ledger_en
 // 3. Two proposals on one base: the second approval is refused and its row is Superseded.
 #[tokio::test]
 async fn the_second_approval_on_one_base_version_is_refused_and_superseded() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let mk = |extra: &str| {
@@ -236,7 +235,7 @@ async fn the_second_approval_on_one_base_version_is_refused_and_superseded() {
 // 4. A sensitive field in an Internal workspace is flagged. The proposer cannot approve it.
 #[tokio::test]
 async fn a_sensitive_field_in_an_internal_workspace_needs_a_second_person() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let mut fields = base_fields();
@@ -258,7 +257,7 @@ async fn a_sensitive_field_in_an_internal_workspace_needs_a_second_person() {
 // 5. If the ledger insert fails, nothing is kept.
 #[tokio::test]
 async fn when_the_ledger_insert_fails_the_version_and_the_proposal_are_unchanged() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let (v0, _) = live_version(&w).await;
@@ -290,7 +289,7 @@ async fn when_the_ledger_insert_fails_the_version_and_the_proposal_are_unchanged
 // 6. An editor can propose and cannot decide.
 #[tokio::test]
 async fn an_editor_can_propose_and_cannot_decide() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let mut fields = base_fields();
@@ -313,7 +312,7 @@ fn page(sha256: &str, read: &[&str], write: &[&str]) -> Value {
 // 7. A page hash with no stored source returns the page_source error and stores no row.
 #[tokio::test]
 async fn a_page_whose_source_was_not_sent_is_refused_and_stores_no_row() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let base_rows = proposal_rows(&w.slug);
@@ -327,7 +326,7 @@ async fn a_page_whose_source_was_not_sent_is_refused_and_stores_no_row() {
 
 #[tokio::test]
 async fn a_source_with_a_closing_script_tag_or_over_256_kb_is_refused() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let base_rows = proposal_rows(&w.slug);
@@ -344,7 +343,7 @@ async fn a_source_with_a_closing_script_tag_or_over_256_kb_is_refused() {
 // 8. A page granted read on a sensitive field fails page_sensitivity.
 #[tokio::test]
 async fn a_page_that_reads_a_sensitive_field_is_flagged_and_the_proposer_cannot_approve() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let mut fields = base_fields();
     fields.push(field("ssn", "Social security number", "Text", true));
@@ -370,7 +369,7 @@ async fn a_page_that_reads_a_sensitive_field_is_flagged_and_the_proposer_cannot_
 // 9. One character changes the hash, and the change list reports the page as changed.
 #[tokio::test]
 async fn one_changed_character_is_a_new_hash_and_a_changed_page() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let first = "export default function Page() { return 'a' }";
@@ -392,7 +391,7 @@ async fn one_changed_character_is_a_new_hash_and_a_changed_page() {
 
 #[tokio::test]
 async fn a_schema_failure_stores_no_row_and_returns_every_error() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let base_rows = proposal_rows(&w.slug);
@@ -408,7 +407,7 @@ async fn a_schema_failure_stores_no_row_and_returns_every_error() {
 
 #[tokio::test]
 async fn removing_a_field_that_has_records_is_flagged_data_loss() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let (s, _) = rest(&w.app, "POST", &format!("/api/v1/apps/{}/records", w.slug), &w.owner, Some(json!({ "data": { "_table_id": "grants", "title": "Has data" } }))).await;
@@ -424,7 +423,7 @@ async fn removing_a_field_that_has_records_is_flagged_data_loss() {
 
 #[tokio::test]
 async fn list_shows_pending_first_and_a_rejection_changes_nothing() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     live_app(&w, base_fields()).await;
     let (v0, _) = live_version(&w).await;

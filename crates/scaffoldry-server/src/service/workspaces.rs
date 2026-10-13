@@ -324,7 +324,8 @@ pub fn create_workspace(
         added_at: now,
     };
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_workspace(&record).map_err(|e| ServiceError::Internal(e.to_string()))?;
         repo.upsert_collaborator(&initial_owner).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
@@ -503,7 +504,8 @@ pub fn update_workspace(
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_workspace(&ws).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
@@ -671,7 +673,8 @@ pub fn add_collaborator(
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_collaborator(&new_member).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
@@ -775,7 +778,8 @@ pub fn update_collaborator_role(
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_collaborator(&updated).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
@@ -870,7 +874,8 @@ pub fn remove_collaborator(
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.remove_collaborator(workspace_id, target_eppn).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 

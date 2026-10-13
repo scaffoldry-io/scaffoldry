@@ -75,6 +75,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: e.message, next: "Narrow the filter." };
     case "file_too_large":
       return { message: e.message, next: "Choose a smaller file, or ask an admin to raise the file size limit." };
+    case "storage_unavailable":
+      return { message: "The server cannot reach its database right now.", next: "Try again in a minute. If it keeps happening, tell an administrator." };
     case "scanner_unavailable":
       return { message: "Files cannot be uploaded right now.", next: "Try again in a few minutes, or ask an admin to check the virus scanner." };
     case "file_type_blocked":

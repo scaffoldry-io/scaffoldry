@@ -53,10 +53,7 @@ fn view(job: &Job) -> Value {
 fn visible_job(state: &SharedState, caller: &AuthUser, raw_id: &str) -> Result<Job, ServiceError> {
     let not_found = || ServiceError::NotFound("Job not found".to_string());
     let id = Uuid::parse_str(raw_id).map_err(|_| not_found())?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let job = jobs::get_job(repo, id).map_err(internal)?.ok_or_else(not_found)?;
     if job.created_by.eq_ignore_ascii_case(&caller.eppn)
         || crate::service::admin::require_platform_admin(caller, state).is_ok() {
@@ -85,10 +82,7 @@ async fn cancel_job(
 ) -> Result<impl IntoResponse, ServiceError> {
     let caller = caller(user, &headers, &state)?;
     let job = visible_job(&state, &caller, &id)?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let updated = jobs::cancel_job(repo, job.id)
         .map_err(internal)?
         .ok_or_else(|| ServiceError::NotFound("Job not found".to_string()))?;
@@ -102,10 +96,7 @@ async fn list_jobs(
     Query(page): Query<Page>,
 ) -> Result<impl IntoResponse, ServiceError> {
     let caller = caller(user, &headers, &state)?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let limit = page.limit.unwrap_or(50).clamp(1, 200);
     let offset = page.offset.unwrap_or(0).max(0);
     let found = jobs::list_jobs(repo, &caller.eppn, limit, offset).map_err(internal)?;

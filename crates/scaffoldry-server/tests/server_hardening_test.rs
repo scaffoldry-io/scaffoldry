@@ -3,28 +3,24 @@
 //! 2. Body limit enforcement (413 Payload Too Large)
 //! 3. Graceful error handling on poisoned locks without panicking
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use scaffoldry_server::{build_app, build_app_with_state, state::ServerState};
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
-
-static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[tokio::test]
 async fn test_boot_with_unreachable_database_url_returns_error() {
-    let _lock = TEST_LOCK.lock().await;
-    std::env::set_var("DATABASE_URL", "postgres://scaffoldry:wrong@127.0.0.1:5439/nonexistent");
     let res = scaffoldry_server::repository::PostgresRepository::connect(Some("postgres://scaffoldry:wrong@127.0.0.1:5439/nonexistent"));
-    assert!(res.is_err(), "PostgresRepository::connect with unreachable DATABASE_URL must return an error");
-    std::env::remove_var("DATABASE_URL");
+    assert!(res.is_err(), "PostgresRepository::connect with an unreachable database must return an error");
 }
 
 #[tokio::test]
 async fn test_default_body_limit_enforced() {
-    let _lock = TEST_LOCK.lock().await;
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
 
     let admin_token = scaffoldry_server::service::identity::issue_test_token_and_user("jordan.lee@state.edu");
@@ -57,7 +53,7 @@ async fn test_default_body_limit_enforced() {
 
 #[tokio::test]
 async fn test_lock_poison_does_not_panic_server() {
-    let _lock = TEST_LOCK.lock().await;
+    let _db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("state"));
 
     // Intentionally poison the datasets lock
@@ -92,7 +88,7 @@ async fn test_lock_poison_does_not_panic_server() {
 
 #[tokio::test]
 async fn test_expired_session_rejected_with_401() {
-    let _lock = TEST_LOCK.lock().await;
+    let _db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("state"));
 
     let expired_token = scaffoldry_server::service::identity::generate_raw_token();
@@ -130,16 +126,15 @@ async fn test_expired_session_rejected_with_401() {
 }
 
 fn get_db_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-    })
+    scaffoldry_server::testing::database_url()
 }
 
 #[tokio::test]
 async fn test_tamper_detected_on_nonsense_decision_type() {
-    let _lock = TEST_LOCK.lock().await;
-    tokio::task::spawn_blocking(|| {
-        let mut client = match postgres::Client::connect(&get_db_url(), postgres::NoTls) {
+    let _db = common::TestDb::new();
+    let url = get_db_url();
+    tokio::task::spawn_blocking(move || {
+        let mut client = match postgres::Client::connect(&url, postgres::NoTls) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Skipping test: PostgreSQL not reachable ({e})");
@@ -147,7 +142,7 @@ async fn test_tamper_detected_on_nonsense_decision_type() {
             }
         };
 
-        let repo = scaffoldry_server::repository::PostgresRepository::connect(Some(&get_db_url()))
+        let repo = scaffoldry_server::repository::PostgresRepository::connect(Some(&url))
             .expect("repo connect");
 
         let last_row = client.query_one(
@@ -197,9 +192,10 @@ async fn test_tamper_detected_on_nonsense_decision_type() {
 
 #[tokio::test]
 async fn test_workspace_update_fails_when_ledger_fails() {
-    let _lock = TEST_LOCK.lock().await;
-    tokio::task::spawn_blocking(|| {
-        let mut client = match postgres::Client::connect(&get_db_url(), postgres::NoTls) {
+    let _db = common::TestDb::new();
+    let url = get_db_url();
+    tokio::task::spawn_blocking(move || {
+        let mut client = match postgres::Client::connect(&url, postgres::NoTls) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Skipping test: PostgreSQL not reachable ({e})");
@@ -207,7 +203,8 @@ async fn test_workspace_update_fails_when_ledger_fails() {
             }
         };
 
-        let state = Arc::new(ServerState::new().expect("state"));
+        let state = Arc::new(ServerState::connect(&url).expect("state"));
+        state.seed_demo().expect("seed");
 
         let fail_principal = "fail_ledger_test_user@state.edu";
         let caller = scaffoldry_server::state::AuthUser {

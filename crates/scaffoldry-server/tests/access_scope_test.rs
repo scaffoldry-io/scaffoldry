@@ -1,6 +1,8 @@
 //! Access rules phase 2: one predicate, two evaluators. `eval` in Rust and `to_sql` over
 //! `record_index` must return the same records for every predicate, record, and person.
 
+mod common;
+
 use postgres::types::ToSql;
 use scaffoldry_core::access::{check, row_scope, substitute, Op, Operand, Person, PersonAttr, Pred, RowOp, RowRule, RowScope};
 use scaffoldry_engine::access::{eval, to_sql, CompileError, Param};
@@ -10,8 +12,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// A connection to a database that has the schema. `ServerState::new` applies the migrations.
@@ -234,6 +235,7 @@ fn scratch(c: &mut postgres::Client) -> String {
 // 1. The 2,000-case equivalence test.
 #[test]
 fn eval_and_sql_agree_on_two_thousand_random_cases() {
+    let _db = common::TestDb::new();
     let mut c = client();
     let slug = scratch(&mut c);
     let mut compiled = 0;
@@ -262,6 +264,7 @@ fn eval_and_sql_agree_on_two_thousand_random_cases() {
 // 2. substitute folds constants.
 #[test]
 fn substitute_folds_what_the_person_decides() {
+    let _db = common::TestDb::new();
     let physics = Person { address: "a@x.edu".into(), department: "Physics".into(), ..Default::default() };
     let chemistry = Person { address: "b@x.edu".into(), department: "Chemistry".into(), ..Default::default() };
     let same = Pred::Cmp { field: "person.address".into(), op: Op::Eq, value: Operand::Person(PersonAttr::Address) };
@@ -280,6 +283,7 @@ fn substitute_folds_what_the_person_decides() {
 
 #[test]
 fn row_scope_skips_excepted_roles_and_platform_admins_and_combines_the_rest() {
+    let _db = common::TestDb::new();
     let me = Person { address: "a@x.edu".into(), ..Default::default() };
     let rule = |id: &str, except: &[&str]| RowRule {
         id: id.into(),
@@ -300,6 +304,7 @@ fn row_scope_skips_excepted_roles_and_platform_admins_and_combines_the_rest() {
 // 3. A field outside the indexed set is an error, not a scan.
 #[test]
 fn a_field_outside_the_indexed_set_does_not_compile() {
+    let _db = common::TestDb::new();
     let p = Pred::Cmp { field: "unindexed".into(), op: Op::Eq, value: Operand::Literal(json!("x")) };
     assert_eq!(to_sql(&p, &fields(), "r.id", "a", "t", 1).unwrap_err(), CompileError::NotIndexed("unindexed".into()));
     let text_order = Pred::Cmp { field: "t".into(), op: Op::Gt, value: Operand::Literal(json!("x")) };
@@ -309,6 +314,7 @@ fn a_field_outside_the_indexed_set_does_not_compile() {
 // 4. A multi-valued field matches on any of its values, in both evaluators.
 #[test]
 fn a_multi_valued_field_matches_on_any_value() {
+    let _db = common::TestDb::new();
     let mut c = client();
     let slug = scratch(&mut c);
     let mut tx = c.transaction().unwrap();
@@ -325,6 +331,7 @@ fn a_multi_valued_field_matches_on_any_value() {
 // 5. A literal over 128 characters is rejected.
 #[test]
 fn a_literal_over_128_characters_is_rejected() {
+    let _db = common::TestDb::new();
     let long = Pred::Cmp { field: "t".into(), op: Op::Eq, value: Operand::Literal(json!("x".repeat(129))) };
     assert!(check(&long).is_err());
     assert!(to_sql(&long, &fields(), "r.id", "a", "t", 1).is_err());
@@ -337,6 +344,7 @@ fn a_literal_over_128_characters_is_rejected() {
 // 6. At 200,000 rows a compiled predicate does not scan.
 #[test]
 fn a_compiled_predicate_over_200000_rows_does_not_scan() {
+    let _db = common::TestDb::new();
     let mut c = client();
     let slug = scratch(&mut c);
     c.execute(
@@ -387,6 +395,7 @@ fn a_compiled_predicate_over_200000_rows_does_not_scan() {
 // 7. Blank and missing values behave the same in both evaluators for every operation.
 #[test]
 fn blank_and_missing_values_behave_the_same_for_every_op() {
+    let _db = common::TestDb::new();
     let mut c = client();
     let slug = scratch(&mut c);
     let mut tx = c.transaction().unwrap();
@@ -416,6 +425,7 @@ fn blank_and_missing_values_behave_the_same_for_every_op() {
 // The rules serialize in the shape the published schema describes.
 #[test]
 fn a_rule_round_trips_in_the_schema_shape() {
+    let _db = common::TestDb::new();
     let schema: Value = serde_json::from_str(&std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../governance/schema/access-rules.schema.json")).unwrap()).unwrap();
     let defs = schema["$defs"].as_object().unwrap();
     let rule = RowRule {

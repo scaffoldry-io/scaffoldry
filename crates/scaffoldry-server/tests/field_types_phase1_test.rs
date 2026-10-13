@@ -9,6 +9,8 @@
 //! 5. A kanban over a select field groups by id and shows the current label and color.
 //! 6. A multi-select with three values makes three index rows and filters by any.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -22,19 +24,16 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const SECOND: &str = "jordan.lee@state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -158,7 +157,7 @@ fn manifest_with_select(slug: &str, options: Vec<SelectOption>) -> AppManifest {
 // 1. Renaming `Admitted` to `Offer made` changes the label everywhere and leaves records unchanged.
 #[tokio::test]
 async fn renaming_option_changes_label_everywhere_and_leaves_records_unchanged() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let initial_manifest = manifest_with_select(
@@ -231,7 +230,7 @@ async fn renaming_option_changes_label_everywhere_and_leaves_records_unchanged()
 // 2. Removing an option in use is flagged and shows the count. Removing an unused one is not.
 #[tokio::test]
 async fn removing_option_in_use_is_flagged_with_count_unused_is_not() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let base_manifest = manifest_with_select(
@@ -311,7 +310,7 @@ async fn removing_option_in_use_is_flagged_with_count_unused_is_not() {
 //    A value matching no option becomes blank and is counted.
 #[tokio::test]
 async fn conversion_1000_records_with_strings_become_ids_and_history_recorded() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let m = manifest_with_select(
@@ -343,7 +342,7 @@ async fn conversion_1000_records_with_strings_become_ids_and_history_recorded() 
     });
 
     // Enqueue and run convert_select_options job
-    let repo = w.state.repository.as_ref().expect("repository");
+    let repo = &w.state.repository;
     let job_id = scaffoldry_server::jobs::enqueue(
         repo,
         "convert_select_options",
@@ -403,7 +402,7 @@ async fn conversion_1000_records_with_strings_become_ids_and_history_recorded() 
 // 4. A write with an id that is not an option is 400.
 #[tokio::test]
 async fn write_with_unknown_id_is_400_naming_the_field() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let m = manifest_with_select(
@@ -437,7 +436,7 @@ async fn write_with_unknown_id_is_400_naming_the_field() {
 // 5. A kanban over a select field groups by id and shows the current label and color.
 #[tokio::test]
 async fn kanban_over_select_field_groups_by_id_and_shows_label_and_color() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let mut m = manifest_with_select(
@@ -498,7 +497,7 @@ async fn kanban_over_select_field_groups_by_id_and_shows_label_and_color() {
 // 6. A multi-select with three values makes three index rows and filters by any.
 #[tokio::test]
 async fn multiselect_with_three_values_makes_three_index_rows_and_filters_by_any() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let mut tags_field = FieldSpec::simple("tags", "Tags", FieldType::MultiSelect, false, false);

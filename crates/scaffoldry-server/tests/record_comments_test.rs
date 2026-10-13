@@ -2,6 +2,8 @@
 //!
 //! The app is private to each run, so the tests share the database without touching anyone's rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -12,11 +14,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const COMMENTER: &str = "grace.hopper@science.state.edu";
@@ -26,8 +26,7 @@ const EDITOR: &str = "student.smith@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// Direct database work on its own thread. The synchronous client cannot start inside the async
@@ -162,7 +161,7 @@ async fn remove(f: &Fixture, token: &str, comment: &str) -> (StatusCode, Value) 
 // 1. A viewer cannot comment. A commenter can, and cannot edit the record.
 #[tokio::test]
 async fn a_viewer_cannot_comment_and_a_commenter_can_but_cannot_edit_the_record() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let id = record(&f).await;
 
@@ -185,7 +184,7 @@ async fn a_viewer_cannot_comment_and_a_commenter_can_but_cannot_edit_the_record(
 // 2. A mention of someone without read access is dropped silently. One of someone with access is stored.
 #[tokio::test]
 async fn a_mention_of_someone_without_access_is_dropped_without_a_word() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let id = record(&f).await;
     let text = format!("Please look, @[{EDITOR}] and @[{OUTSIDER}], and @[nobody@nowhere.example]");
@@ -203,7 +202,7 @@ async fn a_mention_of_someone_without_access_is_dropped_without_a_word() {
 // 3. A body of 4,001 characters is 400.
 #[tokio::test]
 async fn a_body_over_4000_characters_is_refused() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let id = record(&f).await;
     let (status, body) = post(&f, &f.owner, &id, json!({ "body": "x".repeat(4001) })).await;
@@ -225,7 +224,7 @@ fn age_comment(slug: &str, id: &str, minutes: i32) {
 // 4. An author cannot edit after 15 minutes. An admin can delete.
 #[tokio::test]
 async fn an_author_has_fifteen_minutes_and_an_admin_can_remove_any_comment() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let id = record(&f).await;
     let (_, made) = post(&f, &f.commenter, &id, json!({ "body": "First" })).await;
@@ -252,7 +251,7 @@ async fn an_author_has_fifteen_minutes_and_an_admin_can_remove_any_comment() {
 // 5. A deleted comment's body is gone from the response and from the database row.
 #[tokio::test]
 async fn a_removed_comment_loses_its_text_everywhere() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let id = record(&f).await;
     let (_, made) = post(&f, &f.commenter, &id, json!({ "body": format!("Secret words @[{EDITOR}]") })).await;
@@ -294,7 +293,7 @@ async fn a_removed_comment_loses_its_text_everywhere() {
 // 6. Comments are not returned to someone who cannot read the record.
 #[tokio::test]
 async fn comments_are_hidden_from_someone_who_cannot_read_the_record() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let id = record(&f).await;
     post(&f, &f.owner, &id, json!({ "body": "Private" })).await;
@@ -312,7 +311,7 @@ async fn comments_are_hidden_from_someone_who_cannot_read_the_record() {
 // 7a. The mention picker offers only people with read access.
 #[tokio::test]
 async fn the_mention_list_names_only_people_with_read_access() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let (status, body) = send(&f.app, "GET", &format!("/api/v1/apps/{}/mentionable", f.slug), &f.owner, &[], None).await;
     assert_eq!(status, StatusCode::OK, "{body}");

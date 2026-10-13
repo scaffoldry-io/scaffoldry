@@ -2,6 +2,8 @@
 //!
 //! Each test uses a private app with a fresh slug and deletes its rows when it ends.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -22,8 +24,7 @@ const WORKSPACE: &str = "ws-bio-lab";
 const LINKS: i64 = 200_000;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -177,6 +178,7 @@ fn link_rows(slug: &str) -> Vec<LinkRow> {
 // 1. A write keeps one row per linked id, and a change replaces the old rows.
 #[tokio::test]
 async fn a_link_writes_a_row_and_changing_it_replaces_the_row() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let p1 = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let p2 = id_of(&create(&w, "programs", json!({ "code": "BIO" })).await);
@@ -199,6 +201,7 @@ async fn a_link_writes_a_row_and_changing_it_replaces_the_row() {
 // 2. One accepts one id. A missing id and an id from another table are 400 and name the field.
 #[tokio::test]
 async fn a_link_with_too_many_ids_a_missing_id_or_an_id_from_another_table_is_refused_naming_the_field() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let p1 = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let p2 = id_of(&create(&w, "programs", json!({ "code": "BIO" })).await);
@@ -225,6 +228,7 @@ async fn a_link_with_too_many_ids_a_missing_id_or_an_id_from_another_table_is_re
 // 3. A link to a record the writer cannot see is refused the same way as a missing one.
 #[tokio::test]
 async fn a_link_to_a_record_in_an_app_the_writer_cannot_see_is_refused_like_a_missing_one() {
+    let _db = common::TestDb::new();
     let w = world().await;
     // A program record that belongs to another app, which the writer has no part in.
     let foreign_slug = format!("lnk-foreign-{}", &Uuid::new_v4().to_string()[..8]);
@@ -253,6 +257,7 @@ async fn a_link_to_a_record_in_an_app_the_writer_cannot_see_is_refused_like_a_mi
 // 4. The JSON and the table always agree, and a rebuild from the JSON reproduces the table.
 #[tokio::test]
 async fn the_json_and_record_links_agree_after_mixed_writes_and_a_rebuild_reproduces_them() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let mut programs = Vec::new();
     for code in ["P1", "P2", "P3", "P4"] {
@@ -302,6 +307,7 @@ async fn the_json_and_record_links_agree_after_mixed_writes_and_a_rebuild_reprod
 // 6. At 200,000 links, a record's links and its reverse links each use an index.
 #[tokio::test]
 async fn at_200000_links_finding_links_and_reverse_links_uses_an_index() {
+    let _db = common::TestDb::new();
     let w = world().await;
     {
         let slug = w.slug.clone();
@@ -331,6 +337,7 @@ async fn at_200000_links_finding_links_and_reverse_links_uses_an_index() {
 // 7. History records the id list, and shows names instead of ids.
 #[tokio::test]
 async fn history_shows_the_display_names_of_linked_records_not_their_ids() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let cs = id_of(&create(&w, "programs", json!({ "code": "CS-101" })).await);
     let bio = id_of(&create(&w, "programs", json!({ "code": "BIO-200" })).await);

@@ -1,5 +1,7 @@
 //! Links phase 4: choosing a record to link. Each test uses a private app with a fresh slug.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -18,8 +20,7 @@ const OUTSIDER: &str = "outsider.student@state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 struct Cleanup(String);
@@ -127,6 +128,7 @@ async fn options(w: &World, token: &str, query: &str) -> (StatusCode, Value) {
 // 1. A person with no access to the app gets no options. (Row-level scope arrives with access-rules phase 2.)
 #[tokio::test]
 async fn a_person_without_access_to_the_app_gets_no_options() {
+    let _db = common::TestDb::new();
     let w = world().await;
     program(&w, json!({ "code": "CS" })).await;
     let (owner_status, owner_body) = options(&w, &w.token, "").await;
@@ -140,6 +142,7 @@ async fn a_person_without_access_to_the_app_gets_no_options() {
 // 2. The response holds only id, label, and secondary.
 #[tokio::test]
 async fn the_response_holds_only_id_label_and_secondary() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let id = program(&w, json!({ "code": "CS", "name": "Computer Science", "dean": "Hopper", "notes": "private" })).await;
     let (s, body) = options(&w, &w.token, "").await;
@@ -150,6 +153,7 @@ async fn the_response_holds_only_id_label_and_secondary() {
 // 3. A query matches the primary field and the first three text fields, ignoring case, and pages.
 #[tokio::test]
 async fn a_query_matches_case_insensitively_and_pages() {
+    let _db = common::TestDb::new();
     let w = world().await;
     for i in 0..5 {
         program(&w, json!({ "code": format!("PX{i}"), "name": "Physics" })).await;
@@ -175,6 +179,7 @@ async fn a_query_matches_case_insensitively_and_pages() {
 // A limit above 50 is cut to 50, and a trashed record is not offered.
 #[tokio::test]
 async fn the_limit_is_capped_and_trashed_records_are_not_offered() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let id = program(&w, json!({ "code": "GONE" })).await;
     program(&w, json!({ "code": "KEPT" })).await;

@@ -1,5 +1,7 @@
 //! Calculation graph phase 3: changing a definition is a job, and the field says so while it runs.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,11 +15,9 @@ use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const SECOND: &str = "jordan.lee@state.edu";
@@ -26,8 +26,7 @@ const BIG: i64 = 200_000;
 const SMALL: i64 = 5_000;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -223,7 +222,7 @@ fn wrong_rows(slug: &str, factor: i64) -> i64 {
 // 1. A formula changes on a big table: the approval returns at once, the field is calculating, and a job makes every value right.
 #[tokio::test]
 async fn changing_a_formula_on_a_big_table_returns_at_once_and_a_job_recalculates_every_value() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let took = approve_triple(&w, BIG).await;
     println!("calc: the approval returned in {took:?} on {BIG} rows");
@@ -253,7 +252,7 @@ async fn changing_a_formula_on_a_big_table_returns_at_once_and_a_job_recalculate
 // 2. A filter or sort on a calculating field is refused with `calculating`.
 #[tokio::test]
 async fn a_filter_or_sort_on_a_calculating_field_is_refused() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     approve_triple(&w, SMALL).await;
     let probe = json!({ "conjunction": "And", "clauses": [{ "id": "c", "field_name": "doubled", "operator": "GreaterThan", "value": "10" }] });
@@ -271,7 +270,7 @@ async fn a_filter_or_sort_on_a_calculating_field_is_refused() {
 // 3. A write during the job uses the new formula at once, and the job leaves that record alone.
 #[tokio::test]
 async fn a_record_written_during_the_job_is_right_and_the_job_does_not_touch_it() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     approve_triple(&w, SMALL).await;
     let rid = format!("rec-{}-{:08}", w.slug, 77);
@@ -303,7 +302,7 @@ async fn a_record_written_during_the_job_is_right_and_the_job_does_not_touch_it(
 // 4. A worker that died halfway: the job resumes from its checkpoint. Nothing is skipped, and the first half is not computed again.
 #[tokio::test]
 async fn a_killed_recalculation_resumes_from_its_checkpoint() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     approve_triple(&w, SMALL).await;
     let repo = repo();
@@ -347,7 +346,7 @@ async fn a_killed_recalculation_resumes_from_its_checkpoint() {
 // 5. A preview of text to number counts what would blank, with 50 examples. The proposal is flagged. Approval blanks it, with history.
 #[tokio::test]
 async fn a_conversion_previews_flags_converts_with_history_and_can_be_undone() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     go_live(&w, 3_000).await;
     let repo = repo();

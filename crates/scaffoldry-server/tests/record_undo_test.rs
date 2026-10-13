@@ -2,6 +2,8 @@
 //!
 //! The app is private to each run, so the tests share the database without touching anyone's rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -12,11 +14,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const EDITOR2: &str = "grace.hopper@science.state.edu";
@@ -24,8 +24,7 @@ const EDITOR: &str = "student.smith@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// Direct database work on its own thread. The synchronous client cannot start inside the async
@@ -177,7 +176,7 @@ fn count_reverts(slug: &str, batch: &str) -> i64 {
 // 1. Paste ten cells, undo: all ten return and one new batch exists with `reverts_batch` set.
 #[tokio::test]
 async fn undoing_a_paste_of_ten_cells_brings_them_all_back_in_one_new_batch() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let (ids, batch) = pasted(&f).await;
     assert_eq!(score(&f, &ids[0]).await, 101);
@@ -198,7 +197,7 @@ async fn undoing_a_paste_of_ten_cells_brings_them_all_back_in_one_new_batch() {
 // 2. Another user edits one of them: 409 listing that record, and nothing changes.
 #[tokio::test]
 async fn undo_stops_with_a_conflict_when_a_record_has_moved_on_and_writes_nothing() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let (ids, batch) = pasted(&f).await;
     let theirs = get(&f, &f.owner, &ids[2]).await.1;
@@ -220,7 +219,7 @@ async fn undo_stops_with_a_conflict_when_a_record_has_moved_on_and_writes_nothin
 // 3. Undo of a create deletes the record, and history records it.
 #[tokio::test]
 async fn undoing_a_create_deletes_the_record_and_history_says_so() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let batch = Uuid::new_v4();
     let bh = batch.to_string();
@@ -243,7 +242,7 @@ async fn undoing_a_create_deletes_the_record_and_history_says_so() {
 // 4. Undo then undo again restores the original change.
 #[tokio::test]
 async fn undoing_an_undo_puts_the_original_change_back() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let made = create(&f, &f.editor, json!({ "_table_id": "t1", "title": "A", "score": 1 })).await;
     let id = made["id"].as_str().unwrap().to_string();
@@ -265,7 +264,7 @@ async fn undoing_an_undo_puts_the_original_change_back() {
 // 5. A different editor cannot undo someone else's batch. An app admin can.
 #[tokio::test]
 async fn only_the_actor_or_an_owner_or_admin_can_undo_a_batch() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let (ids, batch) = pasted(&f).await;
     let (status, body) = undo(&f, &f.editor2, &batch.to_string()).await;
@@ -280,7 +279,7 @@ async fn only_the_actor_or_an_owner_or_admin_can_undo_a_batch() {
 // 6. Restore of one field to version 2 writes only that field and bumps the version once.
 #[tokio::test]
 async fn restoring_one_field_to_an_earlier_version_writes_only_that_field() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let made = create(&f, &f.editor, json!({ "_table_id": "t1", "title": "A", "score": 1 })).await;
     let id = made["id"].as_str().unwrap().to_string();

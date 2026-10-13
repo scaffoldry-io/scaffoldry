@@ -67,6 +67,7 @@ pub const ERROR_CODES: &[&str] = &[
     "share_not_allowed",
     "archived",
     "too_many_indexes",
+    "storage_unavailable",
 ];
 
 #[derive(Debug, Clone)]
@@ -99,6 +100,8 @@ pub enum ServiceError {
     FileTypeBlocked(String),
     /// Uploads need a scan and no scanner answers.
     ScannerUnavailable(String),
+    /// The database cannot be read, so nothing the server holds can be trusted.
+    StorageUnavailable(String),
     /// A sort or filter names a field whose index is still being built.
     IndexBuilding(String),
     /// An undo found records that have changed since the batch. `conflicts` lists them.
@@ -159,7 +162,7 @@ impl ServiceError {
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::ScannerUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -177,6 +180,7 @@ impl ServiceError {
             Self::FileTooLarge(_) => "file_too_large",
             Self::FileTypeBlocked(_) => "file_type_blocked",
             Self::ScannerUnavailable(_) => "scanner_unavailable",
+            Self::StorageUnavailable(_) => "storage_unavailable",
             Self::IndexBuilding(_) => "index_building",
             Self::Calculating(_) => "calculating",
             Self::QuotaExceeded(_) => "quota_exceeded",
@@ -201,6 +205,7 @@ impl ServiceError {
             | Self::FileTooLarge(msg)
             | Self::FileTypeBlocked(msg)
             | Self::ScannerUnavailable(msg)
+            | Self::StorageUnavailable(msg)
             | Self::IndexBuilding(msg)
             | Self::Calculating(msg)
             | Self::QuotaExceeded(msg)

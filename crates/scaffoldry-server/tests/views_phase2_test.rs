@@ -3,6 +3,8 @@
 //! The server filters, groups, totals and tones. The browser never does. A view still cannot widen access:
 //! a color rule or a footer that reads a field the person cannot see is dropped for them.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -16,20 +18,16 @@ use scaffoldry_server::service::scope::set_column_rules;
 use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-/// The 200,000-row tests share the machine.
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const VIEWER: &str = "student.viewer@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -258,7 +256,7 @@ async fn run(w: &World, token: &str, id: &str, query: &str) -> (StatusCode, Valu
 //    plan has no sequential scan.
 #[tokio::test]
 async fn a_nested_filter_returns_the_right_rows_and_its_plan_has_no_sequential_scan() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world(200_000).await;
     let filter = group("And", vec![clause("amount", "GreaterThan", "5")], vec![group("Or", vec![clause("status", "Equals", "s1"), clause("status", "Equals", "s2")], vec![])]);
 
@@ -287,13 +285,14 @@ async fn a_nested_filter_returns_the_right_rows_and_its_plan_has_no_sequential_s
         offset: 0,
     };
     let (sql, params) = build_indexed_sql(&q, IndexPhase::All);
-    let plan = w.state.repository.as_deref().unwrap().explain(&sql, &params).unwrap();
+    let plan = w.state.repository.explain(&sql, &params).unwrap();
     assert!(!plan.contains("Seq Scan"), "the plan reads the index:\n{plan}");
 }
 
 // 2. In, Between, Before and After read the index on indexed fields and the record on the rest.
 #[tokio::test]
 async fn in_between_before_and_after_filter_on_indexed_and_unindexed_fields() {
+    let _db = common::TestDb::new();
     let w = world(2_000).await;
     let one = |c: Value| group("And", vec![c], vec![]);
 
@@ -316,6 +315,7 @@ async fn in_between_before_and_after_filter_on_indexed_and_unindexed_fields() {
 // 3. A filter nests two levels and holds fifty clauses at most. A view that breaks either is refused.
 #[tokio::test]
 async fn a_filter_that_nests_too_deep_is_refused_everywhere_it_can_be_given() {
+    let _db = common::TestDb::new();
     let w = world(50).await;
     let leaf = || group("And", vec![clause("amount", "GreaterThan", "1")], vec![]);
     let too_deep = group("And", vec![], vec![group("Or", vec![], vec![group("And", vec![], vec![leaf()])])]);
@@ -331,6 +331,7 @@ async fn a_filter_that_nests_too_deep_is_refused_everywhere_it_can_be_given() {
 // 4. Relative dates are resolved on the server. A row from now is in the last 7 days, and a row from ten days ago is not.
 #[tokio::test]
 async fn a_relative_date_is_resolved_by_the_server_clock() {
+    let _db = common::TestDb::new();
     let w = world(10).await;
     let slug = w.slug.clone();
     db(move |c| {
@@ -356,6 +357,7 @@ async fn a_relative_date_is_resolved_by_the_server_clock() {
 // 5. Grouping by two fields returns groups with counts that add up to the filtered total. Opening a group pages only its rows.
 #[tokio::test]
 async fn grouping_by_two_fields_counts_to_the_total_and_a_group_pages_only_its_rows() {
+    let _db = common::TestDb::new();
     let w = world(2_000).await;
     let view = make_view(
         &w,
@@ -412,7 +414,7 @@ async fn grouping_by_two_fields_counts_to_the_total_and_a_group_pages_only_its_r
 // 6. A footer sum over 200,000 rows is correct, and the statement is one, over the index and not the records.
 #[tokio::test]
 async fn a_footer_sum_over_200000_rows_is_correct_and_runs_as_one_statement() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world(200_000).await;
     let view = make_view(&w, &w.owner, "Totals", json!({ "column_summary": [["amount", "sum"], ["status", "unique"], ["program", "filled"], ["due", "empty"]] })).await;
     let (s, page) = run(&w, &w.owner, view["id"].as_str().unwrap(), "?limit=5").await;
@@ -437,7 +439,7 @@ async fn a_footer_sum_over_200000_rows_is_correct_and_runs_as_one_statement() {
     };
     let (sql, params) = build_aggregate_sql(&plan);
     assert_eq!(sql.matches("SELECT").count(), 2, "one statement: the sum, in a wrapper that turns no rows into zero\n{sql}");
-    let explained = w.state.repository.as_deref().unwrap().explain(&sql, &params).unwrap();
+    let explained = w.state.repository.explain(&sql, &params).unwrap();
     // A total reads every value of the field, so it may scan the index table. It never reads the records.
     assert!(!explained.contains("dataset_records"), "{explained}");
 
@@ -450,6 +452,7 @@ async fn a_footer_sum_over_200000_rows_is_correct_and_runs_as_one_statement() {
 // 7. The other footer choices, and a footer on a field the person cannot see.
 #[tokio::test]
 async fn footers_offer_the_other_choices_and_none_for_a_hidden_field() {
+    let _db = common::TestDb::new();
     let w = world(2_000).await;
     let view = |field: &str, f: &str| json!({ "column_summary": [[field, f]] });
     for (f, expected) in [("count", 2_000.0), ("avg", 1_000.5), ("min", 1.0), ("max", 2_000.0), ("sum", 2_001_000.0)] {
@@ -503,6 +506,7 @@ fn row_with_amount(page: &Value, amount: f64) -> Value {
 //    person cannot see is dropped for them.
 #[tokio::test]
 async fn a_color_rule_marks_the_right_rows_and_a_rule_on_a_hidden_field_is_dropped() {
+    let _db = common::TestDb::new();
     let w = world(200).await;
     let when = |f: &str, op: &str, v: &str| group("And", vec![clause(f, op, v)], vec![]);
     let view = make_view(
@@ -560,6 +564,7 @@ async fn a_color_rule_marks_the_right_rows_and_a_rule_on_a_hidden_field_is_dropp
 // 9. A view with too many groups, color rules or a bad footer is refused, and a color rule needs a label.
 #[tokio::test]
 async fn a_view_that_asks_for_too_much_is_refused() {
+    let _db = common::TestDb::new();
     let w = world(20).await;
     let when = group("And", vec![clause("amount", "GreaterThan", "1")], vec![]);
     let many: Vec<Value> = (0..11).map(|i| rule(&format!("r{i}"), "L", when.clone(), "info", "row", None)).collect();

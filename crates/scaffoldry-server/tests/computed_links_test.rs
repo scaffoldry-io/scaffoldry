@@ -2,6 +2,8 @@
 //!
 //! Each test uses a private app with a fresh slug and deletes its rows when it ends.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -14,19 +16,16 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const VIEWER: &str = "marcus.vance@state.edu";
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -216,7 +215,7 @@ fn as_f64(v: &Value) -> f64 {
 // 1. A parent with three children shows the sum. Adding, changing, moving, and removing each updates it.
 #[tokio::test]
 async fn a_rollup_and_a_count_follow_every_change_to_the_children() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let p1 = id_of(&create(&w, "parents", json!({ "name": "P1" })).await);
     let p2 = id_of(&create(&w, "parents", json!({ "name": "P2" })).await);
@@ -268,7 +267,7 @@ async fn list(w: &World, token: &str, limit: usize) -> Vec<Value> {
 // 2. A lookup on a page of 200 rows runs a fixed number of statements, however many rows the page has.
 #[tokio::test]
 async fn a_lookup_runs_one_statement_per_page_whatever_the_page_size() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let p = id_of(&create(&w, "parents", json!({ "name": "Dean" })).await);
     let q = id_of(&create(&w, "parents", json!({ "name": "Chair" })).await);
@@ -292,7 +291,7 @@ async fn a_lookup_runs_one_statement_per_page_whatever_the_page_size() {
 // 3. A hidden target field is absent from a lookup for a restricted person.
 #[tokio::test]
 async fn a_lookup_never_returns_a_field_the_reader_may_not_see() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let p = id_of(&create(&w, "parents", json!({ "name": "Dean", "notes": "advises on probation" })).await);
     create(&w, "children", json!({ "title": "x", "amount": 1, "parent": p })).await;
@@ -352,7 +351,7 @@ fn fill_big(slug: &str) {
 // 4. A rollup over 200,000 children of 1,000 parents updates one parent in under 200 ms.
 #[tokio::test]
 async fn updating_one_child_among_200000_updates_its_parent_in_under_200_ms() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill_big(&w.slug);
     let child = format!("chi-{}-7", w.slug);
@@ -371,7 +370,7 @@ async fn updating_one_child_among_200000_updates_its_parent_in_under_200_ms() {
 // 5. The plans of the aggregate and the lookup hold no sequential scan.
 #[tokio::test]
 async fn the_aggregate_and_the_lookup_plans_have_no_sequential_scan() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill_big(&w.slug);
     let repo = PostgresRepository::connect(None).unwrap();

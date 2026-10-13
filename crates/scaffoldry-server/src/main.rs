@@ -11,7 +11,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 && args[1] == "setup-token" {
         let state = ServerState::new()?;
-        if let Some(ref repo) = state.repository {
+        {
+        let repo = &state.repository;
             repo.revoke_setup_tokens()?;
         }
         let token = service::identity::create_setup_token(&state)?;
@@ -50,18 +51,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Workers start after migrations. With no job kinds registered there is nothing to claim, so
     // none start. The runner stops its workers when it is dropped.
-    let _job_runner = match state.repository.as_deref() {
-        Some(repo) if !jobs::JOB_KINDS.is_empty() => {
-            // Finished jobs are cleared once a day.
-            jobs::register_schedule(repo, "purge_jobs", 24 * 60 * 60)?;
-            // Uploads that no record took are cleared every hour.
-            jobs::register_schedule(repo, "purge_unattached_files", 60 * 60)?;
-            // A safety net for uploads whose scan job could not be queued.
-            jobs::register_schedule(repo, "scan_file", 10 * 60)?;
-            Some(jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?)
-        }
-        _ => None,
-    };
+    let repo = &*state.repository;
+    // Finished jobs are cleared once a day.
+    jobs::register_schedule(repo, "purge_jobs", 24 * 60 * 60)?;
+    // Uploads that no record took are cleared every hour.
+    jobs::register_schedule(repo, "purge_unattached_files", 60 * 60)?;
+    // A safety net for uploads whose scan job could not be queued.
+    jobs::register_schedule(repo, "scan_file", 10 * 60)?;
+    let _job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?;
 
     let app = build_app_with_state(state)?;
 

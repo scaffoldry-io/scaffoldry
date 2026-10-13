@@ -1,6 +1,8 @@
 //! Tests for MCP as the authoritative API and MCP Apps resources.
 //! Each capability tested via MCP JSON-RPC 2.0 with allowed and denied cases per role.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -9,10 +11,8 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 async fn reset_test_db() {
-    tokio::task::spawn_blocking(|| {
-        let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-        });
+    let db_url = scaffoldry_server::testing::database_url();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&db_url, postgres::NoTls) {
             let _ = client.batch_execute("
                 TRUNCATE TABLE organizations CASCADE;
@@ -70,6 +70,7 @@ async fn mcp_call(
 
 #[tokio::test]
 async fn test_mcp_workspace_tools_allow_and_deny_by_role() {
+    let _db = common::TestDb::new();
     reset_test_db().await;
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
@@ -209,6 +210,7 @@ async fn test_mcp_workspace_tools_allow_and_deny_by_role() {
 
 #[tokio::test]
 async fn test_mcp_record_tools_allow_and_deny_by_department() {
+    let _db = common::TestDb::new();
     reset_test_db().await;
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
@@ -279,6 +281,7 @@ async fn test_mcp_record_tools_allow_and_deny_by_department() {
 
 #[tokio::test]
 async fn test_mcp_apps_ui_resources() {
+    let _db = common::TestDb::new();
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
     let app = scaffoldry_server::build_app_with_state(state).expect("Failed to build router");
@@ -355,6 +358,7 @@ async fn seeded_app() -> Router {
 
 #[tokio::test]
 async fn tools_list_returns_exactly_the_registry_with_read_only_hints() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     let (status, res) = mcp_call(&app, &token, "tools/list", None).await;
@@ -381,6 +385,7 @@ async fn tools_list_returns_exactly_the_registry_with_read_only_hints() {
 
 #[tokio::test]
 async fn every_app_and_workspace_tool_refuses_a_caller_with_no_role() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     // Sarah Connor is computer science faculty. She has no role in the bio lab or the physics lab.
     let sarah = login_user(&app, "sarah.connor@state.edu").await;
@@ -412,6 +417,7 @@ async fn every_app_and_workspace_tool_refuses_a_caller_with_no_role() {
 
 #[tokio::test]
 async fn a_scoped_tool_without_its_target_is_a_tool_error_that_names_it() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     let (_, res) = mcp_call(
@@ -427,6 +433,7 @@ async fn a_scoped_tool_without_its_target_is_a_tool_error_that_names_it() {
 
 #[tokio::test]
 async fn an_unknown_argument_is_a_tool_error_that_names_it() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     let (status, res) = mcp_call(
@@ -443,6 +450,7 @@ async fn an_unknown_argument_is_a_tool_error_that_names_it() {
 
 #[tokio::test]
 async fn an_unknown_tool_is_a_tool_error() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     let (_, res) = mcp_call(
@@ -457,6 +465,7 @@ async fn an_unknown_tool_is_a_tool_error() {
 
 #[tokio::test]
 async fn a_result_is_structured_content_and_one_matching_text_block() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     let (_, res) = mcp_call(
@@ -494,6 +503,7 @@ async fn raw_post(app: &Router, token: &str, payload: Value) -> (StatusCode, Vec
 
 #[tokio::test]
 async fn a_notification_is_202_with_no_body() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     let (status, body) =
@@ -504,6 +514,7 @@ async fn a_notification_is_202_with_no_body() {
 
 #[tokio::test]
 async fn get_mcp_is_405() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     for path in ["/api/mcp", "/api/v1/mcp"] {
@@ -524,6 +535,7 @@ async fn get_mcp_is_405() {
 
 #[tokio::test]
 async fn initialize_answers_with_a_version_it_speaks() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     for (asked, expected) in [
@@ -543,6 +555,7 @@ async fn initialize_answers_with_a_version_it_speaks() {
 
 #[tokio::test]
 async fn simulate_cedar_policy_calls_the_engine_and_needs_a_platform_admin() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let admin = login_user(&app, "jordan.lee@state.edu").await;
     let faculty = login_user(&app, "sarah.connor@state.edu").await;
@@ -592,6 +605,7 @@ async fn simulate_cedar_policy_calls_the_engine_and_needs_a_platform_admin() {
 
 #[tokio::test]
 async fn the_cedar_resource_is_the_source_the_engine_was_built_from() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;
     let (_, res) = mcp_call(&app, &token, "resources/read", Some(json!({ "uri": "policies://cedar" }))).await;
@@ -614,6 +628,7 @@ async fn the_cedar_resource_is_the_source_the_engine_was_built_from() {
 
 #[tokio::test]
 async fn a_recorded_decision_is_attributed_to_the_session_not_to_an_argument() {
+    let _db = common::TestDb::new();
     let app = seeded_app().await;
     let faculty = login_user(&app, "sarah.connor@state.edu").await;
     let admin = login_user(&app, "jordan.lee@state.edu").await;

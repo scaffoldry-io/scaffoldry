@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -43,6 +45,7 @@ async fn send_req(
 
 #[test]
 fn test_decision_types_properties_and_pinned_hashes() {
+    let _db = common::TestDb::new();
     assert_eq!(DecisionType::ALL.len(), 28);
 
     for &dt in DecisionType::ALL {
@@ -90,6 +93,7 @@ fn test_decision_types_properties_and_pinned_hashes() {
 
 #[test]
 fn test_is_platform_admin_and_unit_in_scope_agreement() {
+    let _db = common::TestDb::new();
     let root_id = Uuid::new_v4();
     let dept_id = Uuid::new_v4();
 
@@ -155,6 +159,7 @@ fn test_is_platform_admin_and_unit_in_scope_agreement() {
 
 #[tokio::test]
 async fn test_admin_routes_enforce_platform_admin_and_auth() {
+    let _db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("server state"));
     let app = build_app_with_state(state.clone()).expect("app router");
 
@@ -194,6 +199,7 @@ async fn test_admin_routes_enforce_platform_admin_and_auth() {
 
 #[tokio::test]
 async fn test_overview_counts_match_fixture() {
+    let _db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("server state"));
     state.process_instances.write().unwrap().clear();
 

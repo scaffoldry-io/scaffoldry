@@ -23,7 +23,7 @@ pub fn convert_preview(caller: &AuthUser, app_slug: &str, body: &Value, state: &
     if !conversion_supported(from, to) {
         return Err(ServiceError::BadRequest(format!("A {from:?} field cannot be converted to {to:?}")));
     }
-    let repo = state.repository.as_deref().ok_or_else(|| ServiceError::Internal("A preview needs PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let payload = json!({ "app_slug": app_slug, "table_id": table_id, "field": field, "from": from, "to": to });
     let job = crate::jobs::enqueue(repo, "convert_preview", payload, &caller.eppn, None).map_err(|e| match e {
         crate::jobs::JobsError::Quota(message) => ServiceError::QuotaExceeded(message),
