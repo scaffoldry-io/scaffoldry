@@ -225,7 +225,8 @@ impl PostgresRepository {
     /// because that is the order a backward index scan gives without a sort step.
     pub fn indexed_page(&self, q: &IndexedQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let desc = q.sort.as_ref().is_some_and(|s| s.descending);
-        if !desc {
+        // The first page of an ascending walk has no cursor, so one statement reads the values and then the blanks.
+        if !desc && q.after.is_none() {
             return self.run_indexed(q, IndexPhase::All);
         }
         let in_blanks = matches!(q.after, Some((IndexedValue::Blank, _)));
@@ -421,23 +422,41 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
     }
 
     // The cursor and the order.
+    // A cursor is a row comparison on the two columns the index ends with, so it is a boundary in the index and the scan
+    // starts there. The older form, `value > v OR (value = v AND id > x) OR value IS NULL`, was a filter: the scan read
+    // from the front of the field and threw away every row before the cursor, so a page near the end of a million rows
+    // took 300 ms. The blanks sort last, so they are a phase of their own after the values.
     let order = match (descending, phase) {
-        (false, _) | (_, IndexPhase::All) => {
-            if let Some((v, id)) = &q.after {
-                let idp = push(&mut params, SqlParam::Text(id.clone()));
-                match value_param(&mut params, v) {
-                    Some(vp) => wheres.push(format!("(i.{col} > {vp} OR (i.{col} = {vp} AND i.record_id > ${idp}) OR i.{col} IS NULL)")),
-                    None => wheres.push(format!("(i.{col} IS NULL AND i.record_id > ${idp})")),
-                }
-            }
+        (false, IndexPhase::All) => {
+            // The first page has no cursor to find, so one statement covers the values and then the blanks.
             format!("i.{col} ASC NULLS LAST, i.record_id ASC")
         }
-        (true, IndexPhase::NonBlank) => {
+        (false, IndexPhase::NonBlank) => {
             wheres.push(format!("i.{col} IS NOT NULL"));
             if let Some((v, id)) = &q.after {
                 let idp = push(&mut params, SqlParam::Text(id.clone()));
                 if let Some(vp) = value_param(&mut params, v) {
-                    wheres.push(format!("(i.{col} < {vp} OR (i.{col} = {vp} AND i.record_id < ${idp}))"));
+                    wheres.push(format!("(i.{col}, i.record_id) > ({vp}, ${idp})"));
+                }
+            }
+            format!("i.{col} ASC, i.record_id ASC")
+        }
+        (false, IndexPhase::Blank) => {
+            wheres.push(format!("i.{col} IS NULL"));
+            if let Some((IndexedValue::Blank, id)) = &q.after {
+                let idp = push(&mut params, SqlParam::Text(id.clone()));
+                wheres.push(format!("i.record_id > ${idp}"));
+            }
+            // Ordered the way the index is, so it is read in place. `ORDER BY record_id` alone made the planner walk the
+            // primary key and filter a million rows to find none.
+            format!("i.{col} ASC NULLS LAST, i.record_id ASC")
+        }
+        (true, IndexPhase::All | IndexPhase::NonBlank) => {
+            wheres.push(format!("i.{col} IS NOT NULL"));
+            if let Some((v, id)) = &q.after {
+                let idp = push(&mut params, SqlParam::Text(id.clone()));
+                if let Some(vp) = value_param(&mut params, v) {
+                    wheres.push(format!("(i.{col}, i.record_id) < ({vp}, ${idp})"));
                 }
             }
             format!("i.{col} DESC, i.record_id DESC")
@@ -448,7 +467,9 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
                 let idp = push(&mut params, SqlParam::Text(id.clone()));
                 wheres.push(format!("i.record_id > ${idp}"));
             }
-            "i.record_id ASC".to_string()
+            // Ordered the way the index is, so it is read in place. `ORDER BY record_id` alone made the planner walk the
+            // primary key and filter a million rows to find none.
+            format!("i.{col} ASC NULLS LAST, i.record_id ASC")
         }
     };
     let scope = match &q.scope {
@@ -558,31 +579,56 @@ fn window_order(q: &IndexedQuery, reverse: bool) -> (String, bool) {
 /// not a join. With `reverse` the order is flipped and the caller flips the rows back.
 pub fn build_window_sql(q: &IndexedQuery, reverse: bool) -> (String, Vec<SqlParam>) {
     let mut params = vec![SqlParam::Text(q.app_slug.clone()), SqlParam::Text(q.table_id.clone())];
-    let mut wheres = window_wheres(q, &mut params);
+    let wheres = window_wheres(q, &mut params);
     let s = q.sort.as_ref().expect("a window walks a sort");
     let col = column_name(s.column);
     let (order, backward) = window_order(q, reverse);
+    let tail = |params: &mut Vec<SqlParam>| {
+        let limit = push_param(params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
+        let offset = push_param(params, SqlParam::Int(i64::try_from(q.offset).unwrap_or(i64::MAX)));
+        (limit, offset)
+    };
+    let fetch = |inner: String, w_order: &str| {
+        format!(
+            "SELECT r.id, r.app_slug, r.data, r.ceds_mapping, r.is_ferpa_sensitive, r.created_at::text AS created_at_text, r.created_by, r.version \
+             FROM ({inner}) w JOIN dataset_records r ON r.id = w.record_id AND r.deleted_at IS NULL ORDER BY {w_order}"
+        )
+    };
+    // A cursor is a row comparison on the two columns the index ends with, so the scan starts at it. The blanks sort last
+    // (first, when the walk runs backward), so a forward walk past a value also reads every blank, and that is a second
+    // branch of its own with its own bound.
+    if let (Some((v, id)), false, false) = (&q.after, backward, matches!(q.after, Some((IndexedValue::Blank, _)))) {
+        let idp = push_param(&mut params, SqlParam::Text(id.clone()));
+        let vp = agg_value_param(&mut params, v).expect("a value that is not blank has a parameter");
+        let (limit, offset) = tail(&mut params);
+        let cap = push_param(&mut params, SqlParam::Int(i64::try_from(q.limit + q.offset).unwrap_or(i64::MAX)));
+        let inner = format!(
+            "SELECT record_id, k FROM (\
+               (SELECT i.record_id, i.{col} AS k, 0 AS part FROM record_index i WHERE {wheres} AND i.{col} IS NOT NULL AND (i.{col}, i.record_id) > ({vp}, ${idp}) \
+                ORDER BY i.{col} ASC, i.record_id ASC LIMIT ${cap}::bigint) \
+               UNION ALL \
+               (SELECT i.record_id, i.{col} AS k, 1 AS part FROM record_index i WHERE {wheres} AND i.{col} IS NULL ORDER BY i.{col} ASC NULLS LAST, i.record_id ASC LIMIT ${cap}::bigint)\
+             ) u ORDER BY part, k, record_id LIMIT ${limit}::bigint OFFSET ${offset}::bigint"
+        );
+        return (fetch(inner, "w.k ASC NULLS LAST, w.record_id ASC"), params);
+    }
+    let mut wheres = wheres;
     if let Some((v, id)) = &q.after {
         let idp = push_param(&mut params, SqlParam::Text(id.clone()));
         let vp = agg_value_param(&mut params, v);
         let after = match (vp, backward) {
-            (Some(vp), false) => format!("(i.{col} > {vp} OR (i.{col} = {vp} AND i.record_id > ${idp}) OR i.{col} IS NULL)"),
+            // Forward past a blank: only blanks are left.
             (None, false) => format!("(i.{col} IS NULL AND i.record_id > ${idp})"),
-            (Some(vp), true) => format!("(i.{col} < {vp} OR (i.{col} = {vp} AND i.record_id < ${idp}))"),
+            (Some(vp), true) => format!("(i.{col}, i.record_id) < ({vp}, ${idp})"),
             (None, true) => format!("((i.{col} IS NULL AND i.record_id < ${idp}) OR i.{col} IS NOT NULL)"),
+            (Some(_), false) => unreachable!("handled above"),
         };
         wheres = format!("{wheres} AND {after}");
     }
-    let limit = push_param(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
-    let offset = push_param(&mut params, SqlParam::Int(i64::try_from(q.offset).unwrap_or(i64::MAX)));
-    let w_order = order.replace("i.", "w.");
-    let w_order = w_order.replace(&format!("w.{col}"), "w.k");
-    let sql = format!(
-        "SELECT r.id, r.app_slug, r.data, r.ceds_mapping, r.is_ferpa_sensitive, r.created_at::text AS created_at_text, r.created_by, r.version \
-         FROM (SELECT i.record_id, i.{col} AS k FROM record_index i WHERE {wheres} ORDER BY {order} LIMIT ${limit}::bigint OFFSET ${offset}::bigint) w \
-         JOIN dataset_records r ON r.id = w.record_id AND r.deleted_at IS NULL ORDER BY {w_order}"
-    );
-    (sql, params)
+    let (limit, offset) = tail(&mut params);
+    let w_order = order.replace("i.", "w.").replace(&format!("w.{col}"), "w.k");
+    let inner = format!("SELECT i.record_id, i.{col} AS k FROM record_index i WHERE {wheres} ORDER BY {order} LIMIT ${limit}::bigint OFFSET ${offset}::bigint");
+    (fetch(inner, &w_order), params)
 }
 
 /// The statement that counts the rows of a view, to a cap when `cap` is given.

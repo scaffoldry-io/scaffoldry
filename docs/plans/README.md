@@ -97,7 +97,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 67 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked | **COMPLETED** |
 | 68 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules | **COMPLETED** |
 | 69 | [views.md](views.md) | 3 | A million rows in a window. Uses `@tanstack/react-virtual`, approved by Johann (MIT) | **COMPLETED** |
-| 70 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |
+| 70 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
 | 71 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts |
 | 72 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
 | 73 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers |

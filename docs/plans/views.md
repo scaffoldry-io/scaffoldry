@@ -130,7 +130,7 @@ Measured on the development database (PostgreSQL 16, parallel workers on) with 1
 | The page statement as it was (index join records, `OFFSET` after the join) | 500,000 | 3.0 s warm (6.5 s cold) | `Parallel Index Scan` on `idx_record_index_num`, then 500,616 lookups on `dataset_records_pkey`, `Gather Merge`. Uses the index, and joins every row it skips |
 | The same, near the end | 999,800 | 2.1 s | `Parallel Seq Scan` on both tables |
 | Skip on the index alone, fetch the 200 records after | 500,000 | 0.41 to 0.47 s | `Index Scan` on `idx_record_index_num` for 500,200 entries, then 200 lookups on `dataset_records_pkey` |
-| **Anchor**: start at the nearest of 1,000 anchors, skip at most 999 | any | 0.19 s measured through the whole HTTP request | Index scan of at most 1,200 entries, then 200 lookups |
+| **Anchor**: start at the nearest of 1,000 anchors, skip at most 999 | any | 0.03 s measured through the whole HTTP request (0.19 s before the cursor fix in `row-scale.md` phase 6) | Index scan of at most 1,200 entries, then 200 lookups |
 
 Neither plain `OFFSET` meets the 300 ms limit, and the index-only form grows with the offset, so the strategy is **anchors**. The first row of the table is the plan to beat: the index is used and it is still 3 seconds, because the cost is the number of rows skipped.
 
