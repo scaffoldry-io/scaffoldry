@@ -18,7 +18,7 @@ pub const MAX_INDEXED_FIELDS: usize = 20;
 pub type IndexCols = (Option<f64>, Option<String>, Option<String>);
 
 /// Which column a field's values go in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IndexColumn {
     Num,
     Txt,

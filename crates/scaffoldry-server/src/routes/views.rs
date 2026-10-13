@@ -105,6 +105,10 @@ struct DataQuery {
     cursor: Option<String>,
     limit: Option<usize>,
     group_path: Option<String>,
+    offset: Option<usize>,
+    #[serde(default)]
+    last: bool,
+    count: Option<String>,
 }
 
 async fn view_data(
@@ -121,7 +125,7 @@ async fn view_data(
         Some(p) => serde_json::from_str(p).map_err(|_| ServiceError::BadRequest("group_path must be a JSON array of strings".to_string()))?,
     };
     let origin = crate::guard::read_origin(&state, &headers);
-    let body = tokio::task::spawn_blocking(move || views::run(&caller, &origin, &slug, id, views::RunQuery { cursor: q.cursor, limit: q.limit, group_path }, &state))
+    let body = tokio::task::spawn_blocking(move || views::run(&caller, &origin, &slug, id, views::RunQuery { cursor: q.cursor, limit: q.limit, group_path, offset: q.offset, last: q.last, count: q.count }, &state))
         .await
         .map_err(|_| ServiceError::Internal("The read stopped".to_string()))??;
     Ok(Json(body))

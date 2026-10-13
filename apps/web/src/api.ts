@@ -553,6 +553,10 @@ export interface ViewData {
   next_cursor?: string | null;
   /** On the first page only. A hidden field has none. */
   footers?: Record<string, ViewFooter>;
+  /** Present when a window was asked for: where it began (null for the last page) and how it was found. */
+  window?: { offset: number | null; strategy: "offset" | "anchor" | "reverse" };
+  /** Present when `count: "exact"` was asked for. `at_least` means the count ran out of time. */
+  count?: { value: number; exact: true } | { at_least: number };
 }
 
 /**
@@ -562,9 +566,12 @@ export interface ViewData {
 export const runView = (
   appSlug: string,
   viewId: string,
-  opts: { groupPath?: string[]; cursor?: string; limit?: number } = {}
+  opts: { groupPath?: string[]; cursor?: string; limit?: number; offset?: number; last?: boolean; count?: "exact" } = {}
 ): Promise<ViewData> => {
   const q = new URLSearchParams();
+  if (opts.offset !== undefined) q.set("offset", String(opts.offset));
+  if (opts.last) q.set("last", "true");
+  if (opts.count) q.set("count", opts.count);
   if (opts.groupPath?.length) q.set("group_path", JSON.stringify(opts.groupPath));
   if (opts.cursor) q.set("cursor", opts.cursor);
   if (opts.limit) q.set("limit", String(opts.limit));

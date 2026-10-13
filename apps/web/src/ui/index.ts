@@ -20,3 +20,4 @@ export * from "./PersonLabel";
 export * from "./useAsync";
 export * from "./Markdown";
 export * from "./ToneMark";
+export * from "./VirtualGrid";
