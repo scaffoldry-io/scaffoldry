@@ -172,9 +172,14 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "Programs and web pages cannot be uploaded.", next: "Save it as a PDF, an image, or a plain document, then upload that." },
       ],
       [
+        "scanner_unavailable",
+        new ApiError(503, "Files cannot be uploaded now. The virus scanner is not answering.", { code: "scanner_unavailable" }),
+        { message: "Files cannot be uploaded right now.", next: "Try again in a few minutes, or ask an admin to check the virus scanner." },
+      ],
+      [
         "any other code uses the server's sentence and the body's remedy",
-        new ApiError(422, "The scanner is down", { code: "scanner_unavailable", remedy: "Try again later." }),
-        { message: "The scanner is down", next: "Try again later." },
+        new ApiError(422, "The vault is sealed", { code: "master_key_missing", remedy: "Try again later." }),
+        { message: "The vault is sealed", next: "Try again later." },
       ],
     ];
 

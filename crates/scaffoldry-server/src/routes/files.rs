@@ -50,6 +50,21 @@ async fn upload(
     if files::blocked_name(&name) {
         return Err(pair(ServiceError::FileTypeBlocked(format!("'{name}' is a program or a web page. Programs and web pages cannot be uploaded."))));
     }
+    // With `files.require_scan` an upload needs a scanner that answers, checked before any bytes are kept.
+    let scanner = {
+        let settings = state.settings.read().map_err(|e| pair(ServiceError::Internal(e.to_string())))?;
+        crate::scan::Scanner::from_setting(settings.get("files.scanner"))
+    };
+    let require_scan = state.settings.read().ok().and_then(|s| s.get("files.require_scan").and_then(Value::as_bool)).unwrap_or(false);
+    if require_scan {
+        let answers = match scanner.clone() {
+            Some(s) => tokio::task::spawn_blocking(move || s.ping()).await.unwrap_or(false),
+            None => false,
+        };
+        if !answers {
+            return Err(pair(ServiceError::ScannerUnavailable("Files cannot be uploaded now. The virus scanner is not answering.".to_string())));
+        }
+    }
     let limit = files::max_bytes(&state);
     let too_large = || ServiceError::FileTooLarge(format!("That file is over the limit of {} MB.", limit / 1024 / 1024));
     if declared > limit {
@@ -77,9 +92,15 @@ async fn upload(
         app_slug: &slug,
         name: &name,
         uploaded_by: &user.eppn,
+        scan_state: if scanner.is_some() { "pending" } else { "skipped" },
     })
-        .map_err(|e| pair(ServiceError::Internal(e.to_string())))?;
-    Ok((StatusCode::CREATED, Json(json!({ "ref_id": ref_id, "name": name, "size": stored.size, "media_type": stored.media_type }))))
+    .map_err(|e| pair(ServiceError::Internal(e.to_string())))?;
+    let scan_state = if scanner.is_some() { "pending" } else { "skipped" };
+    if scanner.is_some() {
+        // One job scans everything that waits. If it cannot be queued now, the schedule picks the file up.
+        let _ = crate::jobs::enqueue(repo, "scan_file", json!({}), "scanner@scaffoldry.internal", Some("scan_pending_files"));
+    }
+    Ok((StatusCode::CREATED, Json(json!({ "ref_id": ref_id, "name": name, "size": stored.size, "media_type": stored.media_type, "scan_state": scan_state }))))
 }
 
 fn not_found() -> Response {
@@ -95,6 +116,10 @@ async fn download(State(state): State<SharedState>, headers: HeaderMap, Path((sl
     let Ok(record) = crate::service::records::get_record(&user, &slug, &id, &state) else { return not_found() };
     let Some(repo) = state.repository.as_deref() else { return not_found() };
     let Ok(Some(file)) = repo.record_file_ref(&slug, &id, ref_id) else { return not_found() };
+    // A file waits for its scan. An infected one is deleted, so the lookup above has already refused it.
+    if file.scan_state == "pending" {
+        return not_found();
+    }
     let Some(field) = file.field.clone() else { return not_found() };
     // The record came back with the fields the caller may not read removed. The file counts only if its field is left.
     let listed = record

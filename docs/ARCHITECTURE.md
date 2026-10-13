@@ -312,6 +312,15 @@ A file is kept outside the record. The record holds a list of `{ref_id, name}` i
 - **A download from a sensitive field** writes a `file_download` row to the disclosure log.
 - **An upload no record takes** is removed after 24 hours by the `purge_unattached_files` job. A server with `SCAFFOLDRY_FILES_DIR` set to a missing or read-only directory does not start. With it unset, uploads are off.
 
+#### 6.1.7 Scanning (Attachments Phase 2)
+
+With `files.scanner` set (`{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }`), every upload starts `pending` and one `scan_file` job sends each waiting file to the daemon over its socket. The client is written by hand over `std` (`scan.rs`). A daemon that does not answer in 30 seconds gives `error`.
+
+- **A pending file cannot be attached or downloaded.** `clean`, `error` and `skipped` files can. With no scanner a file is `skipped`, and the Overview says so in a Banner.
+- **An infected file** is removed from disk, every upload of the same bytes is marked deleted, and a `FileInfected` ledger entry names the hash, the signature and the uploader.
+- **`files.require_scan`** makes an upload fail with `scanner_unavailable` (503) when no scanner answers. It never turns a check off.
+- **The Overview** shows whether a scanner is set, whether it answers, the last result, and how many files are in `error` or `skipped`.
+
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
 In legacy low-code tools, departmental apps become unmaintained legacy liabilities. In Scaffoldry, apps are maintained as version-controlled repositories:

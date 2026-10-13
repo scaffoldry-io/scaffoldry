@@ -18,6 +18,7 @@ pub mod repository_trash;
 pub mod repository_undo;
 pub mod repository_views;
 pub mod routes;
+pub mod scan;
 pub mod service;
 pub mod state;
 

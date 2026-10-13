@@ -101,7 +101,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 71 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts | **COMPLETED** |
 | 72 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
 | 73 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers | **COMPLETED** |
-| 74 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon |
+| 74 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon | **COMPLETED** |
 | 75 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app |
 | 76 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures |
 | 77 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal |
