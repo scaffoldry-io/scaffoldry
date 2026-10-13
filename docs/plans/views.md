@@ -38,7 +38,7 @@ This brief moves views out of governance, because a view cannot widen access, an
 ## Rules for every phase
 
 1. Write the failing test first. Run it. Confirm it fails because the behavior is missing. Then write the code.
-2. Do not add a dependency, except `@tanstack/react-virtual` in phase 3 once Johann has said yes.
+2. Do not add a dependency, except `@tanstack/react-virtual` in phase 3, which Johann has approved.
 3. A view never widens access. A test proves a view cannot return a hidden row or field.
 4. A list, a group, a total, or a chart is computed by the server over the indexed set. The browser never sorts, filters, groups, or totals records.
 5. Color is never the only signal.
@@ -114,7 +114,7 @@ Tests.
 
 ## Phase 3 — a million rows in a window
 
-Needs Johann's yes on `@tanstack/react-virtual`.
+Johann has said yes to `@tanstack/react-virtual` (MIT, on the licence whitelist). It is the only new dependency this phase may add.
 
 1. Offset window. `GET .../rows` accepts `offset` and `limit` in addition to the cursor, for an ordering over an indexed key. Measure first. Run `SELECT ... ORDER BY ... OFFSET 500000 LIMIT 200` over 1,000,000 rows and paste the plan and the time. If it is under 300 ms and the plan uses the index, offsets are allowed up to 1,000,000. If not, build anchors instead: a job `build_anchors` samples the sort key of every 1,000th row into `view_anchors (view_id, position, cursor)` (migration `0047_view_anchors.sql`) and a jump fetches from the nearest anchor with a cursor.
 2. Counts. A request asks `count=exact` and runs under a two-second statement timeout. If it times out, the response is `{ "at_least": n }`, and the screen says `Over 250,000 records`. A view with no filter uses the stored estimate for the table plus the delta of writes since, shown as `about`.
