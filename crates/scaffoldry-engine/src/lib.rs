@@ -164,6 +164,10 @@ pub enum FieldType {
     },
     /// DateTime stored as a UTC instant.
     DateTime,
+    /// Files kept outside the record. The value is a list of `{ref_id, name}`.
+    Attachment {
+        allow_multiple: bool,
+    },
 }
 
 impl FieldType {
@@ -208,6 +212,7 @@ impl serde::Serialize for FieldType {
             FieldType::LongText => serializer.serialize_str("LongText"),
             FieldType::Duration { .. } => serializer.serialize_str("Duration"),
             FieldType::DateTime => serializer.serialize_str("DateTime"),
+            FieldType::Attachment { .. } => serializer.serialize_str("Attachment"),
         }
     }
 }
@@ -248,6 +253,7 @@ impl<'de> serde::Deserialize<'de> for FieldType {
                 "LongText" => Ok(FieldType::LongText),
                 "Duration" => Ok(FieldType::Duration { format: DurationFormat::HMm }),
                 "DateTime" => Ok(FieldType::DateTime),
+                "Attachment" => Ok(FieldType::Attachment { allow_multiple: true }),
                 other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
             },
             serde_json::Value::Object(map) => {
@@ -267,6 +273,13 @@ impl<'de> serde::Deserialize<'de> for FieldType {
                         _ => false,
                     };
                     Ok(FieldType::Collaborator { allow_multiple })
+                } else if let Some(att) = map.get("Attachment") {
+                    let allow_multiple = match att {
+                        serde_json::Value::Bool(b) => *b,
+                        serde_json::Value::Object(sub) => sub.get("allow_multiple").and_then(serde_json::Value::as_bool).unwrap_or(true),
+                        _ => true,
+                    };
+                    Ok(FieldType::Attachment { allow_multiple })
                 } else if map.contains_key("CreatedBy") {
                     Ok(FieldType::CreatedBy)
                 } else if map.contains_key("LastModifiedBy") {

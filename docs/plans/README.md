@@ -100,7 +100,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 70 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
 | 71 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts | **COMPLETED** |
 | 72 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
-| 73 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers |
+| 73 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers | **COMPLETED** |
 | 74 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon |
 | 75 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app |
 | 76 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures |
@@ -226,7 +226,7 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0029_disclosure_log.sql` | record history phase 4 |
 | `0030_member_principals.sql` | access rules phase 1 |
 | `0031_record_links.sql` | links phase 1 |
-| `0032_attachments.sql` | attachments phase 1 |
+| `0032_attachments.sql` | attachments phase 1. Shipped as `0051_files.sql`, because 0032 was taken |
 | `0033_app_views.sql` | views phase 1 |
 | `0034_view_shares.sql` | views phase 6. Also creates `rate_limits` |
 | `0035_import_export.sql` | import export phase 4 (`app_templates`) |

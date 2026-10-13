@@ -23,6 +23,7 @@ pub mod governance;
 pub mod jobs;
 pub mod mcp;
 pub mod policy;
+pub mod files;
 pub mod records;
 pub mod scim;
 pub mod organizations;
@@ -50,6 +51,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(organizations::router())
         .merge(apps::router())
         .merge(records::router())
+        .merge(files::router())
         .merge(history::router())
         .merge(trash::router())
         .merge(calc::router())

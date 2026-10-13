@@ -1,5 +1,6 @@
 //! Scaffoldry Sovereign API Server (Layer 1 / Layer 2 / Layer 3 Bridge)
 
+pub mod files;
 pub mod guard;
 pub mod calc_jobs;
 pub mod index_jobs;
@@ -8,6 +9,7 @@ pub mod jwt;
 pub mod repository;
 pub mod repository_comments;
 pub mod repository_disclosure;
+pub mod repository_files;
 pub mod repository_calc;
 pub mod repository_index;
 pub mod repository_links;
@@ -69,6 +71,7 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
             axum::http::header::ACCEPT,
             axum::http::header::ORIGIN,
             axum::http::HeaderName::from_static("x-requested-with"),
+            axum::http::HeaderName::from_static("x-file-name"),
         ]);
 
     let router = routes::api_router(state.clone())
