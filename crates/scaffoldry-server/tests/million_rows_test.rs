@@ -134,7 +134,9 @@ fn seed(slug: &str) -> Duration {
             .expect("index");
         }
         // The planner reads statistics, and an index-only scan reads the visibility map. A real table has both by now.
-        c.batch_execute("VACUUM ANALYZE dataset_records; VACUUM ANALYZE record_index;").expect("vacuum");
+        // VACUUM cannot share a transaction, so each is its own statement.
+        c.batch_execute("VACUUM ANALYZE dataset_records").expect("vacuum records");
+        c.batch_execute("VACUUM ANALYZE record_index").expect("vacuum index");
     });
     started.elapsed()
 }
