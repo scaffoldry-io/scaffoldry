@@ -392,6 +392,9 @@ async fn blocked_names_are_refused_and_names_are_cleaned() {
     let name = r.json()["name"].as_str().unwrap().to_string();
     assert!(!name.contains('/') && !name.contains(".."), "{name}");
     assert!(name.ends_with(".txt"), "{name}");
+    // A browser sends the name percent-encoded.
+    let accented = upload(&f, &f.owner, "r%C3%A9sum%C3%A9%20final.txt", "text/plain", b"plain words".to_vec()).await;
+    assert_eq!(accented.json()["name"], "résumé final.txt", "{}", String::from_utf8_lossy(&accented.bytes));
     // A script or page by its bytes is refused whatever its name.
     let page = upload(&f, &f.owner, "notes.txt", "text/plain", b"<!DOCTYPE html><html><script>1</script></html>".to_vec()).await;
     assert_eq!(page.json()["code"], "file_type_blocked");
@@ -479,4 +482,43 @@ async fn boot_refuses_a_missing_or_unwritable_files_directory() {
     assert!(scaffoldry_server::files::open_dir().is_err());
     std::env::remove_var("SCAFFOLDRY_FILES_DIR");
     assert!(scaffoldry_server::files::open_dir().is_ok(), "unset means uploads are off, which is not a boot error");
+}
+
+// 11. A record lists its files with their size, type and scan state, and only for the fields the person may read.
+#[tokio::test]
+async fn a_record_lists_its_files_for_the_fields_a_person_may_read() {
+    let _g = LOCK.lock().await;
+    let f = fixture().await;
+    let doc = upload(&f, &f.owner, "a.png", "image/png", png()).await;
+    let scan = upload(&f, &f.owner, "s.png", "image/png", {
+        let mut b = png();
+        b.push(11);
+        b
+    })
+    .await;
+    let made = create(&f, &f.owner, json!({ "doc": doc_of(&doc), "scan": doc_of(&scan) })).await;
+    let id = made.json()["id"].as_str().unwrap().to_string();
+    // The record itself carries what a grid chip shows.
+    let held = &made.json()["data"]["doc"][0];
+    assert_eq!(held["name"], "a.png", "{}", String::from_utf8_lossy(&made.bytes));
+    assert_eq!(held["size"], png().len());
+    assert_eq!(held["media_type"], "image/png");
+
+    let uri = format!("/api/v1/apps/{}/records/{}/files", f.slug, id);
+    let all = get(&f, &f.owner, &uri).await;
+    assert_eq!(all.status, StatusCode::OK, "{}", String::from_utf8_lossy(&all.bytes));
+    let body = all.json();
+    assert_eq!(body["fields"], json!(["doc", "scan"]));
+    let files = body["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    let first = files.iter().find(|x| x["field"] == "doc").unwrap();
+    assert_eq!(first["ref_id"], doc.json()["ref_id"]);
+    assert_eq!(first["scan_state"], "skipped");
+    assert_eq!(first["media_type"], "image/png");
+
+    let seen = get(&f, &f.viewer, &uri).await;
+    assert_eq!(seen.status, StatusCode::OK);
+    assert_eq!(seen.json()["fields"], json!(["doc"]), "the sensitive field is not even named");
+    assert!(seen.json()["files"].as_array().unwrap().iter().all(|x| x["field"] == "doc"));
+    assert_eq!(get(&f, &f.outsider, &uri).await.status, StatusCode::FORBIDDEN);
 }

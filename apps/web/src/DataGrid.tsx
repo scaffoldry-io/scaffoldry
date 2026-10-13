@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-table";
 import { FieldSpec, RowDensity, FieldType, AppView, AppTable } from "./types";
 import { explainError } from "./ui/explainError";
+import { AttachmentChips, type AttachedFile } from "./ui/Attachments";
 
 export type CellAddr = { recordId: string; fieldName: string };
 
@@ -63,6 +64,8 @@ const READ_ONLY_TYPES = new Set<FieldType>([
   "LastModifiedTime",
   "CreatedBy",
   "LastModifiedBy",
+  // Files are added in the record drawer.
+  "Attachment",
 ]);
 
 function isReadOnlyField(field?: FieldSpec): boolean {
@@ -1520,6 +1523,8 @@ export function DataGrid({
                             );
                           })()}
                         </div>
+                      ) : field.field_type === "Attachment" ? (
+                        <AttachmentChips value={Array.isArray(cellVal) ? (cellVal as AttachedFile[]) : []} />
                       ) : (
                         /* Non-editing display */
                         <div className="flex items-center justify-between text-slate-800 dark:text-slate-200 min-h-[1.25rem]">
