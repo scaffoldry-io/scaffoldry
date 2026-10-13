@@ -23,7 +23,7 @@ const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
     std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry_agent_b".to_string())
+        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -603,5 +603,5 @@ async fn adding_unique_to_a_field_with_3_duplicate_values_raises_data_loss_and_s
     let previews = data_loss["previews"].as_array().expect("previews present on data_loss");
     let dupe_preview = previews.iter().find(|p| p["field"] == "code").expect("code preview found");
     assert_eq!(dupe_preview["duplicates"], 3, "count of duplicates must be 3");
-    assert!(dupe_preview["examples"].as_array().unwrap().len() >= 1, "examples present");
+    assert!(!dupe_preview["examples"].as_array().unwrap().is_empty(), "examples present");
 }

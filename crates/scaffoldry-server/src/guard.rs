@@ -105,9 +105,9 @@ pub fn view_as_tool_gate(row: &crate::state::ApiToken, name: &str, args: &serde_
     Ok(())
 }
 
-/// How this request reached the server: an agent token or a person, and the batch the caller
-/// named. A bad batch header is refused, not ignored, so a typo cannot split a paste in two.
-pub fn origin(state: &SharedState, headers: &HeaderMap) -> Result<crate::service::history::Origin, ServiceError> {
+/// Whether this request carries an agent token, and its label. A read has no batch, so a bad batch
+/// header cannot hide the agent: this never refuses.
+pub fn read_origin(state: &SharedState, headers: &HeaderMap) -> crate::service::history::Origin {
     use crate::repository::ActorKind;
     let mut origin = crate::service::history::Origin::user();
     if let Some(row) = bearer_token(headers).and_then(|t| state.get_api_token(&hash_token(t))) {
@@ -116,6 +116,13 @@ pub fn origin(state: &SharedState, headers: &HeaderMap) -> Result<crate::service
             origin.token_label = Some(row.label);
         }
     }
+    origin
+}
+
+/// How this request reached the server: an agent token or a person, and the batch the caller
+/// named. A bad batch header is refused, not ignored, so a typo cannot split a paste in two.
+pub fn origin(state: &SharedState, headers: &HeaderMap) -> Result<crate::service::history::Origin, ServiceError> {
+    let mut origin = read_origin(state, headers);
     if let Some(value) = headers.get("x-scaffoldry-batch") {
         let batch = value
             .to_str()

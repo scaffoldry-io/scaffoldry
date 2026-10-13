@@ -56,6 +56,13 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "You are viewing as someone else. This view is read-only.", next: "Exit the view to make changes." };
     case "quota_exceeded":
       return { message: e.message, next: "Wait for your background work to finish, or cancel some of it, then try again." };
+    case "too_many_indexes": {
+      const unused: string[] = Array.isArray(e.details?.unused) ? e.details.unused : [];
+      const next = unused.length
+        ? `Ask an admin to stop indexing a field no view uses, such as ${unused.slice(0, 3).join(", ")}.`
+        : "Sort or filter on a field that is already indexed.";
+      return { message: e.message, next };
+    }
     case "calculating":
       return { message: e.message, next: "Try again when it has finished." };
     case "index_building":
@@ -68,6 +75,12 @@ export function explainError(e: unknown): ExplainedError {
       return { message: e.message, next: "Check the field value and try again." };
     case "too_large":
       return { message: e.message, next: "Narrow the filter." };
+    case "file_too_large":
+      return { message: e.message, next: "Choose a smaller file, or ask an admin to raise the file size limit." };
+    case "scanner_unavailable":
+      return { message: "Files cannot be uploaded right now.", next: "Try again in a few minutes, or ask an admin to check the virus scanner." };
+    case "file_type_blocked":
+      return { message: e.message, next: "Save it as a PDF, an image, or a plain document, then upload that." };
     default:
       return e.remedy ? { message: e.message, next: e.remedy } : { message: e.message };
   }

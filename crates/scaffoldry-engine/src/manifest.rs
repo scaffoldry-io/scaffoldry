@@ -35,7 +35,7 @@ pub const ROLLUP_FUNCTIONS: [&str; 6] = ["sum", "avg", "min", "max", "count", "c
 /// True for a field type whose value is stored as a number.
 pub fn is_numeric(t: FieldType) -> bool {
     use FieldType::*;
-    matches!(t, Number | Currency | Percent | Rating | Autonumber | Count | Rollup)
+    matches!(t, Number | Currency | Percent | Rating | Autonumber | Count | Rollup | Duration { .. })
 }
 
 /// Things that still validate but should change. A relationship joins by value, and a link joins by
@@ -99,9 +99,31 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
             if f.indexed && f.field_type == FieldType::Lookup {
                 problems.push(format!("table '{}': Lookup field '{}' cannot be indexed", table.id, f.name));
             }
+            if f.indexed && f.field_type == FieldType::LongText {
+                problems.push(format!("table '{}': LongText field '{}' cannot be indexed", table.id, f.name));
+            }
         }
         for f in &table.fields {
             match f.field_type {
+                                FieldType::Duration { .. } => {
+                    if let Some(ref df) = f.duration_format {
+                        if !matches!(df.as_str(), "h:mm" | "h:mm:ss" | "d h" | "days") {
+                            problems.push(format!("table '{}': field '{}' has invalid duration format '{}'", table.id, f.name, df));
+                        }
+                    }
+                }
+                FieldType::Select | FieldType::MultiSelect => {
+                    let mut opt_ids = HashSet::new();
+                    let mut opt_labels = HashSet::new();
+                    for opt in &f.select_options {
+                        if opt.id.is_empty() || !opt_ids.insert(opt.id.as_str()) {
+                            problems.push(format!("table '{}': field '{}' has duplicate or empty select option id '{}'", table.id, f.name, opt.id));
+                        }
+                        if opt.label.is_empty() || !opt_labels.insert(opt.label.as_str()) {
+                            problems.push(format!("table '{}': field '{}' has duplicate or empty select option label '{}'", table.id, f.name, opt.label));
+                        }
+                    }
+                }
                 FieldType::Formula => {
                     if let Some(expr) = &f.formula_expression {
                         match validate_formula(expr) {
@@ -213,6 +235,78 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                             problems.push(format!("view '{}' lists the field '{}', which '{tid}' does not have", view.id, f.name));
                         }
                     }
+                    for s in &view.sort_rules {
+                        if let Some(f) = table.fields.iter().find(|x| x.name == s.field_name) {
+                            if f.field_type == FieldType::LongText {
+                                problems.push(format!("view '{}': LongText field '{}' cannot be used for sort", view.id, s.field_name));
+                            }
+                        }
+                    }
+                    if let Some(filters) = &view.filters {
+                        if let Err(e) = crate::check_filter(filters) {
+                            problems.push(format!("view '{}': {e}", view.id));
+                        }
+                        for c in crate::clauses_of(filters) {
+                            if let Some(f) = table.fields.iter().find(|x| x.name == c.field_name) {
+                                if f.field_type == FieldType::LongText {
+                                    problems.push(format!("view '{}': LongText field '{}' cannot be used for filter", view.id, c.field_name));
+                                }
+                            }
+                        }
+                    }
+                    let has = |name: &str| table.fields.iter().any(|x| x.name == name);
+                    if view.group_by.len() > crate::MAX_GROUP_LEVELS {
+                        problems.push(format!("view '{}' groups by {} fields, and {} is the most", view.id, view.group_by.len(), crate::MAX_GROUP_LEVELS));
+                    }
+                    for name in &view.group_by {
+                        if !has(name) {
+                            problems.push(format!("view '{}' groups by the field '{name}', which '{tid}' does not have", view.id));
+                        }
+                    }
+                    for (name, function) in &view.column_summary {
+                        if !has(name) {
+                            problems.push(format!("view '{}' totals the field '{name}', which '{tid}' does not have", view.id));
+                        }
+                        if !crate::FOOTER_FUNCTIONS.contains(&function.as_str()) {
+                            problems.push(format!("view '{}': '{function}' is not a footer choice. Use one of {}", view.id, crate::FOOTER_FUNCTIONS.join(", ")));
+                        }
+                    }
+                    if view.aggregations.len() > crate::MAX_AGGREGATIONS {
+                        problems.push(format!("view '{}' has {} aggregations, and {} is the most", view.id, view.aggregations.len(), crate::MAX_AGGREGATIONS));
+                    }
+                    for a in &view.aggregations {
+                        if !crate::SUMMARY_FUNCTIONS.contains(&a.function.as_str()) {
+                            problems.push(format!("view '{}': '{}' is not an aggregation. Use one of {}", view.id, a.function, crate::SUMMARY_FUNCTIONS.join(", ")));
+                        }
+                        match a.field.as_deref() {
+                            None if a.function != "count" => problems.push(format!("view '{}': {} needs a field", view.id, a.function)),
+                            Some(f) if !has(f) => problems.push(format!("view '{}' totals the field '{f}', which '{tid}' does not have", view.id)),
+                            _ => {}
+                        }
+                    }
+                    if view.color_rules.len() > crate::MAX_COLOR_RULES {
+                        problems.push(format!("view '{}' has {} color rules, and {} is the most", view.id, view.color_rules.len(), crate::MAX_COLOR_RULES));
+                    }
+                    for rule in &view.color_rules {
+                        if rule.label.trim().is_empty() {
+                            problems.push(format!("view '{}': color rule '{}' needs a label, because color is never the only signal", view.id, rule.id));
+                        }
+                        if let Err(e) = crate::check_filter(&rule.when) {
+                            problems.push(format!("view '{}': color rule '{}': {e}", view.id, rule.id));
+                        }
+                        for c in crate::clauses_of(&rule.when) {
+                            if !has(&c.field_name) {
+                                problems.push(format!("view '{}': color rule '{}' reads the field '{}', which '{tid}' does not have", view.id, rule.id, c.field_name));
+                            }
+                        }
+                        match (&rule.target, rule.field.as_deref()) {
+                            (crate::ColorTarget::Field, None) => problems.push(format!("view '{}': color rule '{}' colors a field and names none", view.id, rule.id)),
+                            (crate::ColorTarget::Field, Some(f)) if !has(f) => {
+                                problems.push(format!("view '{}': color rule '{}' colors the field '{f}', which '{tid}' does not have", view.id, rule.id));
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
         }
@@ -269,7 +363,7 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                 problems.push(format!("table '{}': access rule '{}' names field '{f_name}', which does not exist", table.id, rule.id));
                 continue;
             };
-            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup) {
+            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup | FieldType::LongText) {
                 problems.push(format!("table '{}': access rule '{}' uses non-indexable field '{f_name}'", table.id, rule.id));
             }
         }
@@ -322,7 +416,7 @@ pub fn detect_access_problems(m: &AppManifest) -> Vec<String> {
                 problems.push(format!("rule '{}': field_missing", rule.id));
                 continue;
             };
-            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup) {
+            if matches!(f.field_type, FieldType::Lookup | FieldType::Link | FieldType::Formula | FieldType::Count | FieldType::Rollup | FieldType::LongText) {
                 problems.push(format!("rule '{}': unsupported_field", rule.id));
             }
         }

@@ -25,6 +25,10 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "sensitivity.categories",
     "sensitivity.detectors",
     "platform.timezone",
+    "files.max_mb",
+    "files.app_quota_mb",
+    "files.scanner",
+    "files.require_scan",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -40,6 +44,7 @@ static PRESET_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub fn validate_setting(key: &str, value: &Value) -> bool {
     match key {
         "oidc.issuer" | "oidc.audience" => value.is_string(),
+        "platform.timezone" => value.as_str().is_some_and(|s| !s.trim().is_empty()),
         "oidc.jwks" => value.is_object(),
         "cors.allowed_origins" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
@@ -47,14 +52,17 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "tokens.max_days" | "process.stale_days" => {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
-        "tokens.agent_enabled" => value.is_boolean(),
+        "tokens.agent_enabled" | "files.require_scan" => value.is_boolean(),
+        // No scanner is null. Otherwise `{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }`.
+        "files.scanner" => value.is_null() || crate::scan::Scanner::from_setting(Some(value)).is_some(),
+        "files.max_mb" => value.as_i64().is_some_and(|n| (1..=crate::files::MAX_MAX_MB as i64).contains(&n)),
+        "files.app_quota_mb" => value.as_i64().is_some_and(|n| (1..=10_000_000).contains(&n)),
         "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
         // The shape of these two is checked in full, with a path, where the state is known.
         "sensitivity.detectors" => scaffoldry_engine::sensitivity::validate_detectors(value).is_ok(),
         "sensitivity.categories" => value.is_array(),
-        "platform.timezone" => value.as_str().is_some_and(|s| !s.trim().is_empty()),
         _ => false,
     }
 }
@@ -179,6 +187,11 @@ async fn put_setting(
     }
 
     // Update in-memory state
+    if key == "platform.timezone" {
+        if let Some(tz) = payload.as_str() {
+            scaffoldry_engine::formula::set_institution_timezone(tz);
+        }
+    }
     state.settings.write().unwrap().insert(key.clone(), payload.clone());
 
     if key == "platform.timezone" {

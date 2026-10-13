@@ -147,6 +147,14 @@ pub static TOOLS: &[Tool] = &[
         run: run_describe_app,
     },
     Tool {
+        name: "aggregate_records",
+        description: "Aggregate records in a table using count, sum, avg, min, or max, optionally grouped by an indexed field.",
+        input_schema: schema_aggregate_records,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_aggregate_records,
+    },
+    Tool {
         name: "list_records",
         description: "One page of a table's records, up to 200. Pass next_cursor back as cursor for the next page. A filter or sort works on a table of 10,000 rows or fewer.",
         input_schema: schema_list_records,
@@ -154,7 +162,15 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         run: run_list_records,
     },
-    Tool {
+        Tool {
+        name: "get_view_data",
+        description: "Returns grouped records for a kanban or group-by view with option labels and colors.",
+        input_schema: schema_get_view_data,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_get_view_data,
+    },
+Tool {
         name: "get_record",
         description: "One record, with its version.",
         input_schema: schema_get_record,
@@ -233,6 +249,30 @@ pub static TOOLS: &[Tool] = &[
         scope: Scope::App(AppAction::Read),
         read_only: false,
         run: run_decide_process,
+    },
+    Tool {
+        name: "list_views",
+        description: "List the views of an app: your personal views and every collaborative and locked one.",
+        input_schema: schema_list_views,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_list_views,
+    },
+    Tool {
+        name: "save_view",
+        description: "Create a view, or change one by naming its view_id and its current version. A personal view is yours. A collaborative view needs an editor. A locked view needs an admin.",
+        input_schema: schema_save_view,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_save_view,
+    },
+    Tool {
+        name: "delete_view",
+        description: "Delete a view. The rights are those of saving it.",
+        input_schema: schema_delete_view,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_delete_view,
     },
     Tool {
         name: "get_job",
@@ -618,6 +658,69 @@ fn run_get_framework_spec(_caller: &AuthUser, _origin: &Origin, _args: Value, _s
     Ok(crate::routes::framework::build_framework_spec_json())
 }
 
+fn schema_list_views() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "app_slug": { "type": "string", "description": "Application slug identifier" } },
+        "required": ["app_slug"]
+    })
+}
+
+fn schema_save_view() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "view_id": { "type": "string", "description": "The view to change. Leave out to create one" },
+            "name": { "type": "string", "description": "1 to 120 characters" },
+            "kind": { "type": "string", "enum": ["grid", "kanban", "calendar", "gallery", "form", "summary", "dashboard"], "description": "Required to create" },
+            "ownership": { "type": "string", "enum": ["personal", "collaborative", "locked"], "description": "To create. Default collaborative" },
+            "table_id": { "type": "string", "description": "The table the view is over, from describe_app" },
+            "config": { "type": "object", "description": "The sort, filters, grouping and layout" },
+            "version": { "type": "integer", "description": "The version you read. Required to change a view" }
+        },
+        "required": ["app_slug", "name"]
+    })
+}
+
+fn schema_delete_view() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "view_id": { "type": "string", "description": "The view to delete" }
+        },
+        "required": ["app_slug", "view_id"]
+    })
+}
+
+fn view_uuid(args: &Value) -> Result<uuid::Uuid, ServiceError> {
+    uuid::Uuid::parse_str(required_str(args, "view_id")?).map_err(|_| ServiceError::NotFound("View not found".to_string()))
+}
+
+fn run_list_views(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::views::list(caller, required_str(&args, "app_slug")?, state)
+}
+
+fn run_save_view(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let app = required_str(&args, "app_slug")?.to_string();
+    if args.get("view_id").is_some() {
+        let id = view_uuid(&args)?;
+        let body: crate::service::views::UpdateBody = parse(json!({
+            "name": args.get("name"),
+            "config": args.get("config").cloned().unwrap_or_else(|| json!({})),
+            "version": args.get("version"),
+        }))?;
+        return crate::service::views::update(caller, &app, id, body, state).map_err(stale_as_text);
+    }
+    let body: crate::service::views::CreateBody = parse(args)?;
+    crate::service::views::create(caller, &app, body, state)
+}
+
+fn run_delete_view(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::views::delete(caller, required_str(&args, "app_slug")?, view_uuid(&args)?, state)
+}
+
 fn schema_get_job() -> Value {
     json!({
         "type": "object",
@@ -728,7 +831,8 @@ fn schema_list_records() -> Value {
             "filter": { "type": "object", "description": "{ conjunction: And|Or, clauses: [{ id, field_name, operator, value }] }. Operators: Equals, NotEquals, Contains, NotContains, GreaterThan, LessThan, IsEmpty, IsNotEmpty" },
             "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
             "limit": { "type": "integer", "description": "Rows per page, 1 to 200. Default 50" },
-            "cursor": { "type": "string", "description": "The next_cursor of the previous page" }
+            "cursor": { "type": "string", "description": "The next_cursor of the previous page" },
+            "search": { "type": "string", "description": "Full-text search query across record fields" }
         },
         "required": ["app_slug", "table_id"]
     })
@@ -798,6 +902,7 @@ struct ListRecordsArgs {
     sort: Option<SortArg>,
     limit: Option<usize>,
     cursor: Option<String>,
+    search: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -851,8 +956,12 @@ fn run_describe_app(caller: &AuthUser, _origin: &Origin, args: Value, state: &Sh
     Ok(crate::routes::apps::with_version(state, &manifest))
 }
 
-fn run_list_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_records(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: ListRecordsArgs = parse(args)?;
+    if let Some(f) = &args.filter {
+        scaffoldry_engine::check_filter(f).map_err(ServiceError::BadRequest)?;
+    }
+    let (app_slug, table_id) = (args.app_slug.clone(), args.table_id.clone());
     let limit = args.limit.unwrap_or(50);
     if limit == 0 || limit > MAX_ROWS {
         return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
@@ -871,9 +980,11 @@ fn run_list_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &Sh
             cursor: args.cursor,
             max_bytes: Some(MAX_BYTES),
             must_exist: true,
+            search: args.search,
         },
         state,
     )?;
+    crate::service::disclosure::record_agent_read(caller, origin, &app_slug, Some(&table_id), &page.records, state)?;
     let mut body = json!({ "records": page.records, "next_cursor": page.next_cursor });
     records::add_field_states(&mut body, &page.calculating);
     Ok(body)
@@ -1069,4 +1180,115 @@ fn run_list_waiting_decisions(caller: &AuthUser, _origin: &Origin, _args: Value,
 fn run_decide_process(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: DecideProcessArgs = parse(args)?;
     to_value(&crate::service::processes::decide_process(caller, origin, &a.app_slug, &a.instance_id, &a.decision, state)?)
+}
+
+
+fn schema_get_view_data() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string" },
+            "view_id": { "type": "string" },
+        },
+        "required": ["app_slug", "view_id"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct GetViewDataArgs {
+    app_slug: String,
+    view_id: String,
+}
+
+fn run_get_view_data(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: GetViewDataArgs = parse(args)?;
+    let manifest = state
+        .engine
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .resolve_by_slug(&args.app_slug)
+        .cloned()
+        .or_else(|| state.get_app_manifest(&args.app_slug))
+        .ok_or_else(|| ServiceError::NotFound(format!("App '{}' not found", args.app_slug)))?;
+
+    let view = manifest
+        .views
+        .iter()
+        .find(|v| v.id == args.view_id)
+        .ok_or_else(|| ServiceError::NotFound(format!("View '{}' not found", args.view_id)))?;
+
+    crate::service::views::check_runnable(caller, &args.app_slug, view, state)?;
+    let all_records = records::list_records(caller, &args.app_slug, state)?;
+    let raw_records: Vec<Value> = all_records.iter().map(|r| r.data.clone()).collect();
+
+    let view_data = scaffoldry_engine::group_by_select(&manifest, view, &raw_records)
+        .ok_or_else(|| ServiceError::BadRequest(format!("View '{}' is not over a select field", args.view_id)))?;
+
+    // The stages hold the records themselves, so this is a release of records. Log the ones that came back.
+    let returned: std::collections::HashSet<String> = view_data.stages.iter().flat_map(|s| s.records.iter().map(Value::to_string)).collect();
+    let released: Vec<_> = all_records.iter().filter(|r| returned.contains(&r.data.to_string())).cloned().collect();
+    crate::service::disclosure::record_agent_read(caller, origin, &args.app_slug, view.table_id.as_deref(), &released, state)?;
+
+    to_value(&view_data)
+}
+
+fn schema_aggregate_records() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "table_id": { "type": "string", "description": "Table id or slug from describe_app" },
+            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "Aggregate function. count_distinct (alias unique), filled and empty work on a field of any type" },
+            "field": { "type": "string", "description": "Numeric field to aggregate (required unless function is count)" },
+            "filter": { "type": "object", "description": "Optional filter on indexed fields" },
+            "group_by": { "type": "string", "description": "Optional indexed field to group by" },
+            "group_by2": { "type": "string", "description": "Optional second indexed field to group by, inside the first" },
+            "bucket": { "type": "string", "enum": ["day", "week", "month", "quarter", "year"], "description": "Groups a date group_by into days, weeks (from Monday), months, quarters or years in the institution's time zone" }
+        },
+        "required": ["app_slug", "table_id", "function"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AggregateRecordsArgs {
+    app_slug: String,
+    table_id: String,
+    function: String,
+    field: Option<String>,
+    filter: Option<scaffoldry_engine::CompoundFilter>,
+    group_by: Option<String>,
+    group_by2: Option<String>,
+    bucket: Option<String>,
+}
+
+fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let args: AggregateRecordsArgs = parse(args)?;
+    let func = match args.function.to_lowercase().as_str() {
+        "count" => records::AggregateFunction::Count,
+        "sum" => records::AggregateFunction::Sum,
+        "avg" => records::AggregateFunction::Avg,
+        "min" => records::AggregateFunction::Min,
+        "max" => records::AggregateFunction::Max,
+        "filled" => records::AggregateFunction::Filled,
+        "empty" => records::AggregateFunction::Empty,
+        "unique" | "count_distinct" => records::AggregateFunction::Unique,
+        other => return Err(ServiceError::BadRequest(format!("Unknown aggregate function '{other}'"))),
+    };
+    let res = records::aggregate_records(
+        caller,
+        &args.app_slug,
+        &args.table_id,
+        records::AggregateQuery {
+            function: func,
+            field: args.field,
+            filter: args.filter,
+            group_by: args.group_by,
+            group_by2: args.group_by2,
+            bucket: args.bucket,
+            order_by_key: false,
+        },
+        state,
+    )?;
+    serde_json::to_value(res).map_err(|e| ServiceError::Internal(e.to_string()))
 }

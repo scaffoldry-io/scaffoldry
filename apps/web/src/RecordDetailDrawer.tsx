@@ -1,5 +1,9 @@
+import { DurationEditor } from "./DurationEditor";
+import { formatDateTime, parseDateTimeInput, getUserTimezone } from "./utils/durationDatetime";
 import React from "react";
 import { AppTable } from "./types";
+import { LongTextEditor } from "./LongTextEditor";
+import { AttachmentField, type AttachedFile } from "./ui/Attachments";
 import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
 
 export interface RecordDetailDrawerProps {
@@ -7,6 +11,8 @@ export interface RecordDetailDrawerProps {
   onClose: () => void;
   activeTable: AppTable;
   tables: AppTable[];
+  /** The app the records belong to. Attachments need it to upload and download. */
+  appSlug?: string;
   setTables: React.Dispatch<React.SetStateAction<AppTable[]>>;
   onUpdateRecordField: (recordId: string, fieldName: string, value: any) => void;
   onDuplicateRecord: (recordId: string) => void;
@@ -18,6 +24,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
   onClose,
   activeTable,
   tables,
+  appSlug,
   setTables,
   onUpdateRecordField,
   onDuplicateRecord,
@@ -27,6 +34,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
   const activeDetailRecord = (activeTable.records || []).find(
     (r) => r.id === selectedRecordId
   );
+  const [editingFields, setEditingFields] = React.useState<Record<string, boolean>>({});
   if (!activeDetailRecord) return null;
 
   const relatedTables = tables.filter((t) => t.id !== activeTable.id);
@@ -124,6 +132,20 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {activeTable.fields.map((field) => {
+                // An attachment field draws its own frame, so a field the person may not read leaves no trace.
+                if (field.field_type === "Attachment") {
+                  return appSlug ? (
+                    <AttachmentField
+                      key={field.name}
+                      appSlug={appSlug}
+                      recordId={activeDetailRecord.id}
+                      fieldName={field.name}
+                      label={field.label}
+                      value={Array.isArray(activeDetailRecord[field.name]) ? (activeDetailRecord[field.name] as AttachedFile[]) : []}
+                      onChange={(next) => onUpdateRecordField(activeDetailRecord.id, field.name, next)}
+                    />
+                  ) : null;
+                }
                 const isComputed = [
                   "Formula",
                   "Lookup",
@@ -137,7 +159,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
                 return (
                   <div
                     key={field.name}
-                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5"
+                    className={`p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5 ${field.field_type === "LongText" ? "md:col-span-2" : ""}`}
                   >
                     <div className="flex items-center justify-between">
                       <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -161,6 +183,72 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
                         {typeof computedVal === "number"
                           ? computedVal.toLocaleString()
                           : String(computedVal ?? "")}
+                      </div>
+                    ) : field.field_type === "LongText" ? (
+                      <LongTextEditor
+                        id={`detail-input-${field.name}`}
+                        label={field.label}
+                        value={String(activeDetailRecord[field.name] ?? "")}
+                        onChange={(val) =>
+                          onUpdateRecordField(
+                            activeDetailRecord.id,
+                            field.name,
+                            val
+                          )
+                        }
+                        isEditing={editingFields[field.name] ?? false}
+                        onToggleEdit={() =>
+                          setEditingFields((prev) => ({
+                            ...prev,
+                            [field.name]: !prev[field.name],
+                          }))
+                        }
+                      />
+                    ) : field.field_type === "Duration" ? (
+                      <DurationEditor
+                        id={`detail-input-${field.name}`}
+                        label={field.label}
+                        value={
+                          typeof activeDetailRecord[field.name] === "number"
+                            ? (activeDetailRecord[field.name] as number)
+                            : null
+                        }
+                        format={field.duration_format || "h:mm"}
+                        onChange={(val) =>
+                          onUpdateRecordField(
+                            activeDetailRecord.id,
+                            field.name,
+                            val
+                          )
+                        }
+                      />
+                    ) : field.field_type === "DateTime" ? (
+                      <div className="space-y-1">
+                        <input
+                          type="datetime-local"
+                          data-testid={`detail-input-${field.name}`}
+                          defaultValue={
+                            activeDetailRecord[field.name]
+                              ? formatDateTime(String(activeDetailRecord[field.name])).replace(" ", "T").slice(0, 16)
+                              : ""
+                          }
+                          onBlur={(e) => {
+                            const val = e.target.value;
+                            if (!val) {
+                              onUpdateRecordField(activeDetailRecord.id, field.name, null);
+                            } else {
+                              const utcInstant = parseDateTimeInput(val);
+                              if (utcInstant) {
+                                onUpdateRecordField(activeDetailRecord.id, field.name, utcInstant);
+                              }
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-white"
+                        />
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Stored as UTC instant</span>
+                          <span className="font-mono">{getUserTimezone()}</span>
+                        </div>
                       </div>
                     ) : field.field_type === "Checkbox" ? (
                       <div className="pt-1">
@@ -196,11 +284,14 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
                           "Approved",
                           "Funded",
                           "Rejected",
-                        ]).map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
+                        ]).map((rawOpt) => {
+                          const opt = typeof rawOpt === "string" ? { id: rawOpt, label: rawOpt } : rawOpt;
+                          return (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          );
+                        })}
                       </select>
                     ) : field.field_type === "Rating" ? (
                       <div className="flex items-center gap-1 pt-1">

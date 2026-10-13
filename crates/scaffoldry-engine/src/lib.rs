@@ -1,6 +1,10 @@
 //! Scaffoldry Dynamic Engine and Manifest Renderer (Layer 3)
 
 pub mod access;
+pub mod duration;
+pub use duration::*;
+pub mod filter_tree;
+pub use filter_tree::{check_filter, clauses_of, instant_of, is_flat, list_of, range_of, relative_range, resolve_relative_dates, valid_zone, MAX_FILTER_CLAUSES, MAX_FILTER_DEPTH};
 pub mod automation;
 pub mod detect;
 pub mod graph;
@@ -62,6 +66,15 @@ pub enum FilterOperator {
     LessThan,
     IsEmpty,
     IsNotEmpty,
+    /// The cell is one of a list: a JSON array or a comma list.
+    In,
+    /// The cell is from `low` to `high`, both inside: `10..20`, `2026-01-01..2026-01-31`, or a relative date
+    /// such as `last_7_days` on a date field.
+    Between,
+    /// A date before the value.
+    Before,
+    /// A date after the value.
+    After,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +95,9 @@ pub struct FilterClause {
 pub struct CompoundFilter {
     pub conjunction: FilterConjunction,
     pub clauses: Vec<FilterClause>,
+    /// Nested groups, joined with the clauses by the same conjunction. A group nests two levels below the root.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<CompoundFilter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,7 +121,7 @@ pub enum RowDensity {
     ExtraTall,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldType {
     Text,
     Number,
@@ -132,16 +148,35 @@ pub enum FieldType {
     Formula,
     /// A list of record ids, or one id, of records in another table. `record_links` indexes it.
     Link,
+    /// Collaborator stores addresses.
+    Collaborator {
+        allow_multiple: bool,
+    },
+    /// Set at creation to the actor and never changes.
+    CreatedBy,
+    /// Set on every user write.
+    LastModifiedBy,
+    /// Plain text up to 100,000 characters, rendered with safe Markdown subset.
+    LongText,
+    /// Duration stored as whole seconds in a number.
+    Duration {
+        format: DurationFormat,
+    },
+    /// DateTime stored as a UTC instant.
+    DateTime,
+    /// Files kept outside the record. The value is a list of `{ref_id, name}`.
+    Attachment {
+        allow_multiple: bool,
+    },
 }
 
 impl FieldType {
     /// True when the value follows from other values, so nobody writes it.
     pub fn is_computed(self) -> bool {
         use FieldType::*;
-        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime)
+        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime | CreatedBy | LastModifiedBy)
     }
 }
-
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FieldConstraints {
@@ -160,6 +195,241 @@ pub struct FieldConstraints {
 pub enum SetOn {
     Create,
     Change { fields: Vec<String> },
+}
+
+impl serde::Serialize for FieldType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            FieldType::Text => serializer.serialize_str("Text"),
+            FieldType::Number => serializer.serialize_str("Number"),
+            FieldType::Date => serializer.serialize_str("Date"),
+            FieldType::Select => serializer.serialize_str("Select"),
+            FieldType::Boolean => serializer.serialize_str("Boolean"),
+            FieldType::Relation => serializer.serialize_str("Relation"),
+            FieldType::Checkbox => serializer.serialize_str("Checkbox"),
+            FieldType::MultiSelect => serializer.serialize_str("MultiSelect"),
+            FieldType::Currency => serializer.serialize_str("Currency"),
+            FieldType::Percent => serializer.serialize_str("Percent"),
+            FieldType::Rating => serializer.serialize_str("Rating"),
+            FieldType::Email => serializer.serialize_str("Email"),
+            FieldType::Phone => serializer.serialize_str("Phone"),
+            FieldType::Url => serializer.serialize_str("Url"),
+            FieldType::Autonumber => serializer.serialize_str("Autonumber"),
+            FieldType::CreatedTime => serializer.serialize_str("CreatedTime"),
+            FieldType::LastModifiedTime => serializer.serialize_str("LastModifiedTime"),
+            FieldType::Lookup => serializer.serialize_str("Lookup"),
+            FieldType::Count => serializer.serialize_str("Count"),
+            FieldType::Rollup => serializer.serialize_str("Rollup"),
+            FieldType::Formula => serializer.serialize_str("Formula"),
+            FieldType::Link => serializer.serialize_str("Link"),
+            FieldType::Collaborator { .. } => serializer.serialize_str("Collaborator"),
+            FieldType::CreatedBy => serializer.serialize_str("CreatedBy"),
+            FieldType::LastModifiedBy => serializer.serialize_str("LastModifiedBy"),
+            FieldType::LongText => serializer.serialize_str("LongText"),
+            FieldType::Duration { .. } => serializer.serialize_str("Duration"),
+            FieldType::DateTime => serializer.serialize_str("DateTime"),
+            FieldType::Attachment { .. } => serializer.serialize_str("Attachment"),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FieldType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let val = serde_json::Value::deserialize(deserializer)?;
+        match val {
+            serde_json::Value::String(s) => match s.as_str() {
+                "Text" => Ok(FieldType::Text),
+                "Number" => Ok(FieldType::Number),
+                "Date" => Ok(FieldType::Date),
+                "Select" => Ok(FieldType::Select),
+                "Boolean" => Ok(FieldType::Boolean),
+                "Relation" => Ok(FieldType::Relation),
+                "Checkbox" => Ok(FieldType::Checkbox),
+                "MultiSelect" => Ok(FieldType::MultiSelect),
+                "Currency" => Ok(FieldType::Currency),
+                "Percent" => Ok(FieldType::Percent),
+                "Rating" => Ok(FieldType::Rating),
+                "Email" => Ok(FieldType::Email),
+                "Phone" => Ok(FieldType::Phone),
+                "Url" => Ok(FieldType::Url),
+                "Autonumber" => Ok(FieldType::Autonumber),
+                "CreatedTime" => Ok(FieldType::CreatedTime),
+                "LastModifiedTime" => Ok(FieldType::LastModifiedTime),
+                "Lookup" => Ok(FieldType::Lookup),
+                "Count" => Ok(FieldType::Count),
+                "Rollup" => Ok(FieldType::Rollup),
+                "Formula" => Ok(FieldType::Formula),
+                "Link" => Ok(FieldType::Link),
+                "Collaborator" => Ok(FieldType::Collaborator { allow_multiple: false }),
+                "CreatedBy" => Ok(FieldType::CreatedBy),
+                "LastModifiedBy" => Ok(FieldType::LastModifiedBy),
+                "LongText" => Ok(FieldType::LongText),
+                "Duration" => Ok(FieldType::Duration { format: DurationFormat::HMm }),
+                "DateTime" => Ok(FieldType::DateTime),
+                "Attachment" => Ok(FieldType::Attachment { allow_multiple: true }),
+                other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
+            },
+            serde_json::Value::Object(map) => {
+                if let Some(dur) = map.get("Duration") {
+                    let format = match dur {
+                        serde_json::Value::String(s) => DurationFormat::parse(s).unwrap_or_default(),
+                        serde_json::Value::Object(sub) => sub.get("format").and_then(serde_json::Value::as_str).and_then(DurationFormat::parse).unwrap_or_default(),
+                        _ => DurationFormat::HMm,
+                    };
+                    Ok(FieldType::Duration { format })
+                } else if map.contains_key("DateTime") {
+                    Ok(FieldType::DateTime)
+                } else if let Some(collab) = map.get("Collaborator") {
+                    let allow_multiple = match collab {
+                        serde_json::Value::Bool(b) => *b,
+                        serde_json::Value::Object(sub) => sub.get("allow_multiple").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                        _ => false,
+                    };
+                    Ok(FieldType::Collaborator { allow_multiple })
+                } else if let Some(att) = map.get("Attachment") {
+                    let allow_multiple = match att {
+                        serde_json::Value::Bool(b) => *b,
+                        serde_json::Value::Object(sub) => sub.get("allow_multiple").and_then(serde_json::Value::as_bool).unwrap_or(true),
+                        _ => true,
+                    };
+                    Ok(FieldType::Attachment { allow_multiple })
+                } else if map.contains_key("CreatedBy") {
+                    Ok(FieldType::CreatedBy)
+                } else if map.contains_key("LastModifiedBy") {
+                    Ok(FieldType::LastModifiedBy)
+                } else {
+                    Err(serde::de::Error::custom("unknown field type object"))
+                }
+            }
+            _ => Err(serde::de::Error::custom("field type must be string or object")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectOptionColor {
+    #[default]
+    Neutral,
+    Ok,
+    Warn,
+    Bad,
+    Info,
+    Accent1,
+    Accent2,
+    Accent3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectOption {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub color: SelectOptionColor,
+    #[serde(default)]
+    pub order: i32,
+}
+
+pub fn deserialize_select_options<'de, D>(deserializer: D) -> Result<Vec<SelectOption>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(items) => {
+            let mut result = Vec::new();
+            for (idx, item) in items.into_iter().enumerate() {
+                if let serde_json::Value::String(s) = item {
+                    let clean: String = s
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                        .collect();
+                    let trimmed = clean.trim_matches('_');
+                    let slug = if trimmed.is_empty() { format!("opt_{idx}") } else { format!("opt_{trimmed}") };
+                    result.push(SelectOption {
+                        id: slug,
+                        label: s,
+                        color: SelectOptionColor::Neutral,
+                        order: idx as i32,
+                    });
+                } else {
+                    let opt: SelectOption = serde_json::from_value(item).map_err(serde::de::Error::custom)?;
+                    result.push(opt);
+                }
+            }
+            Ok(result)
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanStage {
+    pub id: String,
+    pub label: String,
+    pub color: SelectOptionColor,
+    pub records: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KanbanViewData {
+    pub column_field: String,
+    pub stages: Vec<KanbanStage>,
+}
+
+pub fn group_by_select(
+    manifest: &AppManifest,
+    view: &AppView,
+    records: &[serde_json::Value],
+) -> Option<KanbanViewData> {
+    let col_name = view.kanban_column_field.as_deref().or(view.group_by_field.as_deref())?;
+    let table_id = view.table_id.as_deref();
+    let table = manifest.tables.iter().find(|t| table_id.is_none_or(|tid| t.id == tid || t.slug == tid))?;
+    let field = table.fields.iter().find(|f| f.name == col_name)?;
+    if !matches!(field.field_type, FieldType::Select | FieldType::MultiSelect) {
+        return None;
+    }
+
+    let mut stages: Vec<KanbanStage> = field
+        .select_options
+        .iter()
+        .map(|opt| KanbanStage {
+            id: opt.id.clone(),
+            label: opt.label.clone(),
+            color: opt.color,
+            records: Vec::new(),
+        })
+        .collect();
+
+    for r in records {
+        let val = r.get(col_name).or_else(|| r.get("data").and_then(|d| d.get(col_name)));
+        if let Some(v) = val {
+            if let Some(id_str) = v.as_str() {
+                if let Some(stage) = stages.iter_mut().find(|s| s.id == id_str) {
+                    stage.records.push(r.clone());
+                }
+            } else if let Some(arr) = v.as_array() {
+                for item in arr {
+                    if let Some(id_str) = item.as_str() {
+                        if let Some(stage) = stages.iter_mut().find(|s| s.id == id_str) {
+                            stage.records.push(r.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some(KanbanViewData {
+        column_field: col_name.to_string(),
+        stages,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,8 +463,10 @@ pub struct FieldSpec {
     pub formula_expression: Option<String>,
     #[serde(default)]
     pub rollup_function: Option<String>,
-    #[serde(default)]
-    pub select_options: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_select_options")]
+    pub select_options: Vec<SelectOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_format: Option<String>,
     #[serde(default)]
     pub currency_symbol: Option<String>,
     #[serde(default)]
@@ -224,6 +496,8 @@ pub struct FieldSpec {
     pub set_on: Option<SetOn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub constraints: Option<FieldConstraints>,
+    #[serde(default)]
+    pub notify_on_assign: bool,
 }
 
 /// How many records a link field holds.
@@ -316,6 +590,7 @@ impl FieldSpec {
             formula_expression: None,
             rollup_function: None,
             select_options: Vec::new(),
+            duration_format: if let FieldType::Duration { format } = field_type { Some(format.as_str().to_string()) } else { None },
             currency_symbol: None,
             precision: None,
             indexed: false,
@@ -328,6 +603,7 @@ impl FieldSpec {
             default: None,
             set_on: None,
             constraints: None,
+            notify_on_assign: false,
         }
     }
 }
@@ -461,8 +737,102 @@ pub struct AppView {
     pub hidden_columns: Vec<String>,
     #[serde(default)]
     pub frozen_through: Option<String>,
+    /// Each field's footer choice: `(field, function)`. The functions are in `FOOTER_FUNCTIONS`.
     #[serde(default)]
     pub column_summary: Vec<(String, String)>,
+    /// Up to three fields to group by, outermost first. Computed by the server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_by: Vec<String>,
+    /// Up to ten rules that tone a row or a field when a filter matches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub color_rules: Vec<ColorRule>,
+    /// A summary view's measures: one column for each, computed over each group of `group_by`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aggregations: Vec<Aggregation>,
+}
+
+/// What a summary view computes for each group. `count` needs no field. Every other function needs one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Aggregation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(rename = "fn")]
+    pub function: String,
+}
+
+/// The functions a summary view may use. They are the functions the aggregate route can group.
+pub const SUMMARY_FUNCTIONS: [&str; 6] = ["count", "sum", "avg", "min", "max", "count_distinct"];
+pub const MAX_SUMMARY_GROUPS: usize = 2;
+pub const MAX_AGGREGATIONS: usize = 8;
+
+impl Aggregation {
+    /// The column heading: `count`, `sum of amount`, `distinct status`.
+    pub fn label(&self) -> String {
+        let field = self.field.as_deref().unwrap_or("");
+        match self.function.as_str() {
+            "count" => "count".to_string(),
+            "count_distinct" => format!("distinct {field}"),
+            "avg" => format!("average of {field}"),
+            "min" => format!("smallest {field}"),
+            "max" => format!("largest {field}"),
+            other => format!("{other} of {field}"),
+        }
+    }
+}
+
+/// The footer choices a field may have.
+pub const FOOTER_FUNCTIONS: [&str; 8] = ["count", "filled", "empty", "unique", "sum", "avg", "min", "max"];
+pub const MAX_GROUP_LEVELS: usize = 3;
+pub const MAX_COLOR_RULES: usize = 10;
+
+/// The fixed set of tones. A tone shows as a color, an icon and the rule's label. Never as color alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tone {
+    Neutral,
+    Info,
+    Success,
+    Warning,
+    Danger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorTarget {
+    Row,
+    Field,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColorRule {
+    pub id: String,
+    pub label: String,
+    pub when: CompoundFilter,
+    pub tone: Tone,
+    pub target: ColorTarget,
+    /// The field a `field` rule colors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+/// A rule that matched a row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AppliedTone {
+    pub id: String,
+    pub label: String,
+    pub tone: Tone,
+    pub target: ColorTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+/// The rules that match a record, in the order the view lists them.
+pub fn tones_of(record: &Value, rules: &[ColorRule]) -> Vec<AppliedTone> {
+    rules
+        .iter()
+        .filter(|r| matches_filter(record, &r.when))
+        .map(|r| AppliedTone { id: r.id.clone(), label: r.label.clone(), tone: r.tone, target: r.target, field: r.field.clone() })
+        .collect()
 }
 
 impl AppView {
@@ -489,17 +859,31 @@ impl AppView {
             hidden_columns: Vec::new(),
             frozen_through: None,
             column_summary: Vec::new(),
+            group_by: Vec::new(),
+            color_rules: Vec::new(),
+            aggregations: Vec::new(),
         }
     }
 }
 
 pub fn matches_filter(record: &Value, filter: &CompoundFilter) -> bool {
-    if filter.clauses.is_empty() {
+    if filter.clauses.is_empty() && filter.groups.is_empty() {
         return true;
     }
+    let clauses = filter.clauses.iter().map(|c| matches_clause(record, c));
+    let groups = filter.groups.iter().map(|g| matches_filter(record, g));
     match filter.conjunction {
-        FilterConjunction::And => filter.clauses.iter().all(|c| matches_clause(record, c)),
-        FilterConjunction::Or => filter.clauses.iter().any(|c| matches_clause(record, c)),
+        FilterConjunction::And => clauses.chain(groups).all(|m| m),
+        FilterConjunction::Or => clauses.chain(groups).any(|m| m),
+    }
+}
+
+fn cell_text(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::Bool(b)) => b.to_string(),
+        _ => String::new(),
     }
 }
 
@@ -580,6 +964,33 @@ pub fn matches_clause(record: &Value, clause: &FilterClause) -> bool {
                 _ => false,
             }
         }
+        FilterOperator::In => {
+            let wanted: Vec<String> = list_of(&clause.value).into_iter().map(|v| v.to_lowercase()).collect();
+            match cell_val {
+                Some(Value::Array(items)) => items.iter().any(|i| wanted.contains(&cell_text(Some(i)).to_lowercase())),
+                other => wanted.contains(&cell_text(other).to_lowercase()),
+            }
+        }
+        FilterOperator::Between => match range_of(&clause.value) {
+            None => false,
+            Some((low, high)) => {
+                if let (Some(n), Ok(a), Ok(b)) = (cell_val.and_then(Value::as_f64), low.parse::<f64>(), high.parse::<f64>()) {
+                    return a <= n && n <= b;
+                }
+                match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(low), instant_of(high)) {
+                    (Some(t), Some(a), Some(b)) => a <= t && t <= b,
+                    _ => false,
+                }
+            }
+        },
+        FilterOperator::Before => match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(&clause.value)) {
+            (Some(t), Some(limit)) => t < limit,
+            _ => false,
+        },
+        FilterOperator::After => match (cell_val.and_then(Value::as_str).and_then(instant_of), instant_of(&clause.value)) {
+            (Some(t), Some(limit)) => t > limit,
+            _ => false,
+        },
     }
 }
 

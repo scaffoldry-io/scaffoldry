@@ -200,6 +200,11 @@ pub struct ServerState {
     /// Row rules by app slug. Until rules join the manifest (access-rules phase 5), this is where an
     /// app's rules live. Read them through `service::scope::rules_of`.
     pub access_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::RowRule>>>,
+    /// The stored views of each app (`app_views`). The engine runs each app's manifest with these merged in.
+    pub app_views: RwLock<HashMap<String, Vec<crate::repository_views::StoredView>>>,
+    /// How long an exact row count may run, in milliseconds, before the answer becomes `at least`. Two seconds unless
+    /// `SCAFFOLDRY_COUNT_TIMEOUT_MS` says otherwise. A test lowers it to make a count time out.
+    pub count_timeout_ms: std::sync::atomic::AtomicU64,
     /// Column rules by app slug, kept the same way.
     pub column_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::ColumnRule>>>,
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
@@ -236,6 +241,7 @@ impl ServerState {
         let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
             .map_err(|e| format!("Failed to initialize PolicyEngine: {e}"))?;
 
+        let mut app_views_cache: HashMap<String, Vec<crate::repository_views::StoredView>> = HashMap::new();
         let mut users = HashMap::new();
         let mut groups = HashMap::new();
         let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
@@ -317,6 +323,11 @@ impl ServerState {
         if let Some(ref repo) = repository {
             if let Ok(db_settings) = repo.get_platform_settings() {
                 for (k, v) in db_settings {
+                    if k == "platform.timezone" {
+                        if let Some(tz) = v.as_str() {
+                            scaffoldry_engine::formula::set_institution_timezone(tz);
+                        }
+                    }
                     settings_map.insert(k, v);
                 }
             }
@@ -337,9 +348,36 @@ impl ServerState {
             // Ensure genesis ledger entry exists in repo
             let _ = repo.append_ledger_entry(&entry_0, &json!({"system": "scaffoldry", "genesis": true}));
             // Load persisted manifests into engine
+            // Views live in their own table. A manifest stored with views still in it has them moved, once, and
+            // the migration is one ledger entry with the count. What the engine runs is the manifest with the
+            // stored views merged back in, so nothing that reads a manifest's views changes.
+            if let Ok(stored_views) = repo.list_all_app_views() {
+                for v in stored_views {
+                    app_views_cache.entry(v.app_slug.clone()).or_default().push(v);
+                }
+            }
             if let Ok(persisted_manifests) = repo.list_app_manifests() {
-                for m in persisted_manifests {
-                    let _ = engine.register_manifest(m);
+                for mut m in persisted_manifests {
+                    if !m.views.is_empty() {
+                        if let Ok(Some(done)) = repo.migrate_manifest_views(&m.slug) {
+                            let count = done.views.len();
+                            if let Ok(entry) = repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                                principal: "system@scaffoldry.local".to_string(),
+                                organization_code: m.organization_code.clone(),
+                                app_slug: Some(m.slug.clone()),
+                                decision_type: scaffoldry_core::ledger::DecisionType::ViewsMigrated,
+                                oscal_control_id: "CM-03".to_string(),
+                                rationale: format!("Moved {count} views of {} out of the manifest into their own table", m.slug),
+                                payload: serde_json::json!({ "app_slug": m.slug, "views": count }),
+                            }) {
+                                ledger.push(entry);
+                            }
+                            app_views_cache.entry(m.slug.clone()).or_default().extend(done.views);
+                            m = done.manifest;
+                        }
+                    }
+                    let views = app_views_cache.get(&m.slug).cloned().unwrap_or_default();
+                    let _ = engine.register_manifest(crate::repository_views::merged(m, &views));
                 }
             }
 
@@ -465,6 +503,8 @@ impl ServerState {
             users: RwLock::new(users),
             groups: RwLock::new(groups),
             access_rules: RwLock::new(HashMap::new()),
+            app_views: RwLock::new(app_views_cache),
+            count_timeout_ms: std::sync::atomic::AtomicU64::new(std::env::var("SCAFFOLDRY_COUNT_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(2_000)),
             column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
@@ -572,6 +612,14 @@ impl ServerState {
         match self.repository {
             Some(ref repo) => repo.query_records(app_slug, query).map_err(|e| e.to_string()),
             None => Err("Filtering and sorting need PostgreSQL".to_string()),
+        }
+    }
+
+    /// Aggregate over record_index.
+    pub fn aggregate_records(&self, plan: &crate::repository_index::AggregatePlan) -> Result<crate::repository_index::AggregateResultRaw, String> {
+        match self.repository {
+            Some(ref repo) => repo.aggregate_records(plan).map_err(|e| e.to_string()),
+            None => Err("Aggregates need PostgreSQL".to_string()),
         }
     }
 
@@ -825,8 +873,16 @@ impl ServerState {
         Ok(self.workspaces.read().unwrap().len())
     }
 
+    /// Registers a manifest the way the engine runs it: with the stored views of its app merged in, so a manifest
+    /// that arrives with older copies of those views does not put them back.
+    pub fn register_runtime_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let views = self.app_views.read().map_err(|_| "views lock poisoned")?.get(&m.slug).cloned().unwrap_or_default();
+        self.engine.write().map_err(|_| "engine lock poisoned")?.register_manifest(crate::repository_views::merged(m, &views))?;
+        Ok(())
+    }
+
     pub fn persist_app_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.engine.write().map_err(|_| "engine lock poisoned")?.register_manifest(m.clone())?;
+        self.register_runtime_manifest(m.clone())?;
         if let Some(ref repo) = self.repository {
             repo.upsert_app_manifest(&m)?;
         }
@@ -890,6 +946,7 @@ impl ServerState {
     pub fn get_scim_user(&self, id: &str) -> Option<ScimUser> {
         self.users.read().ok()?.get(id).cloned()
     }
+
 
     pub fn platform_timezone(&self) -> String {
         self.settings
@@ -1157,6 +1214,8 @@ impl ServerState {
             users: RwLock::new(users),
             groups: RwLock::new(groups),
             access_rules: RwLock::new(HashMap::new()),
+            app_views: RwLock::new(HashMap::new()),
+            count_timeout_ms: std::sync::atomic::AtomicU64::new(2_000),
             column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),

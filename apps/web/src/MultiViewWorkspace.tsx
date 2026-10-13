@@ -219,7 +219,16 @@ export const MultiViewWorkspace: React.FC<Props> = ({
   };
 
   // Kanban status columns
-  const kanbanStatuses = ["Draft", "Under Review", "Approved", "Action Required"];
+  const statusField = fields.find((f) => f.name === "status" || f.field_type === "Select");
+  const kanbanStages = (statusField?.select_options && statusField.select_options.length > 0)
+    ? statusField.select_options.map((o) => typeof o === "string" ? { id: o, label: o, color: "neutral" as const } : o)
+    : [
+        { id: "Draft", label: "Draft", color: "neutral" as const },
+        { id: "Under Review", label: "Under Review", color: "warn" as const },
+        { id: "Approved", label: "Approved", color: "ok" as const },
+        { id: "Action Required", label: "Action Required", color: "bad" as const },
+      ];
+  const kanbanStatuses = kanbanStages.map((s) => s.label);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden">

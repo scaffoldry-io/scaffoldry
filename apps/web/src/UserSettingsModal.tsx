@@ -1,3 +1,4 @@
+import { COMMON_TIMEZONES, getUserTimezone, setUserTimezone } from "./utils/durationDatetime";
 import React, { useState, useEffect } from "react";
 import { apiClient } from "./api";
 
@@ -22,6 +23,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
   const [error, setError] = useState<string | null>(null);
   const [agentEnabled, setAgentEnabled] = useState(true);
   const [maxDays, setMaxDays] = useState(90);
+  const [userTz, setUserTz] = useState<string>(() => getUserTimezone());
 
   // Form state
   const [label, setLabel] = useState("");
@@ -130,6 +132,35 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
             {error}
           </div>
         )}
+
+        {/* User Time Zone */}
+        <div className="space-y-2 pb-4 border-b border-slate-100 dark:border-slate-800">
+          <label htmlFor="user-timezone-select" className="block text-xs font-semibold text-slate-900 dark:text-white uppercase tracking-wider">
+            Time Zone
+          </label>
+          <div className="flex items-center gap-3">
+            <select
+              id="user-timezone-select"
+              aria-label="Time Zone"
+              value={userTz}
+              onChange={(e) => {
+                setUserTz(e.target.value);
+                setUserTimezone(e.target.value);
+              }}
+              className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            >
+              {COMMON_TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </select>
+            <span className="text-[11px] text-slate-500">
+              Dates and times will display in this zone.
+            </span>
+          </div>
+        </div>
+
 
         {agentEnabled && (
           <div className="space-y-4">

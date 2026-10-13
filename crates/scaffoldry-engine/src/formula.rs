@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
+use chrono::TimeZone;
 
 pub const MAX_FORMULA_CHARS: usize = 500;
 pub const MAX_FORMULA_NODES: usize = 200;
@@ -665,7 +666,23 @@ pub fn formula_field_refs(expression: &str) -> Option<Vec<String>> {
     validate_formula(expression).ok().map(|info| info.field_refs)
 }
 
-pub fn evaluate_formula(expression: &str, record: &Value) -> Value {
+static INSTITUTION_TIMEZONE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+pub fn set_institution_timezone(tz: &str) {
+    if let Ok(mut lock) = INSTITUTION_TIMEZONE.write() {
+        *lock = Some(tz.to_string());
+    }
+}
+
+pub fn institution_timezone() -> String {
+    INSTITUTION_TIMEZONE
+        .read()
+        .ok()
+        .and_then(|lock| lock.clone())
+        .unwrap_or_else(|| "UTC".to_string())
+}
+
+pub fn evaluate_formula_with_tz(expression: &str, record: &Value, tz: Option<&str>) -> Value {
     let expr = expression.trim();
     if expr.is_empty() || expr.len() > MAX_FORMULA_CHARS {
         return Value::Null;
@@ -686,9 +703,19 @@ pub fn evaluate_formula(expression: &str, record: &Value) -> Value {
         return Value::Null;
     }
 
-    let mut evaluator = AstEvaluator::new(record);
+    let effective_tz = tz
+        .map(|s| s.to_string())
+        .or_else(|| record.get("_timezone").and_then(Value::as_str).map(|s| s.to_string()))
+        .unwrap_or_else(institution_timezone);
+
+    let mut evaluator = AstEvaluator::new_with_tz(record, Some(effective_tz));
     let val = evaluator.eval(&ast);
     truncate_result(val)
+}
+
+pub fn evaluate_formula(expression: &str, record: &Value) -> Value {
+    let tz = record.get("_timezone").and_then(Value::as_str);
+    evaluate_formula_with_tz(expression, record, tz)
 }
 
 pub fn parse_operand(op: &str, record: &Value) -> Value {
@@ -697,11 +724,17 @@ pub fn parse_operand(op: &str, record: &Value) -> Value {
 
 struct AstEvaluator<'a> {
     record: &'a Value,
+    tz: Option<String>,
 }
 
 impl<'a> AstEvaluator<'a> {
+    #[allow(dead_code)]
     fn new(record: &'a Value) -> Self {
-        Self { record }
+        Self { record, tz: None }
+    }
+
+    fn new_with_tz(record: &'a Value, tz: Option<String>) -> Self {
+        Self { record, tz }
     }
 
     fn is_truthy(val: &Value) -> bool {
@@ -1064,6 +1097,69 @@ impl<'a> AstEvaluator<'a> {
             }
 
             // Date
+            "TODATE" => {
+                let val = evaluated_args.first().unwrap_or(&Value::Null);
+                let tz_arg = evaluated_args.get(1).and_then(|v| v.as_str()).or(self.tz.as_deref());
+                let target_tz: chrono_tz::Tz = tz_arg.and_then(|s| s.parse().ok()).unwrap_or(chrono_tz::UTC);
+                if let Some(s) = val.as_str() {
+                    if s.len() == 10 && parse_date(s).is_some() {
+                        Value::from(s.to_string())
+                    } else if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                        let local_dt = dt.with_timezone(&target_tz);
+                        Value::from(local_dt.format("%Y-%m-%d").to_string())
+                    } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+                        let dt = chrono::Utc.from_utc_datetime(&naive);
+                        let local_dt = dt.with_timezone(&target_tz);
+                        Value::from(local_dt.format("%Y-%m-%d").to_string())
+                    } else {
+                        Value::Null
+                    }
+                } else if let Some(secs) = Self::to_number(val) {
+                    if let Some(dt) = chrono::DateTime::from_timestamp(secs as i64, 0) {
+                        let local_dt = dt.with_timezone(&target_tz);
+                        Value::from(local_dt.format("%Y-%m-%d").to_string())
+                    } else {
+                        Value::Null
+                    }
+                } else {
+                    Value::Null
+                }
+            }
+            "TODATETIME" => {
+                let val = evaluated_args.first().unwrap_or(&Value::Null);
+                let tz_arg = evaluated_args.get(1).and_then(|v| v.as_str()).or(self.tz.as_deref());
+                let target_tz: chrono_tz::Tz = tz_arg.and_then(|s| s.parse().ok()).unwrap_or(chrono_tz::UTC);
+                if let Some(s) = val.as_str() {
+                    if let Some((y, m, d)) = parse_date(s) {
+                        if let Some(naive_date) = chrono::NaiveDate::from_ymd_opt(y, m, d) {
+                            if let Some(naive_dt) = naive_date.and_hms_opt(0, 0, 0) {
+                                match target_tz.from_local_datetime(&naive_dt) {
+                                    chrono::LocalResult::Single(local) => {
+                                        let utc_dt = local.with_timezone(&chrono::Utc);
+                                        Value::from(utc_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                                    }
+                                    chrono::LocalResult::Ambiguous(earliest, _) => {
+                                        let utc_dt = earliest.with_timezone(&chrono::Utc);
+                                        Value::from(utc_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                                    }
+                                    chrono::LocalResult::None => Value::Null,
+                                }
+                            } else {
+                                Value::Null
+                            }
+                        } else {
+                            Value::Null
+                        }
+                    } else if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                        let utc_dt = dt.with_timezone(&chrono::Utc);
+                        Value::from(utc_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                    } else {
+                        Value::Null
+                    }
+                } else {
+                    Value::Null
+                }
+            }
             "TODAY" => {
                 let secs = SystemTime::now()
                     .duration_since(UNIX_EPOCH)

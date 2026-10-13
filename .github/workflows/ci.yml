@@ -23,7 +23,7 @@ jobs:
   # Branch protection requires a check named `validate`. This job is that check: it passes only
   # when the two groups of jobs below pass. See docs/operations/build-agent.md.
   validate:
-    needs: [checks, rust]
+    needs: [checks, rust, million-rows]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +31,8 @@ jobs:
         run: |
           echo "checks: ${{ needs.checks.result }}"
           echo "rust: ${{ needs.rust.result }}"
-          test "${{ needs.checks.result }}" = success && test "${{ needs.rust.result }}" = success
+          echo "million-rows: ${{ needs.million-rows.result }}"
+          test "${{ needs.checks.result }}" = success && test "${{ needs.rust.result }}" = success && test "${{ needs.million-rows.result }}" = success
 
   # The governance gates and the web app. They need no Rust and no database.
   checks:
@@ -109,6 +110,8 @@ jobs:
   # with the rest, each with its own database. Every test file is in exactly one group.
   rust:
     runs-on: ubuntu-latest
+    # A hung test would hold the check, and the pull request with it, for the six hours GitHub allows. The slowest group takes about fifteen minutes.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -156,3 +159,39 @@ jobs:
 
       - name: Drop this repository's own build output before the cache is saved
         run: cargo clean -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server
+
+  # The million-row proof (docs/plans/row-scale.md phase 6). It seeds 1,000,000 rows of thirty fields, five indexed, runs each
+  # of nine operations twenty times through the routes, and fails if the slowest passes its limit or a read scans a table. If a
+  # limit fails here and the plan is right, the limit does not move: paste the plan and the timings into the record and stop.
+  million-rows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-million-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-million-${{ runner.os }}-
+
+      - name: Start PostgreSQL container
+        run: |
+          docker compose -f deploy/docker-compose.yml up -d postgres
+          timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
+
+      - name: Hard Gate - Million Rows
+        run: cargo test --release -p scaffoldry-server --test million_rows_test -- --ignored million_rows --nocapture --test-threads=1
+
+      - name: Drop this repository's own build output before the cache is saved
+        run: cargo clean --release -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server

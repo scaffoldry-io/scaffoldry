@@ -268,19 +268,26 @@ async fn create_appointment(
         ));
     }
 
-    if payload.scoped_affiliation != "unit_admin" && payload.scoped_affiliation != "platform_admin" {
+    if !["unit_admin", "platform_admin", "compliance"].contains(&payload.scoped_affiliation.as_str()) {
         return Err(ServiceError::BadRequest(
-            "scoped_affiliation must be 'unit_admin' or 'platform_admin'".to_string(),
+            "scoped_affiliation must be 'unit_admin', 'platform_admin' or 'compliance'".to_string(),
         ));
     }
-    if payload.scoped_affiliation == "platform_admin" {
+    // A platform_admin and a compliance officer are institution-wide, so they sit on the root unit, and
+    // only a Platform Admin names them.
+    if payload.scoped_affiliation != "unit_admin" {
         if !unit_is_root(&all_orgs, id) {
-            return Err(ServiceError::BadRequest(
-                "A platform_admin appointment belongs on the root unit".to_string(),
-            ));
+            return Err(ServiceError::BadRequest(format!(
+                "A {} appointment belongs on the root unit",
+                payload.scoped_affiliation
+            )));
         }
         if !is_platform_admin(&caller, &state) {
-            return Err(ServiceError::forbidden("Only a Platform Admin may appoint a Platform Admin"));
+            return Err(ServiceError::forbidden(if payload.scoped_affiliation == "compliance" {
+                "Only a Platform Admin may appoint a compliance officer"
+            } else {
+                "Only a Platform Admin may appoint a Platform Admin"
+            }));
         }
     }
 
@@ -289,7 +296,12 @@ async fn create_appointment(
         person_id: Uuid::new_v4(),
         eppn: payload.eppn.clone(),
         organization_id: id,
-        role_title: if payload.scoped_affiliation == "platform_admin" { "Platform Admin" } else { "Org Unit Admin" }.to_string(),
+        role_title: match payload.scoped_affiliation.as_str() {
+            "platform_admin" => "Platform Admin",
+            "compliance" => "Compliance Officer",
+            _ => "Org Unit Admin",
+        }
+        .to_string(),
         scoped_affiliation: payload.scoped_affiliation.clone(),
         is_primary: true,
         source: "api".to_string(),

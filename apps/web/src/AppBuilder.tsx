@@ -23,6 +23,7 @@ import { WorkflowBuilder } from "./WorkflowBuilder";
 import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
 import { DataShapingToolbar } from "./DataShapingToolbar";
 import { RecordDetailDrawer } from "./RecordDetailDrawer";
+import { AttachmentCover, type AttachedFile } from "./ui/Attachments";
 import { CsvImportModal } from "./CsvImportModal";
 import { AddViewModal } from "./AddViewModal";
 import { CreateTableModal } from "./CreateTableModal";
@@ -393,8 +394,10 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
       if (f.field_type === "Number" || f.field_type === "Currency") newRecord[f.name] = 0;
       else if (f.field_type === "Checkbox") newRecord[f.name] = false;
       else if (f.field_type === "Date") newRecord[f.name] = "2026-10-06";
-      else if (f.field_type === "Select" && f.select_options && f.select_options.length > 0)
-        newRecord[f.name] = f.select_options[0];
+      else if (f.field_type === "Select" && f.select_options && f.select_options.length > 0) {
+        const opt0 = f.select_options[0];
+        newRecord[f.name] = typeof opt0 === "string" ? opt0 : opt0.id;
+      }
       else if (f.field_type === "Rating") newRecord[f.name] = 3;
       else if (!["Formula", "Lookup", "Count", "Rollup"].includes(f.field_type))
         newRecord[f.name] = "";
@@ -1404,13 +1407,20 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   // VIEW TYPE: KANBAN
                   if (activeView.view_type === "Kanban") {
                     const stageCol = activeView.kanban_column_field || "status";
-                    const statuses = ["Under Review", "Approved", "Funded"];
+                    const stageField = activeTable.fields.find((f) => f.name === stageCol);
+                    const stages = (stageField?.select_options && stageField.select_options.length > 0)
+                      ? stageField.select_options.map((o) => typeof o === "string" ? { id: o, label: o, color: "neutral" as const } : o)
+                      : [
+                          { id: "Under Review", label: "Under Review", color: "warn" as const },
+                          { id: "Approved", label: "Approved", color: "ok" as const },
+                          { id: "Funded", label: "Funded", color: "ok" as const },
+                        ];
 
                     return (
                       <div data-testid="view-kanban-board" className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                        {statuses.map((stage) => {
+                        {stages.map((stage) => {
                           const stageRecords = sortedRecords.filter(
-                            (r) => String(r[stageCol] || "") === stage
+                            (r) => String(r[stageCol] || "") === stage.id || String(r[stageCol] || "") === stage.label
                           );
                           const stageTotal = stageRecords.reduce(
                             (acc, r) => acc + (Number(r.budget || r.allocated_amount) || 0),
@@ -1419,14 +1429,14 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
 
                           return (
                             <div
-                              key={stage}
-                              data-testid={`kanban-column-${stage.toLowerCase().replace(/\s+/g, "-")}`}
+                              key={stage.id}
+                              data-testid={`kanban-column-${stage.label.toLowerCase().replace(/\s+/g, "-")}`}
                               className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-col space-y-3"
                             >
                               <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700">
                                 <div className="flex items-center gap-2">
                                   <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
-                                    {stage}
+                                    {stage.label}
                                   </span>
                                   <span className="text-[10px] font-mono px-2 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                                     {stageRecords.length}
@@ -1560,11 +1570,20 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                             data-testid={`gallery-card-${rec.id}`}
                             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs hover:border-blue-400 transition-all flex flex-col"
                           >
-                            <div className="h-20 bg-linear-to-r from-blue-600/20 via-purple-600/20 to-emerald-600/20 p-3 flex items-start justify-between">
-                              <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 font-bold text-slate-700 dark:text-slate-300">
+                            <div className="relative h-20 bg-linear-to-r from-blue-600/20 via-purple-600/20 to-emerald-600/20 p-3 flex items-start justify-between">
+                              {(() => {
+                                const att = activeTable.fields.find((f) => f.field_type === "Attachment");
+                                const files = att && Array.isArray(rec[att.name]) ? (rec[att.name] as AttachedFile[]) : [];
+                                return files.length ? (
+                                  <div className="absolute inset-0 overflow-hidden">
+                                    <AttachmentCover appSlug={app.slug} recordId={String(rec.id)} value={files} />
+                                  </div>
+                                ) : null;
+                              })()}
+                              <span className="relative font-mono text-[10px] px-2 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 font-bold text-slate-700 dark:text-slate-300">
                                 {rec.id}
                               </span>
-                              <div className="flex items-center gap-1.5">
+                              <div className="relative flex items-center gap-1.5">
                                 <span
                                   className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                                     rec.status === "Approved"
@@ -2262,6 +2281,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   onClose={() => setSelectedRecordId(null)}
                   activeTable={activeTable}
                   tables={tables}
+                  appSlug={app.slug}
                   setTables={setTables}
                   onUpdateRecordField={handleUpdateRecordField}
                   onDuplicateRecord={handleDuplicateRecord}

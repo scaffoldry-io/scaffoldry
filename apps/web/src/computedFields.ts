@@ -104,6 +104,7 @@ export function computeFieldValue(
 export function getFieldTypeIcon(type: string): string {
   switch (type) {
     case "Text":
+    case "LongText":
       return "🔤";
     case "Number":
       return "🔢";
@@ -141,6 +142,12 @@ export function getFieldTypeIcon(type: string): string {
       return "123";
     case "CreatedTime":
     case "LastModifiedTime":
+      return "🕒";
+    case "Collaborator":
+      return "👤";
+    case "CreatedBy":
+      return "✍️";
+    case "LastModifiedBy":
       return "🕒";
     default:
       return "📄";

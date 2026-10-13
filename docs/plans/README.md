@@ -88,21 +88,21 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 58 | [calc-graph.md](calc-graph.md) | 3 | Recalculation jobs when a definition changes, and type conversion with a dry run | **COMPLETED** |
 | 59 | [calc-graph.md](calc-graph.md) | 4 | Volatile formulas, defaults, and constraints. Adds `platform.timezone` | **COMPLETED** |
 | 60 | [jobs.md](jobs.md) | 4 | Quotas, retention of finished jobs, and the Background work indicator | **COMPLETED** |
-| 61 | [field-types.md](field-types.md) | 1 | Select options with ids and colors |
-| 62 | [record-history.md](record-history.md) | 4 | The disclosure log |
-| 63 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by |
-| 64 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer |
-| 65 | [field-types.md](field-types.md) | 4 | Duration and date-time |
-| 66 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search |
-| 67 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked |
-| 68 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules |
-| 69 | [views.md](views.md) | 3 | A million rows in a window. Needs `@tanstack/react-virtual` |
-| 70 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record |
-| 71 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts |
+| 61 | [field-types.md](field-types.md) | 1 | Select options with ids and colors | **COMPLETED** |
+| 62 | [record-history.md](record-history.md) | 4 | The disclosure log | **COMPLETED** |
+| 63 | [field-types.md](field-types.md) | 2 | Collaborator, created by, and last modified by | **COMPLETED** |
+| 64 | [field-types.md](field-types.md) | 3 | Long text with a safe renderer | **COMPLETED** |
+| 65 | [field-types.md](field-types.md) | 4 | Duration and date-time | **COMPLETED** |
+| 66 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search | **COMPLETED** |
+| 67 | [views.md](views.md) | 1 | Views live apart from the manifest. Personal, collaborative, and locked | **COMPLETED** |
+| 68 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules | **COMPLETED** |
+| 69 | [views.md](views.md) | 3 | A million rows in a window. Uses `@tanstack/react-virtual`, approved by Johann (MIT) | **COMPLETED** |
+| 70 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
+| 71 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts | **COMPLETED** |
 | 72 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
-| 73 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers |
-| 74 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon |
-| 75 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app |
+| 73 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers | **COMPLETED** |
+| 74 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon | **COMPLETED** |
+| 75 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app | **COMPLETED** |
 | 76 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures |
 | 77 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal |
 | 78 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had |
@@ -226,7 +226,7 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0029_disclosure_log.sql` | record history phase 4 |
 | `0030_member_principals.sql` | access rules phase 1 |
 | `0031_record_links.sql` | links phase 1 |
-| `0032_attachments.sql` | attachments phase 1 |
+| `0032_attachments.sql` | attachments phase 1. Shipped as `0051_files.sql`, because 0032 was taken |
 | `0033_app_views.sql` | views phase 1 |
 | `0034_view_shares.sql` | views phase 6. Also creates `rate_limits` |
 | `0035_import_export.sql` | import export phase 4 (`app_templates`) |

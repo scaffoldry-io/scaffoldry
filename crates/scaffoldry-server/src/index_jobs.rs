@@ -137,3 +137,12 @@ pub fn recompute_flags(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
     }
     ctx.result(json!({ "records": done, "raised": raised }))
 }
+
+/// Samples a view's walk so a jump to any row starts at the nearest anchor. The payload is an `AnchorSpec`.
+pub fn build_anchors(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    let spec: crate::repository_index::AnchorSpec = serde_json::from_value(payload).map_err(|e| JobError::Permanent(format!("the job is not an anchor spec: {e}")))?;
+    let repo = ctx.repository();
+    let total = repo.build_anchors(spec.view_id, &spec.hash(), &spec.query()).map_err(retry)?;
+    ctx.progress(total, total)?;
+    ctx.result(json!({ "rows": total, "anchors": total / crate::repository_index::ANCHOR_STEP as i64 + 1 }))
+}

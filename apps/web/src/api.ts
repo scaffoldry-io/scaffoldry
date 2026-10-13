@@ -33,6 +33,13 @@ export interface AdminOverviewData {
     oldest_queued_age_secs: number | null;
     failed_last_24h: number;
   };
+  files?: {
+    scanner: { configured: boolean; reachable: boolean; last_result: string | null };
+    error: number;
+    skipped: number;
+    pending: number;
+    infected: number;
+  };
 }
 
 export interface ProposalCheck {
@@ -294,9 +301,14 @@ export class ApiError extends Error {
 
 let activeToken: string | null = null;
 
-export const setAuthToken = (token: string | null) => {
+/**
+ * Sets the token that requests carry. With `persist` false the token lives in memory only, so a
+ * reload goes back to the stored one. A view-as token is set this way, because a reload would
+ * otherwise keep the view and lose its banner.
+ */
+export const setAuthToken = (token: string | null, persist = true) => {
   activeToken = token;
-  if (typeof window !== "undefined") {
+  if (persist && typeof window !== "undefined") {
     if (token) {
       localStorage.setItem("scaffoldry_token", token);
     } else {
@@ -394,6 +406,89 @@ export const listTrash = (appSlug: string, cursor?: string): Promise<{ entries: 
 export const restoreTrash = (appSlug: string, what: string): Promise<{ restored: number; batch_id: string }> =>
   request(`/apps/${appSlug}/trash/${encodeURIComponent(what)}/restore`, { method: "POST", body: JSON.stringify({}) });
 
+/** A file a record holds in an attachment field, as the record stores it. */
+export interface StoredFile {
+  ref_id: string;
+  name: string;
+  size: number;
+  media_type: string;
+}
+
+/** A file as the record's file list reports it, with its scan state. */
+export interface RecordFile extends StoredFile {
+  field: string;
+  scan_state: "pending" | "clean" | "infected" | "error" | "skipped" | string;
+}
+
+/** The files of a record. `fields` names the attachment fields the person may read, and no others. */
+export interface RecordFiles {
+  fields: string[];
+  files: RecordFile[];
+}
+
+export interface UploadedFile extends StoredFile {
+  scan_state: string;
+}
+
+export const listRecordFiles = (appSlug: string, recordId: string): Promise<RecordFiles> =>
+  request(`/apps/${appSlug}/records/${encodeURIComponent(recordId)}/files`);
+
+/** Downloads a file through the record and field checks. The bytes come back as a Blob. */
+export const fetchRecordFile = async (appSlug: string, recordId: string, refId: string): Promise<Blob> => {
+  const token = getAuthToken();
+  let response: Response;
+  try {
+    response = await fetch(`${getBaseUrl()}/apps/${appSlug}/records/${encodeURIComponent(recordId)}/files/${encodeURIComponent(refId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch (e) {
+    throw new ApiError(0, e instanceof Error ? e.message : "The server is not reachable.");
+  }
+  if (!response.ok) {
+    let details: any = null;
+    try {
+      details = await response.json();
+    } catch {
+      // Not JSON.
+    }
+    throw new ApiError(response.status, details?.error ?? `HTTP ${response.status}`, details);
+  }
+  return response.blob();
+};
+
+export interface UploadOptions {
+  onProgress?: (sent: number, total: number) => void;
+  signal?: AbortSignal;
+}
+
+/** Uploads one file. It uses XMLHttpRequest because `fetch` reports no upload progress. */
+export const uploadRecordFile = (appSlug: string, file: File, opts: UploadOptions = {}): Promise<UploadedFile> =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${getBaseUrl()}/apps/${appSlug}/files`);
+    const token = getAuthToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    // A header holds Latin-1 only, so the name travels percent-encoded.
+    xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      let body: any = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // Not JSON.
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && body) resolve(body as UploadedFile);
+      else reject(new ApiError(xhr.status, body?.error ?? `HTTP ${xhr.status}`, body));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "The server is not reachable."));
+    xhr.onabort = () => reject(new DOMException("The upload was cancelled.", "AbortError"));
+    opts.signal?.addEventListener("abort", () => xhr.abort());
+    xhr.send(file);
+  });
+
 export interface LinkOption {
   id: string;
   label: string;
@@ -412,6 +507,189 @@ export const listLinkOptions = (
   if (cursor) params.set("cursor", cursor);
   const query = params.toString();
   return request(`/apps/${appSlug}/tables/${encodeURIComponent(tableId)}/link-options${query ? `?${query}` : ""}`);
+};
+
+export interface AggregateQueryOptions {
+  function: "count" | "sum" | "avg" | "min" | "max";
+  field?: string;
+  filter?: Record<string, unknown>;
+  groupBy?: string;
+}
+
+export interface AggregateGroup {
+  key: string;
+  group: string;
+  value: number;
+  count?: number;
+}
+
+export interface AggregateResult {
+  function: "count" | "sum" | "avg" | "min" | "max";
+  field?: string;
+  group_by?: string;
+  value?: number;
+  count?: number;
+  groups?: AggregateGroup[];
+  has_more?: boolean;
+}
+
+/** Totals and group counts computed in one statement over the record index. */
+export const aggregateRecords = (
+  appSlug: string,
+  tableId: string,
+  options: AggregateQueryOptions,
+): Promise<AggregateResult> => {
+  const params = new URLSearchParams();
+  params.set("function", options.function);
+  if (options.field) params.set("field", options.field);
+  if (options.groupBy) params.set("group_by", options.groupBy);
+  if (options.filter) params.set("filter", JSON.stringify(options.filter));
+  const query = params.toString();
+  return request(`/apps/${appSlug}/tables/${encodeURIComponent(tableId)}/aggregate${query ? `?${query}` : ""}`);
+};
+
+export interface CollaboratorOption {
+  id: string;
+  label: string;
+  email?: string;
+  active?: boolean;
+}
+
+
+export interface AppView {
+  id: string;
+  app_slug: string;
+  table_id: string | null;
+  name: string;
+  kind: string;
+  ownership: "personal" | "collaborative" | "locked";
+  owner: string | null;
+  config: Record<string, any>;
+  version: number;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface ViewResponse {
+  view: AppView;
+  index_state: string;
+}
+
+export const listViews = (appSlug: string): Promise<{ views: AppView[] }> => {
+  return request(`/apps/${appSlug}/views`);
+};
+
+export const createView = (
+  appSlug: string,
+  payload: {
+    table_id?: string;
+    name: string;
+    kind?: string;
+    ownership?: "personal" | "collaborative" | "locked";
+    config?: Record<string, any>;
+  }
+): Promise<ViewResponse> => {
+  return request(`/apps/${appSlug}/views`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+};
+
+export const updateView = (
+  appSlug: string,
+  viewId: string,
+  payload: {
+    name: string;
+    config: Record<string, any>;
+    version: number;
+  }
+): Promise<ViewResponse> => {
+  return request(`/apps/${appSlug}/views/${viewId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+};
+
+export const deleteView = (
+  appSlug: string,
+  viewId: string
+): Promise<{ deleted: boolean; id: string }> => {
+  return request(`/apps/${appSlug}/views/${viewId}`, {
+    method: "DELETE",
+  });
+};
+
+/** One level of a grouped view: the groups, with counts. */
+export interface ViewGroups {
+  level: number;
+  field: string;
+  items: { key: string; count: number }[];
+  has_more: boolean;
+}
+
+export interface ViewFooter {
+  function: string;
+  value: number | null;
+  unsupported?: boolean;
+}
+
+/** What running a view returns: the groups of the next level, or the rows of a group (or of the whole view). */
+export interface ViewData {
+  view_id: string;
+  groups?: ViewGroups;
+  records?: { id: string; data: Record<string, any> }[];
+  next_cursor?: string | null;
+  /** On the first page only. A hidden field has none. */
+  footers?: Record<string, ViewFooter>;
+  /** Present when a window was asked for: where it began (null for the last page) and how it was found. */
+  window?: { offset: number | null; strategy: "offset" | "anchor" | "reverse" };
+  /** Present when `count: "exact"` was asked for. `at_least` means the count ran out of time. */
+  count?: { value: number; exact: true } | { at_least: number };
+  /** Present for a summary view: its groups and one value for each measure, 200 groups at most. */
+  summary?: { columns: string[]; groups: { key: string[]; values: (number | null)[] }[]; has_more: boolean };
+}
+
+/**
+ * Runs a view on the server. `groupPath` holds the key chosen at each level so far. The server filters, sorts,
+ * groups and totals. The browser only draws.
+ */
+export const runView = (
+  appSlug: string,
+  viewId: string,
+  opts: { groupPath?: string[]; cursor?: string; limit?: number; offset?: number; last?: boolean; count?: "exact" } = {}
+): Promise<ViewData> => {
+  const q = new URLSearchParams();
+  if (opts.offset !== undefined) q.set("offset", String(opts.offset));
+  if (opts.last) q.set("last", "true");
+  if (opts.count) q.set("count", opts.count);
+  if (opts.groupPath?.length) q.set("group_path", JSON.stringify(opts.groupPath));
+  if (opts.cursor) q.set("cursor", opts.cursor);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return request(`/apps/${appSlug}/views/${viewId}/data${qs ? `?${qs}` : ""}`);
+};
+
+export const duplicateView = (
+  appSlug: string,
+  viewId: string
+): Promise<ViewResponse> => {
+  return request(`/apps/${appSlug}/views/${viewId}/duplicate`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+};
+
+/** Search the directory for collaborators who can read the app. */
+export const listCollaborators = (
+  appSlug: string,
+  q?: string,
+): Promise<{ collaborators: CollaboratorOption[] }> => {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  const query = params.toString();
+  return request(`/apps/${appSlug}/collaborators${query ? `?${query}` : ""}`);
 };
 
 export const apiClient = {
@@ -688,7 +966,7 @@ export const apiClient = {
   },
 
   /** The signed-in person's own jobs, newest first. */
-  listMyJobs: async () => (await request<{ jobs: import("./ui").BackgroundJob[] }>("/jobs?limit=50")).jobs,
+  listMyJobs: async () => (await request<{ jobs?: import("./ui").BackgroundJob[] }>("/jobs?limit=50"))?.jobs ?? [],
 
   /** Opens a read-only view of an app as another person. The caller swaps tokens and shows the banner. */
   startViewAs: (appSlug: string, eppn: string) =>
@@ -931,6 +1209,12 @@ export const apiClient = {
       body: JSON.stringify(payload),
     });
   },
+
+  listViews: async (appSlug: string) => listViews(appSlug),
+  createView: async (appSlug: string, payload: Parameters<typeof createView>[1]) => createView(appSlug, payload),
+  updateView: async (appSlug: string, viewId: string, payload: Parameters<typeof updateView>[2]) => updateView(appSlug, viewId, payload),
+  deleteView: async (appSlug: string, viewId: string) => deleteView(appSlug, viewId),
+  duplicateView: async (appSlug: string, viewId: string) => duplicateView(appSlug, viewId),
 };
 
 export const computeSha256 = async (message: string): Promise<string> => {

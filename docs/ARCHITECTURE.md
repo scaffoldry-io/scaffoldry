@@ -163,6 +163,7 @@ All documentation, user interfaces, error messages, and commit histories must fo
   - Scoping Pure Function: `unit_in_scope` walks ancestors with an explicit 32-step cycle guard. If an organization node is unreachable or cycles, traversal terminates safely.
 - **Administrative Roles & UI Labels:**
   - **Platform Admin:** Stored affiliation `central_admin` or root `platform_admin` role. Has supervisory access to all units, all workspaces, and the full `/admin` console (policy, ledger, infra, SCIM, and org tree management).
+  - **Compliance officer:** Stored role `roles.scoped_affiliation = "compliance"` on the root unit, appointed by a Platform Admin through `POST /orgs/{id}/appointments` and recorded as an `AccessRoleGranted` ledger entry. The holder's affiliation resolves to `compliance`, which opens the disclosure log, the governance ledger and policy reads, and the other compliance routes. It is a role and not a claim from the identity provider: a SCIM record that says `compliance@...` grants nothing, so the registry cannot hand out this access. Like `central_admin`, the role replaces the person's registry affiliation while it is held.
   - **Org Unit Admin:** Stored role `roles.scoped_affiliation = "unit_admin"`. Scoped strictly to that unit and its descendants. Sees "Your units" on the workspace rail filter and can create workspaces within assigned units. Never gets `/admin` policy or ledger access.
   - *Strict Rule:* Never use the labels "Super Admin", "System Admin", or "Org Admin". Admin status is never inferred from job titles (e.g., "Chair" or "Dean").
 - **Identity & SCIM Synchronization:**
@@ -245,6 +246,84 @@ Changes to an application never push directly to live data. Every creation, form
    - Data sensitivity classification and required approvals.
    - Automated check results (Pass/Fail).
 4. **Governed Deployment:** When approved, the system writes the manifest and appends an audit block to the `governance_ledger` in one transaction. The production database and calculation engine reload the new manifest instantly.
+
+#### 6.1.1 Views Live Apart From the Manifest
+
+A view is presentation, so it is not governed. Views are stored in `app_views`, not in the manifest, and changing one is not a proposal. A view cannot grant access, because every read still goes through the row scope and the field visibility rules, and a view over a field the person cannot see is refused when it is run.
+
+- **Ownership decides who changes a view.** A `personal` view is its owner's alone. A `collaborative` view needs an editor. A `locked` view needs an admin, and everyone who can read the app may use it. Routes: `GET`/`POST /apps/{slug}/views`, `PUT`/`DELETE /apps/{slug}/views/{id}`, `POST .../duplicate`. The MCP tools are `list_views`, `save_view` and `delete_view`. A save names the version it read, and a stale one is a `409`.
+- **Indexes follow views.** A save that sorts or filters on a field outside the table's indexed set starts that index in the same transaction (`index_state: building`), and a table may index 20 fields (`too_many_indexes` lists the indexed fields no view uses).
+- **What runs is the manifest with the stored views merged in.** A manifest stored with views in it has them moved once, when the server starts, and the move is one `ViewsMigrated` ledger entry with the count. The engine's copy keeps the merged list, so validation, index derivation and the schema routes read `views` as before.
+
+#### 6.1.2 What a View Can Do (Phase 2)
+
+The server does the work. The browser draws what it is sent and never sorts, filters, groups or totals records. `GET /apps/{slug}/views/{id}/data` runs a view.
+
+- **Filter trees.** A filter is a group: a conjunction over clauses and nested groups, two levels deep below the root and 50 clauses at most. The new operators are `In` (a JSON array or a comma list), `Between` (`low..high`, both inside), `Before` and `After`. A date range may be a relative word: `today`, `this_week` (opens Monday), `last_7_days`, `last_30_days` (today and the days before) or `next_30_days`. The server turns the word into whole local days in `platform.timezone`, then compiles the filter. Tests prove the window is the same at 00:30 and at 23:30 local time. Over the index, each clause past the walked field is an `EXISTS` probe of the same record, so a tree on indexed fields never scans the table. A tree that names a field outside the index is allowed only on a table of 10,000 rows or fewer, and then it reads the record JSON.
+- **Grouping.** A view groups by up to three fields (`group_by`). With no `group_path`, the route returns the groups of the first level with counts, at most 200 per level, and `has_more` says when there are others. A `group_path` of the keys chosen so far (a JSON array) returns the next level, and a path as long as the list returns that group's rows, paged by the ordinary cursor. A key of `""` is the group with no value. The groups come from the same index statement as the aggregate route.
+- **Footers.** `column_summary` holds one choice per field: `count`, `filled`, `empty`, `unique`, `sum`, `avg`, `min` or `max`. Each is one aggregate statement over the whole filtered set and rides on the first page only. A field the person cannot see has no footer, and a function the field's type cannot answer says `unsupported`.
+- **Color rules.** A view holds ten rules at most, each `{ id, label, when, tone, target }` with `tone` one of `neutral`, `info`, `success`, `warning`, `danger`, and `target` of `row` or `field` (a field rule names the field). The server evaluates the rules on the rows it returns and adds `_tone`, a list of the rules that matched, in the view's order. A rule needs a label, because color is never the only signal: the web shows an icon and the label as text and names the group for the same words. A rule that reads a field the person cannot see is dropped for them, and the view still runs.
+
+#### 6.1.3 A Million Rows in a Window (Phase 3)
+
+A view with a sort on an indexed field opens at any row, with the same row scope and column rules as every other read: `GET /apps/{slug}/views/{id}/data?offset=&limit=`, `last=true`, and `count=exact`.
+
+- **Jumps use anchors.** Skipping 500,000 rows with `OFFSET` over 1,000,000 took 3.0 s, and the best form without anchors took 0.4 s and grew with depth (`docs/plans/views.md` has the plans). A `build_anchors` job samples the sort key of every 1,000th row into `view_anchors`. A jump starts at the nearest anchor and skips fewer than 1,000 rows, in about 30 ms. Until the anchors exist a deep jump still answers, by skipping on the index, and it asks for them. A window may start at row 1,000,000 at most.
+- **The order is a total order.** An ascending sort reads the key up with blanks last, then the record id. A descending sort is exactly that reversed. So the last page is the same query reversed, and the rows are flipped back.
+- **Counts say when they gave up.** `count=exact` runs under the count timeout (two seconds). If it runs out, a count capped at 250,000 runs, and the answer is `{ "at_least": 250000 }`, which the screen shows as `Over 250,000 records`. If that also runs out, the answer is `{ "at_least": 0 }`.
+- **A person with a row scope** gets windows and counts over their own scope only. They never use anchors, because their positions are not the table's.
+- **The grid** (`VirtualGrid`, using `@tanstack/react-virtual`) draws the rows in view and a buffer, asks for windows of 200, shows skeleton rows until one arrives, and numbers its rows with `aria-rowcount` and `aria-rowindex`. Browsers stop honoring the height of a scroll area somewhere between 17 and 33 million pixels, and a million rows of 32 pixels is 32 million, so the scroll area is kept to 10 million pixels and the grid keeps its own offset in the list's pixels.
+
+#### 6.1.4 The Measured Size (Row Scale Phase 6)
+
+One table of **1,000,000 rows of thirty fields, five of them indexed,** was measured through the routes, twenty runs of each operation, release build, one PostgreSQL 16 server. CI runs the same test (`million_rows`, `cargo test --release -- --ignored million_rows`) and fails if the slowest of twenty passes its limit or a read scans the records.
+
+| Operation | Median | Slowest | Limit |
+| --- | --- | --- | --- |
+| First page, default order | 13.2 ms | 19.3 ms | 100 ms |
+| A page by cursor near the end | 11.1 ms | 12.5 ms | 100 ms |
+| Sort by an indexed number, a page near the end | 13.4 ms | 21.4 ms | 200 ms |
+| Indexed range filter, 200 of 1,000 matches | 18.6 ms | 20.6 ms | 200 ms |
+| `sum` over the whole table | 388.7 ms | 452.4 ms | 1,500 ms |
+| `count` grouped by a five-value field | 1,007.7 ms | 1,115.7 ms | 1,500 ms |
+| Search for a word in ten rows | 9.3 ms | 12.5 ms | 200 ms |
+| Create one record, five indexed fields | 14.4 ms | 22.2 ms | 50 ms |
+| Update one indexed field | 14.7 ms | 20.2 ms | 50 ms |
+
+The next limit is one PostgreSQL server. The totals are the slowest rows because they read every value of a field, so they grow with the table: a total reads the index, never the records. Nothing was measured above a million rows.
+
+#### 6.1.5 Summaries and Charts (Phase 4)
+
+A summary is a view of `kind: summary` with `group_by` (one or two fields) and `aggregations` (`{ field, fn }`, `fn` one of `count`, `sum`, `avg`, `min`, `max`, `count_distinct`). Running it (`GET /apps/{slug}/views/{id}/data`) returns `summary: { columns, groups, has_more }`: a read-only table of at most 200 groups, ordered by key, with a flag when there are more. It releases totals and never records.
+
+- **Each measure is one call to the aggregate route**, ordered by key so every column has the same groups, and the columns are put together by key. The totals and the groups are computed in PostgreSQL over the index. Nothing is counted in Rust.
+- **The aggregate route** gains `bucket` (`day`, `week`, `month`, `quarter`, `year`) for a date `group_by`, `group_by2` for a second group, and `count_distinct` for groups. A bucket is cut in `platform.timezone`, so a record at 23:30 on 31 March in New York is in March, not April. A week opens on Monday and a bucket's key is the date it opens on.
+- **Charts** are SVG written by hand in `apps/web/src/ui/charts/` with no library: bar (grouped or stacked), line and area, pie and donut (12 slices at most, the rest as `Other`), and a stat with a comparison. Each has axis labels and ticks, direct value labels where there is room, a legend as text, a pattern as well as a color for each series, and a `View as table` button that shows the exact data. Points are reachable by keyboard, and a live region says where the arrow keys landed (`March: 42 applications`). A stat says the difference in words (`Up 12 from 30 last term (40%)`).
+- **A row of a summary** opens the grid on its group in an unsaved view whose filter is in the address (`?unsaved=`). Nothing is written to the server.
+- **A chart over a field the person cannot see is not offered.** The schema the server sends leaves a hidden field out, and the aggregate route refuses a hidden field in a group, a measure or a filter.
+
+#### 6.1.6 Attachments (Phase 1)
+
+A file is kept outside the record. The record holds a list of `{ref_id, name}` in an `Attachment` field. The bytes sit on disk at `$SCAFFOLDRY_FILES_DIR/aa/bb/{sha256}`, so the same bytes uploaded twice are one blob and two refs (`files`, `file_refs`, migration `0051`).
+
+- **Upload** (`POST /apps/{slug}/files`) needs write access. The body streams to a temporary name while it is hashed, is stopped at `files.max_mb` (default 50, at most 500), and moves to its hash name once the hash is known. The app's total is held to `files.app_quota_mb` (default 5000).
+- **The type comes from the bytes.** What the client says is never read. Programs, scripts and pages are refused as `file_type_blocked`, by their first bytes or their name (`.exe`, `.html`, `.svg` and the like). Names are cleaned of paths and odd characters.
+- **Download** (`GET /apps/{slug}/records/{id}/files/{ref_id}`) goes through the same record and field checks as a read. Any refusal is one 404. Only PNG, JPEG, GIF and WebP are shown inline. Everything else is `Content-Disposition: attachment`. Every response carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, no-store`.
+- **A download from a sensitive field** writes a `file_download` row to the disclosure log.
+- **An upload no record takes** is removed after 24 hours by the `purge_unattached_files` job. A server with `SCAFFOLDRY_FILES_DIR` set to a missing or read-only directory does not start. With it unset, uploads are off.
+
+#### 6.1.7 Scanning (Attachments Phase 2)
+
+With `files.scanner` set (`{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }`), every upload starts `pending` and one `scan_file` job sends each waiting file to the daemon over its socket. The client is written by hand over `std` (`scan.rs`). A daemon that does not answer in 30 seconds gives `error`.
+
+- **A pending file cannot be attached or downloaded.** `clean`, `error` and `skipped` files can. With no scanner a file is `skipped`, and the Overview says so in a Banner.
+- **An infected file** is removed from disk, every upload of the same bytes is marked deleted, and a `FileInfected` ledger entry names the hash, the signature and the uploader.
+- **`files.require_scan`** makes an upload fail with `scanner_unavailable` (503) when no scanner answers. It never turns a check off.
+- **The Overview** shows whether a scanner is set, whether it answers, the last result, and how many files are in `error` or `skipped`.
+
+#### 6.1.8 Attachments in the app (Phase 3)
+
+A record stores `{ref_id, name, size, media_type}` for each file, so a grid chip shows a name and a size with no second request. `GET /apps/{slug}/records/{id}/files` adds the scan state and names the attachment fields the person may read. The record drawer's editor (`ui/Attachments.tsx`) has a drop target and a `Choose files` button that both work from the keyboard, a list with name, size, type and scan state as text, `Remove`, and a download. Uploads show text and a progress bar with `Cancel`, and an error shows the server's specific message through `explainError`. A field the person may not read leaves no label and no control.
 
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 

@@ -274,6 +274,51 @@ Each read also passes the `Seq Scan` check. Add a CI step that runs `cargo test 
 
 Paste the printed table into the session output. Those numbers replace the estimate in this brief.
 
+### Measured
+
+The run that passed, on the development database (PostgreSQL 16, release build). 1,000,000 rows of thirty fields, five indexed. Seeding took 326 s. The table is the test's own output.
+
+| Operation | Median | Slowest | Limit |
+| --- | --- | --- | --- |
+| First page, default order | 13.2 ms | 19.3 ms | 100 ms |
+| A page by cursor near the end | 11.1 ms | 12.5 ms | 100 ms |
+| Sort by an indexed number, a page near the end | 13.4 ms | 21.4 ms | 200 ms |
+| Indexed range filter, 200 of 1,000 matches | 18.6 ms | 20.6 ms | 200 ms |
+| sum over the whole table | 388.7 ms | 452.4 ms | 1500 ms |
+| count grouped by a five-value field | 1007.7 ms | 1115.7 ms | 1500 ms |
+| Search for a word in ten rows | 9.3 ms | 12.5 ms | 200 ms |
+| Create one record, five indexed fields | 14.4 ms | 22.2 ms | 50 ms |
+| Update one indexed field | 14.7 ms | 20.2 ms | 50 ms |
+
+**The first run failed three limits, and the limits did not move.**
+
+| Operation | Median | Slowest | Limit | What it was |
+| --- | --- | --- | --- | --- |
+| Sort by an indexed number, a page near the end | 313.1 ms | 380.6 ms | 200 ms | A defect. The plan used the index and still read 1,000,000 rows: see below |
+| First page, default order | 14.0 ms | 200.2 ms | 100 ms | One slow run of twenty, a median of 14 ms. Gone after a `CHECKPOINT` that a loaded table has already had |
+| Update one indexed field | 16.3 ms | 125.6 ms | 50 ms | The same: one slow run, gone after the checkpoint |
+
+**The defect.** `EXPLAIN (ANALYZE)` of the sorted page near the end, before:
+
+```
+Index Scan using idx_record_index_num on record_index i  (actual time=306.024..306.054 rows=101)
+  Index Cond: (app_slug, table_id, field)
+  Filter: (ord = 0) AND ((num > 999800) OR (num = 999800 AND record_id > 'rec-...00999800') OR (num IS NULL))
+  Rows Removed by Filter: 999800
+```
+
+The cursor was a filter, not an index condition. The `OR num IS NULL` kept the planner from using the cursor as a boundary, so the scan started at the front of the field and threw away every row before the cursor. The plan had no `Seq Scan`, so the check in this brief did not catch it. After, with the cursor as a row comparison on the last two columns of the index:
+
+```
+Index Scan using idx_record_index_num on record_index i  (actual time=0.073..0.103 rows=101)
+  Index Cond: (app_slug, table_id, field, num IS NOT NULL, ROW(num, record_id) > ROW(999800, 'rec-...00999800'))
+Execution Time: 0.375 ms
+```
+
+The blanks sort last, so they are a second phase after the values, as a descending sort already did. Its `ORDER BY record_id` alone made the planner walk the primary key and filter a million rows to find none (650 ms for a branch that returns nothing). Ordering it the way the index is ordered reads it in place (1.6 ms). The anchored window of `views.md` phase 3 had the same defect and went from 191 ms to 29 ms.
+
+**One departure from the brief.** The brief says each read passes the `Seq Scan` check. The two totals do not: `sum` and `count` grouped each read every value of one field, which is a fifth of `record_index`, and the planner chooses a parallel `Seq Scan` of `record_index` for that, as it would for any total over a fifth of a table. The test lets those two scan `record_index` and fails if either touches `dataset_records`. Every other read has no `Seq Scan` at all.
+
 ## How to prompt Gemini
 
 ```

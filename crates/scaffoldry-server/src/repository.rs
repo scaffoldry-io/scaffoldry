@@ -17,7 +17,11 @@ use scaffoldry_core::{
 };
 use scaffoldry_engine::AppManifest;
 use serde_json::Value;
-pub use crate::repository_index::{build_indexed_sql, IndexPhase, IndexedClause, IndexedQuery, IndexedSort, IndexedValue};
+pub use crate::repository_index::{
+    build_aggregate_sql, build_indexed_sql, AggregateFunction,
+    AggregateGroupRow, AggregatePlan, AggregateResultRaw, IndexPhase, IndexedClause, IndexedQuery, IndexedSort,
+    IndexedValue,
+};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, sync_channel, Sender};
 
@@ -35,6 +39,7 @@ const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_ap
 const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
 const SCHEMA_0014: &str = include_str!("../../scaffoldry-core/migrations/0014_record_table_id.sql");
 const SCHEMA_0015: &str = include_str!("../../scaffoldry-core/migrations/0015_record_index.sql");
+const SCHEMA_0016: &str = include_str!("../../scaffoldry-core/migrations/0016_record_search.sql");
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
 const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
 const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
@@ -45,6 +50,11 @@ const SCHEMA_0027: &str = include_str!("../../scaffoldry-core/migrations/0027_re
 const SCHEMA_0026: &str = include_str!("../../scaffoldry-core/migrations/0026_jobs.sql");
 const SCHEMA_0046: &str = include_str!("../../scaffoldry-core/migrations/0046_calc_status.sql");
 const SCHEMA_0047: &str = include_str!("../../scaffoldry-core/migrations/0047_view_as_token.sql");
+const SCHEMA_0048: &str = include_str!("../../scaffoldry-core/migrations/0048_disclosure_log.sql");
+const SCHEMA_0049: &str = include_str!("../../scaffoldry-core/migrations/0049_app_views.sql");
+const SCHEMA_0050: &str = include_str!("../../scaffoldry-core/migrations/0050_view_anchors.sql");
+const SCHEMA_0051: &str = include_str!("../../scaffoldry-core/migrations/0051_files.sql");
+const SCHEMA_0052: &str = include_str!("../../scaffoldry-core/migrations/0052_file_scans.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -457,6 +467,10 @@ pub struct RecordQuery {
     pub limit: usize,
     /// Only the records inside this scope.
     pub scope: Option<ScopePlan>,
+    /// Full-text search string.
+    pub search: Option<String>,
+    /// A filter tree, read from each record's JSON. Used instead of `clauses` when set.
+    pub expr: Option<crate::repository_index::Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -524,53 +538,23 @@ pub(crate) fn to_sql_params(params: Vec<SqlParam>) -> Vec<Box<dyn postgres::type
 /// The statement for a `RecordQuery`, and its parameters in order. Pure, so it can be tested
 /// without a database.
 pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlParam>) {
-    use scaffoldry_engine::FilterOperator as Op;
     fn push(params: &mut Vec<SqlParam>, p: SqlParam) -> usize {
         params.push(p);
         params.len()
     }
     let mut params = vec![SqlParam::Text(app_slug.to_string()), SqlParam::Text(q.table_id.clone())];
-    let mut preds: Vec<String> = Vec::new();
-    for (field, op, value) in &q.clauses {
-        // The older evaluator treats a clause with no value as no clause. So does this.
-        if value.trim().is_empty() && !matches!(op, Op::IsEmpty | Op::IsNotEmpty) {
-            continue;
+    let joined = match &q.expr {
+        Some(e) => json_expr(&mut params, e),
+        None => {
+            let mut preds: Vec<String> = Vec::new();
+            for (field, op, value) in &q.clauses {
+                if let Some(pred) = json_clause(&mut params, field, *op, value, None) {
+                    preds.push(pred);
+                }
+            }
+            if preds.is_empty() { "TRUE".to_string() } else { preds.join(if q.any { " OR " } else { " AND " }) }
         }
-        let pred = match op {
-            Op::IsEmpty | Op::IsNotEmpty => {
-                let f = push(&mut params, SqlParam::Text(field.clone()));
-                let empty = format!(
-                    "((data -> ${f}::text) IS NULL OR (data -> ${f}::text) = 'null'::jsonb OR data ->> ${f}::text = '')"
-                );
-                if matches!(op, Op::IsEmpty) { empty } else { format!("NOT {empty}") }
-            }
-            Op::Equals | Op::NotEquals | Op::Contains | Op::NotContains => {
-                let f = push(&mut params, SqlParam::Text(field.clone()));
-                let v = push(&mut params, SqlParam::Text(value.clone()));
-                let cell = format!("lower(COALESCE(data ->> ${f}::text, ''))");
-                let want = format!("lower(${v}::text)");
-                match op {
-                    Op::Equals => format!("{cell} = {want}"),
-                    Op::NotEquals => format!("{cell} <> {want}"),
-                    Op::Contains => format!("strpos({cell}, {want}) > 0"),
-                    _ => format!("strpos({cell}, {want}) = 0"),
-                }
-            }
-            Op::GreaterThan | Op::LessThan => match value.parse::<f64>() {
-                Ok(n) if n.is_finite() => {
-                    let f = push(&mut params, SqlParam::Text(field.clone()));
-                    let v = push(&mut params, SqlParam::Float(n));
-                    let sign = if matches!(op, Op::GreaterThan) { ">" } else { "<" };
-                    format!(
-                        "CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 {sign} ${v}::float8 ELSE FALSE END"
-                    )
-                }
-                _ => "FALSE".to_string(),
-            },
-        };
-        preds.push(pred);
-    }
-    let joined = if preds.is_empty() { "TRUE".to_string() } else { preds.join(if q.any { " OR " } else { " AND " }) };
+    };
 
     let key = q.sort.as_ref().map(|(field, _)| {
         let f = push(&mut params, SqlParam::Text(field.clone()));
@@ -597,6 +581,13 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
             }
         }
     };
+    let search_clause = match &q.search {
+        Some(s) if !s.trim().is_empty() => {
+            let sp = push(&mut params, SqlParam::Text(s.clone()));
+            format!(" AND search @@ plainto_tsquery('simple', ${sp})")
+        }
+        _ => String::new(),
+    };
     let scope = match &q.scope {
         Some(plan) => {
             let (app, table) = (match &params[0] { SqlParam::Text(t) => t.clone(), _ => String::new() }, q.table_id.clone());
@@ -607,10 +598,115 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
     let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
     let sql = format!(
         "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){after}{scope} \
+         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){search_clause}{after}{scope} \
          ORDER BY {order} LIMIT ${limit}::bigint"
     );
     (sql, params)
+}
+
+
+fn push_sql(params: &mut Vec<SqlParam>, p: SqlParam) -> usize {
+    params.push(p);
+    params.len()
+}
+
+/// A date in a record's JSON, as an instant. A plain date is midnight UTC, as the index reads it.
+fn json_instant(f: usize) -> String {
+    format!(
+        "(CASE WHEN data ->> ${f}::text ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' THEN ((data ->> ${f}::text) || 'T00:00:00+00:00')::timestamptz \
+         WHEN data ->> ${f}::text ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}:[0-9]{{2}}(\\.[0-9]+)?(Z|[+-][0-9]{{2}}:[0-9]{{2}})$' THEN (data ->> ${f}::text)::timestamptz \
+         ELSE NULL END)"
+    )
+}
+
+/// The condition one clause puts on a record's JSON, or `None` for a clause that has no value and so is no clause.
+/// The newer operators need the column of the field to know whether the cell is a number or a date.
+fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::FilterOperator, value: &str, column: Option<scaffoldry_engine::IndexColumn>) -> Option<String> {
+    use scaffoldry_engine::{list_of, parse_instant, range_of, IndexColumn, FilterOperator as Op};
+    // The older evaluator treats a clause with no value as no clause. So does this.
+    if value.trim().is_empty() && !matches!(op, Op::IsEmpty | Op::IsNotEmpty) {
+        return None;
+    }
+    Some(match op {
+        Op::IsEmpty | Op::IsNotEmpty => {
+            let f = push_sql(params, SqlParam::Text(field.to_string()));
+            let empty = format!("((data -> ${f}::text) IS NULL OR (data -> ${f}::text) = 'null'::jsonb OR data ->> ${f}::text = '')");
+            if matches!(op, Op::IsEmpty) { empty } else { format!("NOT {empty}") }
+        }
+        Op::Equals | Op::NotEquals | Op::Contains | Op::NotContains => {
+            let f = push_sql(params, SqlParam::Text(field.to_string()));
+            let v = push_sql(params, SqlParam::Text(value.to_string()));
+            let cell = format!("lower(COALESCE(data ->> ${f}::text, ''))");
+            let want = format!("lower(${v}::text)");
+            match op {
+                Op::Equals => format!("{cell} = {want}"),
+                Op::NotEquals => format!("{cell} <> {want}"),
+                Op::Contains => format!("strpos({cell}, {want}) > 0"),
+                _ => format!("strpos({cell}, {want}) = 0"),
+            }
+        }
+        Op::GreaterThan | Op::LessThan => match value.parse::<f64>() {
+            Ok(n) if n.is_finite() => {
+                let f = push_sql(params, SqlParam::Text(field.to_string()));
+                let v = push_sql(params, SqlParam::Float(n));
+                let sign = if matches!(op, Op::GreaterThan) { ">" } else { "<" };
+                format!("CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 {sign} ${v}::float8 ELSE FALSE END")
+            }
+            _ => "FALSE".to_string(),
+        },
+        Op::In => {
+            let list: Vec<String> = list_of(value).into_iter().map(|v| v.to_lowercase()).collect();
+            if list.is_empty() {
+                return Some("FALSE".to_string());
+            }
+            let f = push_sql(params, SqlParam::Text(field.to_string()));
+            let l = push_sql(params, SqlParam::Texts(list));
+            format!(
+                "(lower(COALESCE(data ->> ${f}::text, '')) = ANY(${l}::text[]) OR (jsonb_typeof(data -> ${f}::text) = 'array' AND EXISTS \
+                 (SELECT 1 FROM jsonb_array_elements_text(data -> ${f}::text) e WHERE lower(e) = ANY(${l}::text[]))))"
+            )
+        }
+        Op::Between => match (column, range_of(value)) {
+            (Some(IndexColumn::Num), Some((low, high))) => match (low.parse::<f64>(), high.parse::<f64>()) {
+                (Ok(a), Ok(b)) if a.is_finite() && b.is_finite() => {
+                    let f = push_sql(params, SqlParam::Text(field.to_string()));
+                    let (a, b) = (push_sql(params, SqlParam::Float(a)), push_sql(params, SqlParam::Float(b)));
+                    format!("CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 BETWEEN ${a}::float8 AND ${b}::float8 ELSE FALSE END")
+                }
+                _ => "FALSE".to_string(),
+            },
+            (Some(IndexColumn::Ts), Some((low, high))) => match (parse_instant(low), parse_instant(high)) {
+                (Some(a), Some(b)) => {
+                    let f = push_sql(params, SqlParam::Text(field.to_string()));
+                    let (a, b) = (push_sql(params, SqlParam::Text(a)), push_sql(params, SqlParam::Text(b)));
+                    format!("COALESCE({} BETWEEN ${a}::text::timestamptz AND ${b}::text::timestamptz, FALSE)", json_instant(f))
+                }
+                _ => "FALSE".to_string(),
+            },
+            _ => "FALSE".to_string(),
+        },
+        Op::Before | Op::After => match (column, parse_instant(value.trim())) {
+            (Some(IndexColumn::Ts), Some(t)) => {
+                let f = push_sql(params, SqlParam::Text(field.to_string()));
+                let v = push_sql(params, SqlParam::Text(t));
+                let sign = if matches!(op, Op::Before) { "<" } else { ">" };
+                format!("COALESCE({} {sign} ${v}::text::timestamptz, FALSE)", json_instant(f))
+            }
+            _ => "FALSE".to_string(),
+        },
+    })
+}
+
+/// A filter tree as a condition on a record's JSON.
+fn json_expr(params: &mut Vec<SqlParam>, e: &crate::repository_index::Expr) -> String {
+    use crate::repository_index::Expr;
+    match e {
+        Expr::Leaf(c) => json_clause(params, &c.field, c.op, &c.value, Some(c.column)).unwrap_or_else(|| "TRUE".to_string()),
+        Expr::And(v) if v.is_empty() => "TRUE".to_string(),
+        Expr::Or(v) if v.is_empty() => "FALSE".to_string(),
+        Expr::And(v) => format!("({})", v.iter().map(|x| json_expr(params, x)).collect::<Vec<_>>().join(" AND ")),
+        Expr::Or(v) => format!("({})", v.iter().map(|x| json_expr(params, x)).collect::<Vec<_>>().join(" OR ")),
+    }
 }
 
 /// The table a record belongs to, as the column holds it. The key also stays in the JSON.
@@ -697,7 +793,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 31] = [
+                        let migrations: [(&str, &str); 37] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -711,6 +807,7 @@ impl PostgresRepository {
                             ("0013_platform_settings.sql", SCHEMA_0013),
                             ("0014_record_table_id.sql", SCHEMA_0014),
                             ("0015_record_index.sql", SCHEMA_0015),
+                            ("0016_record_search.sql", SCHEMA_0016),
                             ("0021_positions.sql", SCHEMA_0021),
                             ("0022_record_created_by.sql", SCHEMA_0022),
                             ("0007_record_version.sql", SCHEMA_0007),
@@ -725,6 +822,11 @@ impl PostgresRepository {
                             ("0045_index_status.sql", SCHEMA_0045),
                             ("0046_calc_status.sql", SCHEMA_0046),
                             ("0047_view_as_token.sql", SCHEMA_0047),
+                            ("0048_disclosure_log.sql", SCHEMA_0048),
+                            ("0049_app_views.sql", SCHEMA_0049),
+                            ("0050_view_anchors.sql", SCHEMA_0050),
+                            ("0051_files.sql", SCHEMA_0051),
+                            ("0052_file_scans.sql", SCHEMA_0052),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -1317,6 +1419,44 @@ impl PostgresRepository {
     }
 
     /// One page that filters or sorts. Use `list_records_page` when there is neither.
+    pub fn aggregate_records(&self, plan: &AggregatePlan) -> Result<AggregateResultRaw, RepositoryError> {
+        let (sql, params) = build_aggregate_sql(plan);
+        let is_group_by = plan.group_by.is_some();
+        self.with_client(move |client| {
+            let boxed = to_sql_params(params);
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+            if is_group_by {
+                let rows = client.query(&sql, &refs)?;
+                let mut groups = Vec::new();
+                for r in rows {
+                    let key: String = r.get(0);
+                    let key2: Option<String> = r.get(1);
+                    let val: Option<f64> = r.get(2);
+                    groups.push(AggregateGroupRow {
+                        key,
+                        key2,
+                        value: val.unwrap_or(0.0),
+                    });
+                }
+                let has_more = groups.len() > 200;
+                groups.truncate(200);
+                Ok(AggregateResultRaw {
+                    value: None,
+                    groups: Some(groups),
+                    has_more,
+                })
+            } else {
+                let row = client.query_one(&sql, &refs)?;
+                let val: Option<f64> = row.get(0);
+                Ok(AggregateResultRaw {
+                    value: val,
+                    groups: None,
+                    has_more: false,
+                })
+            }
+        })
+    }
+
     pub fn query_records(&self, app_slug: &str, query: &RecordQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_record_query(app_slug, query);
         self.with_client(move |client| {

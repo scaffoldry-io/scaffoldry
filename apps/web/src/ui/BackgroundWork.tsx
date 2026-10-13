@@ -18,6 +18,8 @@ export interface BackgroundWorkProps {
   fetchJobs: () => Promise<BackgroundJob[]>;
   /** Until `realtime.md` phase 3 pushes changes, the indicator asks every five seconds. */
   intervalMs?: number;
+  /** Where the region sits. The default is an ordinary block. */
+  className?: string;
 }
 
 const ACTIVE = ["queued", "running"];
@@ -28,7 +30,7 @@ function progressWords(job: BackgroundJob): string {
 }
 
 /** The signed-in person's queued and running jobs. It shows nothing when there are none. */
-export function BackgroundWork({ fetchJobs, intervalMs = 5000 }: BackgroundWorkProps) {
+export function BackgroundWork({ fetchJobs, intervalMs = 5000, className = "" }: BackgroundWorkProps) {
   const [jobs, setJobs] = useState<BackgroundJob[]>([]);
 
   useEffect(() => {
@@ -51,7 +53,7 @@ export function BackgroundWork({ fetchJobs, intervalMs = 5000 }: BackgroundWorkP
 
   if (jobs.length === 0) return null;
   return (
-    <div role="status" className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm">
+    <div role="status" className={`rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm ${className}`.trim()}>
       <p className="font-semibold">Background work</p>
       <ul className="mt-1 space-y-1">
         {jobs.map((job) => (

@@ -381,7 +381,7 @@ async fn a_scoped_list_at_200000_rows_is_fast_and_does_not_scan() {
         pred: Pred::Cmp { field: "advisor".into(), op: Op::Eq, value: Operand::Literal(json!(w.ann.to_lowercase())) },
         indexed: manifest(&w.slug).tables[0].fields.clone(),
     };
-    let (sql, params) = build_record_query(&w.slug, &RecordQuery { table_id: "students".into(), any: false, clauses: vec![], sort: None, after: None, limit: 51, scope: Some(plan) });
+    let (sql, params) = build_record_query(&w.slug, &RecordQuery { table_id: "students".into(), any: false, clauses: vec![], sort: None, after: None, limit: 51, scope: Some(plan), search: None, expr: None });
     let explained = format!("EXPLAIN {sql}");
     let plan_text = db(move |c| {
         let boxed: Vec<Box<dyn postgres::types::ToSql + Sync>> = params

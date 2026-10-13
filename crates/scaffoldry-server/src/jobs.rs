@@ -84,6 +84,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::index_jobs::build_index,
     },
     JobKind {
+        name: "build_anchors",
+        title: "Preparing a long list",
+        description: "Marks every thousandth row of a view so that jumping to any row of a very large table is fast.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::index_jobs::build_anchors,
+    },
+    JobKind {
         name: "recompute_flags",
         title: "Updating sensitivity flags",
         description: "Works out again which records hold sensitive content after a label changes.",
@@ -124,6 +132,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::calc_jobs::convert_field,
     },
     JobKind {
+        name: "convert_select_options",
+        title: "Converting select options",
+        description: "Converts legacy string values in select fields to option IDs.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::calc_jobs::convert_select_options,
+    },
+    JobKind {
         name: "purge_jobs",
         title: "Clearing old job records",
         description: "Deletes finished jobs after 30 days and failed jobs after 90 days.",
@@ -138,6 +154,22 @@ pub static JOB_KINDS: &[JobKind] = &[
         max_attempts: 3,
         max_concurrent: 1,
         run: crate::calc_jobs::recalc_volatile,
+    },
+    JobKind {
+        name: "scan_file",
+        title: "Scanning a file",
+        description: "Sends an uploaded file to the virus scanner and records the result.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: scan_file,
+    },
+    JobKind {
+        name: "purge_unattached_files",
+        title: "Clearing unused uploads",
+        description: "Deletes files that were uploaded and never added to a record within 24 hours.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: purge_unattached_files,
     },
 ];
 
@@ -376,8 +408,6 @@ pub fn cancel_job(repo: &PostgresRepository, id: Uuid) -> Result<Option<Job>, Jo
     })?)
 }
 
-
-/// Registers a recurring schedule. Inserts at boot if missing, preserving next_run_at if already present.
 
 /// Registers the nightly recalc_volatile schedule in the given IANA timezone.
 pub fn register_volatile_schedule(
@@ -840,6 +870,33 @@ pub fn purge_jobs(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
         }
     }
     ctx.result(serde_json::json!({ "deleted": deleted }))
+}
+
+/// Scans uploads. With `{ "ref_id": ... }` it scans that one. With no payload, which is how the schedule and every
+/// upload start it, it scans every upload that waits. One job at a time does this, so a person's uploads never meet
+/// the per-person limit on jobs.
+pub fn scan_file(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    if let Some(raw) = payload.get("ref_id") {
+        let ref_id = raw.as_str().and_then(|s| s.parse::<Uuid>().ok()).ok_or_else(|| JobError::Permanent("ref_id is not an id".to_string()))?;
+        let state = crate::scan::scan_file(ctx.repository(), ref_id).map_err(JobError::Retry)?;
+        return ctx.result(serde_json::json!({ "scan_state": state }));
+    }
+    let mut cancelled = false;
+    let done = crate::scan::scan_pending(ctx.repository(), 1000, || {
+        cancelled = ctx.cancelled().unwrap_or(false);
+        cancelled
+    })
+    .map_err(JobError::Retry)?;
+    if cancelled {
+        return Err(JobError::Cancelled);
+    }
+    ctx.result(serde_json::json!({ "scanned": done }))
+}
+
+/// Deletes uploads no record took within a day, and the blobs nothing refers to. It runs on a schedule.
+pub fn purge_unattached_files(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
+    let removed = crate::files::purge_unattached(ctx.repository(), crate::files::UNATTACHED_HOURS).map_err(JobError::Retry)?;
+    ctx.result(serde_json::json!({ "deleted": removed }))
 }
 
 fn finish(client: &mut Client, job: &ClaimedJob, worker: &str, outcome: Result<Value, JobError>, cfg: &JobConfig) {
