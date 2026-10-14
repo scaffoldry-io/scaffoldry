@@ -12,7 +12,7 @@ use scaffoldry_core::ledger::DecisionType;
 use scaffoldry_engine::{AppManifest, AppTable, FieldSpec, FieldType};
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
-use scaffoldry_server::state::{OrganizationNode, RoleRow, ScimGroup, ServerState};
+use scaffoldry_server::state::{OrganizationNode, PositionType, RoleRow, ScimGroup, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -161,6 +161,21 @@ impl World {
     }
 
     fn role_at(&self, eppn: &str, unit: Uuid, position: Option<&str>) {
+        // A held position has a foreign key to its type, so the type is stored first.
+        if let Some(key) = position {
+            self.state
+                .persist_position_type(&PositionType {
+                    key: key.to_string(),
+                    name: key.to_string(),
+                    description: String::new(),
+                    org_types: vec![],
+                    max_holders: 50,
+                    retired_at: None,
+                    created_by: "test".to_string(),
+                    created_at: "2026-01-01T00:00:00Z".to_string(),
+                })
+                .unwrap();
+        }
         self.state.persist_role(&RoleRow {
             id: Uuid::new_v4(),
             person_id: Uuid::new_v4(),

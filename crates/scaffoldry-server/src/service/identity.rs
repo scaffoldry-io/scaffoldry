@@ -335,7 +335,7 @@ pub fn issue_test_token_and_user(eppn: &str) -> String {
         });
 
         let _ = client.execute(
-            "INSERT INTO scim_users (id, user_name, active, payload, updated_at)              VALUES ($1, $2, true, $3, NOW())              ON CONFLICT (id) DO UPDATE SET active = true, payload = $3, updated_at = NOW()",
+            "INSERT INTO scim_users (id, user_name, active, payload, updated_at)              SELECT $1::text, $2::text, true, $3::jsonb, NOW()              WHERE NOT EXISTS (SELECT 1 FROM scim_users WHERE lower(user_name) = lower($2::text) AND id <> $1::text)              ON CONFLICT (id) DO UPDATE SET active = true, payload = $3, updated_at = NOW()",
             &[&scim_id, &eppn, &payload],
         );
 

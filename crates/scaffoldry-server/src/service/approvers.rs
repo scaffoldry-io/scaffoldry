@@ -53,7 +53,7 @@ pub fn path_holdings(state: &SharedState, units: &[uuid::Uuid], people: &[String
 }
 
 /// The resolver's inputs for one record of one app, read once.
-pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by: Option<&str>) -> ResolveCtx {
+pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by: Option<&str>, named: &[String]) -> ResolveCtx {
     use scaffoldry_engine::HostRouter;
 
     let units: Vec<Unit> = state
@@ -100,6 +100,7 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
         extra.insert(e.clone());
     }
     extra.extend(submitter.iter().cloned());
+    extra.extend(named.iter().cloned());
     extra.extend(started_by.map(str::to_string));
     let wanted: Vec<String> = extra.iter().cloned().collect();
     let mut people: Vec<Person> = state
@@ -134,6 +135,16 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
     }
 }
 
+/// The people an instance names itself: the person in the spec and the one it was assigned to. Their state
+/// must be loaded even when they hold nothing on the path.
+fn named_in(spec: &ApproverSpec, inst: &ProcessInstance) -> Vec<String> {
+    let mut named: Vec<String> = inst.assigned_to.iter().cloned().collect();
+    if let ApproverSpec::Person { eppn } = spec {
+        named.push(eppn.clone());
+    }
+    named
+}
+
 /// The approver spec of the user task an instance waits on.
 pub fn spec_of(state: &SharedState, inst: &ProcessInstance) -> Option<ApproverSpec> {
     let step_id = inst.waiting_step_id.as_deref()?;
@@ -147,7 +158,7 @@ pub fn spec_of(state: &SharedState, inst: &ProcessInstance) -> Option<ApproverSp
 
 pub fn resolution_for(state: &SharedState, inst: &ProcessInstance) -> Option<(ApproverSpec, ResolveCtx, Resolution)> {
     let spec = spec_of(state, inst)?;
-    let ctx = context(state, &inst.app_slug, &inst.record_id, inst.started_by.as_deref());
+    let ctx = context(state, &inst.app_slug, &inst.record_id, inst.started_by.as_deref(), &named_in(&spec, inst));
     let resolution = resolve_approvers(&spec, &ctx);
     Some((spec, ctx, resolution))
 }
@@ -158,7 +169,7 @@ pub fn caller_can_decide(state: &SharedState, caller: &AuthUser, inst: &ProcessI
         return false;
     }
     let Some(spec) = spec_of(state, inst) else { return false };
-    let ctx = context(state, &inst.app_slug, &inst.record_id, inst.started_by.as_deref());
+    let ctx = context(state, &inst.app_slug, &inst.record_id, inst.started_by.as_deref(), &named_in(&spec, inst));
     can_decide(&caller.eppn, &caller.affiliation, inst.assigned_to.as_deref(), &spec, &ctx)
 }
 

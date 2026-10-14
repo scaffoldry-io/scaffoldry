@@ -230,6 +230,11 @@ async fn test_overview_counts_match_fixture() {
             },
         );
     }
+    // A role has a foreign key to its unit, so the units are stored, not only held in memory.
+    let stored: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
+    for o in stored.iter().filter(|o| o.parent_id.is_none()).chain(stored.iter().filter(|o| o.parent_id.is_some())) {
+        state.persist_organization(o).unwrap();
+    }
 
     // 2. Setup 3 users: 1 central admin (active), 1 on hold, 1 regular active
     let admin_eppn = "admin.lead@state.edu";
