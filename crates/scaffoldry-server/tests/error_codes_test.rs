@@ -52,6 +52,15 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::ViewAsReadOnly("Read only".into()), "view_as_read_only", StatusCode::FORBIDDEN),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
         (
+            ServiceError::ConstraintViolation {
+                message: "field 'score' violates constraint 'min'".into(),
+                field: "score".into(),
+                constraint: "min".into(),
+            },
+            "constraint_violated",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
             ServiceError::FieldHidden { message: "Hidden".into(), reason: "A rule hides it".into(), remedy: "Ask an owner".into() },
             "field_hidden",
             StatusCode::FORBIDDEN,
@@ -85,6 +94,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::QuotaExceeded(_)
             | ServiceError::TooManyIndexes { .. }
             | ServiceError::ConstraintViolated(_)
+            | ServiceError::ConstraintViolation { .. }
             | ServiceError::FieldHidden { .. }
             | ServiceError::FieldReadOnly { .. }
             | ServiceError::UndoConflict { .. }

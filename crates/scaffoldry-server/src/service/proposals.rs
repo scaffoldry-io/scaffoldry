@@ -311,6 +311,32 @@ fn check_manifest_part(
         return Err(ServiceError::BadRequest(format!("schema: the manifest has {} problem(s): {}", problems.len(), problems.join("; "))));
     }
 
+    for table in &manifest.tables {
+        for f in &table.fields {
+            if f.field_type == scaffoldry_engine::FieldType::Formula {
+                if let Some(ref expr) = f.formula_expression {
+                    if scaffoldry_engine::is_formula_volatile(expr) {
+                        let total_rows: i64 = repo.with_client({
+                            let (slug, tid) = (manifest.slug.clone(), table.id.clone());
+                            move |c| {
+                                Ok(c.query_one(
+                                    "SELECT count(*) FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL",
+                                    &[&slug, &tid],
+                                )?.get(0))
+                            }
+                        }).unwrap_or(0);
+                        if total_rows > 500_000 {
+                            return Err(ServiceError::BadRequest(format!(
+                                "field '{}' of table '{}': volatile formulas (TODAY, NOW) are not supported on tables with more than 500,000 rows (has {} rows)",
+                                f.name, table.name, total_rows
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // page_source: a failure stores no row.
     let mut source_problems = Vec::new();
     let mut provided: BTreeMap<String, String> = BTreeMap::new();
@@ -409,7 +435,52 @@ fn check_manifest_part(
             }
         }
     }
-    let loss = if loss.is_empty() || !records_exist(&manifest.slug, state) { Vec::new() } else { loss };
+    if let (Some(l), true) = (live, records_exist(&manifest.slug, state)) {
+        for t in &manifest.tables {
+            let old_table = l.tables.iter().find(|ot| ot.id == t.id);
+            for f in &t.fields {
+                let is_unique = f.constraints.as_ref().is_some_and(|c| c.unique);
+                let was_unique = old_table
+                    .and_then(|ot| ot.fields.iter().find(|of| of.name == f.name))
+                    .and_then(|of| of.constraints.as_ref())
+                    .map(|c| c.unique)
+                    .unwrap_or(false);
+                if is_unique && !was_unique {
+                    let dupes: Result<(i64, Vec<Value>), _> = repo.with_client({
+                        let (slug, tid, fname) = (manifest.slug.clone(), t.id.clone(), f.name.clone());
+                        move |c| {
+                            let rows = c.query(
+                                "SELECT data->>$1 AS val, count(*) AS cnt FROM dataset_records WHERE app_slug = $2 AND table_id = $3 AND deleted_at IS NULL AND data->>$1 IS NOT NULL GROUP BY data->>$1 HAVING count(*) > 1 LIMIT 50",
+                                &[&fname, &slug, &tid],
+                            )?;
+                            let mut count = 0;
+                            let mut examples = Vec::new();
+                            for r in rows {
+                                let val: Option<String> = r.get(0);
+                                let cnt: i64 = r.get(1);
+                                count += cnt;
+                                examples.push(json!({ "value": val, "count": cnt }));
+                            }
+                            Ok((count, examples))
+                        }
+                    });
+                    if let Ok((cnt, examples)) = dupes {
+                        if cnt > 0 {
+                            loss.push(format!("field '{}' of table '{}' has {} duplicate values and cannot be made unique", f.name, t.name, cnt));
+                            previews.push(json!({
+                                "table_id": t.id,
+                                "field": f.name,
+                                "duplicates": cnt,
+                                "examples": examples,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+        let loss = if loss.is_empty() || !records_exist(&manifest.slug, state) { Vec::new() } else { loss };
 
     // page_sensitivity: a new or changed custom page reads a sensitive field.
     let mut page_problems = Vec::new();

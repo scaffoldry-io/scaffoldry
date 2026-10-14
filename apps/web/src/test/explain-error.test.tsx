@@ -131,6 +131,11 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "You cannot change 'name'.", next: "Ask a workspace owner or an administrator if you need access." },
       ],
       [
+        "constraint_violated",
+        new ApiError(400, "field 'score' violates constraint 'min'", { code: "constraint_violated" }),
+        { message: "field 'score' violates constraint 'min'", next: "Check the field value and try again." },
+      ],
+      [
         "calculating",
         new ApiError(409, "This field is still being calculated. It is 63% done.", { code: "calculating" }),
         { message: "This field is still being calculated. It is 63% done.", next: "Try again when it has finished." },
