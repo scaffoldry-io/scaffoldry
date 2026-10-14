@@ -55,6 +55,7 @@ const SCHEMA_0049: &str = include_str!("../../scaffoldry-core/migrations/0049_ap
 const SCHEMA_0050: &str = include_str!("../../scaffoldry-core/migrations/0050_view_anchors.sql");
 const SCHEMA_0051: &str = include_str!("../../scaffoldry-core/migrations/0051_files.sql");
 const SCHEMA_0052: &str = include_str!("../../scaffoldry-core/migrations/0052_file_scans.sql");
+const SCHEMA_0053: &str = include_str!("../../scaffoldry-core/migrations/0053_cache_versions.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -742,6 +743,9 @@ pub struct PostgresRepository {
     worker_tx: Sender<WorkerJob>,
     worker_count: usize,
     db_url: std::sync::Arc<String>,
+    /// How many times work went to the database through `with_client`. A test reads it to count the statements a
+    /// request makes.
+    statements: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl std::fmt::Debug for PostgresRepository {
@@ -752,12 +756,7 @@ impl std::fmt::Debug for PostgresRepository {
 
 impl PostgresRepository {
     pub fn connect(url: Option<&str>) -> Result<Self, RepositoryError> {
-        let db_url = url
-            .map(str::to_string)
-            .or_else(|| std::env::var("DATABASE_URL").ok())
-            .unwrap_or_else(|| {
-                "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-            });
+        let db_url = url.map(str::to_string).unwrap_or_else(crate::testing::database_url);
 
         let num_workers: usize = std::env::var("SCAFFOLDRY_DB_WORKERS")
             .ok()
@@ -793,7 +792,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 37] = [
+                        let migrations: [(&str, &str); 38] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -827,6 +826,7 @@ impl PostgresRepository {
                             ("0050_view_anchors.sql", SCHEMA_0050),
                             ("0051_files.sql", SCHEMA_0051),
                             ("0052_file_scans.sql", SCHEMA_0052),
+                            ("0053_cache_versions.sql", SCHEMA_0053),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -925,8 +925,19 @@ impl PostgresRepository {
             worker_tx,
             worker_count: num_workers,
             db_url: std::sync::Arc::new(db_url),
+            statements: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         Ok(repo)
+    }
+
+    /// The number of calls to `with_client` so far.
+    pub fn statements(&self) -> u64 {
+        self.statements.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Every cache counter, in one statement.
+    pub fn cache_versions(&self) -> Result<Vec<(String, i64)>, RepositoryError> {
+        self.with_client(|c| Ok(c.query("SELECT name, version FROM cache_versions", &[])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
     }
 
     pub fn worker_count(&self) -> usize {
@@ -950,6 +961,7 @@ impl PostgresRepository {
         &self,
         f: impl FnOnce(&mut Client) -> Result<R, RepositoryError> + Send + 'static,
     ) -> Result<R, RepositoryError> {
+        self.statements.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (tx, rx) = sync_channel(1);
         self.worker_tx
             .send(Box::new(move |client| {
@@ -2579,6 +2591,18 @@ impl PostgresRepository {
     }
 }
 
+/// The settings a locked update wrote, and the ledger entry written with them.
+pub type SettingsUpdate = (Vec<(String, serde_json::Value)>, LedgerEntry);
+
+fn upsert_setting(tx: &mut postgres::Transaction<'_>, key: &str, value: &serde_json::Value, by: &str) -> Result<(), RepositoryError> {
+    tx.execute(
+        "INSERT INTO platform_settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW()) \
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()",
+        &[&key, value, &by],
+    )?;
+    Ok(())
+}
+
 /// Appends one ledger entry inside the caller's transaction, so a caller can keep it or lose it
 /// together with its own writes.
 pub(crate) fn append_ledger_in_tx(
@@ -2857,18 +2881,70 @@ impl PostgresRepository {
         })
     }
 
-    pub fn put_platform_setting(&self, key: &str, value: &serde_json::Value, updated_by: &str) -> Result<(), RepositoryError> {
-        let k = key.to_string();
-        let val = value.clone();
-        let by = updated_by.to_string();
+    /// Writes a setting, raises the `settings` counter, and appends the ledger entry, in one transaction. A server that
+    /// reads the counter after the commit reloads the setting.
+    pub fn put_platform_setting(
+        &self,
+        key: &str,
+        value: &serde_json::Value,
+        updated_by: &str,
+        ledger: AppendDecisionParams,
+    ) -> Result<LedgerEntry, RepositoryError> {
+        let (k, val, by) = (key.to_string(), value.clone(), updated_by.to_string());
         self.with_client(move |client| {
-            client.execute(
-                "INSERT INTO platform_settings (key, value, updated_by, updated_at)                  VALUES ($1, $2, $3, NOW())                  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()",
-                &[&k, &val, &by],
-            )?;
-            Ok(())
+            let mut tx = client.transaction()?;
+            upsert_setting(&mut tx, &k, &val, &by)?;
+            crate::cache::bump(&mut tx, "settings")?;
+            let entry = append_ledger_in_tx(&mut tx, ledger)?;
+            tx.commit()?;
+            Ok(entry)
         })
     }
+
+    /// Changes two settings that depend on each other. Both rows are locked first, so two requests that change them
+    /// take turns on any number of server instances. `decide` sees the current values and returns what to write and the
+    /// ledger entry, or a refusal, which writes nothing.
+    pub fn update_settings_locked<E: Send + 'static>(
+        &self,
+        updated_by: &str,
+        keys: [&'static str; 2],
+        decide: impl FnOnce([serde_json::Value; 2]) -> Result<(Vec<(String, serde_json::Value)>, AppendDecisionParams), E> + Send + 'static,
+    ) -> Result<Result<SettingsUpdate, E>, RepositoryError> {
+        let by = updated_by.to_string();
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            for k in keys {
+                tx.execute(
+                    "INSERT INTO platform_settings (key, value, updated_by, updated_at) VALUES ($1, '[]'::jsonb, $2, NOW()) ON CONFLICT (key) DO NOTHING",
+                    &[&k, &by],
+                )?;
+            }
+            let rows = tx.query(
+                "SELECT key, value FROM platform_settings WHERE key = ANY($1) ORDER BY key FOR UPDATE",
+                &[&keys.to_vec()],
+            )?;
+            let value_of = |k: &str| -> serde_json::Value {
+                rows.iter().find(|r| r.get::<_, String>(0) == k).map(|r| r.get(1)).unwrap_or(serde_json::json!([]))
+            };
+            let current = [value_of(keys[0]), value_of(keys[1])];
+            match decide(current) {
+                Err(refusal) => {
+                    tx.rollback()?;
+                    Ok(Err(refusal))
+                }
+                Ok((updates, ledger)) => {
+                    for (k, v) in &updates {
+                        upsert_setting(&mut tx, k, v, &by)?;
+                    }
+                    crate::cache::bump(&mut tx, "settings")?;
+                    let entry = append_ledger_in_tx(&mut tx, ledger)?;
+                    tx.commit()?;
+                    Ok(Ok((updates, entry)))
+                }
+            }
+        })
+    }
+
     pub fn count_legacy_workspace_guards(&self) -> Result<i64, RepositoryError> {
         self.with_client(|client| {
             let row = client.query_one("SELECT COUNT(*) FROM workspace_guards_legacy", &[])?;

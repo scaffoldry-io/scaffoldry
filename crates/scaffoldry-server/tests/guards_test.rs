@@ -1,5 +1,7 @@
 //! Workspace Guards Phase 2 Tests (all 11 tests from docs/plans/guards.md).
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -15,26 +17,20 @@ use scaffoldry_server::state::{
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 struct Ctx {
     app: Router,
     state: Arc<ServerState>,
     admin_token: String,
     faculty_token: String,
-    _guard: MutexGuard<'static, ()>,
 }
 
 async fn ctx() -> Ctx {
-    let guard = LOCK.lock().await;
-    tokio::task::spawn_blocking(|| {
-        let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-        });
+    let url = scaffoldry_server::testing::database_url();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&url, postgres::NoTls) {
             let _ = client.batch_execute(
                 "TRUNCATE TABLE scim_users, scim_groups, roles, persons, organizations, workspaces, workspace_collaborators, dataset_records, api_tokens, workspace_guards CASCADE;",
@@ -55,7 +51,6 @@ async fn ctx() -> Ctx {
         state,
         admin_token,
         faculty_token,
-        _guard: guard,
     }
 }
 
@@ -102,7 +97,8 @@ fn seed_workspace(state: &ServerState, id: &str) {
         organization_id: None,
     };
     state.workspaces.write().unwrap().insert(id.to_string(), ws.clone());
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         let _ = repo.upsert_workspace(&ws);
     }
     let collabs = vec![
@@ -138,7 +134,8 @@ fn seed_workspace(state: &ServerState, id: &str) {
         },
     ];
     state.collaborators.write().unwrap().insert(id.to_string(), collabs.clone());
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         for c in &collabs {
             let _ = repo.upsert_collaborator(c);
         }
@@ -148,6 +145,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
 // 1. A workspace with deny_export_unless_affiliation: [staff]. A faculty member who could export now cannot. The response names the guard and carries its sentence. A staff member still can.
 #[tokio::test]
 async fn test_01_deny_export_unless_affiliation() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-guard-1");
 
@@ -208,6 +206,7 @@ async fn test_01_deny_export_unless_affiliation() {
 // 2. Every compiled policy parses and is a forbid. A template list that would compile a permit fails. A raw source containing permit is 400.
 #[tokio::test]
 async fn test_02_every_compiled_policy_is_forbid_raw_permit_is_400() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-guard-2");
 
@@ -229,6 +228,7 @@ async fn test_02_every_compiled_policy_is_forbid_raw_permit_is_400() {
 // 3. A guard on workspace A has no effect on a request in workspace B, including a request by the same person.
 #[tokio::test]
 async fn test_03_guard_on_workspace_a_no_effect_on_workspace_b() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-a");
     seed_workspace(&c.state, "ws-b");
@@ -284,6 +284,7 @@ async fn test_03_guard_on_workspace_a_no_effect_on_workspace_b() {
 // 4. A guard cannot grant: with the institutional policy denying an action, adding any guard leaves it denied.
 #[tokio::test]
 async fn test_04_guard_cannot_grant_access() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-restricted");
     {
@@ -341,6 +342,7 @@ async fn test_04_guard_cannot_grant_access() {
 // 5. deny_access_outside_units with the college unit allows a person in a department under that college and denies a person in another college.
 #[tokio::test]
 async fn test_05_deny_access_outside_units() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-units");
 
@@ -462,6 +464,7 @@ async fn test_05_deny_access_outside_units() {
 // 6. Rules over 20, or a unit that does not exist, are 400.
 #[tokio::test]
 async fn test_06_rules_over_20_or_missing_unit_is_400() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-limits");
 
@@ -505,6 +508,7 @@ async fn test_06_rules_over_20_or_missing_unit_is_400() {
 // 7. A ledger failure makes PUT fail and the version unchanged.
 #[tokio::test]
 async fn test_07_ledger_failure_aborts_guard_put() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-ledger-fail");
 
@@ -551,6 +555,7 @@ async fn test_07_ledger_failure_aborts_guard_put() {
 // 8. impact for a four-member workspace lists exactly the members and actions whose result changes, and nothing else.
 #[tokio::test]
 async fn test_08_impact_route_lists_only_changes() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-impact");
 
@@ -598,7 +603,8 @@ async fn test_08_impact_route_lists_only_changes() {
         },
     ];
     c.state.collaborators.write().unwrap().insert("ws-impact".to_string(), collabs.clone());
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         for cl in &collabs {
             let _ = repo.upsert_collaborator(cl);
         }
@@ -633,6 +639,7 @@ async fn test_08_impact_route_lists_only_changes() {
 // 9. grep -rn cedar_policy_guard crates/ apps/web/src prints nothing. Paste the output.
 #[tokio::test]
 async fn test_09_no_cedar_policy_guard_remains() {
+    let _db = common::TestDb::new();
     let output = std::process::Command::new("grep")
         .args(["-rn", "--exclude=*.sql", "--exclude=guards_test.rs", "cedar_policy_guard", "crates/", "apps/web/src"])
         .output()
@@ -644,6 +651,7 @@ async fn test_09_no_cedar_policy_guard_remains() {
 // 10. An automation whose triggering user is forbidden run_automation by a guard applies no effects.
 #[tokio::test]
 async fn test_10_automation_forbidden_by_guard_applies_no_effects() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     seed_workspace(&c.state, "ws-auto");
 
@@ -690,10 +698,10 @@ async fn test_10_automation_forbidden_by_guard_applies_no_effects() {
 // 11. The archive holds the old text, and the boot ledger entry holds the count.
 #[tokio::test]
 async fn test_11_legacy_archive_and_boot_ledger_entry() {
-    tokio::task::spawn_blocking(|| {
-        let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-        });
+    let _db = common::TestDb::new();
+    let url = scaffoldry_server::testing::database_url();
+    let boot_url = url.clone();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&url, postgres::NoTls) {
             let _ = client.execute(
                 "INSERT INTO workspace_guards_legacy (workspace_id, cedar_policy_guard) VALUES ('ws-legacy-test', 'forbid (principal, action, resource);') ON CONFLICT (workspace_id) DO UPDATE SET cedar_policy_guard = EXCLUDED.cedar_policy_guard",
@@ -701,7 +709,7 @@ async fn test_11_legacy_archive_and_boot_ledger_entry() {
             );
         }
 
-        let state = ServerState::new().expect("ServerState::new with legacy archive");
+        let state = ServerState::connect(&boot_url).expect("ServerState::new with legacy archive");
         let ledger = state.ledger.read().unwrap();
         let has_entry = ledger.iter().any(|e| {
             e.decision_type == DecisionType::PolicyRevision

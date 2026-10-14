@@ -47,12 +47,10 @@ async fn get_overview(
 
     // 1. Server
     let version = env!("CARGO_PKG_VERSION");
-    let (applied_migrations, worker_count) = if let Some(repo) = &state.repository {
+    let (applied_migrations, worker_count) = { let repo = &state.repository;
         let migs = repo.get_applied_migrations().unwrap_or_default();
         let workers = repo.worker_count();
         (migs, workers)
-    } else {
-        (Vec::new(), 0)
     };
 
     // 2. People
@@ -146,10 +144,8 @@ async fn get_overview(
     };
 
     // 7. Jobs
-    let jobs_overview = if let Some(repo) = &state.repository {
+    let jobs_overview = { let repo = &state.repository;
         jobs::get_jobs_overview(repo).unwrap_or_default()
-    } else {
-        jobs::JobsOverview::default()
     };
 
     (
@@ -186,14 +182,14 @@ async fn get_overview(
                 "waiting": waiting_instance_count,
             },
             "proposals": {
-                "pending": state.repository.as_ref().and_then(|r| r.count_pending_proposals().ok()).unwrap_or(0),
+                "pending": state.repository.count_pending_proposals().unwrap_or(0),
             },
             "ledger": {
                 "entry_count": ledger_count,
                 "head_hash": head_hash,
             },
             "files": crate::scan::overview(
-                state.repository.as_deref(),
+                Some(&*state.repository),
                 state.settings.read().ok().and_then(|s| s.get("files.scanner").cloned()).as_ref(),
             ),
             "jobs": {
@@ -229,10 +225,7 @@ async fn get_jobs(
     let caller = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
     require_platform_admin(&caller, &state)?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::internal("Jobs need PostgreSQL"))?;
+    let repo = &*state.repository;
 
     let offset = query
         .cursor
@@ -278,10 +271,7 @@ async fn get_job_by_id(
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
     require_platform_admin(&caller, &state)?;
     let uuid = Uuid::parse_str(&id).map_err(|_| ServiceError::not_found("Job not found"))?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::internal("Jobs need PostgreSQL"))?;
+    let repo = &*state.repository;
     let job = jobs::get_job(repo, uuid)
         .map_err(|e| ServiceError::internal(e.to_string()))?
         .ok_or_else(|| ServiceError::not_found("Job not found"))?;
@@ -307,10 +297,7 @@ async fn cancel_job_by_id(
         &payload.reason,
         &json!({ "job_id": uuid }),
         || {
-            let repo = state
-                .repository
-                .as_deref()
-                .ok_or_else(|| ServiceError::internal("Jobs need PostgreSQL"))?;
+            let repo = &*state.repository;
             jobs::cancel_job(repo, uuid)
                 .map_err(|e| ServiceError::internal(e.to_string()))?
                 .ok_or_else(|| ServiceError::not_found("Job not found"))
@@ -336,10 +323,7 @@ async fn retry_job_by_id(
         ));
     }
     let uuid = Uuid::parse_str(&id).map_err(|_| ServiceError::not_found("Job not found"))?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::internal("Jobs need PostgreSQL"))?;
+    let repo = &*state.repository;
     let job = jobs::retry_job(repo, uuid).map_err(|e| match e {
         jobs::JobsError::Conflict(msg) => ServiceError::conflict(msg),
         jobs::JobsError::NotFound(msg) => ServiceError::not_found(msg),

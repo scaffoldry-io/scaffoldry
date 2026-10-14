@@ -9,6 +9,8 @@
 //! 4. A Date field never shifts across a time zone change.
 //! 5. TODATE and TODATETIME agree with the institution's time zone across a daylight saving change.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -24,18 +26,15 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 struct Cleanup(String);
@@ -112,6 +111,7 @@ fn manifest_with_tables(slug: &str, tables: Vec<AppTable>) -> AppManifest {
 
 #[tokio::test]
 async fn test_duration_indexing_and_is_numeric() {
+    let _db = common::TestDb::new();
     let dur_type = FieldType::Duration { format: scaffoldry_engine::duration::DurationFormat::HMm };
     assert_eq!(index_column(dur_type), IndexColumn::Num);
     assert!(is_numeric(dur_type), "Duration must be recognized as numeric");
@@ -134,7 +134,7 @@ async fn test_duration_indexing_and_is_numeric() {
 
 #[tokio::test]
 async fn test_duration_inputs_store_5400_and_bad_input_rejected() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let mut dur_field = FieldSpec::simple("duration", "Duration", FieldType::Duration { format: scaffoldry_engine::duration::DurationFormat::HMm }, false, false);
     dur_field.duration_format = Some("h:mm".to_string());
@@ -207,7 +207,7 @@ async fn test_duration_inputs_store_5400_and_bad_input_rejected() {
 
 #[tokio::test]
 async fn test_sum_rollup_over_durations() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let parent_table = AppTable {
@@ -331,7 +331,7 @@ async fn test_sum_rollup_over_durations() {
 
 #[tokio::test]
 async fn test_date_never_shifts_across_timezone_change() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let m = manifest_with_tables(&w.slug, vec![AppTable {
@@ -381,6 +381,7 @@ async fn test_date_never_shifts_across_timezone_change() {
 
 #[tokio::test]
 async fn test_todate_and_todatetime_across_dst_change() {
+    let _db = common::TestDb::new();
     // In America/New_York:
     // DST ends on Sunday, Nov 1, 2026.
     // Before fallback: 2026-11-01 03:30:00 UTC is 2026-10-31 23:30:00 EDT (UTC-4).

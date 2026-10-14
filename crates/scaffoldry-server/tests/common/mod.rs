@@ -1,0 +1,106 @@
+//! A database of its own for each test.
+//!
+//! `TestDb::new()` makes `scaffoldry_test_<uuid>` on the server `DATABASE_URL` names, and drops it when the value is
+//! dropped. It also names the database for the calling thread, so `ServerState::new` and
+//! `issue_test_token_and_user` use it. No test changes the process environment.
+//!
+//! `app()` is a router on a new `ServerState`. `second_app()` is another, on the same database. The pair is how a
+//! test shows that a write through one instance is read through the other.
+#![allow(dead_code)]
+
+use axum::Router;
+use scaffoldry_server::build_app_with_state;
+use scaffoldry_server::state::{ServerState, SharedState};
+use std::sync::Arc;
+use uuid::Uuid;
+
+const DEFAULT_URL: &str = "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry";
+
+fn admin_url() -> String {
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string())
+}
+
+/// The URL of another database on the same server.
+fn url_of(admin: &str, name: &str) -> String {
+    match admin.rsplit_once('/') {
+        Some((head, tail)) => {
+            let query = tail.split_once('?').map(|(_, q)| format!("?{q}")).unwrap_or_default();
+            format!("{head}/{name}{query}")
+        }
+        None => format!("{admin}/{name}"),
+    }
+}
+
+/// Runs a statement on the server's own database, on a thread of its own: the synchronous client cannot start
+/// inside the async test runtime.
+fn on_server(sql: String) {
+    let url = admin_url();
+    std::thread::spawn(move || {
+        let mut c = postgres::Client::connect(&url, postgres::NoTls).expect("the test server");
+        c.batch_execute(&sql).expect("create or drop a test database");
+    })
+    .join()
+    .expect("the database thread");
+}
+
+pub struct TestDb {
+    name: String,
+    url: String,
+}
+
+impl TestDb {
+    pub fn new() -> TestDb {
+        let name = format!("scaffoldry_test_{}", Uuid::new_v4().simple());
+        on_server(format!("CREATE DATABASE {name} STRATEGY = WAL_LOG"));
+        let url = url_of(&admin_url(), &name);
+        // A new database is empty. Connecting migrates it, so a test may touch it before it builds a server.
+        scaffoldry_server::repository::PostgresRepository::connect(Some(&url)).expect("migrate the test database");
+        scaffoldry_server::testing::use_database(Some(url.clone()));
+        TestDb { name, url }
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// A new server on this database.
+    pub fn state(&self) -> SharedState {
+        Arc::new(ServerState::connect(&self.url).expect("a server on the test database"))
+    }
+
+    /// A router on a new server.
+    pub fn app(&self) -> Router {
+        build_app_with_state(self.state()).expect("router")
+    }
+
+    /// Another router, on another server, on the same database.
+    pub fn second_app(&self) -> Router {
+        self.app()
+    }
+
+    /// Direct database work on its own thread.
+    pub fn run<R: Send + 'static>(&self, f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
+        let url = self.url.clone();
+        std::thread::spawn(move || {
+            let mut c = postgres::Client::connect(&url, postgres::NoTls).expect("the test database");
+            f(&mut c)
+        })
+        .join()
+        .expect("the database thread")
+    }
+}
+
+impl Drop for TestDb {
+    fn drop(&mut self) {
+        scaffoldry_server::testing::use_database(None);
+        // FORCE ends the connections the servers of this test still hold.
+        let name = self.name.clone();
+        let _ = std::thread::spawn(move || {
+            let url = admin_url();
+            if let Ok(mut c) = postgres::Client::connect(&url, postgres::NoTls) {
+                let _ = c.batch_execute(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"));
+            }
+        })
+        .join();
+    }
+}

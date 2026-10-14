@@ -66,7 +66,8 @@ pub fn find_by_id(state: &SharedState, id: &str) -> Option<ScimUser> {
 }
 
 fn persist(state: &SharedState, user: &ScimUser) -> Result<(), ServiceError> {
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_scim_user(user)
             .map_err(|e| ServiceError::Internal(format!("Failed to persist user: {e}")))?;
     }
@@ -327,12 +328,9 @@ pub fn list_users(state: &SharedState, q: &UserQuery) -> Result<(Vec<Value>, Opt
 }
 
 fn ledger_rows(state: &SharedState, principal: &str) -> Vec<Value> {
-    let ledger = match state.repository {
-        Some(ref repo) => repo
+    let ledger = { let repo = &state.repository; repo
             .get_ledger()
-            .unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone()),
-        None => state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone(),
-    };
+            .unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone()) };
     let mut mine: Vec<Value> = ledger
         .iter()
         .filter(|e| e.principal.eq_ignore_ascii_case(principal))
@@ -556,10 +554,8 @@ pub fn list_app_collaborators(
     state: &SharedState,
 ) -> Result<Vec<Value>, ServiceError> {
     let q = query.trim().to_lowercase();
-    let mut all_users: Vec<ScimUser> = if let Some(ref repo) = state.repository {
+    let mut all_users: Vec<ScimUser> = { let repo = &state.repository;
         repo.list_scim_users().unwrap_or_default()
-    } else {
-        Vec::new()
     };
     if let Ok(mem) = state.users.read() {
         for u in mem.values() {

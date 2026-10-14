@@ -7,6 +7,8 @@
 //! 4. Record creation: A 100,000-character value is accepted.
 //! 5. Record retrieval: LongText value is preserved and retrievable.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -20,18 +22,15 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 struct Cleanup(String);
@@ -117,6 +116,7 @@ fn manifest_with_fields(slug: &str, fields: Vec<FieldSpec>) -> AppManifest {
 
 #[tokio::test]
 async fn test_manifest_rejects_indexed_long_text() {
+    let _db = common::TestDb::new();
     let mut field = FieldSpec::simple("body", "Body", FieldType::LongText, false, false);
     field.indexed = true;
     let m = manifest_with_fields("test-indexed-lt", vec![
@@ -135,6 +135,7 @@ async fn test_manifest_rejects_indexed_long_text() {
 
 #[tokio::test]
 async fn test_manifest_rejects_sort_and_filter_on_long_text() {
+    let _db = common::TestDb::new();
     let mut m = manifest_with_fields("test-sort-filter-lt", vec![
         FieldSpec::simple("title", "Title", FieldType::Text, true, false),
         FieldSpec::simple("body", "Body", FieldType::LongText, false, false),
@@ -174,7 +175,7 @@ async fn test_manifest_rejects_sort_and_filter_on_long_text() {
 
 #[tokio::test]
 async fn test_long_text_100001_chars_is_400() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let m = manifest_with_fields(&w.slug, vec![
         FieldSpec::simple("title", "Title", FieldType::Text, true, false),

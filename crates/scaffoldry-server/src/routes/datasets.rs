@@ -216,7 +216,8 @@ async fn publish_dataset(
     };
 
     state.datasets.write().map_err(|_| lock_err())?.insert(id, dataset.clone());
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_published_dataset(&dataset)
             .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     }
@@ -301,7 +302,8 @@ async fn create_relationship(
     };
 
     state.relationships.write().map_err(|_| lock_err())?.insert(id, rel.clone());
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_dataset_relationship(&rel)
             .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     }

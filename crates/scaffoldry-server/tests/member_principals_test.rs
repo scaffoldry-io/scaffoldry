@@ -2,6 +2,8 @@
 //!
 //! Each test uses fresh people and ids, and deletes the collaborator rows it added.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -20,8 +22,7 @@ const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// Removes the non-person collaborator rows and the people this test added.
@@ -179,6 +180,7 @@ impl World {
 // 1. A group gives each current member the group's role, and follows the group.
 #[tokio::test]
 async fn a_group_gives_each_current_member_its_role_and_follows_the_group() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (ann, ann_token) = w.person("ann");
     let (bob, bob_token) = w.person("bob");
@@ -198,6 +200,7 @@ async fn a_group_gives_each_current_member_its_role_and_follows_the_group() {
 // 2. The highest role among all memberships wins.
 #[tokio::test]
 async fn a_person_in_two_memberships_has_the_higher_role() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (ann, ann_token) = w.person("ann");
     let dept = w.unit(None, "dept");
@@ -219,6 +222,7 @@ async fn a_person_in_two_memberships_has_the_higher_role() {
 // 3. A unit covers a person whose role is at a unit below it, and not a sibling's.
 #[tokio::test]
 async fn a_unit_covers_units_below_it_and_not_a_sibling() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (below, below_token) = w.person("below");
     let (sibling, sibling_token) = w.person("sibling");
@@ -236,6 +240,7 @@ async fn a_unit_covers_units_below_it_and_not_a_sibling() {
 // 4. A position follows the holder when it changes hands.
 #[tokio::test]
 async fn a_position_follows_the_holder() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (ann, ann_token) = w.person("ann");
     let (bob, bob_token) = w.person("bob");
@@ -253,6 +258,7 @@ async fn a_position_follows_the_holder() {
 // 5. A group cannot be an owner. The last user owner cannot be removed.
 #[tokio::test]
 async fn a_group_cannot_own_and_the_last_user_owner_stays() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (s, body) = w.share("group", &format!("grp-{}", w.tag), "Owner").await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
@@ -278,6 +284,7 @@ async fn a_group_cannot_own_and_the_last_user_owner_stays() {
 // 6. No code outside the member module and the member routes reads the collaborator table directly.
 #[test]
 fn only_the_member_module_and_the_member_routes_read_collaborators() {
+    let _db = common::TestDb::new();
     let allowed = [
         "state.rs",
         "repository.rs",
@@ -312,6 +319,7 @@ fn only_the_member_module_and_the_member_routes_read_collaborators() {
 // 7. Every grant to a group, unit, or position writes one ledger entry.
 #[tokio::test]
 async fn every_grant_writes_one_ledger_entry() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let before = w.ledger_count(DecisionType::AccessRoleGranted);
     let dept = w.unit(None, "dept");

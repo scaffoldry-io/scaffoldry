@@ -4,6 +4,8 @@
 //! Each test builds its own `ServerState`, sometimes two on the same database, to stand for a
 //! restart. Record ids are fresh, so the tests share the database without clearing it.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,11 +15,8 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 
-/// The tests rename seeded rows, so they take turns.
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const SLUG: &str = "physics-admissions-review";
 const ADMIN: &str = "jordan.lee@state.edu";
@@ -59,10 +58,10 @@ fn record_uri(id: &str) -> String {
 
 #[tokio::test]
 async fn seeding_twice_does_not_change_a_workspace_or_dataset_someone_edited() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (state, _app, _token) = seeded().await;
 
-    let mut ws = state.repository.as_ref().unwrap().get_workspace("ws-bio-lab").unwrap().expect("seeded workspace");
+    let mut ws = state.repository.get_workspace("ws-bio-lab").unwrap().expect("seeded workspace");
     let original = ws.name.clone();
     ws.name = "Renamed by an administrator".to_string();
     state.persist_workspace(ws).unwrap();
@@ -72,7 +71,7 @@ async fn seeding_twice_does_not_change_a_workspace_or_dataset_someone_edited() {
     let restarted = new_state();
     restarted.seed_demo().expect("seed after restart");
 
-    let stored = restarted.repository.as_ref().unwrap().get_workspace("ws-bio-lab").unwrap().unwrap();
+    let stored = restarted.repository.get_workspace("ws-bio-lab").unwrap().unwrap();
     assert_eq!(stored.name, "Renamed by an administrator", "the stored row is left as stored");
     assert_eq!(state.workspaces.read().unwrap()["ws-bio-lab"].name, "Renamed by an administrator");
     assert_eq!(restarted.workspaces.read().unwrap()["ws-bio-lab"].name, "Renamed by an administrator");
@@ -85,7 +84,7 @@ async fn seeding_twice_does_not_change_a_workspace_or_dataset_someone_edited() {
 
 #[tokio::test]
 async fn a_record_created_by_one_process_is_read_by_the_next() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let created = create(&app, &token, "Survives a restart").await;
     let id = created["id"].as_str().unwrap();
@@ -102,7 +101,7 @@ async fn a_record_created_by_one_process_is_read_by_the_next() {
 
 #[tokio::test]
 async fn a_cell_edit_and_a_delete_survive_a_restart() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let edited = create(&app, &token, "Before").await;
     let removed = create(&app, &token, "To remove").await;
@@ -124,7 +123,7 @@ async fn a_cell_edit_and_a_delete_survive_a_restart() {
 
 #[tokio::test]
 async fn a_record_carries_a_version_that_starts_at_one() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let created = create(&app, &token, "Versioned").await;
     assert_eq!(created["version"], 1);
@@ -138,7 +137,7 @@ async fn a_record_carries_a_version_that_starts_at_one() {
 
 #[tokio::test]
 async fn a_save_with_the_returned_version_succeeds_and_bumps_it_by_one() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let created = create(&app, &token, "First").await;
     let id = created["id"].as_str().unwrap();
@@ -153,7 +152,7 @@ async fn a_save_with_the_returned_version_succeeds_and_bumps_it_by_one() {
 
 #[tokio::test]
 async fn two_saves_with_the_same_version_get_one_success_and_one_conflict() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let created = create(&app, &token, "Original").await;
     let id = created["id"].as_str().unwrap();
@@ -172,7 +171,7 @@ async fn two_saves_with_the_same_version_get_one_success_and_one_conflict() {
 
 #[tokio::test]
 async fn a_save_without_a_version_is_a_bad_request_and_writes_nothing() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let created = create(&app, &token, "Untouched").await;
     let id = created["id"].as_str().unwrap();
@@ -186,7 +185,7 @@ async fn a_save_without_a_version_is_a_bad_request_and_writes_nothing() {
 
 #[tokio::test]
 async fn an_app_save_is_versioned_in_the_same_way() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let (_state, app, token) = seeded().await;
     let (s, current) = call(&app, "GET", &format!("/api/v1/apps/{SLUG}"), &token, None).await;
     assert_eq!(s, StatusCode::OK);

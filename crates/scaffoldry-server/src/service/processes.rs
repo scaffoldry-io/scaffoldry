@@ -124,7 +124,8 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
 /// instance that has none.
 pub fn rule_for(state: &SharedState, inst: &ProcessInstance) -> Option<AutomationRule> {
     if inst.rule_version > 0 {
-        if let Some(repo) = state.repository.as_deref() {
+        {
+        let repo = &state.repository;
             if let Ok(Some(rule)) = repo.get_rule_version(&inst.rule_id, inst.rule_version) {
                 return Some(rule);
             }
@@ -156,7 +157,7 @@ pub fn save_rule(
     if !problems.is_empty() {
         return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
     }
-    let repo = state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Process definitions need PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let (saved, entry) = repo
         .save_rule(&rule, summary, proposal_id, changed_by, &manifest.organization_code)
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
@@ -167,7 +168,8 @@ pub fn save_rule(
 
 /// Replaces the in-memory rules of an app with the live rows.
 pub fn reload_rules(state: &SharedState, app_slug: &str) {
-    if let Some(repo) = state.repository.as_deref() {
+    {
+        let repo = &state.repository;
         if let Ok(rows) = repo.list_workflow_automations(Some(app_slug)) {
             state.automations.write().unwrap_or_else(|p| p.into_inner()).insert(app_slug.to_string(), rows);
         }

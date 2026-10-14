@@ -1,5 +1,5 @@
 use crate::guard::session_user;
-use crate::state::{RecordDecisionInput, SharedState};
+use crate::state::SharedState;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -37,9 +37,6 @@ pub fn router() -> Router<SharedState> {
         .route("/settings/{key}", put(put_setting))
         .route("/settings/sensitivity/presets/{id}", axum::routing::post(enable_preset))
 }
-
-/// Preset switch-on reads settings, checks, and writes two of them, so it runs one at a time.
-static PRESET_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub fn validate_setting(key: &str, value: &Value) -> bool {
     match key {
@@ -159,48 +156,35 @@ async fn put_setting(
         let _ = write!(val_hash, "{:02x}", b);
     }
 
-    let ledger_payload = json!({
-        "key": key,
-        "value_sha256": val_hash,
-    });
-
-    // Append ledger entry, DecisionType::PolicyRevision
-    if let Err(e) = state.append_ledger_entry(RecordDecisionInput {
-        principal: user.eppn.clone(),
-        organization_code: "INST".to_string(),
-        app_slug: None,
-        decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
-        oscal_control_id: "AC-03".to_string(),
-        rationale: format!("Platform setting '{}' updated by {}", key, user.eppn),
-        payload: &ledger_payload,
-    }) {
-        return ServiceError::internal(format!("Ledger append failed: {e}")).into_pair()
-            .into_response();
+    // The row, the counter, and the ledger entry commit together. Then this instance reloads, as every other will.
+    let entry = match state.repository.put_platform_setting(
+        &key,
+        &payload,
+        &user.eppn,
+        crate::repository::AppendDecisionParams {
+            principal: user.eppn.clone(),
+            organization_code: "INST".to_string(),
+            app_slug: None,
+            decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
+            oscal_control_id: "AC-03".to_string(),
+            rationale: format!("Platform setting '{}' updated by {}", key, user.eppn),
+            payload: json!({ "key": key, "value_sha256": val_hash }),
+        },
+    ) {
+        Ok(entry) => entry,
+        Err(e) => return ServiceError::internal(format!("Database write failed: {e}")).into_pair().into_response(),
+    };
+    state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(entry);
+    if let Err(e) = state.refresh() {
+        return ServiceError::StorageUnavailable(format!("The setting was saved, but this server could not reload: {e}")).into_response();
     }
 
-    // Write row to platform_settings
-    if let Some(ref repo) = state.repository {
-        if let Err(e) = repo.put_platform_setting(&key, &payload, &user.eppn) {
-            return ServiceError::internal(format!("Database write failed: {e}")).into_pair()
-                .into_response();
-        }
-    }
-
-    // Update in-memory state
     if key == "platform.timezone" {
         if let Some(tz) = payload.as_str() {
             scaffoldry_engine::formula::set_institution_timezone(tz);
+            let _ = crate::jobs::register_volatile_schedule(&state.repository, tz);
         }
     }
-    state.settings.write().unwrap().insert(key.clone(), payload.clone());
-
-    if key == "platform.timezone" {
-        if let Some(ref repo) = state.repository {
-            let tz = payload.as_str().unwrap_or("UTC");
-            let _ = crate::jobs::register_volatile_schedule(repo, tz);
-        }
-    }
-
     (StatusCode::OK, Json(json!({ "key": key, "value": payload }))).into_response()
 }
 
@@ -230,61 +214,60 @@ async fn enable_preset(
         Some(Ok(p)) => p,
     };
 
-    let _one_at_a_time = PRESET_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let mut categories = stored(&state, "sensitivity.categories").as_array().cloned().unwrap_or_default();
-    let mut detectors = stored(&state, "sensitivity.detectors").as_array().cloned().unwrap_or_default();
+    // Both settings are locked in PostgreSQL while the preset is merged, so two requests take turns on any number of
+    // instances. The merge, the writes, the counter, and the ledger entry commit together.
+    let (preset_id, eppn) = (id.clone(), user.eppn.clone());
+    let outcome = state.repository.update_settings_locked(&user.eppn, ["sensitivity.categories", "sensitivity.detectors"], move |[current_categories, current_detectors]| {
+        let mut categories = current_categories.as_array().cloned().unwrap_or_default();
+        let mut detectors = current_detectors.as_array().cloned().unwrap_or_default();
 
-    if categories.iter().any(|c| c["id"] == preset.category.id.as_str()) {
-        return ServiceError::conflict(format!("The category '{}' is already in settings", preset.category.id))
-            .into_pair()
-            .into_response();
-    }
-    if let Some(d) = preset.detectors.iter().find(|d| detectors.iter().any(|x| x["id"] == d.id.as_str())) {
-        return ServiceError::conflict(format!("A detector with the id '{}' is already in settings", d.id))
-            .into_pair()
-            .into_response();
-    }
-    categories.push(serde_json::to_value(&preset.category).unwrap_or(Value::Null));
-    for d in &preset.detectors {
-        detectors.push(serde_json::to_value(d).unwrap_or(Value::Null));
-    }
-    let (categories, detectors) = (Value::Array(categories), Value::Array(detectors));
-
-    // The merged settings must still be valid together.
-    if let Err(e) = scaffoldry_engine::sensitivity::validate_detectors(&detectors)
-        .and_then(|d| scaffoldry_engine::sensitivity::validate_categories(&categories, &d).map(|_| ()))
-    {
-        return ServiceError::conflict(format!("The preset does not fit the current settings: {}", e.message))
-            .into_pair()
-            .into_response();
-    }
-
-    // One ledger entry first. It holds hashes, never a value.
-    let ledger_payload = json!({
-        "preset": id,
-        "categories_sha256": sha256_hex(&categories),
-        "detectors_sha256": sha256_hex(&detectors),
-    });
-    if let Err(e) = state.append_ledger_entry(RecordDecisionInput {
-        principal: user.eppn.clone(),
-        organization_code: "INST".to_string(),
-        app_slug: None,
-        decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
-        oscal_control_id: "RA-02".to_string(),
-        rationale: format!("Sensitivity preset '{id}' switched on by {}", user.eppn),
-        payload: &ledger_payload,
-    }) {
-        return ServiceError::internal(format!("Ledger append failed: {e}")).into_pair().into_response();
-    }
-
-    for (key, value) in [("sensitivity.categories", &categories), ("sensitivity.detectors", &detectors)] {
-        if let Some(ref repo) = state.repository {
-            if let Err(e) = repo.put_platform_setting(key, value, &user.eppn) {
-                return ServiceError::internal(format!("Database write failed: {e}")).into_pair().into_response();
-            }
+        if categories.iter().any(|c| c["id"] == preset.category.id.as_str()) {
+            return Err(ServiceError::conflict(format!("The category '{}' is already in settings", preset.category.id)));
         }
-        state.settings.write().unwrap().insert(key.to_string(), value.clone());
-    }
+        if let Some(d) = preset.detectors.iter().find(|d| detectors.iter().any(|x| x["id"] == d.id.as_str())) {
+            return Err(ServiceError::conflict(format!("A detector with the id '{}' is already in settings", d.id)));
+        }
+        categories.push(serde_json::to_value(&preset.category).unwrap_or(Value::Null));
+        for d in &preset.detectors {
+            detectors.push(serde_json::to_value(d).unwrap_or(Value::Null));
+        }
+        let (categories, detectors) = (Value::Array(categories), Value::Array(detectors));
 
-    (StatusCode::OK, Json(json!({ "preset": id, "categories": categories, "detectors": detectors }))).into_response()
+        // The merged settings must still be valid together.
+        if let Err(e) = scaffoldry_engine::sensitivity::validate_detectors(&detectors)
+            .and_then(|d| scaffoldry_engine::sensitivity::validate_categories(&categories, &d).map(|_| ()))
+        {
+            return Err(ServiceError::conflict(format!("The preset does not fit the current settings: {}", e.message)));
+        }
+
+        // The ledger entry holds hashes, never a value.
+        let ledger = crate::repository::AppendDecisionParams {
+            principal: eppn.clone(),
+            organization_code: "INST".to_string(),
+            app_slug: None,
+            decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
+            oscal_control_id: "RA-02".to_string(),
+            rationale: format!("Sensitivity preset '{preset_id}' switched on by {eppn}"),
+            payload: json!({
+                "preset": preset_id,
+                "categories_sha256": sha256_hex(&categories),
+                "detectors_sha256": sha256_hex(&detectors),
+            }),
+        };
+        Ok((
+            vec![("sensitivity.categories".to_string(), categories), ("sensitivity.detectors".to_string(), detectors)],
+            ledger,
+        ))
+    });
+    let (updates, entry) = match outcome {
+        Err(e) => return ServiceError::internal(format!("Database write failed: {e}")).into_pair().into_response(),
+        Ok(Err(refusal)) => return refusal.into_pair().into_response(),
+        Ok(Ok(done)) => done,
+    };
+    state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(entry);
+    if let Err(e) = state.refresh() {
+        return ServiceError::StorageUnavailable(format!("The preset was saved, but this server could not reload: {e}")).into_response();
+    }
+    let value_of = |k: &str| updates.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()).unwrap_or(Value::Null);
+    (StatusCode::OK, Json(json!({ "preset": id, "categories": value_of("sensitivity.categories"), "detectors": value_of("sensitivity.detectors") }))).into_response()
 }

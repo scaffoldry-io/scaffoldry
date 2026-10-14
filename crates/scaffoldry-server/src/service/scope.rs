@@ -192,7 +192,7 @@ pub fn readable_ids(caller: &AuthUser, app_slug: &str, ids: &[String], state: &S
     if rules_of(app_slug, state).is_empty() || caller.affiliation == "central_admin" {
         return ids.iter().cloned().collect();
     }
-    let Some(repo) = state.repository.as_deref() else { return Default::default() };
+    let repo = &state.repository;
     let found = repo.records_with_trashed(app_slug, ids).unwrap_or_default();
     found.into_iter().filter(|r| allows(caller, app_slug, r, RowOp::Read, state)).map(|r| r.id).collect()
 }
@@ -267,10 +267,7 @@ pub fn count_scoped(
     scope: Option<&crate::repository::ScopePlan>,
     state: &SharedState,
 ) -> Result<u64, crate::service::ServiceError> {
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| crate::service::ServiceError::Internal("Database required".to_string()))?;
+    let repo = &*state.repository;
     repo.count_scoped_records(app_slug, table_id, scope)
         .map_err(|e| crate::service::ServiceError::Internal(e.to_string()))
 }

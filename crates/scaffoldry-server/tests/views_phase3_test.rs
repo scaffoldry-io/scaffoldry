@@ -5,6 +5,8 @@
 //! `view_anchors`, and a jump starts at the nearest anchor. Windows, counts and the last page all run on the index,
 //! and a person with a row scope gets windows and counts over their own scope only.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -19,12 +21,9 @@ use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-/// The million-row test shares the machine.
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const VIEWER: &str = "student.viewer@science.state.edu";
@@ -32,8 +31,7 @@ const WORKSPACE: &str = "ws-bio-lab";
 const MILLION: i64 = 1_000_000;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -225,7 +223,7 @@ fn wait_for_anchors(w: &World, view: &str) {
 //    count on a hard filter says at least inside the timeout, and the last page is the final 200 rows in order.
 #[tokio::test]
 async fn a_million_rows_open_in_a_window_by_anchor_and_the_last_page_and_count_hold() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world(MILLION).await;
     let view = make_view(&w, "By amount", by_amount()).await;
 
@@ -235,7 +233,7 @@ async fn a_million_rows_open_in_a_window_by_anchor_and_the_last_page_and_count_h
     assert_eq!(first["window"]["strategy"], "offset");
     assert_eq!(amounts(&first), (500_001..=500_200).collect::<Vec<i64>>(), "the rows are right even without anchors");
 
-    let runner = JobRunner::start(w.state.repository.as_deref().unwrap(), JOB_KINDS, fast()).unwrap();
+    let runner = JobRunner::start(&w.state.repository, JOB_KINDS, fast()).unwrap();
     wait_for_anchors(&w, &view);
     runner.stop();
     let anchors: i64 = {
@@ -313,6 +311,7 @@ async fn a_million_rows_open_in_a_window_by_anchor_and_the_last_page_and_count_h
 // 5. A window of a view with no sort cannot be placed, and a count needs `exact`.
 #[tokio::test]
 async fn a_window_needs_a_sort_and_a_count_needs_exact() {
+    let _db = common::TestDb::new();
     let w = world(50).await;
     let unsorted = make_view(&w, "Plain", json!({})).await;
     let (s, v) = run(&w, &w.owner, &unsorted, "?offset=10&limit=5").await;
@@ -329,6 +328,7 @@ async fn a_window_needs_a_sort_and_a_count_needs_exact() {
 // 6. A scoped person gets counts and windows over their own scope only. They never use the anchors of the whole table.
 #[tokio::test]
 async fn a_scoped_person_gets_counts_and_windows_over_their_own_scope_only() {
+    let _db = common::TestDb::new();
     let w = world(2_000).await;
     set_rules(
         &w.slug,

@@ -46,10 +46,8 @@ async fn get_governance_ledger(
         return Err(ServiceError::forbidden("Forbidden: Requires Platform Admin or compliance affiliation").into_pair());
     }
 
-    let entries = if let Some(ref repo) = state.repository {
+    let entries = { let repo = &state.repository;
         repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone())
-    } else {
-        state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone()
     };
     let is_valid = state.verify_ledger().unwrap_or(false);
     let head_hash = entries
@@ -109,10 +107,8 @@ async fn append_ledger_decision(
 }
 
 async fn verify_governance_ledger(State(state): State<SharedState>) -> impl IntoResponse {
-    let entries = if let Some(ref repo) = state.repository {
+    let entries = { let repo = &state.repository;
         repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap().clone())
-    } else {
-        state.ledger.read().unwrap().clone()
     };
     match state.verify_ledger() {
         Ok(valid) => Json(json!({

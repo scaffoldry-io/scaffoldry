@@ -392,7 +392,7 @@ fn validate_attachments(
         let refs = if ids.is_empty() {
             Vec::new()
         } else {
-            let repo = state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Files need PostgreSQL".to_string()))?;
+            let repo = &*state.repository;
             repo.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))?
         };
         let mut clean: Vec<Value> = Vec::new();
@@ -433,10 +433,7 @@ pub fn record_files(caller: &AuthUser, app_slug: &str, id: &str, state: &SharedS
         let listed = record.data.get(name).and_then(Value::as_array).into_iter().flatten();
         ids.extend(listed.filter_map(|i| i.get("ref_id").and_then(Value::as_str).and_then(|s| s.parse::<uuid::Uuid>().ok())));
     }
-    let refs = match state.repository.as_deref() {
-        Some(repo) if !ids.is_empty() => repo.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))?,
-        _ => Vec::new(),
-    };
+    let refs = if ids.is_empty() { Vec::new() } else { state.repository.file_refs(app_slug, &ids).map_err(|e| ServiceError::Internal(e.to_string()))? };
     let files: Vec<Value> = refs
         .iter()
         .filter(|r| !r.deleted && r.record_id.as_deref() == Some(id))
@@ -450,7 +447,7 @@ pub fn record_files(caller: &AuthUser, app_slug: &str, id: &str, state: &SharedS
 
 /// Ties the files a write listed to the record, and lets go of the ones it dropped.
 fn attach_attachments(app_slug: &str, table_id: &str, record_id: &str, attachments: &Attachments, state: &SharedState) -> Result<(), ServiceError> {
-    let Some(repo) = state.repository.as_deref() else { return Ok(()) };
+    let repo = &state.repository;
     for (field, ids) in attachments {
         repo.attach_file_refs(app_slug, table_id, record_id, field, ids).map_err(|e| ServiceError::Internal(format!("Files could not be attached: {e}")))?;
     }
@@ -1292,7 +1289,7 @@ fn strip_lookups(app_slug: &str, data: &Value, state: &SharedState) -> Value {
 /// rows the page has. A value the reader may not see is not added.
 fn fill_lookups(caller: &AuthUser, app_slug: &str, rows: &mut [DatasetRecord], state: &SharedState) {
     use scaffoldry_engine::FieldType;
-    let Some(repo) = state.repository.as_deref() else { return };
+    let repo = &state.repository;
     let mut by_table: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
         by_table.entry(r.data.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string()).or_default().push(i);
@@ -1551,7 +1548,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     let (fields, table) = table_fields(app_slug, &query.table_id, query.must_exist, state)?;
     let hidden = hidden_fields(caller, app_slug, &table, &fields, state);
-    let calculating: Vec<(String, i64)> = state.repository.as_deref().and_then(|r| r.calc_states(app_slug, &table).ok()).unwrap_or_default();
+    let calculating: Vec<(String, i64)> = state.repository.calc_states(app_slug, &table).map_err(|e| ServiceError::Internal(e.to_string()))?;
     let check = |name: &str| -> Result<(), ServiceError> {
         if !fields.iter().any(|f| f.name == name) {
             Err(ServiceError::BadRequest(format!("'{name}' is not a field of this table")))
@@ -2209,13 +2206,13 @@ fn internal(e: impl std::fmt::Display) -> ServiceError {
 }
 
 fn repo_of(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
-    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Windows need PostgreSQL".to_string()))
+    Ok(&*state.repository)
 }
 
 /// Asks for the anchors of a view to be built. A repeat while one is queued or running is the same job. A person at
 /// their job quota just waits for the next request.
 fn ask_for_anchors(caller: &AuthUser, spec: &crate::repository_index::AnchorSpec, state: &SharedState) {
-    let Some(repo) = state.repository.as_deref() else { return };
+    let repo = &state.repository;
     let key = format!("build_anchors:{}:{}", spec.view_id, spec.hash());
     if let Ok(payload) = serde_json::to_value(spec) {
         let _ = crate::jobs::enqueue(repo, "build_anchors", payload, &caller.eppn, Some(&key));

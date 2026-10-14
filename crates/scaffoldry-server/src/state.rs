@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use scaffoldry_core::{
-    verify_ledger_chain, ActionType, AutomationRule, ConditionOperator, DatasetField,
+    ActionType, AutomationRule, ConditionOperator, DatasetField,
     DatasetRelationship, DecisionType, FieldPredicate, LedgerEntry, LedgerError,
     NewLedgerEntryParams, ProcessInstance, PublishedDataset, RelationshipType, TriggerEvent,
     GENESIS_PREVIOUS_HASH,
@@ -209,9 +209,6 @@ pub struct ServerState {
     pub column_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::ColumnRule>>>,
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
     pub collaborators: RwLock<HashMap<String, Vec<CollaboratorRecord>>>,
-    /// Records live in PostgreSQL. This map holds them only when there is no repository, which
-    /// is the case for tests that call `ServerState::in_memory`.
-    memory_records: RwLock<HashMap<String, Vec<DatasetRecord>>>,
     pub guards: RwLock<HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>>>,
     pub guard_policy_cache: RwLock<HashMap<(String, i32), scaffoldry_policy::PolicySet>>,
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
@@ -223,7 +220,9 @@ pub struct ServerState {
     pub policy_engine: ScaffoldryPolicyEngine,
     pub sessions: RwLock<HashMap<String, AuthSession>>,
     pub api_tokens: RwLock<HashMap<String, ApiToken>>,
-    pub repository: Option<Arc<crate::repository::PostgresRepository>>,
+    pub repository: Arc<crate::repository::PostgresRepository>,
+    /// The version of each cached collection this instance holds, in the order of `cache::NAMES`.
+    pub cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()],
     pub organizations: RwLock<HashMap<uuid::Uuid, OrganizationNode>>,
     pub roles: RwLock<Vec<RoleRow>>,
     pub position_types: RwLock<HashMap<String, PositionType>>,
@@ -235,7 +234,49 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    /// Makes this instance agree with the database. It reads every cache counter in one statement and reloads each
+    /// collection whose counter differs from the one this instance holds. The counter stored is the one read before
+    /// the reload, so a write that lands during the reload is seen by the next call. A reload that fails keeps the old
+    /// counter and returns the error, and the next call tries again.
+    pub fn refresh(&self) -> Result<(), crate::repository::RepositoryError> {
+        use std::sync::atomic::Ordering::SeqCst;
+        for (name, version) in self.repository.cache_versions()? {
+            let Some(i) = crate::cache::index_of(&name) else { continue };
+            if self.cache_seen[i].load(SeqCst) == version {
+                continue;
+            }
+            self.reload(&name)?;
+            self.cache_seen[i].store(version, SeqCst);
+        }
+        Ok(())
+    }
+
+    /// Loads one cached collection again. A collection moves here from a boot-time copy to the mechanism in the phase
+    /// that makes it cached. The ones not listed are still read at boot only.
+    fn reload(&self, name: &str) -> Result<(), crate::repository::RepositoryError> {
+        if name == "settings" {
+            let stored = self.repository.get_platform_settings()?;
+            let mut held = self.settings.write().unwrap_or_else(|p| p.into_inner());
+            for (k, v) in stored {
+                if k == "platform.timezone" {
+                    if let Some(tz) = v.as_str() {
+                        scaffoldry_engine::formula::set_institution_timezone(tz);
+                    }
+                }
+                held.insert(k, v);
+            }
+        }
+        Ok(())
+    }
+
+    /// A server on the database `DATABASE_URL` names, or the one a test named for its thread.
     pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::connect(&crate::testing::database_url())
+    }
+
+    /// A server on this database. It migrates the database and reads everything it holds. When any of that fails
+    /// the server does not start.
+    pub fn connect(database_url: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let mut engine = ManifestEngine::new()
             .map_err(|e| format!("Failed to initialize ManifestEngine: {e}"))?;
         let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
@@ -254,7 +295,6 @@ impl ServerState {
         };
         let mut organizations = HashMap::new();
         organizations.insert(default_root_id, default_root_org);
-        let mut roles: Vec<RoleRow> = Vec::new();
         let mut position_types: HashMap<String, PositionType> = HashMap::new();
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
@@ -279,7 +319,6 @@ impl ServerState {
 
         let mut ledger = vec![entry_0.clone()];
 
-        let mut sessions = HashMap::new();
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
         let mut api_tokens = HashMap::new();
@@ -307,11 +346,10 @@ impl ServerState {
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
         settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
-        settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
         add_sensitivity_defaults(&mut settings_map);
 
-        let repository = match crate::repository::PostgresRepository::connect(None) {
-            Ok(repo) => Some(Arc::new(repo)),
+        let repository = match crate::repository::PostgresRepository::connect(Some(database_url)) {
+            Ok(repo) => Arc::new(repo),
             Err(e) => {
                 if let crate::repository::RepositoryError::TamperDetected(msg) = &e {
                     return Err(format!("Cryptographic tamper detected in ledger: {msg}").into());
@@ -319,185 +357,142 @@ impl ServerState {
                 return Err(format!("Failed to connect to PostgreSQL repository: {e}").into());
             }
         };
+        let repo = &*repository;
+        // A read that fails stops the server. It does not start with a collection empty and say nothing.
+        let read = |what: &str, e: crate::repository::RepositoryError| -> Box<dyn std::error::Error + Send + Sync> {
+            format!("Failed to read {what} at start: {e}").into()
+        };
 
-        if let Some(ref repo) = repository {
-            if let Ok(db_settings) = repo.get_platform_settings() {
-                for (k, v) in db_settings {
-                    if k == "platform.timezone" {
-                        if let Some(tz) = v.as_str() {
-                            scaffoldry_engine::formula::set_institution_timezone(tz);
-                        }
-                    }
-                    settings_map.insert(k, v);
+        // The counters come first. A write that lands while the rest loads is then seen by the first refresh.
+        let versions = repo.cache_versions().map_err(|e| read("the cache versions", e))?;
+
+        for (k, v) in repo.get_platform_settings().map_err(|e| read("the settings", e))? {
+            if k == "platform.timezone" {
+                if let Some(tz) = v.as_str() {
+                    scaffoldry_engine::formula::set_institution_timezone(tz);
                 }
             }
+            settings_map.insert(k, v);
         }
 
+        // The root organization exists before anything that hangs from it.
+        for org in organizations.values() {
+            repo.upsert_organization(org).map_err(|e| read("the root organization", e))?;
+        }
 
-        if let Some(ref repo) = repository {
-            // Always ensure root organization exists before workspaces
-            for org in organizations.values() {
-                let _ = repo.upsert_organization(org);
-            }
-
-            // Always ensure root organization exists
-            for org in organizations.values() {
-                let _ = repo.upsert_organization(org);
-            }
-
-            // Ensure genesis ledger entry exists in repo
-            let _ = repo.append_ledger_entry(&entry_0, &json!({"system": "scaffoldry", "genesis": true}));
-            // Load persisted manifests into engine
-            // Views live in their own table. A manifest stored with views still in it has them moved, once, and
-            // the migration is one ledger entry with the count. What the engine runs is the manifest with the
-            // stored views merged back in, so nothing that reads a manifest's views changes.
-            if let Ok(stored_views) = repo.list_all_app_views() {
-                for v in stored_views {
-                    app_views_cache.entry(v.app_slug.clone()).or_default().push(v);
-                }
-            }
-            if let Ok(persisted_manifests) = repo.list_app_manifests() {
-                for mut m in persisted_manifests {
-                    if !m.views.is_empty() {
-                        if let Ok(Some(done)) = repo.migrate_manifest_views(&m.slug) {
-                            let count = done.views.len();
-                            if let Ok(entry) = repo.append_ledger_decision(crate::repository::AppendDecisionParams {
-                                principal: "system@scaffoldry.local".to_string(),
-                                organization_code: m.organization_code.clone(),
-                                app_slug: Some(m.slug.clone()),
-                                decision_type: scaffoldry_core::ledger::DecisionType::ViewsMigrated,
-                                oscal_control_id: "CM-03".to_string(),
-                                rationale: format!("Moved {count} views of {} out of the manifest into their own table", m.slug),
-                                payload: serde_json::json!({ "app_slug": m.slug, "views": count }),
-                            }) {
-                                ledger.push(entry);
-                            }
-                            app_views_cache.entry(m.slug.clone()).or_default().extend(done.views);
-                            m = done.manifest;
-                        }
-                    }
-                    let views = app_views_cache.get(&m.slug).cloned().unwrap_or_default();
-                    let _ = engine.register_manifest(crate::repository_views::merged(m, &views));
-                }
-            }
-
-            // Load persisted datasets
-            if let Ok(persisted_datasets) = repo.list_published_datasets() {
-                for ds in persisted_datasets {
-                    datasets.insert(ds.id.clone(), ds);
-                }
-            }
-
-            // Load persisted relationships
-            if let Ok(persisted_rels) = repo.list_dataset_relationships() {
-                for rel in persisted_rels {
-                    relationships.insert(rel.id.clone(), rel);
-                }
-            }
-
-            // Load persisted automations
-            if let Ok(persisted_automations) = repo.list_workflow_automations(None) {
-                for r in persisted_automations {
-                    let entry = automations.entry(r.app_slug.clone()).or_default();
-                    if !entry.iter().any(|existing| existing.id == r.id) {
-                        entry.push(r);
-                    }
-                }
-            }
-
-            // Load persisted process instances
-            if let Ok(persisted_instances) = repo.list_process_instances(None, None) {
-                for inst in persisted_instances {
-                    process_instances.insert(inst.id.clone(), inst);
-                }
-            }
-
-            for org in organizations.values() {
-                let _ = repo.upsert_organization(org);
-            }
-            if let Ok(persisted_orgs) = repo.list_organizations() {
-                for org in persisted_orgs {
-                    organizations.insert(org.id, org);
-                }
-            }
-            if let Ok(persisted_roles) = repo.list_roles() {
-                roles = persisted_roles;
-            }
-            if let Ok(persisted_positions) = repo.list_position_types() {
-                for pt in persisted_positions {
-                    position_types.insert(pt.key.clone(), pt);
-                }
-            }
-
-            // Load persisted SCIM users and groups
-            if let Ok(persisted_users) = repo.list_scim_users() {
-                for u in persisted_users {
-                    users.insert(u.id.clone(), u);
-                }
-            }
-            if let Ok(persisted_groups) = repo.list_scim_groups() {
-                for g in persisted_groups {
-                    groups.insert(g.id.clone(), g);
-                }
-            }
-
-            if let Ok(persisted_guards) = repo.list_all_workspace_guards() {
-                for g in persisted_guards {
-                    guards.entry(g.workspace_id.clone()).or_default().push(g);
-                }
-            }
-
-            if let Ok(archived_count) = repo.count_legacy_workspace_guards() {
-                if archived_count > 0 {
-                    let already_recorded = ledger.iter().any(|e| {
-                        e.decision_type == scaffoldry_core::ledger::DecisionType::PolicyRevision
-                            && (e.rationale.contains("workspace_guards_legacy") || e.rationale.contains("Archived legacy workspace guards"))
-                    });
-                    if !already_recorded {
-                        let payload = serde_json::json!({
-                            "archived_rows": archived_count,
-                            "table": "workspace_guards_legacy"
-                        });
-                        if let Ok(entry) = repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+        // Views live in their own table. A manifest stored with views still in it has them moved, once, and
+        // the migration is one ledger entry with the count. What the engine runs is the manifest with the
+        // stored views merged back in, so nothing that reads a manifest's views changes.
+        for v in repo.list_all_app_views().map_err(|e| read("the views", e))? {
+            app_views_cache.entry(v.app_slug.clone()).or_default().push(v);
+        }
+        for mut m in repo.list_app_manifests().map_err(|e| read("the app manifests", e))? {
+            if !m.views.is_empty() {
+                if let Some(done) = repo.migrate_manifest_views(&m.slug).map_err(|e| read("the view migration", e))? {
+                    let count = done.views.len();
+                    let entry = repo
+                        .append_ledger_decision(crate::repository::AppendDecisionParams {
                             principal: "system@scaffoldry.local".to_string(),
-                            organization_code: "INST".to_string(),
-                            app_slug: None,
-                            decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
-                            oscal_control_id: "AC-03".to_string(),
-                            rationale: format!("Archived legacy workspace guards ({} rows)", archived_count),
-                            payload,
-                        }) {
-                            ledger.push(entry);
-                        }
-                    }
+                            organization_code: m.organization_code.clone(),
+                            app_slug: Some(m.slug.clone()),
+                            decision_type: scaffoldry_core::ledger::DecisionType::ViewsMigrated,
+                            oscal_control_id: "CM-03".to_string(),
+                            rationale: format!("Moved {count} views of {} out of the manifest into their own table", m.slug),
+                            payload: serde_json::json!({ "app_slug": m.slug, "views": count }),
+                        })
+                        .map_err(|e| read("the ledger", e))?;
+                    ledger.push(entry);
+                    app_views_cache.entry(m.slug.clone()).or_default().extend(done.views);
+                    m = done.manifest;
                 }
             }
-            if let Ok(persisted_ws) = repo.list_workspaces() {
-                for ws in persisted_ws {
-                    if let Ok(collabs) = repo.get_collaborators(&ws.id) {
-                        collaborators.insert(ws.id.clone(), collabs);
-                    }
-                    workspaces.insert(ws.id.clone(), ws);
-                }
-            }
-
-            if let Ok(persisted_sessions) = repo.list_sessions() {
-                if persisted_sessions.is_empty() {
-                    for s in sessions.values() {
-                        let _ = repo.upsert_session(s);
-                    }
-                } else {
-                    sessions = persisted_sessions;
-                }
-            }
-            let _ = repo.insert_api_token(&default_scim_token);
-
-            if let Ok(persisted_ledger) = repo.get_ledger() {
-                if !persisted_ledger.is_empty() {
-                    ledger = persisted_ledger;
-                }
+            let views = app_views_cache.get(&m.slug).cloned().unwrap_or_default();
+            let slug = m.slug.clone();
+            if let Err(e) = engine.register_manifest(crate::repository_views::merged(m, &views)) {
+                eprintln!("Warning: the stored app '{slug}' no longer validates and is not loaded: {e}");
             }
         }
+
+        for ds in repo.list_published_datasets().map_err(|e| read("the datasets", e))? {
+            datasets.insert(ds.id.clone(), ds);
+        }
+        for rel in repo.list_dataset_relationships().map_err(|e| read("the relationships", e))? {
+            relationships.insert(rel.id.clone(), rel);
+        }
+        for r in repo.list_workflow_automations(None).map_err(|e| read("the automations", e))? {
+            let entry = automations.entry(r.app_slug.clone()).or_default();
+            if !entry.iter().any(|existing| existing.id == r.id) {
+                entry.push(r);
+            }
+        }
+        for inst in repo.list_process_instances(None, None).map_err(|e| read("the process instances", e))? {
+            process_instances.insert(inst.id.clone(), inst);
+        }
+
+        for org in repo.list_organizations().map_err(|e| read("the organizations", e))? {
+            organizations.insert(org.id, org);
+        }
+        let roles: Vec<RoleRow> = repo.list_roles().map_err(|e| read("the roles", e))?;
+        for pt in repo.list_position_types().map_err(|e| read("the position types", e))? {
+            position_types.insert(pt.key.clone(), pt);
+        }
+
+        for u in repo.list_scim_users().map_err(|e| read("the people", e))? {
+            users.insert(u.id.clone(), u);
+        }
+        for g in repo.list_scim_groups().map_err(|e| read("the groups", e))? {
+            groups.insert(g.id.clone(), g);
+        }
+        for g in repo.list_all_workspace_guards().map_err(|e| read("the workspace guards", e))? {
+            guards.entry(g.workspace_id.clone()).or_default().push(g);
+        }
+
+        let archived_count = repo.count_legacy_workspace_guards().map_err(|e| read("the archived guards", e))?;
+        if archived_count > 0 {
+            let already_recorded = ledger.iter().any(|e| {
+                e.decision_type == scaffoldry_core::ledger::DecisionType::PolicyRevision
+                    && (e.rationale.contains("workspace_guards_legacy") || e.rationale.contains("Archived legacy workspace guards"))
+            });
+            if !already_recorded {
+                let payload = serde_json::json!({
+                    "archived_rows": archived_count,
+                    "table": "workspace_guards_legacy"
+                });
+                let entry = repo
+                    .append_ledger_decision(crate::repository::AppendDecisionParams {
+                        principal: "system@scaffoldry.local".to_string(),
+                        organization_code: "INST".to_string(),
+                        app_slug: None,
+                        decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
+                        oscal_control_id: "AC-03".to_string(),
+                        rationale: format!("Archived legacy workspace guards ({} rows)", archived_count),
+                        payload,
+                    })
+                    .map_err(|e| read("the ledger", e))?;
+                ledger.push(entry);
+            }
+        }
+        for ws in repo.list_workspaces().map_err(|e| read("the workspaces", e))? {
+            let collabs = repo.get_collaborators(&ws.id).map_err(|e| read("the collaborators", e))?;
+            collaborators.insert(ws.id.clone(), collabs);
+            workspaces.insert(ws.id.clone(), ws);
+        }
+
+        let sessions: HashMap<String, AuthSession> = repo.list_sessions().map_err(|e| read("the sessions", e))?;
+        repo.insert_api_token(&default_scim_token).map_err(|e| read("the provisioning token", e))?;
+
+        // The ledger is the stored one. A database with none gets the genesis entry.
+        let persisted_ledger = repo.get_ledger().map_err(|e| read("the ledger", e))?;
+        if persisted_ledger.is_empty() {
+            repo.append_ledger_entry(&entry_0, &json!({"system": "scaffoldry", "genesis": true})).map_err(|e| read("the ledger", e))?;
+        } else {
+            ledger = persisted_ledger;
+        }
+
+        let cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()] = std::array::from_fn(|i| {
+            let version = versions.iter().find(|(n, _)| n == crate::cache::NAMES[i]).map(|(_, v)| *v).unwrap_or(-1);
+            std::sync::atomic::AtomicI64::new(version)
+        });
 
         Ok(Self {
             users: RwLock::new(users),
@@ -508,7 +503,6 @@ impl ServerState {
             column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
-            memory_records: RwLock::new(HashMap::new()),
             guards: RwLock::new(guards),
             guard_policy_cache: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
@@ -521,6 +515,7 @@ impl ServerState {
             sessions: RwLock::new(sessions),
             api_tokens: RwLock::new(api_tokens),
             repository,
+            cache_seen,
             organizations: RwLock::new(organizations),
             roles: RwLock::new(roles),
             position_types: RwLock::new(position_types),
@@ -545,7 +540,8 @@ pub struct RecordDecisionInput<'a> {
 impl ServerState {
     pub fn persist_organization(&self, org: &OrganizationNode) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.organizations.write().unwrap().insert(org.id, org.clone());
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_organization(org)?;
         }
         Ok(())
@@ -554,7 +550,8 @@ impl ServerState {
     pub fn delete_scim_roles(&self, eppn: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut guard = self.roles.write().unwrap();
         guard.retain(|r| !(r.eppn == eppn && r.source == "scim"));
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.delete_scim_roles_for_user(eppn)?;
         }
         Ok(())
@@ -564,15 +561,8 @@ impl ServerState {
     // RECORDS. PostgreSQL holds the rows. Nothing is loaded at boot.
     // -------------------------------------------------------------------------
 
-    fn memory(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, Vec<DatasetRecord>>> {
-        self.memory_records.write().unwrap_or_else(|p| p.into_inner())
-    }
-
     pub fn list_app_records(&self, app_slug: &str) -> Result<Vec<DatasetRecord>, String> {
-        match self.repository {
-            Some(ref repo) => repo.list_records(app_slug).map_err(|e| e.to_string()),
-            None => Ok(self.memory().get(app_slug).cloned().unwrap_or_default()),
-        }
+        { let repo = &self.repository; repo.list_records(app_slug).map_err(|e| e.to_string()) }
     }
 
     /// One page of a table in `(created_at, id)` order, after `cursor` when given.
@@ -583,117 +573,47 @@ impl ServerState {
         limit: usize,
         cursor: Option<(String, String)>,
     ) -> Result<Vec<DatasetRecord>, String> {
-        match self.repository {
-            Some(ref repo) => repo.list_records_page(app_slug, table_id, limit, cursor).map_err(|e| e.to_string()),
-            None => {
-                let mut rows: Vec<DatasetRecord> = self
-                    .memory()
-                    .get(app_slug)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|r| r.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("") == table_id)
-                    .collect();
-                rows.sort_by(|a, b| (a.created_at.as_str(), a.id.as_str()).cmp(&(b.created_at.as_str(), b.id.as_str())));
-                Ok(rows
-                    .into_iter()
-                    .filter(|r| match &cursor {
-                        Some((at, id)) => (r.created_at.as_str(), r.id.as_str()) > (at.as_str(), id.as_str()),
-                        None => true,
-                    })
-                    .take(limit)
-                    .collect())
-            }
-        }
+        { let repo = &self.repository; repo.list_records_page(app_slug, table_id, limit, cursor).map_err(|e| e.to_string()) }
     }
 
     /// One page that filters or sorts.
     pub fn query_records(&self, app_slug: &str, query: &crate::repository::RecordQuery) -> Result<Vec<DatasetRecord>, String> {
-        match self.repository {
-            Some(ref repo) => repo.query_records(app_slug, query).map_err(|e| e.to_string()),
-            None => Err("Filtering and sorting need PostgreSQL".to_string()),
-        }
+        { let repo = &self.repository; repo.query_records(app_slug, query).map_err(|e| e.to_string()) }
     }
 
     /// Aggregate over record_index.
     pub fn aggregate_records(&self, plan: &crate::repository_index::AggregatePlan) -> Result<crate::repository_index::AggregateResultRaw, String> {
-        match self.repository {
-            Some(ref repo) => repo.aggregate_records(plan).map_err(|e| e.to_string()),
-            None => Err("Aggregates need PostgreSQL".to_string()),
-        }
+        { let repo = &self.repository; repo.aggregate_records(plan).map_err(|e| e.to_string()) }
     }
 
     /// The percent done of the build holding back one of `fields`, or `None` when none is building.
     pub fn index_building_percent(&self, app_slug: &str, table_id: &str, fields: &[String]) -> Result<Option<i64>, String> {
-        match self.repository {
-            Some(ref repo) => repo.index_building_percent(app_slug, table_id, fields).map_err(|e| e.to_string()),
-            None => Ok(None),
-        }
+        { let repo = &self.repository; repo.index_building_percent(app_slug, table_id, fields).map_err(|e| e.to_string()) }
     }
 
     /// One page through the pivot index.
     pub fn indexed_page(&self, query: &crate::repository::IndexedQuery) -> Result<Vec<DatasetRecord>, String> {
-        match self.repository {
-            Some(ref repo) => repo.indexed_page(query).map_err(|e| e.to_string()),
-            None => Err("Filtering and sorting need PostgreSQL".to_string()),
-        }
+        { let repo = &self.repository; repo.indexed_page(query).map_err(|e| e.to_string()) }
     }
 
     /// How many records point at `record_id` through any of `fields`.
     pub fn count_links_to(&self, app_slug: &str, record_id: &str, fields: &[String]) -> Result<i64, String> {
-        match self.repository {
-            Some(ref repo) => repo.count_links_to(app_slug, record_id, fields).map_err(|e| e.to_string()),
-            None => Ok(0),
-        }
+        { let repo = &self.repository; repo.count_links_to(app_slug, record_id, fields).map_err(|e| e.to_string()) }
     }
 
     /// Which of `ids` are records of this table of this app.
     pub fn existing_record_ids(&self, app_slug: &str, table_id: &str, ids: &[String]) -> Result<Vec<String>, String> {
-        match self.repository {
-            Some(ref repo) => repo.existing_record_ids(app_slug, table_id, ids).map_err(|e| e.to_string()),
-            None => Ok(self
-                .memory()
-                .get(app_slug)
-                .map(|rows| {
-                    rows.iter()
-                        .filter(|r| ids.contains(&r.id) && r.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("") == table_id)
-                        .map(|r| r.id.clone())
-                        .collect()
-                })
-                .unwrap_or_default()),
-        }
+        { let repo = &self.repository; repo.existing_record_ids(app_slug, table_id, ids).map_err(|e| e.to_string()) }
     }
 
     /// True when a table holds more than `limit` rows.
     pub fn table_has_more_than(&self, app_slug: &str, table_id: &str, limit: i64) -> Result<bool, String> {
-        match self.repository {
-            Some(ref repo) => repo.table_has_more_than(app_slug, table_id, limit).map_err(|e| e.to_string()),
-            None => Ok(self
-                .memory()
-                .get(app_slug)
-                .map(|rows| rows.iter().filter(|r| r.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("") == table_id).count() as i64 > limit)
-                .unwrap_or(false)),
-        }
+        { let repo = &self.repository; repo.table_has_more_than(app_slug, table_id, limit).map_err(|e| e.to_string()) }
     }
 
     /// Deletes a record only if it is still at `expected_version`.
     pub fn remove_record_checked(&self, app_slug: &str, id: &str, expected_version: i32, ctx: &crate::repository::WriteCtx) -> Result<crate::repository::RecordWrite, String> {
-        use crate::repository::RecordWrite;
-        match self.repository {
-            Some(ref repo) => repo.delete_record_checked(app_slug, id, expected_version, ctx).map_err(|e| e.to_string()),
-            None => {
-                let mut map = self.memory();
-                let Some(list) = map.get_mut(app_slug) else { return Ok(RecordWrite::Missing) };
-                match list.iter().position(|r| r.id == id) {
-                    None => Ok(RecordWrite::Missing),
-                    Some(i) if list[i].version != expected_version => Ok(RecordWrite::Conflict(list[i].version)),
-                    Some(i) => {
-                        list.remove(i);
-                        Ok(RecordWrite::Saved(expected_version))
-                    }
-                }
-            }
-        }
+        { let repo = &self.repository; repo.delete_record_checked(app_slug, id, expected_version, ctx).map_err(|e| e.to_string()) }
     }
 
     pub fn count_app_records(&self, app_slug: &str) -> Result<usize, String> {
@@ -701,41 +621,17 @@ impl ServerState {
     }
 
     pub fn find_record(&self, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, String> {
-        match self.repository {
-            Some(ref repo) => repo.get_record(app_slug, id).map_err(|e| e.to_string()),
-            None => Ok(self.memory().get(app_slug).and_then(|v| v.iter().find(|r| r.id == id).cloned())),
-        }
+        { let repo = &self.repository; repo.get_record(app_slug, id).map_err(|e| e.to_string()) }
     }
 
     /// A new record, at version 1.
     pub fn insert_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), crate::repository::RepositoryError> {
-        match self.repository {
-            Some(ref repo) => repo.insert_record(rec, ctx),
-            None => {
-                self.memory().entry(rec.app_slug.clone()).or_default().push(rec.clone());
-                Ok(())
-            }
-        }
+        self.repository.insert_record(rec, ctx)
     }
 
     /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
     pub fn put_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), String> {
-        match self.repository {
-            Some(ref repo) => repo.upsert_record(rec, ctx).map_err(|e| e.to_string()),
-            None => {
-                let mut map = self.memory();
-                let list = map.entry(rec.app_slug.clone()).or_default();
-                match list.iter_mut().find(|r| r.id == rec.id) {
-                    Some(existing) => {
-                        let next = existing.version + 1;
-                        *existing = rec.clone();
-                        existing.version = next;
-                    }
-                    None => list.push(rec.clone()),
-                }
-                Ok(())
-            }
-        }
+        { let repo = &self.repository; repo.upsert_record(rec, ctx).map_err(|e| e.to_string()) }
     }
 
     /// Saves new data when the stored version is the one the caller read.
@@ -748,27 +644,10 @@ impl ServerState {
         ctx: &crate::repository::WriteCtx,
     ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), crate::repository::RepositoryError> {
         use crate::repository::RecordWrite;
-        let outcome = match self.repository {
-            Some(ref repo) => repo
-                .update_record_checked(app_slug, id, data, expected_version, ctx)?,
-            None => {
-                let mut map = self.memory();
-                match map.get_mut(app_slug).and_then(|v| v.iter_mut().find(|r| r.id == id)) {
-                    None => RecordWrite::Missing,
-                    Some(r) if r.version != expected_version => RecordWrite::Conflict(r.version),
-                    Some(r) => {
-                        r.data = data.clone();
-                        r.version += 1;
-                        RecordWrite::Saved(r.version)
-                    }
-                }
-            }
-        };
+        let outcome = self.repository
+            .update_record_checked(app_slug, id, data, expected_version, ctx)?;
         let saved = if matches!(outcome, RecordWrite::Saved(_)) {
-            match self.repository {
-                Some(ref repo) => repo.get_record(app_slug, id)?,
-                None => self.memory().get(app_slug).and_then(|v| v.iter().find(|r| r.id == id).cloned()),
-            }
+            self.repository.get_record(app_slug, id)?
         } else {
             None
         };
@@ -777,40 +656,19 @@ impl ServerState {
 
     /// A write by the system, such as an automation. It always applies and still bumps the version.
     pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value, ctx: &crate::repository::WriteCtx) -> Result<bool, String> {
-        match self.repository {
-            Some(ref repo) => repo
+        { let repo = &self.repository; repo
                 .overwrite_record_data(app_slug, id, data, ctx)
                 .map(|v| v.is_some())
-                .map_err(|e| e.to_string()),
-            None => {
-                let mut map = self.memory();
-                match map.get_mut(app_slug).and_then(|v| v.iter_mut().find(|r| r.id == id)) {
-                    Some(r) => {
-                        r.data = data.clone();
-                        r.version += 1;
-                        Ok(true)
-                    }
-                    None => Ok(false),
-                }
-            }
-        }
+                .map_err(|e| e.to_string()) }
     }
 
     pub fn remove_record(&self, app_slug: &str, id: &str, ctx: &crate::repository::WriteCtx) -> Result<bool, String> {
-        match self.repository {
-            Some(ref repo) => repo.delete_record(app_slug, id, ctx).map_err(|e| e.to_string()),
-            None => {
-                let mut map = self.memory();
-                let Some(list) = map.get_mut(app_slug) else { return Ok(false) };
-                let before = list.len();
-                list.retain(|r| r.id != id);
-                Ok(list.len() != before)
-            }
-        }
+        { let repo = &self.repository; repo.delete_record(app_slug, id, ctx).map_err(|e| e.to_string()) }
     }
 
     pub fn persist_position_type(&self, pt: &PositionType) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_position_type(pt)?;
         }
         self.position_types.write().unwrap().insert(pt.key.clone(), pt.clone());
@@ -819,7 +677,8 @@ impl ServerState {
 
     pub fn delete_role(&self, id: uuid::Uuid) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.roles.write().unwrap().retain(|r| r.id != id);
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.delete_role(id)?;
         }
         Ok(())
@@ -832,7 +691,8 @@ impl ServerState {
         } else {
             guard.push(role.clone());
         }
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_role(role)?;
         }
         Ok(())
@@ -840,14 +700,16 @@ impl ServerState {
 
     pub fn persist_workspace(&self, ws: WorkspaceRecord) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.workspaces.write().unwrap().insert(ws.id.clone(), ws.clone());
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_workspace(&ws)?;
         }
         Ok(())
     }
 
     pub fn get_workspace(&self, id: &str) -> Option<WorkspaceRecord> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             if let Ok(Some(ws)) = repo.get_workspace(id) {
                 return Some(ws);
             }
@@ -860,17 +722,15 @@ impl ServerState {
         for ws in batch {
             guard.insert(ws.id.clone(), ws.clone());
         }
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.persist_workspaces_batch(batch)?;
         }
         Ok(())
     }
 
     pub fn count_workspaces(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref repo) = self.repository {
-            return Ok(repo.count_workspaces()?);
-        }
-        Ok(self.workspaces.read().unwrap().len())
+        Ok(self.repository.count_workspaces()?)
     }
 
     /// Registers a manifest the way the engine runs it: with the stored views of its app merged in, so a manifest
@@ -883,14 +743,16 @@ impl ServerState {
 
     pub fn persist_app_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.register_runtime_manifest(m.clone())?;
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_app_manifest(&m)?;
         }
         Ok(())
     }
 
     pub fn get_app_manifest(&self, slug: &str) -> Option<AppManifest> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             if let Ok(Some(m)) = repo.get_app_manifest(slug) {
                 return Some(m);
             }
@@ -901,7 +763,8 @@ impl ServerState {
 
     pub fn persist_dataset(&self, ds: PublishedDataset) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.datasets.write().map_err(|_| "datasets lock poisoned")?.insert(ds.id.clone(), ds.clone());
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_published_dataset(&ds)?;
         }
         Ok(())
@@ -913,7 +776,8 @@ impl ServerState {
 
     pub fn persist_relationship(&self, rel: DatasetRelationship) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.relationships.write().map_err(|_| "relationships lock poisoned")?.insert(rel.id.clone(), rel.clone());
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_dataset_relationship(&rel)?;
         }
         Ok(())
@@ -921,7 +785,8 @@ impl ServerState {
 
     pub fn persist_automation(&self, rule: AutomationRule) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.automations.write().map_err(|_| "automations lock poisoned")?.entry(rule.app_slug.clone()).or_default().push(rule.clone());
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_workflow_automation(&rule)?;
         }
         Ok(())
@@ -929,7 +794,8 @@ impl ServerState {
 
     pub fn persist_process_instance(&self, inst: ProcessInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.process_instances.write().map_err(|_| "process_instances lock poisoned")?.insert(inst.id.clone(), inst.clone());
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_process_instance(&inst)?;
         }
         Ok(())
@@ -937,7 +803,8 @@ impl ServerState {
 
     pub fn persist_scim_user(&self, user: ScimUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.users.write().map_err(|_| "users lock poisoned")?.insert(user.id.clone(), user.clone());
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.upsert_scim_user(&user)?;
         }
         Ok(())
@@ -960,60 +827,28 @@ impl ServerState {
         &self,
         input: RecordDecisionInput<'_>,
     ) -> Result<LedgerEntry, LedgerError> {
-        if let Some(ref repo) = self.repository {
-            let entry = repo.append_ledger_decision(crate::repository::AppendDecisionParams {
-                principal: input.principal.clone(),
-                organization_code: input.organization_code.clone(),
-                app_slug: input.app_slug.clone(),
-                decision_type: input.decision_type,
-                oscal_control_id: input.oscal_control_id.clone(),
-                rationale: input.rationale.clone(),
-                payload: input.payload.clone(),
-            }).map_err(|e| LedgerError::RepositoryError(e.to_string()))?;
-            self.ledger.write().unwrap().push(entry.clone());
-            return Ok(entry);
-        }
-
-        let mut ledger = self.ledger.write().unwrap();
-        let sequence = ledger.len() as u64;
-        let previous_hash = ledger
-            .last()
-            .map(|l| l.entry_hash.clone())
-            .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
-        let now = chrono::Utc::now().to_rfc3339();
-        let entry = LedgerEntry::new(NewLedgerEntryParams {
-            sequence,
-            timestamp_iso: now,
-            previous_hash,
-            principal: input.principal,
-            organization_code: input.organization_code,
-            app_slug: input.app_slug,
+        let entry = self.repository.append_ledger_decision(crate::repository::AppendDecisionParams {
+            principal: input.principal.clone(),
+            organization_code: input.organization_code.clone(),
+            app_slug: input.app_slug.clone(),
             decision_type: input.decision_type,
-            oscal_control_id: input.oscal_control_id,
-            rationale: input.rationale,
-            payload: input.payload,
-        });
-        ledger.push(entry.clone());
+            oscal_control_id: input.oscal_control_id.clone(),
+            rationale: input.rationale.clone(),
+            payload: input.payload.clone(),
+        }).map_err(|e| LedgerError::RepositoryError(e.to_string()))?;
+        self.ledger.write().unwrap().push(entry.clone());
         Ok(entry)
     }
 
     pub fn verify_ledger(&self) -> Result<bool, LedgerError> {
-        if let Some(ref repo) = self.repository {
-            match repo.verify_and_initialize_ledger(false) {
-                Ok(()) => return Ok(true),
-                Err(_) => return Ok(false),
-            }
+        match self.repository.verify_and_initialize_ledger(false) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
         }
-        let ledger = self.ledger.read().unwrap();
-        verify_ledger_chain(&ledger)
     }
 
     pub fn export_oscal_component_definition(&self) -> Value {
-        let entries = if let Some(ref repo) = self.repository {
-            repo.get_ledger().unwrap_or_else(|_| self.ledger.read().unwrap().clone())
-        } else {
-            self.ledger.read().unwrap().clone()
-        };
+        let entries = self.repository.get_ledger().unwrap_or_else(|_| self.ledger.read().unwrap().clone());
         let now = chrono::Utc::now().to_rfc3339();
 
         let implemented_requirements: Vec<Value> = entries
@@ -1079,7 +914,8 @@ impl ServerState {
     }
 
     pub fn persist_api_token(&self, token: &ApiToken) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.insert_api_token(token)?;
         }
         if let Ok(mut tokens) = self.api_tokens.write() {
@@ -1089,7 +925,8 @@ impl ServerState {
     }
 
     pub fn get_api_token(&self, hash: &str) -> Option<ApiToken> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             if let Ok(Some(token)) = repo.get_api_token(hash) {
                 return Some(token);
             }
@@ -1098,7 +935,8 @@ impl ServerState {
     }
 
     pub fn update_token_last_used(&self, hash: &str, now: chrono::DateTime<chrono::Utc>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             repo.update_token_last_used(hash, now)?;
         }
         if let Ok(mut tokens) = self.api_tokens.write() {
@@ -1110,136 +948,13 @@ impl ServerState {
     }
 
     pub fn revoke_api_token(&self, id: uuid::Uuid, caller_eppn: &str, is_platform_admin: bool) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        let revoked = if let Some(ref repo) = self.repository {
-            repo.revoke_api_token(id, caller_eppn, is_platform_admin)?
-        } else {
-            let mut ok = false;
-            if let Ok(mut tokens) = self.api_tokens.write() {
-                for token in tokens.values_mut() {
-                    if token.id == id && (is_platform_admin || token.eppn == caller_eppn) {
-                        token.revoked_at = Some(chrono::Utc::now());
-                        ok = true;
-                        break;
-                    }
-                }
-            }
-            ok
-        };
-        Ok(revoked)
+        Ok(self.repository.revoke_api_token(id, caller_eppn, is_platform_admin)?)
     }
 
     pub fn revoke_api_token_by_hash(&self, hash: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        let revoked = if let Some(ref repo) = self.repository {
-            repo.revoke_api_token_by_hash(hash)?
-        } else {
-            let mut ok = false;
-            if let Ok(mut tokens) = self.api_tokens.write() {
-                if let Some(t) = tokens.get_mut(hash) {
-                    t.revoked_at = Some(chrono::Utc::now());
-                    ok = true;
-                }
-            }
-            ok
-        };
-        Ok(revoked)
+        Ok(self.repository.revoke_api_token_by_hash(hash)?)
     }
 
-    pub fn in_memory() -> Self {
-        let engine = ManifestEngine::new().expect("ManifestEngine in memory");
-        let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine().expect("PolicyEngine in memory");
-        let users = HashMap::new();
-        let groups = HashMap::new();
-        let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-        let default_root_org = OrganizationNode {
-            id: default_root_id,
-            parent_id: None,
-            name: "Institution".to_string(),
-            code: "INST".to_string(),
-            org_type: "Institution".to_string(),
-        };
-        let mut organizations = HashMap::new();
-        organizations.insert(default_root_id, default_root_org);
-        let roles: Vec<RoleRow> = Vec::new();
-        let position_types: HashMap<String, PositionType> = HashMap::new();
-        let datasets = HashMap::new();
-        let relationships = HashMap::new();
-        let process_instances = HashMap::new();
-        let automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
-
-        let now = Utc::now().to_rfc3339();
-        let entry_0 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 0,
-            timestamp_iso: now.clone(),
-            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
-            principal: "system@scaffoldry.internal".to_string(),
-            organization_code: "INST".to_string(),
-            app_slug: None,
-            decision_type: DecisionType::PolicyRevision,
-            oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional sovereign genesis ledger entry".to_string(),
-            payload: &json!({"system": "scaffoldry", "genesis": true}),
-        });
-        let ledger = vec![entry_0];
-        let sessions = HashMap::new();
-        let workspaces = HashMap::new();
-        let collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
-
-        let mut api_tokens = HashMap::new();
-        let scim_hash = crate::service::identity::hash_token("test-scim-token");
-        let default_scim_token = ApiToken {
-            token_hash: scim_hash.clone(),
-            id: uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
-            kind: "scim".to_string(),
-            eppn: "jordan.lee@state.edu".to_string(),
-            label: "SCIM Provisioning Credential".to_string(),
-            original_admin: None,
-            created_at: Utc::now(),
-            expires_at: Utc::now() + chrono::Duration::days(365),
-            last_used_at: None,
-            revoked_at: None,
-        app_slug: None,
-        };
-        api_tokens.insert(scim_hash, default_scim_token);
-
-        let mut settings_map = HashMap::new();
-        settings_map.insert("cors.allowed_origins".to_string(), serde_json::json!([]));
-        settings_map.insert("tokens.max_days".to_string(), serde_json::json!(90));
-        settings_map.insert("tokens.agent_enabled".to_string(), serde_json::json!(true));
-        settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
-        settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
-        settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
-        add_sensitivity_defaults(&mut settings_map);
-
-        Self {
-            users: RwLock::new(users),
-            groups: RwLock::new(groups),
-            access_rules: RwLock::new(HashMap::new()),
-            app_views: RwLock::new(HashMap::new()),
-            count_timeout_ms: std::sync::atomic::AtomicU64::new(2_000),
-            column_rules: RwLock::new(HashMap::new()),
-            workspaces: RwLock::new(workspaces),
-            collaborators: RwLock::new(collaborators),
-            memory_records: RwLock::new(HashMap::new()),
-            guards: RwLock::new(HashMap::new()),
-            guard_policy_cache: RwLock::new(HashMap::new()),
-            datasets: RwLock::new(datasets),
-            relationships: RwLock::new(relationships),
-            automations: RwLock::new(automations),
-            process_instances: RwLock::new(process_instances),
-            ledger: RwLock::new(ledger),
-            engine: RwLock::new(engine),
-            policy_engine,
-            sessions: RwLock::new(sessions),
-            api_tokens: RwLock::new(api_tokens),
-            repository: None,
-            organizations: RwLock::new(organizations),
-            roles: RwLock::new(roles),
-            position_types: RwLock::new(position_types),
-            labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
-            settings: RwLock::new(settings_map),
-            formula_rate_limits: RwLock::new(HashMap::new()),
-        }
-    }
 
     pub fn check_formula_rate_limit(&self, user_key: &str) -> bool {
         let mut limits = match self.formula_rate_limits.write() {
@@ -1691,29 +1406,11 @@ impl ServerState {
 
         // The demo set is compiled in. Each row is written only when its id is absent, and then it
         // is the institution's data. A later boot never writes it over an edit.
-        let stored_workspaces: std::collections::HashSet<String> = match self.repository {
-            Some(ref repo) => repo.list_workspaces().unwrap_or_default().into_iter().map(|w| w.id).collect(),
-            None => self.workspaces.read().unwrap().keys().cloned().collect(),
-        };
-        let stored_datasets: std::collections::HashSet<String> = match self.repository {
-            Some(ref repo) => repo.list_published_datasets().unwrap_or_default().into_iter().map(|d| d.id).collect(),
-            None => self.datasets.read().unwrap().keys().cloned().collect(),
-        };
-        let stored_relationships: std::collections::HashSet<String> = match self.repository {
-            Some(ref repo) => repo.list_dataset_relationships().unwrap_or_default().into_iter().map(|r| r.id).collect(),
-            None => self.relationships.read().unwrap().keys().cloned().collect(),
-        };
-        let stored_rules: std::collections::HashSet<String> = match self.repository {
-            Some(ref repo) => repo.list_workflow_automations(None).unwrap_or_default().into_iter().map(|r| r.id).collect(),
-            None => self.automations.read().unwrap().values().flatten().map(|r| r.id.clone()).collect(),
-        };
-        let manifest_stored = match self.repository {
-            Some(ref repo) => repo.get_app_manifest(&demo_app.slug).ok().flatten().is_some(),
-            None => {
-                use scaffoldry_engine::HostRouter;
-                self.engine.read().unwrap().resolve_by_slug(&demo_app.slug).is_some()
-            }
-        };
+        let stored_workspaces: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_workspaces().unwrap_or_default().into_iter().map(|w| w.id).collect() };
+        let stored_datasets: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_published_datasets().unwrap_or_default().into_iter().map(|d| d.id).collect() };
+        let stored_relationships: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_dataset_relationships().unwrap_or_default().into_iter().map(|r| r.id).collect() };
+        let stored_rules: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_workflow_automations(None).unwrap_or_default().into_iter().map(|r| r.id).collect() };
+        let manifest_stored = { let repo = &self.repository; repo.get_app_manifest(&demo_app.slug).ok().flatten().is_some() };
 
         // A workspace that is stored stays as stored, collaborators included.
         workspaces.retain(|id, _| !stored_workspaces.contains(id));
@@ -1725,7 +1422,8 @@ impl ServerState {
         }
         automations.retain(|_, rules| !rules.is_empty());
 
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             for ws in workspaces.values() {
                 let _ = repo.upsert_workspace(ws);
             }
@@ -1753,7 +1451,8 @@ impl ServerState {
         // The ledger is only written while it holds nothing but the genesis entry.
         let ledger_is_new = self.ledger.read().unwrap().len() <= 1;
         if ledger_is_new {
-            if let Some(ref repo) = self.repository {
+            {
+        let repo = &self.repository;
                 let _ = repo.append_ledger_entry(&entry_1, &json!({"domain": "inventory.biology.state.edu", "verified": true}));
                 let _ = repo.append_ledger_entry(&entry_2, &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}));
                 let _ = repo.append_ledger_entry(&entry_3, &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}));
@@ -1792,7 +1491,8 @@ impl ServerState {
     }
     /// Every token the user holds, of every kind and state, newest first.
     pub fn list_all_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             if let Ok(list) = repo.list_all_api_tokens_for_eppn(eppn) {
                 return list;
             }
@@ -1805,7 +1505,8 @@ impl ServerState {
     }
 
     pub fn list_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
-        if let Some(ref repo) = self.repository {
+        {
+        let repo = &self.repository;
             if let Ok(list) = repo.list_api_tokens_for_eppn(eppn) {
                 return list;
             }

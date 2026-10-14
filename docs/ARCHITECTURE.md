@@ -325,6 +325,15 @@ With `files.scanner` set (`{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" 
 
 A record stores `{ref_id, name, size, media_type}` for each file, so a grid chip shows a name and a size with no second request. `GET /apps/{slug}/records/{id}/files` adds the scan state and names the attachment fields the person may read. The record drawer's editor (`ui/Attachments.tsx`) has a drop target and a `Choose files` button that both work from the keyboard, a list with name, size, type and scan state as text, `Remove`, and a download. Uploads show text and a progress bar with `Cancel`, and an error shows the server's specific message through `explainError`. A field the person may not read leaves no label and no control.
 
+#### 6.1.9 One source of truth (Stateless Server, Phase 1)
+
+PostgreSQL is the source of truth, and a second copy of the server must be able to run beside the first. Today a copy still holds most of its collections in memory. The first phase adds the one way an instance may hold a collection, and starts with the settings.
+
+- **A counter for each cached collection** (`cache_versions`, `cache.rs`). A writer raises it in the transaction that writes the collection. Every request begins with one statement that reads all the counters, and an instance reloads any collection whose counter it does not hold. `LISTEN` and `NOTIFY` are not used, because a missed notice would leave a cache stale and say nothing. The list of collections is closed. A collection not on it is read every time.
+- **A request fails when the database cannot be read** (`503`, `storage_unavailable`). The next request tries again.
+- **The server does not start with a read that fails.** There is no memory-only mode, and `repository` is always present. A test uses a real database of its own (`TestDb`).
+- **Phases 2 and 3** turn people, sessions and tokens into queries, and put workspaces, guards, labels, datasets and the organization tree on the counters.
+
 ### 6.2 Long-Term Security Maintenance & Fleet Patching
 
 In legacy low-code tools, departmental apps become unmaintained legacy liabilities. In Scaffoldry, apps are maintained as version-controlled repositories:

@@ -3,6 +3,8 @@
 //! The big-table tests fill a private app with generated rows and delete them when they end. The app
 //! slug is fresh each run, so the tests share the database without touching anyone's data.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -15,19 +17,16 @@ use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 const ROWS: i64 = 200_000;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -191,7 +190,7 @@ type IndexSnapshotRow = (String, String, i16, Option<String>, Option<String>, Op
 // 1. A write maintains the index: one row, and an update leaves one row with the new value.
 #[tokio::test]
 async fn a_write_keeps_one_index_row_per_indexed_field_and_an_update_replaces_it() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let created = create(&w, json!({ "amount": 42, "plain_text": "x" })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -234,7 +233,7 @@ async fn a_write_keeps_one_index_row_per_indexed_field_and_an_update_replaces_it
 // 2. Rebuilding from nothing gives the rows the writes gave.
 #[tokio::test]
 async fn rebuild_index_gives_back_exactly_the_rows_the_writes_made() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     create(&w, json!({ "amount": 1, "stamp": "2026-03-04", "tags": ["Red", "Blue"] })).await;
     create(&w, json!({ "amount": "12.5", "stamp": "2026-03-04T10:00:00Z", "tags": [] })).await;
@@ -263,7 +262,7 @@ async fn rebuild_index_gives_back_exactly_the_rows_the_writes_made() {
     let slug = w.slug.clone();
     db(move |c| c.execute("DELETE FROM record_index WHERE app_slug = $1", &[&slug]).map(|_| ()).unwrap());
     assert!(snapshot(w.slug.clone()).is_empty());
-    let repo = w.state.repository.as_deref().unwrap();
+    let repo = &w.state.repository;
     let n = repo.rebuild_index(&w.slug, "t1", &fields().into_iter().filter(|f| f.indexed).collect::<Vec<_>>()).unwrap();
     assert_eq!(n as usize, before.len());
     assert_eq!(snapshot(w.slug.clone()), before);
@@ -287,7 +286,7 @@ fn desc_query(slug: &str) -> IndexedQuery {
 // 3. Sort descending by an indexed number: three pages, 600 distinct ids in order, and no Seq Scan.
 #[tokio::test]
 async fn sorting_descending_by_an_indexed_number_pages_by_cursor_and_never_scans_the_table() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill(&w.slug, ROWS, 0);
 
@@ -314,7 +313,7 @@ async fn sorting_descending_by_an_indexed_number_pages_by_cursor_and_never_scans
     assert_eq!(amounts[599], ROWS - 599);
 
     // The statements do not scan either table.
-    let repo = w.state.repository.as_deref().unwrap();
+    let repo = &w.state.repository;
     for phase in [IndexPhase::NonBlank, IndexPhase::Blank] {
         let (sql, params) = build_indexed_sql(&desc_query(&w.slug), phase);
         let plan = repo.explain(&sql, &params).unwrap();
@@ -331,7 +330,7 @@ async fn sorting_descending_by_an_indexed_number_pages_by_cursor_and_never_scans
 // 4. A thousand blank values: paging to the end returns every record once, blanks last.
 #[tokio::test]
 async fn blank_values_sort_last_in_both_directions_and_every_record_comes_back_once() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let total = 20_000;
     fill(&w.slug, total, 1_000);
@@ -370,7 +369,7 @@ async fn blank_values_sort_last_in_both_directions_and_every_record_comes_back_o
 // 5. A filter on an indexed field returns the predicted rows, and the plan holds no Seq Scan.
 #[tokio::test]
 async fn a_filter_on_an_indexed_field_returns_the_predicted_rows_without_scanning() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill(&w.slug, ROWS, 0);
 
@@ -394,7 +393,7 @@ async fn a_filter_on_an_indexed_field_returns_the_predicted_rows_without_scannin
     assert_eq!(got.iter().copied().min(), Some(199_001));
     assert_eq!(got.iter().copied().max(), Some(200_000));
 
-    let repo = w.state.repository.as_deref().unwrap();
+    let repo = &w.state.repository;
     let query = IndexedQuery {
         table_id: "t1".to_string(),
         clauses: vec![IndexedClause {
@@ -430,7 +429,7 @@ async fn a_filter_on_an_indexed_field_returns_the_predicted_rows_without_scannin
 // 6. A filter on a field that is not indexed, on a big table, is refused and names the field.
 #[tokio::test]
 async fn a_filter_on_a_field_outside_the_index_is_refused_on_a_big_table_and_names_the_field() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill(&w.slug, ROWS, 0);
     let filter = json!({ "conjunction": "And", "clauses": [{ "id": "c", "field_name": "plain_text", "operator": "Equals", "value": "x" }] });
@@ -450,7 +449,7 @@ async fn a_filter_on_a_field_outside_the_index_is_refused_on_a_big_table_and_nam
 // 7. Approving a manifest that adds a view sorting on a new field queues the build of its index rows.
 #[tokio::test]
 async fn approving_a_view_that_sorts_on_a_new_field_gets_its_index_rows_from_a_job() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     // Make the app live through the proposals path, so the stored manifest exists.
     let live = manifest(&w.slug, vec![]);

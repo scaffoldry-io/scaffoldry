@@ -4,6 +4,8 @@
 //! agent. It does not decide what is a disclosure. Each test builds an app of its own, with one
 //! sensitive field, and cleans up after itself.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -28,8 +30,7 @@ const FACULTY: &str = "prof.curie@science.state.edu";
 const STUDENTS: i64 = 40;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -274,6 +275,7 @@ fn export(w: &World, n: i64, fields: &[&str]) -> Option<Uuid> {
 //    one record row per record. An export of only non-sensitive fields writes nothing.
 #[tokio::test]
 async fn an_export_with_a_sensitive_field_is_logged_and_one_without_is_not() {
+    let _db = common::TestDb::new();
     let w = world().await;
     assert!(export(&w, 12, &["name", "major"]).is_none(), "no sensitive field, nothing to log");
     assert!(entries(&w).is_empty());
@@ -299,6 +301,7 @@ async fn an_export_with_a_sensitive_field_is_logged_and_one_without_is_not() {
 //    recipient is the token label. 25 writes none. A user session writes none.
 #[tokio::test]
 async fn an_agent_reading_more_than_25_sensitive_records_is_logged_a_person_is_not() {
+    let _db = common::TestDb::new();
     let w = world().await;
     assert_eq!(AGENT_READ_THRESHOLD, 25);
     let list = |n: i64| format!("/api/v1/apps/{}/tables/students/records?limit={n}", w.slug);
@@ -327,6 +330,7 @@ async fn an_agent_reading_more_than_25_sensitive_records_is_logged_a_person_is_n
 // 2b. The other ways an agent reads: the whole-app list, the older sorted path, and the MCP tool.
 #[tokio::test]
 async fn every_way_an_agent_lists_records_is_logged() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let base = format!("/api/v1/apps/{}", w.slug);
 
@@ -356,6 +360,7 @@ async fn every_way_an_agent_lists_records_is_logged() {
 //     the read is logged for what came back (30 of the 40 are in a stage), and a person's fetch is not.
 #[tokio::test]
 async fn an_agent_fetching_a_board_is_logged_for_the_records_it_receives() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": { "name": "get_view_data", "arguments": { "app_slug": w.slug, "view_id": "board" } } });
@@ -380,6 +385,7 @@ async fn an_agent_fetching_a_board_is_logged_for_the_records_it_receives() {
 // 3. An export of 120,000 records sets records_truncated and keeps the count.
 #[tokio::test]
 async fn an_entry_above_100000_records_keeps_the_count_and_drops_the_record_rows() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let big: Vec<String> = (1..=120_000).map(|i| format!("{}-r{i}", w.slug)).collect();
     log_disclosure(
@@ -403,6 +409,7 @@ async fn an_entry_above_100000_records_keeps_the_count_and_drops_the_record_rows
 //    caller without access.
 #[tokio::test]
 async fn a_records_own_disclosures_are_listed_for_those_who_may_see_them() {
+    let _db = common::TestDb::new();
     let w = world().await;
     export(&w, 10, &["student_id"]); // records 1 to 10
     let tail: Vec<String> = (8..=20).map(|i| id(&w, i)).collect();
@@ -437,6 +444,7 @@ async fn a_records_own_disclosures_are_listed_for_those_who_may_see_them() {
 // 5. A faculty caller is 403 on /admin/disclosures. A compliance caller is 200.
 #[tokio::test]
 async fn the_admin_log_is_for_a_platform_admin_or_compliance() {
+    let _db = common::TestDb::new();
     let w = world().await;
     assert!(ADMIN_ROUTES.contains(&("GET", "/admin/disclosures")));
     assert!(ADMIN_ROUTES.contains(&("GET", "/admin/disclosures/export")));
@@ -468,6 +476,7 @@ async fn the_admin_log_is_for_a_platform_admin_or_compliance() {
 // 5b. The export of the log is capped, in two formats, and is itself a ledger entry.
 #[tokio::test]
 async fn exporting_the_log_is_capped_and_is_a_ledger_entry() {
+    let _db = common::TestDb::new();
     let w = world().await;
     assert_eq!(EXPORT_ROW_LIMIT, 50_000);
     export(&w, 5, &["student_id"]);
@@ -510,6 +519,7 @@ async fn exporting_the_log_is_capped_and_is_a_ledger_entry() {
 //    named as exempt with its reason. A new reader that is in neither list fails here.
 #[test]
 fn every_function_that_releases_records_logs_the_release_or_says_why_not() {
+    let _db = common::TestDb::new();
     assert!(AGENT_RELEASE_EXEMPT.iter().all(|(_, reason)| reason.len() > 20), "an exemption carries a reason");
     let loaders = ["records::list_page(", "records::list_records(", "records::get_record(", "trash::list_trash(", "link_options::link_options("];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

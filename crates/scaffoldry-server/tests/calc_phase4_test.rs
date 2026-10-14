@@ -82,9 +82,7 @@ async fn world(m: AppManifest) -> World {
     state.seed_demo().expect("seed");
     let slug = m.slug.clone();
     state.engine.write().unwrap().register_manifest(m.clone()).unwrap();
-    if let Some(ref repo) = state.repository {
-        let _ = repo.upsert_app_manifest(&m);
-    }
+    let _ = state.repository.upsert_app_manifest(&m);
     World {
         app: build_app_with_state(state.clone()).expect("router"),
         state,
@@ -184,7 +182,7 @@ async fn a_today_field_is_recomputed_by_the_nightly_job_and_not_by_anything_else
     assert_eq!(rec_after_patch["data"]["today_val"], past, "today_val must not change on normal write");
 
     // 1c. Nightly job recalc_volatile DOES recompute it
-    let repo = w.state.repository.as_ref().unwrap();
+    let repo = &w.state.repository;
     register_volatile_schedule(repo, "UTC").unwrap();
     db(|c| {
         c.execute("DELETE FROM jobs WHERE kind = 'recalc_volatile'", &[]).unwrap();

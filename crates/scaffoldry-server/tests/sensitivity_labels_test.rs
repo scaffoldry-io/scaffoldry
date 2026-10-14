@@ -2,6 +2,8 @@
 //! label raises it. The label table and screens are the later part. Here the label set is
 //! filled by hand, which is all the server can do with it today.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -32,6 +34,7 @@ async fn create(app: &axum::Router, token: &str, slug: &str, data: Value) -> Val
 
 #[tokio::test]
 async fn a_label_raises_the_flag_of_a_record_that_holds_the_field() {
+    let _db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
     let slug = format!("labels-{}", &Uuid::new_v4().to_string()[..8]);
@@ -87,6 +90,7 @@ async fn a_label_raises_the_flag_of_a_record_that_holds_the_field() {
 /// which of them are protected. A record is flagged by a protected category and by nothing else.
 #[tokio::test]
 async fn a_protected_category_flags_a_record_and_an_unprotected_one_does_not() {
+    let _db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
     let slug = format!("cats-{}", &Uuid::new_v4().to_string()[..8]);

@@ -99,7 +99,7 @@ pub fn log_disclosure(state: &SharedState, release: Release<'_>) -> Result<Optio
     if kept.is_empty() {
         return Ok(None);
     }
-    let Some(repo) = state.repository.as_deref() else { return Ok(None) };
+    let repo = &state.repository;
     repo.insert_disclosure(NewDisclosure {
         kind: release.kind.to_string(),
         actor: release.actor.to_string(),
@@ -168,7 +168,7 @@ pub fn record_agent_read(
 }
 
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
-    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("The disclosure log needs PostgreSQL".to_string()))
+    Ok(&*state.repository)
 }
 
 fn internal(e: impl std::fmt::Display) -> ServiceError {

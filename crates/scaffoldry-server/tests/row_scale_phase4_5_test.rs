@@ -2,6 +2,8 @@
 //! Phase 4: Totals and group counts in one statement over `record_index`.
 //! Phase 5: Full-text search with generated tsvector and GIN index.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,11 +15,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const VIEWER: &str = "student.viewer@science.state.edu";
@@ -26,8 +26,7 @@ const WORKSPACE: &str = "ws-bio-lab";
 const ROWS: i64 = 200_000;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -246,7 +245,7 @@ fn fill_scale(slug: &str, n: i64) {
 // 1. sum of an indexed number over 200,000 rows equals the predicted value. The plan holds no Seq Scan on dataset_records.
 #[tokio::test]
 async fn phase4_sum_over_200k_rows_equals_predicted_and_no_seq_scan_on_dataset_records() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill_scale(&w.slug, ROWS);
 
@@ -282,7 +281,7 @@ async fn phase4_sum_over_200k_rows_equals_predicted_and_no_seq_scan_on_dataset_r
 // 2. count with group_by on a status field with five values returns five groups that add up to 200,000.
 #[tokio::test]
 async fn phase4_count_grouped_by_five_value_status_adds_to_200k() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill_scale(&w.slug, ROWS);
 
@@ -326,7 +325,7 @@ async fn phase4_count_grouped_by_five_value_status_adds_to_200k() {
 // 3. sum on a field outside the set is BadRequest.
 #[tokio::test]
 async fn phase4_sum_on_unindexed_field_is_bad_request() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     // 'score' is not in the indexed set
@@ -361,7 +360,7 @@ async fn phase4_sum_on_unindexed_field_is_bad_request() {
 // 4. A viewer asking for sum of a ferpa_sensitive field is refused.
 #[tokio::test]
 async fn phase4_viewer_asking_sum_of_ferpa_sensitive_field_is_refused() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     // sensitive_amount is ferpa_sensitive: true, hidden from viewer
@@ -398,7 +397,7 @@ async fn phase4_viewer_asking_sum_of_ferpa_sensitive_field_is_refused() {
 // 1. 200,000 rows, one holding the word zebrafish. Search returns that row. The plan uses idx_dataset_records_search.
 #[tokio::test]
 async fn phase5_search_returns_row_and_uses_gin_index() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     fill_scale(&w.slug, ROWS);
 
@@ -435,7 +434,7 @@ async fn phase5_search_returns_row_and_uses_gin_index() {
 // 2. A viewer searching a table with a ferpa_sensitive field is refused. An editor is not.
 #[tokio::test]
 async fn phase5_viewer_searching_sensitive_table_is_refused_editor_is_not() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     // Viewer searching table with sensitive_amount is refused with BadRequest and exact message
@@ -466,7 +465,7 @@ async fn phase5_viewer_searching_sensitive_table_is_refused_editor_is_not() {
 // 3. idx_dataset_records_data_gin no longer exists.
 #[tokio::test]
 async fn phase5_idx_dataset_records_data_gin_no_longer_exists() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let _w = world().await;
 
     let count: i64 = db(|c| {

@@ -7,6 +7,8 @@
 //! 4. CORS restricted to configured institutional origins (removal of `Any`).
 //! 5. Cedar-guarded and cryptographically ledger-recorded impersonation.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -17,6 +19,7 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn test_oauth2_oidc_jwt_bearer_validation() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Build router");
 
     // 1. Valid token with institutional claims
@@ -71,6 +74,7 @@ async fn test_oauth2_oidc_jwt_bearer_validation() {
 
 #[tokio::test]
 async fn test_seeded_tokens_and_credential_less_login_deleted() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Build router");
 
     // 1. Seeded tokens must no longer exist
@@ -118,6 +122,7 @@ async fn test_seeded_tokens_and_credential_less_login_deleted() {
 
 #[tokio::test]
 async fn test_mcp_authorization_metadata_discovery() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Build router");
 
     // 1. RFC 9728 OAuth 2.0 Protected Resource Metadata
@@ -170,6 +175,7 @@ async fn test_mcp_authorization_metadata_discovery() {
 
 #[tokio::test]
 async fn test_cors_tightened_to_configured_origins() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Build router");
 
     // 1. Malicious origin must not receive Access-Control-Allow-Origin: * or reflect origin
@@ -216,6 +222,7 @@ async fn test_cors_tightened_to_configured_origins() {
 
 #[tokio::test]
 async fn test_impersonation_remains_cedar_guarded_and_ledger_recorded() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Build router");
 
     // 1. Non-admin (faculty) trying to impersonate is DENIED by Cedar policy (403 Forbidden)

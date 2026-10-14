@@ -3,6 +3,8 @@
 //! The files directory is a fresh temporary directory for each test. The directory is named by an environment
 //! variable, so the tests run one at a time.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -28,8 +30,7 @@ const OUTSIDER: &str = "sarah.connor@state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -202,6 +203,7 @@ fn doc_of(r: &Reply) -> Value {
 // 1. A PNG goes in by hash, comes back inline with the safe headers.
 #[tokio::test]
 async fn a_png_is_stored_by_hash_and_served_inline_with_safe_headers() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let bytes = png();
@@ -229,6 +231,7 @@ async fn a_png_is_stored_by_hash_and_served_inline_with_safe_headers() {
 // 2. The client's type is ignored. The bytes decide.
 #[tokio::test]
 async fn the_bytes_decide_the_type_and_the_clients_claim_is_ignored() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let mut exe = b"MZ\x90\x00\x03\x00\x00\x00".to_vec();
@@ -254,6 +257,7 @@ async fn the_bytes_decide_the_type_and_the_clients_claim_is_ignored() {
 // 3. A file over the limit is refused as it streams, and leaves nothing behind.
 #[tokio::test]
 async fn a_file_over_the_limit_is_refused_and_leaves_no_file() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     f.state.settings.write().unwrap().insert("files.max_mb".to_string(), json!(1));
@@ -289,6 +293,7 @@ async fn a_file_over_the_limit_is_refused_and_leaves_no_file() {
 // 4. The same bytes twice make one blob and two references.
 #[tokio::test]
 async fn the_same_bytes_twice_are_one_blob_and_two_references() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let bytes = png();
@@ -310,6 +315,7 @@ async fn the_same_bytes_twice_are_one_blob_and_two_references() {
 // 5. Anyone without record or field access gets a 404, and a ref attached to another record is no key.
 #[tokio::test]
 async fn a_download_without_access_is_a_404() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let up = upload(&f, &f.owner, "a.png", "image/png", png()).await;
@@ -337,6 +343,7 @@ async fn a_download_without_access_is_a_404() {
 // 6. A download from a sensitive field writes one file_download row.
 #[tokio::test]
 async fn a_sensitive_download_is_logged_once() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let scan = upload(&f, &f.owner, "s.png", "image/png", png()).await;
@@ -380,6 +387,7 @@ async fn a_sensitive_download_is_logged_once() {
 // 7. Blocked names are refused, and a name is cleaned of its path.
 #[tokio::test]
 async fn blocked_names_are_refused_and_names_are_cleaned() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     for name in ["a.exe", "b.svg", "c.html", "d.js", "e.HTM"] {
@@ -405,6 +413,7 @@ async fn blocked_names_are_refused_and_names_are_cleaned() {
 // 8. A record may only hold files the writer uploaded or that it already holds.
 #[tokio::test]
 async fn a_record_may_only_attach_a_file_its_writer_uploaded() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let up = upload(&f, &f.owner, "a.png", "image/png", png()).await;
@@ -431,6 +440,7 @@ async fn a_record_may_only_attach_a_file_its_writer_uploaded() {
 // 9. An upload that is never attached goes after 24 hours. An attached one stays.
 #[tokio::test]
 async fn an_unattached_upload_is_removed_after_a_day() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let keep = upload(&f, &f.owner, "k.png", "image/png", png()).await;
@@ -454,7 +464,7 @@ async fn an_unattached_upload_is_removed_after_a_day() {
             c.execute("UPDATE file_refs SET uploaded_at = NOW() - INTERVAL '25 hours' WHERE id = $1", &[&id]).unwrap();
         }
     });
-    let repo = f.state.repository.clone().expect("repository");
+    let repo = f.state.repository.clone();
     let removed = scaffoldry_server::files::purge_unattached(&repo, 24).expect("purge");
     assert!(removed >= 1, "{removed}");
     let ids: Vec<Uuid> = [&keep, &lose, &fresh].iter().map(|r| r.json()["ref_id"].as_str().unwrap().parse().unwrap()).collect();
@@ -467,6 +477,7 @@ async fn an_unattached_upload_is_removed_after_a_day() {
 // 10. Boot refuses a files directory that is missing or cannot be written.
 #[tokio::test]
 async fn boot_refuses_a_missing_or_unwritable_files_directory() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let missing = std::env::temp_dir().join(format!("scaffoldry-nothing-{}", Uuid::new_v4()));
     std::env::set_var("SCAFFOLDRY_FILES_DIR", &missing);
@@ -487,6 +498,7 @@ async fn boot_refuses_a_missing_or_unwritable_files_directory() {
 // 11. A record lists its files with their size, type and scan state, and only for the fields the person may read.
 #[tokio::test]
 async fn a_record_lists_its_files_for_the_fields_a_person_may_read() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let f = fixture().await;
     let doc = upload(&f, &f.owner, "a.png", "image/png", png()).await;

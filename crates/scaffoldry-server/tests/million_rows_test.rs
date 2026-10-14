@@ -6,6 +6,8 @@
 //! plan checked for a `Seq Scan` of the records. If a limit fails on the CI runner and the plan is right, the limit does not
 //! move: the plan and the timings go into the record and the work stops.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -30,8 +32,7 @@ const ROWS: i64 = 1_000_000;
 const RUNS: usize = 20;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -216,12 +217,13 @@ where
 }
 
 fn plan_of(w: &World, sql: &str, params: &[SqlParam]) -> String {
-    w.state.repository.as_deref().unwrap().explain(sql, params).unwrap()
+    w.state.repository.explain(sql, params).unwrap()
 }
 
 #[tokio::test]
 #[ignore = "seeds 1,000,000 rows. CI runs it in release mode: cargo test --release -- --ignored million_rows"]
 async fn million_rows() {
+    let _db = common::TestDb::new();
     let slug = format!("million-{}", &Uuid::new_v4().to_string()[..8]);
     let state = Arc::new(ServerState::new().expect("state"));
     state.seed_demo().expect("seed");

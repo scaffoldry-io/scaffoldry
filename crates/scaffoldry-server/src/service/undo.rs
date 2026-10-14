@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
-    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Undo needs PostgreSQL".to_string()))
+    Ok(&*state.repository)
 }
 
 fn internal(e: impl ToString) -> ServiceError {

@@ -1,5 +1,7 @@
 //! Admin console phase 3: Workspaces and apps inventory, updates, and ownership transfers.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -11,25 +13,20 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::{CollaboratorRecord, DatasetRecord, OrganizationNode, ServerState, WorkspaceRecord};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 struct Ctx {
     app: Router,
     state: Arc<ServerState>,
     admin: String,
     faculty: String,
-    _guard: MutexGuard<'static, ()>,
 }
 
 async fn ctx() -> Ctx {
-    let guard = LOCK.lock().await;
-    tokio::task::spawn_blocking(|| {
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string());
+    let url = scaffoldry_server::testing::database_url();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&url, postgres::NoTls) {
             let _ = client.batch_execute(
                 "TRUNCATE TABLE scim_users, scim_groups, roles, persons, organizations, workspaces, workspace_collaborators, dataset_records, api_tokens CASCADE;",
@@ -43,7 +40,7 @@ async fn ctx() -> Ctx {
     let faculty = issue_test_token_and_user("faculty.curie@state.edu");
     let state = Arc::new(ServerState::new().expect("state"));
     let app = build_app_with_state(state.clone()).expect("router");
-    Ctx { app, state, admin, faculty, _guard: guard }
+    Ctx { app, state, admin, faculty }
 }
 
 async fn send(app: &Router, method: &str, uri: &str, token: Option<&str>, body: Option<Value>) -> (StatusCode, Value) {
@@ -68,6 +65,7 @@ async fn last_ledger_entry(c: &Ctx) -> Value {
 
 #[tokio::test]
 async fn every_workspace_route_is_in_admin_routes_and_refuses_a_faculty_caller() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let required = [
         ("GET", "/admin/workspaces"),
@@ -96,6 +94,7 @@ async fn every_workspace_route_is_in_admin_routes_and_refuses_a_faculty_caller()
 
 #[tokio::test]
 async fn test_workspace_fixture_counts_and_single_statement_for_page() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let ws_id = format!("ws-{}", Uuid::new_v4());
     let ws = WorkspaceRecord {
@@ -114,7 +113,8 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
         organization_id: None,
     };
 
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         repo.upsert_workspace(&ws).unwrap();
     }
     c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws.clone());
@@ -145,7 +145,8 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
 
     c.state.engine.write().unwrap().register_manifest(m1.clone()).unwrap();
     c.state.engine.write().unwrap().register_manifest(m2.clone()).unwrap();
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         repo.upsert_app_manifest(&m1).unwrap();
         repo.upsert_app_manifest(&m2).unwrap();
     }
@@ -199,6 +200,7 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
 
 #[tokio::test]
 async fn test_patch_moving_workspace_to_another_unit() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let old_unit_id = Uuid::new_v4();
     let new_unit_id = Uuid::new_v4();
@@ -217,7 +219,8 @@ async fn test_patch_moving_workspace_to_another_unit() {
         code: "NED".to_string(),
         org_type: "Division".to_string(),
     };
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         repo.upsert_organization(&old_unit).unwrap();
         repo.upsert_organization(&new_unit).unwrap();
     }
@@ -240,7 +243,8 @@ async fn test_patch_moving_workspace_to_another_unit() {
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: Some(old_unit_id),
     };
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         repo.upsert_workspace(&ws).unwrap();
     }
     c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws);
@@ -286,7 +290,7 @@ async fn test_patch_moving_workspace_to_another_unit() {
     assert_eq!(entry["principal"], "jordan.lee@state.edu");
     
     // Check payload stored in database
-    let payload = c.state.repository.as_ref().unwrap().with_client(|client| {
+    let payload = c.state.repository.with_client(|client| {
         let row = client.query_one(
             "SELECT payload FROM governance_ledger WHERE decision_type = 'WorkspaceUpdated' ORDER BY sequence DESC LIMIT 1",
             &[],
@@ -301,6 +305,7 @@ async fn test_patch_moving_workspace_to_another_unit() {
 
 #[tokio::test]
 async fn test_bad_classification_and_visibility_is_400() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let ws_id = format!("ws-{}", Uuid::new_v4());
     let ws = WorkspaceRecord {
@@ -345,6 +350,7 @@ async fn test_bad_classification_and_visibility_is_400() {
 
 #[tokio::test]
 async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let ws_id = format!("ws-{}", Uuid::new_v4());
     let old_owner_eppn = "alice.oldowner@state.edu".to_string();
@@ -409,7 +415,8 @@ async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
         department: "Engineering".to_string(),
         added_at: "2026-10-10T00:00:00Z".to_string(),
     };
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         repo.upsert_workspace(&ws).unwrap();
         repo.upsert_collaborator(&initial_owner).unwrap();
     }
@@ -457,6 +464,7 @@ async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
 
 #[tokio::test]
 async fn test_apps_inventory_list_and_filters() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let ws_id = format!("ws-{}", Uuid::new_v4());
     let ws = WorkspaceRecord {
@@ -474,7 +482,8 @@ async fn test_apps_inventory_list_and_filters() {
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
     };
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         repo.upsert_workspace(&ws).unwrap();
     }
     c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws);
@@ -499,7 +508,8 @@ async fn test_apps_inventory_list_and_filters() {
             ceds_mappings: std::collections::HashMap::new(),
     };
     c.state.engine.write().unwrap().register_manifest(manifest.clone()).unwrap();
-    if let Some(ref repo) = c.state.repository {
+    {
+        let repo = &c.state.repository;
         repo.upsert_app_manifest(&manifest).unwrap();
     }
 

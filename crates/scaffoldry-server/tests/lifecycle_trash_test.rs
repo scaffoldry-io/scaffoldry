@@ -2,6 +2,8 @@
 //!
 //! The app is private to each run, so the tests share the database without touching anyone's rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,11 +15,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const EDITOR2: &str = "grace.hopper@science.state.edu";
@@ -27,8 +27,7 @@ const EDITOR: &str = "student.smith@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// Direct database work on its own thread. The synchronous client cannot start inside the async
@@ -228,7 +227,7 @@ fn ago(slug: &str, id: &str, days: i32) {
 // 1. Delete moves a record to trash: gone from lists, counts, search, and link options. In trash, with time left.
 #[tokio::test]
 async fn delete_moves_a_record_to_trash_and_it_vanishes_from_every_read() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let keep = make(&f, &f.editor, "t1", json!({ "title": "Keep", "score": 1 })).await;
     let gone = make(&f, &f.editor, "t1", json!({ "title": "Gone", "score": 2 })).await;
@@ -265,7 +264,7 @@ async fn delete_moves_a_record_to_trash_and_it_vanishes_from_every_read() {
 // 2 and 3. Restore brings it back with its links, except to a record that was also deleted.
 #[tokio::test]
 async fn restore_brings_a_record_back_with_its_links_except_to_one_that_was_also_deleted() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let program = make(&f, &f.editor, "programs", json!({ "code": "CS" })).await;
     let a1 = make(&f, &f.editor, "apps", json!({ "applicant": "Ada", "program": program })).await;
@@ -288,7 +287,7 @@ async fn restore_brings_a_record_back_with_its_links_except_to_one_that_was_also
 // 4. Trash shows each person what they may see: editors their own deletions, owners all, viewers none.
 #[tokio::test]
 async fn each_person_sees_only_their_part_of_the_trash() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let r1 = make(&f, &f.editor, "t1", json!({ "title": "Mine", "score": 1, "ssn": "123-45-6789" })).await;
     let r2 = make(&f, &f.editor2, "t1", json!({ "title": "Theirs", "score": 2 })).await;
@@ -321,7 +320,7 @@ async fn each_person_sees_only_their_part_of_the_trash() {
 // 5. A multi-delete restores as one batch.
 #[tokio::test]
 async fn a_multi_delete_restores_as_one_batch() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let mut ids = Vec::new();
     for i in 0..3 {
@@ -349,7 +348,7 @@ async fn a_multi_delete_restores_as_one_batch() {
 // 6. History has delete and restore entries.
 #[tokio::test]
 async fn history_records_the_delete_and_the_restore() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let id = make(&f, &f.editor, "t1", json!({ "title": "A", "score": 1 })).await;
     del(&f, &f.editor, &id, None).await;
@@ -362,7 +361,7 @@ async fn history_records_the_delete_and_the_restore() {
 // 7. The partial index serves the list query, with no sequential scan.
 #[tokio::test]
 async fn the_list_query_uses_the_partial_index() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let slug = f.slug.clone();
     db(move |c| {

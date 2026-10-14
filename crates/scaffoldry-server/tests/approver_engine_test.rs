@@ -4,6 +4,8 @@
 //! organization and position tables first. Records and process instances are placed directly in
 //! state, so each test names exactly who submitted and who started what.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -17,11 +19,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::{CollaboratorRecord, DatasetRecord, ServerState, WorkspaceRecord};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 const ROOT_UNIT: &str = "00000000-0000-0000-0000-000000000001";
 const APP: &str = "approver-engine-app";
 const WS: &str = "ws-approver-engine";
@@ -32,7 +32,6 @@ struct World {
     admin: String,
     physics: String,
     college: String,
-    _guard: MutexGuard<'static, ()>,
 }
 
 async fn send(app: &Router, method: &str, uri: &str, token: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -174,10 +173,8 @@ struct People {
 }
 
 async fn world() -> (World, People) {
-    let guard = LOCK.lock().await;
-    tokio::task::spawn_blocking(|| {
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string());
+    let url = scaffoldry_server::testing::database_url();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut c) = postgres::Client::connect(&url, postgres::NoTls) {
             let _ = c.batch_execute(
                 "TRUNCATE TABLE scim_users, scim_groups, roles, persons, organizations, workspaces, api_tokens, position_types, process_instances, workflow_automations CASCADE;",
@@ -189,7 +186,7 @@ async fn world() -> (World, People) {
     let admin = issue_test_token_and_user("jordan.lee@state.edu");
     let state = Arc::new(ServerState::new().expect("state"));
     let app = build_app_with_state(state.clone()).expect("router");
-    let mut w = World { app, state, admin, physics: String::new(), college: String::new(), _guard: guard };
+    let mut w = World { app, state, admin, physics: String::new(), college: String::new() };
 
     w.college = w.unit("Science", "College", ROOT_UNIT).await;
     w.physics = w.unit("Physics", "Department", &w.college.clone()).await;
@@ -239,6 +236,7 @@ async fn world() -> (World, People) {
 // 1. The Physics chair can decide. The Chemistry chair and the submitter cannot.
 #[tokio::test]
 async fn only_the_submitters_department_chair_may_decide() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let id = w.waiting(w.rule("r1", Some(chair(true)), "chair"), "rec-1", &p.sam, None, None);
     assert_eq!(w.decide(&p.okafor_t, &id).await, StatusCode::FORBIDDEN, "the Chemistry chair");
@@ -249,6 +247,7 @@ async fn only_the_submitters_department_chair_may_decide() {
 // 2. A vacant chair: the dean is asked, or the instance is flagged with the reason.
 #[tokio::test]
 async fn a_vacant_position_asks_the_next_unit_up_or_reports_the_problem() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let up = w.waiting(w.rule("up", Some(chair(true)), "chair"), "rec-up", &p.sam, None, None);
     let stay = w.waiting(w.rule("stay", Some(chair(false)), "chair"), "rec-stay", &p.sam, None, None);
@@ -273,6 +272,7 @@ async fn a_vacant_position_asks_the_next_unit_up_or_reports_the_problem() {
 // 3. The submitter is the chair. They cannot decide their own record. The dean can.
 #[tokio::test]
 async fn a_chair_cannot_decide_their_own_record_but_the_dean_can() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let id = w.waiting(w.rule("r3", Some(chair(true)), "chair"), "rec-3", &p.rivera, None, None);
     assert_eq!(w.decide(&p.rivera_t, &id).await, StatusCode::FORBIDDEN);
@@ -282,6 +282,7 @@ async fn a_chair_cannot_decide_their_own_record_but_the_dean_can() {
 // 4. The chair changes while the instance waits.
 #[tokio::test]
 async fn when_the_chair_changes_the_new_chair_decides_and_the_old_one_cannot() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let id = w.waiting(w.rule("r4", Some(chair(true)), "chair"), "rec-4", &p.sam, None, None);
     let newcomer = person("newchair");
@@ -295,6 +296,7 @@ async fn when_the_chair_changes_the_new_chair_decides_and_the_old_one_cannot() {
 // 5. A named person who goes on hold cannot decide, and the instance says why.
 #[tokio::test]
 async fn a_named_person_on_hold_cannot_decide_and_the_instance_says_so() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let id = w.waiting(w.rule("r5", Some(ApproverSpec::Person { eppn: p.okafor.clone() }), "chair"), "rec-5", &p.sam, None, None);
     assert_eq!(w.list(&p.sam_t, "").await.len(), 1);
@@ -313,6 +315,7 @@ async fn a_named_person_on_hold_cannot_decide_and_the_instance_says_so() {
 // 6. An old Role-only rule behaves as before, with the submitter now excluded.
 #[tokio::test]
 async fn an_old_role_rule_still_matches_by_role_or_affiliation() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let id = w.waiting(w.rule("r6", None, "faculty"), "rec-6", &p.sam, None, None);
     assert_eq!(w.decide(&p.sam_t, &id).await, StatusCode::FORBIDDEN, "never the submitter");
@@ -322,6 +325,7 @@ async fn an_old_role_rule_still_matches_by_role_or_affiliation() {
 // 7. mine=true is exactly the waiting instances the caller can decide.
 #[tokio::test]
 async fn mine_returns_only_what_the_caller_can_decide_now() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let physics = w.waiting(w.rule("m1", Some(chair(true)), "chair"), "rec-m1", &p.sam, None, None);
     let chem_rule = w.waiting(w.rule("m2", Some(ApproverSpec::Person { eppn: p.okafor.clone() }), "chair"), "rec-m2", &p.sam, None, None);
@@ -345,6 +349,7 @@ async fn mine_returns_only_what_the_caller_can_decide_now() {
 // An administrator's reassignment narrows the step to one person, still never the submitter.
 #[tokio::test]
 async fn an_assigned_instance_can_only_be_decided_by_the_assignee() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let id = w.waiting(w.rule("a1", Some(chair(true)), "chair"), "rec-a1", &p.sam, None, Some(&p.dean));
     assert_eq!(w.decide(&p.rivera_t, &id).await, StatusCode::FORBIDDEN, "the chair is not the assignee");
@@ -357,6 +362,7 @@ async fn an_assigned_instance_can_only_be_decided_by_the_assignee() {
 // The person whose change started the process never decides it either.
 #[tokio::test]
 async fn the_starter_is_excluded() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     let id = w.waiting(w.rule("s1", Some(chair(true)), "chair"), "rec-s1", &p.sam, Some(&p.rivera), None);
     assert_eq!(w.decide(&p.rivera_t, &id).await, StatusCode::FORBIDDEN, "the starter holds the position");
@@ -366,6 +372,7 @@ async fn the_starter_is_excluded() {
 // Saving a rule checks its approvers. A position that resolves to nobody still saves.
 #[tokio::test]
 async fn saving_a_rule_validates_its_approver_but_allows_a_vacant_position() {
+    let _db = common::TestDb::new();
     let (w, _p) = world().await;
     let save = |rule: Value| {
         let app = w.app.clone();
@@ -400,6 +407,7 @@ async fn saving_a_rule_validates_its_approver_but_allows_a_vacant_position() {
 // A new instance records who started it and flags a step nobody can decide.
 #[tokio::test]
 async fn a_new_instance_records_its_starter_and_flags_a_vacant_step_with_a_log_line() {
+    let _db = common::TestDb::new();
     let (w, p) = world().await;
     // A department with no chair.
     let empty = w.unit("Geology", "Department", &w.college.clone()).await;
