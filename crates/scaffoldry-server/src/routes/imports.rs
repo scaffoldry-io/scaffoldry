@@ -67,6 +67,10 @@ async fn upload_import(
         &headers.get("x-file-name").map(|v| String::from_utf8_lossy(v.as_bytes()).to_string()).unwrap_or_default(),
     ));
 
+    if name.to_lowercase().ends_with(".xlsm") {
+        return Err(pair(ServiceError::BadRequest("Spreadsheets containing macros (.xlsm) cannot be imported.".to_string())));
+    }
+
     if files::blocked_name(&name) {
         return Err(pair(ServiceError::FileTypeBlocked(format!("{name} is a program or a web page. Programs and web pages cannot be uploaded."))));
     }
@@ -77,6 +81,14 @@ async fn upload_import(
         files::StoreError::Bad(msg) => pair(ServiceError::BadRequest(msg)),
         files::StoreError::Io(msg) => pair(ServiceError::Internal(msg)),
     })?;
+
+    let blob_path = files::blob_path(&dir, &stored.sha256);
+    if let Ok(file_bytes) = std::fs::read(&blob_path) {
+        if let Err(e) = crate::import_jobs::check_spreadsheet_safety(&name, &file_bytes) {
+            let _ = std::fs::remove_file(&blob_path);
+            return Err(pair(ServiceError::BadRequest(e)));
+        }
+    }
 
     let file_ref_id = Uuid::new_v4();
     let new_ref = NewRef {
@@ -193,7 +205,8 @@ async fn dry_run_import(
     if let Ok(Some(imp)) = state.repository.get_import(&slug, id) {
         if let Ok((bytes, _)) = crate::import_jobs::read_file_raw(&state.repository, imp.file_ref_id) {
             let delim = imp.delimiter.chars().next().unwrap_or(',');
-            if let Ok((_, rows)) = crate::import_jobs::parse_csv_stream(&bytes[..], delim, None) {
+            let sheet = mapping_val.get("sheet").and_then(|v| v.as_str());
+            if let Ok((_, rows, _)) = crate::import_jobs::parse_rows_from_bytes(&bytes, sheet, Some(delim), None) {
                 if rows.len() > max_rows as usize {
                     return Err(pair(ServiceError::BadRequest(format!("File exceeds the maximum row limit of {} rows.", max_rows))));
                 }
@@ -214,6 +227,9 @@ async fn dry_run_import(
         "max_rows": max_rows,
     });
     if !mapping_val.is_null() {
+        if let Some(target_table) = mapping_val.get("target_table").or_else(|| mapping_val.get("target_table_id")).and_then(|v| v.as_str()) {
+            let _ = state.repository.update_import_mapping(id, target_table, &mapping_val);
+        }
         job_payload["mapping"] = mapping_val;
     }
 
@@ -253,7 +269,8 @@ async fn run_import(
     if let Ok(Some(imp)) = state.repository.get_import(&slug, id) {
         if let Ok((bytes, _)) = crate::import_jobs::read_file_raw(&state.repository, imp.file_ref_id) {
             let delim = imp.delimiter.chars().next().unwrap_or(',');
-            if let Ok((_, rows)) = crate::import_jobs::parse_csv_stream(&bytes[..], delim, None) {
+            let sheet = mapping_val.get("sheet").and_then(|v| v.as_str());
+            if let Ok((_, rows, _)) = crate::import_jobs::parse_rows_from_bytes(&bytes, sheet, Some(delim), None) {
                 if rows.len() > max_rows as usize {
                     return Err(pair(ServiceError::BadRequest(format!("File exceeds the maximum row limit of {} rows.", max_rows))));
                 }
@@ -275,6 +292,9 @@ async fn run_import(
         "max_rows": max_rows,
     });
     if !mapping_val.is_null() {
+        if let Some(target_table) = mapping_val.get("target_table").or_else(|| mapping_val.get("target_table_id")).and_then(|v| v.as_str()) {
+            let _ = state.repository.update_import_mapping(id, target_table, &mapping_val);
+        }
         job_payload["mapping"] = mapping_val;
     }
 

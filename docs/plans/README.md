@@ -126,7 +126,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 87 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers | **COMPLETED** |
 | 88 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon | **COMPLETED** |
 | 89 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app | **COMPLETED** |
-| 90 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures |
+| 90 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures | **COMPLETED** |
 | 91 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal |
 | 92 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had |
 | 93 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first |

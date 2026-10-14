@@ -290,6 +290,14 @@ Tool {
         read_only: false,
         run: run_cancel_job,
     },
+    Tool {
+        name: "export_records",
+        description: "Enqueues an export job for records in an app table or view. Returns a job ID and download URL. Does not return record bytes directly.",
+        input_schema: schema_export_records,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_export_records,
+    },
 ];
 
 /// The one gate. Finds the tool, checks its scope, checks the arguments, and runs it.
@@ -1285,4 +1293,85 @@ fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state
         state,
     )?;
     serde_json::to_value(res).map_err(|e| ServiceError::Internal(e.to_string()))
+}
+
+
+fn schema_export_records() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "table_id": { "type": "string", "description": "Table id or slug to export" },
+            "format": { "type": "string", "description": "Export format: csv, xlsx, json, or jsonl (default csv)" },
+            "fields": { "type": "array", "items": { "type": "string" }, "description": "Field names to include" }
+        },
+        "required": ["app_slug", "table_id"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct ExportRecordsArgs {
+    app_slug: String,
+    table_id: String,
+    format: Option<String>,
+    fields: Option<Vec<String>>,
+}
+
+fn run_export_records(
+    caller: &AuthUser,
+    _origin: &Origin,
+    args: Value,
+    state: &SharedState,
+) -> Result<Value, ServiceError> {
+    let args: ExportRecordsArgs = parse(args)?;
+    let app_slug = args.app_slug;
+    let table_id = args.table_id;
+    let format_str = args.format.unwrap_or_else(|| "csv".to_string()).to_lowercase();
+
+    let manifest = state
+        .engine
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .resolve_by_slug(&app_slug)
+        .cloned()
+        .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
+
+    let table = manifest
+        .tables
+        .iter()
+        .find(|t| t.id == table_id || t.slug == table_id)
+        .ok_or_else(|| ServiceError::NotFound(format!("Table '{table_id}' not found")))?;
+
+    let field_vis = crate::service::scope::field_visibility_of(caller, &app_slug, &table.id, state);
+    let disallowed_fields = field_vis.hidden_names();
+
+    let rules = crate::service::scope::rules_of(&app_slug, state);
+    let person = crate::service::scope::person_of(caller, state);
+
+    let export_id = uuid::Uuid::new_v4();
+
+    let job_id = crate::jobs::enqueue(
+        &state.repository,
+        "export_run",
+        json!({
+            "export_id": export_id,
+            "app_slug": app_slug,
+            "table_id": table.id,
+            "fields": args.fields,
+            "format": format_str,
+            "caller_eppn": caller.eppn,
+            "caller_affiliation": caller.affiliation,
+            "caller_person": person,
+            "row_rules": rules,
+            "disallowed_fields": disallowed_fields,
+        }),
+        &caller.eppn,
+        None,
+    ).map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    Ok(json!({
+        "job_id": job_id.to_string(),
+        "export_id": export_id.to_string(),
+        "download_url": format!("/api/v1/apps/{}/exports/{}/download", app_slug, export_id),
+    }))
 }

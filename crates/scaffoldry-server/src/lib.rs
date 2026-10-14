@@ -18,6 +18,7 @@ pub mod repository_proposals;
 pub mod repository_trash;
 pub mod repository_undo;
 pub mod import_jobs;
+pub mod export_jobs;
 pub mod repository_imports;
 pub mod repository_views;
 pub mod routes;
