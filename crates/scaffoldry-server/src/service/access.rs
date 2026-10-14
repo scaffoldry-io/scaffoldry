@@ -100,18 +100,7 @@ pub fn decide(
         state.policy_engine.policies().clone()
     };
 
-    let role_unit_ids: Vec<String> = {
-        let r_read = state.roles.read().ok();
-        let mut ids = Vec::new();
-        if let Some(roles) = r_read {
-            for r in roles.iter() {
-                if r.eppn.eq_ignore_ascii_case(&caller.eppn) {
-                    ids.push(r.organization_id.to_string());
-                }
-            }
-        }
-        ids
-    };
+    let role_unit_ids: Vec<String> = state.roles_of(&caller.eppn).iter().map(|r| r.organization_id.to_string()).collect();
 
     let org_parents: std::collections::HashMap<String, Option<String>> = {
         let o_read = state.organizations.read().ok();
@@ -272,18 +261,14 @@ pub fn authorize_app(
                 eppn: caller.eppn.clone(),
                 affiliation: caller.affiliation.clone(),
             };
-            let (orgs, roles) = {
-                let o_guard = state
-                    .organizations
-                    .read()
-                    .map_err(|e| ServiceError::Internal(e.to_string()))?;
-                let r_guard = state
-                    .roles
-                    .read()
-                    .map_err(|e| ServiceError::Internal(e.to_string()))?;
-                let org_list: Vec<_> = o_guard.values().cloned().collect();
-                (org_list, r_guard.clone())
-            };
+            let orgs: Vec<_> = state
+                .organizations
+                .read()
+                .map_err(|e| ServiceError::Internal(e.to_string()))?
+                .values()
+                .cloned()
+                .collect();
+            let roles = state.roles_of(&caller.eppn);
             if unit_in_scope(&org_caller, org_id, &orgs, &roles) {
                 return Ok(());
             }

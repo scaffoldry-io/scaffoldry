@@ -143,23 +143,25 @@ impl World {
     }
 
     fn group(&self, id: &str, members: &[&str]) {
-        self.state.groups.write().unwrap().insert(
-            id.to_string(),
-            ScimGroup { id: id.to_string(), display_name: id.to_string(), members: members.iter().map(|m| json!({ "value": m })).collect() },
-        );
+        self.state
+            .repository
+            .upsert_scim_group(&ScimGroup {
+                id: id.to_string(),
+                display_name: id.to_string(),
+                members: members.iter().map(|m| json!({ "value": m })).collect(),
+            })
+            .unwrap();
     }
 
     fn unit(&self, parent: Option<Uuid>, name: &str) -> Uuid {
         let id = Uuid::new_v4();
-        self.state.organizations.write().unwrap().insert(
-            id,
-            OrganizationNode { id, parent_id: parent, name: format!("{name}-{}", self.tag), code: name.to_uppercase(), org_type: "Department".to_string() },
-        );
+        let node = OrganizationNode { id, parent_id: parent, name: format!("{name}-{}", self.tag), code: format!("{}-{}", name.to_uppercase(), self.tag), org_type: "Department".to_string() };
+        self.state.persist_organization(&node).unwrap();
         id
     }
 
     fn role_at(&self, eppn: &str, unit: Uuid, position: Option<&str>) {
-        self.state.roles.write().unwrap().push(RoleRow {
+        self.state.persist_role(&RoleRow {
             id: Uuid::new_v4(),
             person_id: Uuid::new_v4(),
             eppn: eppn.to_string(),
@@ -169,7 +171,8 @@ impl World {
             is_primary: true,
             source: "manual".to_string(),
             position_key: position.map(str::to_string),
-        });
+        })
+        .unwrap();
     }
 
     fn ledger_count(&self, decision: DecisionType) -> usize {
@@ -249,7 +252,9 @@ async fn a_position_follows_the_holder() {
     assert_eq!(w.share("position", &format!("chair@{dept}"), "Editor").await.0, StatusCode::CREATED);
     assert_eq!(w.level(&ann_token).await, "write");
     assert_eq!(w.level(&bob_token).await, "none");
-    w.state.roles.write().unwrap().retain(|r| r.eppn != ann);
+    for r in w.state.roles_of(&ann) {
+        w.state.delete_role(r.id).unwrap();
+    }
     w.role_at(&bob, dept, Some("chair"));
     assert_eq!(w.level(&ann_token).await, "none");
     assert_eq!(w.level(&bob_token).await, "write");

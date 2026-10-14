@@ -38,7 +38,7 @@ fn is_platform_admin(caller: &AuthUser, state: &SharedState) -> bool {
         return true;
     }
     let orgs = state.organizations.read().unwrap();
-    let roles = state.roles.read().unwrap();
+    let roles = state.roles_of(&caller.eppn);
     roles.iter().any(|r| {
         r.eppn == caller.eppn
             && r.scoped_affiliation == "platform_admin"
@@ -59,7 +59,7 @@ async fn list_orgs(
 
     let orgs_map = state.organizations.read().unwrap();
     let all_orgs: Vec<OrganizationNode> = orgs_map.values().cloned().collect();
-    let roles: Vec<RoleRow> = state.roles.read().unwrap().clone();
+    let roles: Vec<RoleRow> = state.roles_of(&caller.eppn);
 
     let mut in_scope_orgs = Vec::new();
     for org in &all_orgs {
@@ -256,7 +256,7 @@ async fn create_appointment(
     };
 
     let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
-    let roles = state.roles.read().unwrap().clone();
+    let roles = state.roles_of(&caller.eppn);
 
     if !all_orgs.iter().any(|o| o.id == id) {
         return Err(ServiceError::NotFound(format!("Organization '{id}' not found")));
@@ -339,20 +339,21 @@ async fn revoke_appointment(
 ) -> Result<impl IntoResponse, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
     let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
-    let roles = state.roles.read().unwrap().clone();
+    let caller_roles = state.roles_of(&caller.eppn);
 
     if !all_orgs.iter().any(|o| o.id == id) {
         return Err(ServiceError::NotFound(format!("Organization '{id}' not found")));
     }
-    if !crate::service::people::may_manage_appointment(&caller, id, &affiliation, &all_orgs, &roles) {
+    if !crate::service::people::may_manage_appointment(&caller, id, &affiliation, &all_orgs, &caller_roles) {
         return Err(ServiceError::forbidden("Caller may not revoke this appointment"));
     }
+    let root = all_orgs.iter().find(|o| o.parent_id.is_none()).map(|o| o.id).unwrap_or(id);
+    let roles = state.repository.roles_in_units(&[id, root]).map_err(|e| ServiceError::Internal(e.to_string()))?;
     let role = roles
         .iter()
         .find(|r| r.organization_id == id && r.eppn.eq_ignore_ascii_case(&eppn) && r.scoped_affiliation == affiliation)
         .cloned()
         .ok_or_else(|| ServiceError::NotFound("No such appointment".to_string()))?;
-    let root = all_orgs.iter().find(|o| o.parent_id.is_none()).map(|o| o.id).unwrap_or(id);
     crate::service::people::revoke_check(&role, &roles, root)
         .map_err(|refusal| ServiceError::conflict(refusal.message()))?;
 
@@ -399,21 +400,21 @@ async fn list_members(
     };
 
     let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
-    let roles = state.roles.read().unwrap().clone();
+    let caller_roles = state.roles_of(&caller.eppn);
 
     if !all_orgs.iter().any(|o| o.id == id) {
         return Err(ServiceError::NotFound(format!("Organization '{id}' not found")));
     }
 
-    if !is_platform_admin(&caller, &state) && !unit_in_scope(&org_caller, id, &all_orgs, &roles) {
+    if !is_platform_admin(&caller, &state) && !unit_in_scope(&org_caller, id, &all_orgs, &caller_roles) {
         return Err(ServiceError::forbidden(
             "Caller is not in scope for this organization unit",
         ));
     }
 
-    let members: Vec<MemberResponse> = roles
+    let unit_roles = state.repository.roles_in_units(&[id]).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let members: Vec<MemberResponse> = unit_roles
         .into_iter()
-        .filter(|r| r.organization_id == id)
         .map(|r| MemberResponse {
             eppn: r.eppn,
             role_title: r.role_title,

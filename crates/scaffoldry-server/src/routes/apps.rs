@@ -74,12 +74,8 @@ async fn create_app_in_workspace(
                 eppn: user.eppn.clone(),
                 affiliation: user.affiliation.clone(),
             };
-            let (orgs, roles) = {
-                let o_guard = state.organizations.read().map_err(|_| lock_err())?;
-                let r_guard = state.roles.read().map_err(|_| lock_err())?;
-                let org_list: Vec<_> = o_guard.values().cloned().collect();
-                (org_list, r_guard.clone())
-            };
+            let orgs: Vec<_> = state.organizations.read().map_err(|_| lock_err())?.values().cloned().collect();
+            let roles = state.roles_of(&user.eppn);
             if unit_in_scope(&org_caller, org_id, &orgs, &roles) {
                 allowed = true;
             }

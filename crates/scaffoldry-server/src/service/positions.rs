@@ -5,31 +5,20 @@
 
 use crate::service::admin::admin_write;
 use crate::service::organizations::{unit_in_scope, OrgCaller};
+use crate::repository_people::Holding;
 use crate::service::people;
 use crate::service::ServiceError;
 use crate::state::{AuthUser, OrganizationNode, PositionType, RoleRow, SharedState};
 use chrono::Utc;
 use scaffoldry_core::ledger::DecisionType;
 use serde_json::{json, Value};
-use std::sync::Mutex;
 use uuid::Uuid;
 
 /// The unit types a position may apply to.
 pub const ORG_TYPES: [&str; 5] = ["Institution", "College", "Department", "Center", "Program"];
 
-/// Holder counts are read and then written, so position writes run one at a time.
-static WRITE_LOCK: Mutex<()> = Mutex::new(());
-
-fn lock() -> std::sync::MutexGuard<'static, ()> {
-    WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner())
-}
-
 fn orgs(state: &SharedState) -> Vec<OrganizationNode> {
     state.organizations.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
-}
-
-fn all_roles(state: &SharedState) -> Vec<RoleRow> {
-    state.roles.read().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
 fn position(state: &SharedState, key: &str) -> Result<PositionType, ServiceError> {
@@ -40,10 +29,6 @@ fn position(state: &SharedState, key: &str) -> Result<PositionType, ServiceError
         .get(key)
         .cloned()
         .ok_or_else(|| ServiceError::not_found(format!("Position '{key}' not found")))
-}
-
-fn holdings_of<'a>(roles: &'a [RoleRow], key: &str, unit: Uuid) -> Vec<&'a RoleRow> {
-    roles.iter().filter(|r| r.position_key.as_deref() == Some(key) && r.organization_id == unit).collect()
 }
 
 fn row(pt: &PositionType, holder_count: usize) -> Value {
@@ -61,8 +46,8 @@ fn row(pt: &PositionType, holder_count: usize) -> Value {
     })
 }
 
-fn holder_count(roles: &[RoleRow], key: &str) -> usize {
-    roles.iter().filter(|r| r.position_key.as_deref() == Some(key)).count()
+fn holder_count(counts: &std::collections::HashMap<String, i64>, key: &str) -> usize {
+    counts.get(key).copied().unwrap_or(0) as usize
 }
 
 fn check_org_types(org_types: &[String]) -> Result<(), ServiceError> {
@@ -104,11 +89,11 @@ fn check_key(key: &str) -> Result<(), ServiceError> {
 // ---------------------------------------------------------------------------------------------
 
 pub fn list_positions(state: &SharedState) -> Vec<Value> {
-    let roles = all_roles(state);
+    let counts = state.repository.holder_counts().unwrap_or_default();
     let mut types: Vec<PositionType> =
         state.position_types.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
     types.sort_by(|a, b| a.key.cmp(&b.key));
-    types.iter().map(|pt| row(pt, holder_count(&roles, &pt.key))).collect()
+    types.iter().map(|pt| row(pt, holder_count(&counts, &pt.key))).collect()
 }
 
 pub struct NewPosition {
@@ -126,7 +111,6 @@ pub fn create_position(state: &SharedState, admin: &AuthUser, new: NewPosition, 
     }
     check_org_types(&new.org_types)?;
     let max_holders = check_max_holders(new.max_holders)?;
-    let _guard = lock();
     if state.position_types.read().unwrap_or_else(|p| p.into_inner()).contains_key(&new.key) {
         return Err(ServiceError::conflict(format!("Position '{}' already exists", new.key)));
     }
@@ -142,7 +126,13 @@ pub fn create_position(state: &SharedState, admin: &AuthUser, new: NewPosition, 
     };
     let payload = json!({ "action": "create_position", "key": pt.key, "org_types": pt.org_types, "max_holders": pt.max_holders });
     admin_write(state, admin, DecisionType::PositionChanged, "AC-02", reason, &payload, || {
-        state.persist_position_type(&pt).map_err(|e| ServiceError::Internal(e.to_string()))
+        // The database decides who owns the key, so two servers creating it at once cannot both win.
+        let created = state.repository.create_position_type(&pt).map_err(|e| ServiceError::Internal(e.to_string()))?;
+        if !created {
+            return Err(ServiceError::conflict(format!("Position '{}' already exists", pt.key)));
+        }
+        state.position_types.write().unwrap_or_else(|p| p.into_inner()).insert(pt.key.clone(), pt.clone());
+        Ok(())
     })?;
     Ok(row(&pt, 0))
 }
@@ -163,9 +153,8 @@ pub fn patch_position(
     patch: PositionPatch,
     reason: &str,
 ) -> Result<Value, ServiceError> {
-    let _guard = lock();
     let mut pt = position(state, key)?;
-    let held = holder_count(&all_roles(state), key);
+    let held = holder_count(&state.repository.holder_counts().unwrap_or_default(), key);
 
     if let Some(name) = patch.name {
         if name.trim().is_empty() {
@@ -194,14 +183,20 @@ pub fn patch_position(
 
     let payload = json!({ "action": "patch_position", "key": key, "retired": pt.retired_at.is_some(), "max_holders": pt.max_holders });
     admin_write(state, admin, DecisionType::PositionChanged, "AC-02", reason, &payload, || {
-        state.persist_position_type(&pt).map_err(|e| ServiceError::Internal(e.to_string()))
+        // The row is locked while the holders are counted, so a holder cannot arrive in between.
+        state.repository.change_position_type(&pt).map_err(|e| match e {
+            crate::repository::RepositoryError::Conflict(m) => ServiceError::conflict(m),
+            other => ServiceError::Internal(other.to_string()),
+        })?;
+        state.position_types.write().unwrap_or_else(|p| p.into_inner()).insert(pt.key.clone(), pt.clone());
+        Ok(())
     })?;
     Ok(row(&pt, held))
 }
 
 /// One row for each unit a position applies to that has no holder.
 pub fn vacancies(state: &SharedState) -> Vec<Value> {
-    let roles = all_roles(state);
+    let filled = state.repository.filled_positions().unwrap_or_default();
     let units = orgs(state);
     let mut types: Vec<PositionType> = state
         .position_types
@@ -216,7 +211,7 @@ pub fn vacancies(state: &SharedState) -> Vec<Value> {
     for pt in &types {
         let mut open: Vec<&OrganizationNode> = units
             .iter()
-            .filter(|u| pt.org_types.contains(&u.org_type) && holdings_of(&roles, &pt.key, u.id).is_empty())
+            .filter(|u| pt.org_types.contains(&u.org_type) && !filled.contains(&(pt.key.clone(), u.id)))
             .collect();
         open.sort_by(|a, b| a.name.cmp(&b.name));
         for u in open {
@@ -246,7 +241,7 @@ fn unit_of(state: &SharedState, unit: Uuid) -> Result<OrganizationNode, ServiceE
 }
 
 fn require_scope(state: &SharedState, caller: &AuthUser, unit: Uuid) -> Result<(), ServiceError> {
-    if unit_in_scope(&org_caller(caller), unit, &orgs(state), &all_roles(state)) {
+    if unit_in_scope(&org_caller(caller), unit, &orgs(state), &state.roles_of(&caller.eppn)) {
         Ok(())
     } else {
         Err(ServiceError::forbidden("Caller is not in scope for this organization unit"))
@@ -257,7 +252,7 @@ fn require_scope(state: &SharedState, caller: &AuthUser, unit: Uuid) -> Result<(
 pub fn unit_positions(state: &SharedState, caller: &AuthUser, unit: Uuid) -> Result<Value, ServiceError> {
     let node = unit_of(state, unit)?;
     require_scope(state, caller, unit)?;
-    let roles = all_roles(state);
+    let roles = state.repository.roles_in_units(&[unit]).map_err(|e| ServiceError::Internal(e.to_string()))?;
     let mut types: Vec<PositionType> = state
         .position_types
         .read()
@@ -270,8 +265,9 @@ pub fn unit_positions(state: &SharedState, caller: &AuthUser, unit: Uuid) -> Res
     let positions: Vec<Value> = types
         .iter()
         .map(|pt| {
-            let holders: Vec<Value> = holdings_of(&roles, &pt.key, unit)
+            let holders: Vec<Value> = roles
                 .iter()
+                .filter(|r| r.position_key.as_deref() == Some(pt.key.as_str()))
                 .map(|r| {
                     let display = people::find_by_user_name(state, &r.eppn)
                         .map(|u| people::display_name(&u))
@@ -302,7 +298,6 @@ pub fn assign_holder(
 ) -> Result<Value, ServiceError> {
     let node = unit_of(state, unit)?;
     require_scope(state, caller, unit)?;
-    let _guard = lock();
     let pt = position(state, key)?;
     if pt.retired_at.is_some() {
         return Err(ServiceError::bad_request(format!("Position '{key}' is retired")));
@@ -321,8 +316,8 @@ pub fn assign_holder(
         return Err(ServiceError::bad_request("The holder must be an active user who is not on hold"));
     }
 
-    let roles = all_roles(state);
-    let current: Vec<RoleRow> = holdings_of(&roles, key, unit).into_iter().cloned().collect();
+    // A first look, so the usual refusals cost no ledger entry. The write below decides again under a row lock.
+    let current = state.repository.roles_at(unit, key).map_err(|e| ServiceError::Internal(e.to_string()))?;
     if current.iter().any(|r| r.eppn.eq_ignore_ascii_case(&user.user_name)) {
         return Err(ServiceError::conflict("This person already holds the position here"));
     }
@@ -354,7 +349,21 @@ pub fn assign_holder(
     let grant = json!({ "action": "assign_holder", "organization_id": unit, "position": key, "eppn": holding.eppn });
     let write_grant = || {
         admin_write(state, caller, DecisionType::AccessRoleGranted, "AC-02", reason, &grant, || {
-            state.persist_role(&holding).map_err(|e| ServiceError::Internal(e.to_string()))
+            let outcome = state
+                .repository
+                .assign_holding(&holding, pt.max_holders, replace)
+                .map_err(|e| ServiceError::Internal(e.to_string()))?;
+            match outcome {
+                Holding::Given => Ok(()),
+                Holding::AlreadyHeld => Err(ServiceError::conflict("This person already holds the position here")),
+                Holding::Full(n) => Err(ServiceError::PositionFull(format!(
+                    "{} at {} already has {n} holder(s)",
+                    pt.name, node.name
+                ))),
+                Holding::RegistryOwned => {
+                    Err(ServiceError::conflict("The registry owns a current holding. Change it in the registry"))
+                }
+            }
         })
     };
 
@@ -365,12 +374,9 @@ pub fn assign_holder(
             "action": "vacate_for_replace", "organization_id": unit, "position": key,
             "vacated": vacate.iter().map(|r| r.eppn.clone()).collect::<Vec<_>>(),
         });
-        admin_write(state, caller, DecisionType::AccessRoleRevoked, "AC-02", reason, &revoke, || {
-            for r in &vacate {
-                state.delete_role(r.id).map_err(|e| ServiceError::Internal(e.to_string()))?;
-            }
-            write_grant()
-        })?;
+        // The vacating happens inside the grant, in the same transaction.
+        admin_write(state, caller, DecisionType::AccessRoleRevoked, "AC-02", reason, &revoke, || Ok(()))?;
+        write_grant()?;
     }
     Ok(json!({ "holder": { "eppn": holding.eppn, "position": key, "organization_id": unit } }))
 }
@@ -385,12 +391,12 @@ pub fn vacate_holder(
 ) -> Result<(), ServiceError> {
     unit_of(state, unit)?;
     require_scope(state, caller, unit)?;
-    let _guard = lock();
-    let roles = all_roles(state);
-    let holding = holdings_of(&roles, key, unit)
+    let holding = state
+        .repository
+        .roles_at(unit, key)
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
         .into_iter()
         .find(|r| r.eppn.eq_ignore_ascii_case(eppn))
-        .cloned()
         .ok_or_else(|| ServiceError::not_found("No such holder"))?;
     if holding.source == "scim" {
         return Err(ServiceError::conflict("The registry owns this holding. Change it in the registry"));

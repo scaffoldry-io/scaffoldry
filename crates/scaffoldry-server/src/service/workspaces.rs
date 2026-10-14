@@ -83,7 +83,7 @@ pub fn list_workspaces(
     };
     let orgs_map = state.organizations.read().unwrap();
     let all_orgs: Vec<crate::state::OrganizationNode> = orgs_map.values().cloned().collect();
-    let roles: Vec<crate::state::RoleRow> = state.roles.read().unwrap().clone();
+    let roles = state.roles_of(&caller.eppn);
 
     let mut response_list = Vec::new();
 
@@ -242,7 +242,7 @@ pub fn create_workspace(
             return Err(ServiceError::BadRequest(format!("Unknown organization_id: {target_org_id}")));
         }
         let all_orgs: Vec<_> = orgs_map.values().cloned().collect();
-        let roles = state.roles.read().unwrap().clone();
+        let roles = state.roles_of(&caller.eppn);
         let org_caller = crate::service::organizations::OrgCaller {
             eppn: caller.eppn.clone(),
             affiliation: caller.affiliation.clone(),
@@ -365,7 +365,7 @@ pub fn update_workspace(
 
     let is_admin = {
         let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().map(|g| g.values().cloned().collect()).unwrap_or_default();
-        let roles: Vec<crate::state::RoleRow> = state.roles.read().map(|g| g.clone()).unwrap_or_default();
+        let roles = state.roles_of(&caller.eppn);
         let org_caller = crate::service::organizations::OrgCaller {
             eppn: caller.eppn.clone(),
             affiliation: caller.affiliation.clone(),

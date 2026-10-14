@@ -16,6 +16,42 @@ pub fn problem_code(p: NoApprover) -> String {
     serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
+/// The holdings the resolver may need when it starts at `units` and walks to the root: those at each unit on the way,
+/// and every holding of the `people` named, whose own unit is another place to start.
+pub fn path_holdings(state: &SharedState, units: &[uuid::Uuid], people: &[String]) -> Vec<Holding> {
+    let own = state.repository.roles_of_people(people).unwrap_or_default();
+    let mut path: Vec<uuid::Uuid> = Vec::new();
+    {
+        let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+        for start in units.iter().copied().chain(own.iter().filter(|r| r.is_primary).map(|r| r.organization_id)) {
+            let mut current = Some(start);
+            for _ in 0..32 {
+                let Some(id) = current else { break };
+                if path.contains(&id) {
+                    break;
+                }
+                path.push(id);
+                current = orgs.get(&id).and_then(|o| o.parent_id);
+            }
+        }
+    }
+    let mut roles = state.repository.roles_in_units(&path).unwrap_or_default();
+    for r in own {
+        if !roles.iter().any(|x| x.id == r.id) {
+            roles.push(r);
+        }
+    }
+    roles
+        .into_iter()
+        .map(|r| Holding {
+            eppn: r.eppn,
+            unit_id: r.organization_id.to_string(),
+            position_key: r.position_key,
+            is_primary: r.is_primary,
+        })
+        .collect()
+}
+
 /// The resolver's inputs for one record of one app, read once.
 pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by: Option<&str>) -> ResolveCtx {
     use scaffoldry_engine::HostRouter;
@@ -30,19 +66,6 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
             parent_id: o.parent_id.map(|p| p.to_string()),
             org_type: o.org_type.clone(),
             name: o.name.clone(),
-        })
-        .collect();
-
-    let holdings: Vec<Holding> = state
-        .roles
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .iter()
-        .map(|r| Holding {
-            eppn: r.eppn.clone(),
-            unit_id: r.organization_id.to_string(),
-            position_key: r.position_key.clone(),
-            is_primary: r.is_primary,
         })
         .collect();
 
@@ -65,13 +88,25 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
 
     let submitter = state.find_record(app_slug, record_id).ok().flatten().and_then(|r| r.created_by);
 
+    // The resolver walks from the workspace's unit, or the submitter's own, up to the root. It needs the holdings
+    // on that path and the submitter's own, not everyone's.
+    let start_units: Vec<uuid::Uuid> = workspace_unit.as_deref().and_then(|u| u.parse().ok()).into_iter().collect();
+    let holdings: Vec<Holding> = path_holdings(state, &start_units, submitter.as_slice());
+
     // People the platform holds a user record for carry their state. Anyone else, such as a
     // seeded persona, counts as active, since nothing says otherwise.
+    let mut extra: HashSet<String> = HashSet::new();
+    for e in holdings.iter().map(|h| &h.eppn).chain(collaborators.iter().map(|c| &c.eppn)) {
+        extra.insert(e.clone());
+    }
+    extra.extend(submitter.iter().cloned());
+    extra.extend(started_by.map(str::to_string));
+    let wanted: Vec<String> = extra.iter().cloned().collect();
     let mut people: Vec<Person> = state
-        .users
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .values()
+        .repository
+        .users_by_names(&wanted)
+        .unwrap_or_default()
+        .iter()
         .map(|u| Person {
             eppn: u.user_name.clone(),
             display_name: crate::service::people::display_name(u),
@@ -80,12 +115,6 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
         })
         .collect();
     let known: HashSet<String> = people.iter().map(|p| p.eppn.to_lowercase()).collect();
-    let mut extra: HashSet<String> = HashSet::new();
-    for e in holdings.iter().map(|h| &h.eppn).chain(collaborators.iter().map(|c| &c.eppn)) {
-        extra.insert(e.clone());
-    }
-    extra.extend(submitter.iter().cloned());
-    extra.extend(started_by.map(str::to_string));
     for e in extra {
         if !known.contains(&e.to_lowercase()) {
             people.push(Person { eppn: e.clone(), display_name: e, active: true, on_hold: false });
@@ -175,18 +204,30 @@ pub fn instance_view(state: &SharedState, inst: &ProcessInstance) -> Value {
     v
 }
 
-pub fn known_sets(state: &SharedState) -> KnownSets {
+/// What the platform knows, for checking this rule: the position types, and the people the rule names.
+pub fn known_sets(state: &SharedState, rule: &AutomationRule) -> KnownSets {
     let types = state.position_types.read().unwrap_or_else(|p| p.into_inner());
+    let named: Vec<String> = rule
+        .steps
+        .iter()
+        .filter_map(|step| match &step.kind {
+            StepKind::UserTask { role, approver, .. } => match effective_approver(role, approver) {
+                ApproverSpec::Person { eppn } => Some(eppn),
+                _ => None,
+            },
+            StepKind::Service { .. } => None,
+        })
+        .collect();
     KnownSets {
         position_keys: types.values().filter(|p| p.retired_at.is_none()).map(|p| p.key.clone()).collect(),
         retired_keys: types.values().filter(|p| p.retired_at.is_some()).map(|p| p.key.clone()).collect(),
-        eppns: state.users.read().unwrap_or_else(|p| p.into_inner()).values().map(|u| u.user_name.clone()).collect(),
+        eppns: state.repository.users_by_names(&named).unwrap_or_default().into_iter().map(|u| u.user_name).collect(),
     }
 }
 
 /// Every user task's approver must be valid. A position that resolves to nobody today is fine.
 pub fn validate_rule(state: &SharedState, rule: &AutomationRule) -> Result<(), ServiceError> {
-    let known = known_sets(state);
+    let known = known_sets(state, rule);
     for step in &rule.steps {
         if let StepKind::UserTask { role, approver, .. } = &step.kind {
             validate_approver(&effective_approver(role, approver), &known)

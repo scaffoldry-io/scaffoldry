@@ -56,6 +56,7 @@ const SCHEMA_0050: &str = include_str!("../../scaffoldry-core/migrations/0050_vi
 const SCHEMA_0051: &str = include_str!("../../scaffoldry-core/migrations/0051_files.sql");
 const SCHEMA_0052: &str = include_str!("../../scaffoldry-core/migrations/0052_file_scans.sql");
 const SCHEMA_0053: &str = include_str!("../../scaffoldry-core/migrations/0053_cache_versions.sql");
+const SCHEMA_0054: &str = include_str!("../../scaffoldry-core/migrations/0054_people_indexes.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -783,7 +784,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 38] = [
+                        let migrations: [(&str, &str); 39] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -818,6 +819,7 @@ impl PostgresRepository {
                             ("0051_files.sql", SCHEMA_0051),
                             ("0052_file_scans.sql", SCHEMA_0052),
                             ("0053_cache_versions.sql", SCHEMA_0053),
+                            ("0054_people_indexes.sql", SCHEMA_0054),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -2345,45 +2347,7 @@ impl PostgresRepository {
 
     pub fn upsert_role(&self, role: &RoleRow) -> Result<(), RepositoryError> {
         let role = role.clone();
-        self.with_client(move |client| {
-            let person_rows = client.query("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?;
-            let person_id = if let Some(row) = person_rows.first() {
-                row.get::<_, uuid::Uuid>(0)
-            } else {
-                let new_pid = role.person_id;
-                let email = role.eppn.clone();
-                client.execute(
-                    "INSERT INTO persons (id, first_name, last_name, email, eppn) \
-                     VALUES ($1, 'User', 'User', $2, $3) \
-                     ON CONFLICT (eppn) DO NOTHING",
-                    &[&new_pid, &email, &role.eppn],
-                )?;
-                new_pid
-            };
-
-            client.execute(
-                "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source, position_key) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-                 ON CONFLICT (id) DO UPDATE SET \
-                    organization_id = EXCLUDED.organization_id, \
-                    role_title = EXCLUDED.role_title, \
-                    scoped_affiliation = EXCLUDED.scoped_affiliation, \
-                    is_primary = EXCLUDED.is_primary, \
-                    source = EXCLUDED.source, \
-                    position_key = EXCLUDED.position_key",
-                &[
-                    &role.id,
-                    &person_id,
-                    &role.organization_id,
-                    &role.role_title,
-                    &role.scoped_affiliation,
-                    &role.is_primary,
-                    &role.source,
-                    &role.position_key,
-                ],
-            )?;
-            Ok(())
-        })
+        self.with_client(move |client| upsert_role_in(client, &role))
     }
 
     pub fn list_position_types(&self) -> Result<Vec<crate::state::PositionType>, RepositoryError> {
@@ -2936,4 +2900,75 @@ impl PostgresRepository {
             Ok(())
         })
     }
+}
+
+/// A token row read with its times as text: `token_hash, id, kind, eppn, label, original_admin, created_at, expires_at,
+/// last_used_at, revoked_at, app_slug`.
+pub(crate) fn api_token_of_text_row(r: &postgres::Row) -> Result<crate::state::ApiToken, RepositoryError> {
+    let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .or_else(|_| chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%#z"))
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now())
+    };
+    let created: String = r.get(6);
+    let expires: String = r.get(7);
+    let last_used: Option<String> = r.get(8);
+    let revoked: Option<String> = r.get(9);
+    Ok(crate::state::ApiToken {
+        token_hash: r.get(0),
+        id: r.get(1),
+        kind: r.get(2),
+        eppn: r.get(3),
+        label: r.get(4),
+        original_admin: r.get(5),
+        created_at: parse_time(&created),
+        expires_at: parse_time(&expires),
+        last_used_at: last_used.map(|s| parse_time(&s)),
+        revoked_at: revoked.map(|s| parse_time(&s)),
+        app_slug: r.get(10),
+    })
+}
+
+/// Writes one appointment or holding, and the person it belongs to when the platform has not met them. It runs on
+/// a connection or inside a transaction.
+pub(crate) fn upsert_role_in(client: &mut impl postgres::GenericClient, role: &RoleRow) -> Result<(), RepositoryError> {
+    let person_rows = client.query("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?;
+    let person_id = if let Some(row) = person_rows.first() {
+        row.get::<_, uuid::Uuid>(0)
+    } else {
+        let new_pid = role.person_id;
+        let email = role.eppn.clone();
+        client.execute(
+            "INSERT INTO persons (id, first_name, last_name, email, eppn) \
+             VALUES ($1, 'User', 'User', $2, $3) \
+             ON CONFLICT (eppn) DO NOTHING",
+            &[&new_pid, &email, &role.eppn],
+        )?;
+        // Another server may have added the person a moment ago, under another id.
+        client.query_one("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?.get::<_, uuid::Uuid>(0)
+    };
+
+    client.execute(
+        "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source, position_key) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         ON CONFLICT (id) DO UPDATE SET \
+            organization_id = EXCLUDED.organization_id, \
+            role_title = EXCLUDED.role_title, \
+            scoped_affiliation = EXCLUDED.scoped_affiliation, \
+            is_primary = EXCLUDED.is_primary, \
+            source = EXCLUDED.source, \
+            position_key = EXCLUDED.position_key",
+        &[
+            &role.id,
+            &person_id,
+            &role.organization_id,
+            &role.role_title,
+            &role.scoped_affiliation,
+            &role.is_primary,
+            &role.source,
+            &role.position_key,
+        ],
+    )?;
+    Ok(())
 }

@@ -90,7 +90,7 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | 58 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search | **COMPLETED** |
 | 59 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
 | 60 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | **COMPLETED** |
-| 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | |
+| 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | **COMPLETED** |
 | 62 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
 | 63 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
 | 64 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | |
