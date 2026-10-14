@@ -2,6 +2,8 @@
 //!
 //! Each test uses a private app with a fresh slug and deletes its rows when it ends.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -19,8 +21,7 @@ const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -207,6 +208,7 @@ fn rows_of(slug: &str, from: &str, field: &str) -> Vec<String> {
 // 1. Linking an application to a program shows the application in the program's mirror field.
 #[tokio::test]
 async fn linking_an_application_shows_it_in_the_programs_mirror_field() {
+    let _db = common::TestDb::new();
     let w = world(false).await;
     let p = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let a = id_of(&create(&w, "apps", json!({ "applicant": "Ada", "program": p })).await);
@@ -225,6 +227,7 @@ async fn linking_an_application_shows_it_in_the_programs_mirror_field() {
 // 2. Unlinking from the program side removes the link from the application.
 #[tokio::test]
 async fn unlinking_from_the_program_side_removes_it_from_the_application() {
+    let _db = common::TestDb::new();
     let w = world(false).await;
     let p = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let a1 = id_of(&create(&w, "apps", json!({ "applicant": "Ada", "program": p })).await);
@@ -247,6 +250,7 @@ async fn unlinking_from_the_program_side_removes_it_from_the_application() {
 // 3. The mirror write does not change the other record's version, and it is recorded as the system's.
 #[tokio::test]
 async fn a_mirror_write_keeps_the_other_records_version_and_is_recorded_as_the_systems() {
+    let _db = common::TestDb::new();
     let w = world(false).await;
     let p = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let before = get(&w, &p).await["version"].as_i64().unwrap();
@@ -274,6 +278,7 @@ async fn a_mirror_write_keeps_the_other_records_version_and_is_recorded_as_the_s
 // 4. Deleting a program removes its links and restoring it brings them back, except to a record that is gone.
 #[tokio::test]
 async fn deleting_a_program_removes_its_links_and_restoring_it_brings_them_back() {
+    let _db = common::TestDb::new();
     let w = world(false).await;
     let p = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let a1 = id_of(&create(&w, "apps", json!({ "applicant": "Ada", "program": p })).await);
@@ -318,6 +323,7 @@ async fn deleting_a_program_removes_its_links_and_restoring_it_brings_them_back(
 // 5. A Restrict field refuses the delete and reports the count.
 #[tokio::test]
 async fn a_restrict_field_refuses_the_delete_and_reports_the_count() {
+    let _db = common::TestDb::new();
     let w = world(true).await;
     let p = id_of(&create(&w, "programs", json!({ "code": "CS" })).await);
     let mut apps = Vec::new();
@@ -342,6 +348,7 @@ async fn a_restrict_field_refuses_the_delete_and_reports_the_count() {
 // 6. A many-to-many pair keeps both sides in step across 50 random changes.
 #[tokio::test]
 async fn a_many_to_many_pair_stays_in_step_across_fifty_random_changes() {
+    let _db = common::TestDb::new();
     let w = world(false).await;
     let mut students = Vec::new();
     let mut courses = Vec::new();

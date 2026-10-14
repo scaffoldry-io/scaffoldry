@@ -3,6 +3,8 @@
 //!
 //! The app is private to each run, so the tests share the database without touching anyone's rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,11 +15,9 @@ use scaffoldry_server::service::identity::{hash_token, issue_test_token_and_user
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const EDITOR: &str = "student.smith@science.state.edu";
@@ -26,8 +26,7 @@ const OUTSIDER: &str = "sarah.connor@state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// Direct database work on its own thread. The synchronous client cannot start inside the async
@@ -137,7 +136,7 @@ fn entries(body: &Value) -> Vec<Value> {
 // 1. Create, update two fields, delete: three entries, newest first, with old and new values.
 #[tokio::test]
 async fn create_update_and_delete_write_three_entries_with_old_and_new_values() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "A", "score": 1 })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -170,7 +169,7 @@ async fn create_update_and_delete_write_three_entries_with_old_and_new_values() 
 // 2. An update that changes nothing writes no history.
 #[tokio::test]
 async fn an_update_that_changes_nothing_writes_no_history() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "Same" })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -185,7 +184,7 @@ async fn an_update_that_changes_nothing_writes_no_history() {
 // 3. A computed field changing is not in `changes`.
 #[tokio::test]
 async fn a_computed_field_is_not_recorded() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "A", "total": 10 })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -201,7 +200,7 @@ async fn a_computed_field_is_not_recorded() {
 // 4. History cannot be changed by SQL, except by the named purge.
 #[tokio::test]
 async fn a_history_row_cannot_be_updated_or_deleted_but_the_purge_can_delete() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "A" })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -226,7 +225,7 @@ async fn a_history_row_cannot_be_updated_or_deleted_but_the_purge_can_delete() {
 // 5. A history row and its record write fail together.
 #[tokio::test]
 async fn when_the_history_insert_fails_the_record_is_unchanged() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "Before" })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -266,7 +265,7 @@ async fn when_the_history_insert_fails_the_record_is_unchanged() {
 // 6. A viewer sees that a sensitive field changed, and not what it held.
 #[tokio::test]
 async fn a_viewer_sees_changed_true_for_a_sensitive_field_and_an_editor_sees_values() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "A", "ssn": "123-45-6789" })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -288,7 +287,7 @@ async fn a_viewer_sees_changed_true_for_a_sensitive_field_and_an_editor_sees_val
 // 7. No read access, no history.
 #[tokio::test]
 async fn a_user_with_no_read_access_gets_404_on_the_history() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "A" })).await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -301,7 +300,7 @@ async fn a_user_with_no_read_access_gets_404_on_the_history() {
 // 8. An agent token's label is in the entry. Ten cells in one paste share one batch.
 #[tokio::test]
 async fn an_agent_tokens_label_is_recorded_and_a_batch_header_groups_ten_writes() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let raw = format!("sct_agent_{}", Uuid::new_v4().simple());
     let hash = hash_token(&raw);
@@ -354,7 +353,7 @@ async fn an_agent_tokens_label_is_recorded_and_a_batch_header_groups_ten_writes(
 
 #[tokio::test]
 async fn the_app_feed_is_for_an_owner_or_admin_and_pages_by_id() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     for n in 0..5 {
         create(&f, &f.owner, json!({ "_table_id": "t1", "title": format!("row {n}") })).await;
@@ -379,6 +378,7 @@ async fn the_app_feed_is_for_an_owner_or_admin_and_pages_by_id() {
 // 9. A write with no actor cannot be written. Every write method takes one.
 #[test]
 fn every_record_write_method_takes_a_write_context() {
+    let _db = common::TestDb::new();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let methods = ["insert_record", "put_record", "save_record_checked", "overwrite_record_data", "remove_record", "remove_record_checked", "upsert_record", "update_record_checked", "delete_record", "delete_record_checked"];
     for file in ["state.rs", "repository.rs"] {
@@ -404,7 +404,7 @@ fn every_record_write_method_takes_a_write_context() {
 
 #[tokio::test]
 async fn the_mcp_tool_masks_the_same_way() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let created = create(&f, &f.owner, json!({ "_table_id": "t1", "title": "A", "ssn": "123-45-6789" })).await;
     let id = created["id"].as_str().unwrap().to_string();

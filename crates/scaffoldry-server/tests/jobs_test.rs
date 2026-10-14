@@ -3,6 +3,8 @@
 //! The tests share one database. Each test uses kind names of its own, and a runner claims only
 //! the kinds in its registry, so tests do not take each other's jobs.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -59,6 +61,7 @@ static K1: &[JobKind] = &[JobKind { name: "t1_count", title: "Test job", descrip
 
 #[test]
 fn eight_workers_run_each_of_one_hundred_jobs_exactly_once() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let ids: Vec<_> = (0..100)
         .map(|n| enqueue(&repo, "t1_count", json!({ "n": n }), "t1@state.edu", None).unwrap())
@@ -82,6 +85,7 @@ static K2: &[JobKind] = &[JobKind { name: "t2_recover", title: "Test job", descr
 
 #[test]
 fn a_job_whose_worker_died_runs_again_after_the_lock_expires() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let cfg = JobConfig { lock_secs: 1, recovery_secs: 1, ..fast(1) };
     let id = enqueue(&repo, "t2_recover", json!({}), "t2@state.edu", None).unwrap();
@@ -117,6 +121,7 @@ static K3: &[JobKind] = &[
 
 #[test]
 fn errors_retry_three_times_and_a_permanent_error_fails_at_once() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let boom = enqueue(&repo, "t3_boom", json!({}), "t3@state.edu", None).unwrap();
     let perm = enqueue(&repo, "t3_perm", json!({}), "t3@state.edu", None).unwrap();
@@ -145,6 +150,7 @@ static K4: &[JobKind] = &[JobKind { name: "t4_checkpoint", title: "Test job", de
 
 #[test]
 fn a_resumed_job_sees_its_checkpoint() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let id = enqueue(&repo, "t4_checkpoint", json!({}), "t4@state.edu", None).unwrap();
     let runner = JobRunner::start(&repo, K4, fast(1)).unwrap();
@@ -168,6 +174,7 @@ static K5: &[JobKind] = &[JobKind { name: "t5_cap", title: "Test job", descripti
 
 #[test]
 fn a_kind_with_a_cap_of_one_never_runs_two_at_once() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let ids: Vec<_> = (0..10)
         .map(|_| enqueue(&repo, "t5_cap", json!({}), "t5@state.edu", None).unwrap())
@@ -185,6 +192,7 @@ static K6: &[JobKind] = &[JobKind { name: "t6_dedupe", title: "Test job", descri
 
 #[test]
 fn a_dedupe_key_returns_the_live_job_and_is_free_after_it_finishes() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let key = format!("t6-{}", uuid::Uuid::new_v4());
     let first = enqueue(&repo, "t6_dedupe", json!({}), "t6@state.edu", Some(&key)).unwrap();
@@ -212,6 +220,7 @@ static K7: &[JobKind] = &[JobKind { name: "t7_cancel", title: "Test job", descri
 
 #[test]
 fn cancelling_a_queued_job_is_immediate_and_a_running_job_stops_at_its_next_batch() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let queued = enqueue(&repo, "t7_cancel", json!({}), "t7@state.edu", None).unwrap();
     let after = cancel_job(&repo, queued).unwrap().expect("job exists");
@@ -243,8 +252,9 @@ fn get(path: &str, token: &str) -> Request<Body> {
 
 #[tokio::test]
 async fn only_the_creator_and_a_platform_admin_can_read_or_cancel_a_job() {
+    let _db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("state"));
-    let repo = state.repository.clone().expect("postgres");
+    let repo = state.repository.clone();
     let app = build_app_with_state(state).expect("router");
 
     let owner = scaffoldry_server::service::identity::issue_test_token_and_user("prof.curie@science.state.edu");
@@ -304,6 +314,7 @@ static K9: &[JobKind] = &[JobKind { name: "t9_leaky", title: "Test job", descrip
 
 #[test]
 fn a_payload_or_result_with_a_token_or_secret_key_is_refused() {
+    let _db = common::TestDb::new();
     let repo = repo();
     assert!(enqueue(&repo, "t9_leaky", json!({ "token": "abc" }), "t9@state.edu", None).is_err());
     assert!(enqueue(&repo, "t9_leaky", json!({ "a": { "Secret": 1 } }), "t9@state.edu", None).is_err());
@@ -326,6 +337,7 @@ use scaffoldry_server::jobs::{register_schedule, scheduler_tick, retry_job};
 
 #[test]
 fn test_phase2_decision_type_job_cancelled() {
+    let _db = common::TestDb::new();
     assert!(DecisionType::ALL.contains(&DecisionType::JobCancelled));
     assert_eq!(DecisionType::JobCancelled.as_str(), "JobCancelled");
     assert_eq!(DecisionType::parse("JobCancelled"), Some(DecisionType::JobCancelled));
@@ -333,6 +345,7 @@ fn test_phase2_decision_type_job_cancelled() {
 
 #[test]
 fn test_phase2_admin_routes_listed_and_guarded() {
+    let _db = common::TestDb::new();
     let routes = [
         ("GET", "/admin/jobs"),
         ("GET", "/admin/jobs/{id}"),
@@ -350,6 +363,7 @@ fn test_phase2_admin_routes_listed_and_guarded() {
 
 #[test]
 fn test_phase2_schedule_two_simulated_threads_create_exactly_one_job() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let kind = "t_p2_sched_1".to_string();
     register_schedule(&repo, &kind, 60).expect("register schedule");
@@ -383,6 +397,7 @@ fn test_phase2_schedule_two_simulated_threads_create_exactly_one_job() {
 
 #[test]
 fn test_phase2_tick_delayed_by_90_seconds_cadence_maintained() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let kind = "t_p2_sched_2".to_string();
     register_schedule(&repo, &kind, 60).expect("register schedule");
@@ -419,6 +434,7 @@ fn test_phase2_tick_delayed_by_90_seconds_cadence_maintained() {
 
 #[test]
 fn test_phase2_schedules_disabled_stops_it() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let kind = "t_p2_sched_3".to_string();
     register_schedule(&repo, &kind, 60).expect("register schedule");
@@ -446,9 +462,10 @@ fn test_phase2_schedules_disabled_stops_it() {
 
 #[tokio::test]
 async fn test_phase2_admin_routes_faculty_is_403() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let mut server_state = ServerState::new().expect("server state");
-    server_state.repository = Some(Arc::new(repo));
+    server_state.repository = Arc::new(repo);
     let state = Arc::new(server_state);
 
     let faculty_token = scaffoldry_server::service::identity::issue_test_token_and_user("faculty.curie@state.edu");
@@ -501,6 +518,7 @@ static K_RETRY: &[JobKind] = &[JobKind {
 
 #[test]
 fn test_phase2_retry_failed_job_and_conflict_on_done() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let runner = JobRunner::start(&repo, K_RETRY, fast(2)).unwrap();
 
@@ -527,9 +545,10 @@ fn test_phase2_retry_failed_job_and_conflict_on_done() {
 
 #[tokio::test]
 async fn test_phase2_mcp_get_job_privacy() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let mut server_state = ServerState::new().expect("server state");
-    server_state.repository = Some(Arc::new(repo.clone()));
+    server_state.repository = Arc::new(repo.clone());
     let state = Arc::new(server_state);
     let app = build_app_with_state(state).expect("app router");
 

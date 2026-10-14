@@ -172,6 +172,11 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "Programs and web pages cannot be uploaded.", next: "Save it as a PDF, an image, or a plain document, then upload that." },
       ],
       [
+        "storage_unavailable",
+        new ApiError(503, "The server cannot read its database: connection refused", { code: "storage_unavailable" }),
+        { message: "The server cannot reach its database right now.", next: "Try again in a minute. If it keeps happening, tell an administrator." },
+      ],
+      [
         "scanner_unavailable",
         new ApiError(503, "Files cannot be uploaded now. The virus scanner is not answering.", { code: "scanner_unavailable" }),
         { message: "Files cannot be uploaded right now.", next: "Try again in a few minutes, or ask an admin to check the virus scanner." },

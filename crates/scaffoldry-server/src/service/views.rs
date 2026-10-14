@@ -23,7 +23,7 @@ const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_NAME: usize = 120;
 
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
-    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Views need PostgreSQL".to_string()))
+    Ok(&*state.repository)
 }
 
 fn internal(e: impl std::fmt::Display) -> ServiceError {

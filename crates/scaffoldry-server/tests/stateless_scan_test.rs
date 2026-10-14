@@ -1,0 +1,88 @@
+//! Stateless server phase 1: the source is read as text. Nothing is held between requests that is not on a list.
+
+use std::path::Path;
+
+/// The fields of `ServerState` that may hold a lock. The list starts as today's fields. Each phase removes the ones
+/// it turns into queries or into cached collections, and none is added.
+const ALLOWED_FIELDS: &[&str] = &[
+    "users",
+    "groups",
+    "access_rules",
+    "app_views",
+    "column_rules",
+    "workspaces",
+    "collaborators",
+    "guards",
+    "guard_policy_cache",
+    "datasets",
+    "relationships",
+    "automations",
+    "process_instances",
+    "ledger",
+    "engine",
+    "sessions",
+    "api_tokens",
+    "organizations",
+    "roles",
+    "position_types",
+    "labels",
+    "settings",
+    "formula_rate_limits",
+];
+
+/// The `static` locks that may remain. `WRITE_LOCK` goes in phase 2.
+const ALLOWED_STATICS: &[&str] = &["WRITE_LOCK"];
+
+fn source(rel: &str) -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+}
+
+fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            rust_files(&p, out);
+        } else if p.extension().is_some_and(|e| e == "rs") {
+            out.push(p);
+        }
+    }
+}
+
+#[test]
+fn server_state_holds_no_lock_that_is_not_on_the_list() {
+    let text = source("src/state.rs");
+    let start = text.find("pub struct ServerState {").expect("the struct");
+    let body = &text[start..text[start..].find("\n}\n").map(|i| start + i).expect("the end of the struct")];
+    let mut found = Vec::new();
+    for line in body.lines().skip(1) {
+        let line = line.trim();
+        if line.starts_with("//") || !(line.contains("RwLock<") || line.contains("Mutex<")) {
+            continue;
+        }
+        let name = line.trim_start_matches("pub ").split(':').next().unwrap().trim().to_string();
+        found.push(name);
+    }
+    let unlisted: Vec<&String> = found.iter().filter(|f| !ALLOWED_FIELDS.contains(&f.as_str())).collect();
+    assert!(unlisted.is_empty(), "these fields hold state between requests and are not on the list: {unlisted:?}");
+}
+
+#[test]
+fn no_static_holds_a_lock_outside_the_list() {
+    let mut files = Vec::new();
+    rust_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    let mut offenders = Vec::new();
+    for f in files {
+        let text = std::fs::read_to_string(&f).unwrap();
+        for (n, line) in text.lines().enumerate() {
+            let l = line.trim_start();
+            let is_static = l.starts_with("static ") || l.starts_with("pub static ") || l.starts_with("pub(crate) static ");
+            if is_static && ["Mutex<", "RwLock<", "OnceLock<", "LazyLock<"].iter().any(|k| l.contains(k)) {
+                let name = l.split("static ").nth(1).unwrap().split(':').next().unwrap().trim().to_string();
+                if !ALLOWED_STATICS.contains(&name.as_str()) {
+                    offenders.push(format!("{}:{} {name}", f.display(), n + 1));
+                }
+            }
+        }
+    }
+    assert!(offenders.is_empty(), "statics that hold a lock: {offenders:?}");
+}

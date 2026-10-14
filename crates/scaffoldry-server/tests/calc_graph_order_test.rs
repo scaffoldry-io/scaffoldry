@@ -1,6 +1,8 @@
 //! Calculation graph phase 2: a write recalculates what depends on it, in order, in the same
 //! transaction, and hands a large fan-out to a job.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -14,18 +16,15 @@ use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -190,7 +189,7 @@ fn id_of(v: &Value) -> String {
 // 1. A write to `c` updates `b`, then `a`, though `a` is declared first.
 #[tokio::test]
 async fn a_write_updates_the_chain_in_dependency_order_not_field_order() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let rec = create(&w, "chain", json!({ "c": 5 })).await;
     assert_eq!((n(&rec["data"]["b"]), n(&rec["data"]["a"])), (Some(10), Some(11)), "{rec}");
@@ -201,7 +200,7 @@ async fn a_write_updates_the_chain_in_dependency_order_not_field_order() {
 // 2. A parent's rollup updates when a child changes, then the formulas that read it, in order.
 #[tokio::test]
 async fn a_rollup_updates_then_the_formulas_that_read_it() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let parent = id_of(&create(&w, "parents", json!({ "name": "P" })).await);
     let child = create(&w, "children", json!({ "amount": 10, "parent": parent })).await;
@@ -215,7 +214,7 @@ async fn a_rollup_updates_then_the_formulas_that_read_it() {
 // 3. A computed change does not change a version, and is not in the owner's history.
 #[tokio::test]
 async fn a_computed_change_keeps_the_version_and_leaves_no_history() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let parent = id_of(&create(&w, "parents", json!({ "name": "P" })).await);
     let child = create(&w, "children", json!({ "amount": 10, "parent": parent })).await;
@@ -287,7 +286,7 @@ fn wait_for_job(repo: &PostgresRepository, id: uuid::Uuid) -> scaffoldry_server:
 // 4. Up to 200 owners are recomputed inline. More than that is a job.
 #[tokio::test]
 async fn a_small_fan_out_is_inline_and_a_large_one_is_a_job() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     // 150 students: inline.

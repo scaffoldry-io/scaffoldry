@@ -745,10 +745,7 @@ fn run_get_job(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedS
     let job_id_str = required_str(&args, "job_id")?;
     let uuid = uuid::Uuid::parse_str(job_id_str)
         .map_err(|_| ServiceError::NotFound("Job not found".to_string()))?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let job = crate::jobs::get_job(repo, uuid)
         .map_err(|e| ServiceError::Internal(e.to_string()))?
         .ok_or_else(|| ServiceError::NotFound("Job not found".to_string()))?;
@@ -765,10 +762,7 @@ fn run_cancel_job(caller: &AuthUser, _origin: &Origin, args: Value, state: &Shar
     let job_id_str = required_str(&args, "job_id")?;
     let uuid = uuid::Uuid::parse_str(job_id_str)
         .map_err(|_| ServiceError::NotFound("Job not found".to_string()))?;
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::Internal("Jobs need PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let job = crate::jobs::get_job(repo, uuid)
         .map_err(|e| ServiceError::Internal(e.to_string()))?
         .ok_or_else(|| ServiceError::NotFound("Job not found".to_string()))?;

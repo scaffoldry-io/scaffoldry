@@ -1,6 +1,8 @@
 //! MCP apps phase 3, server side: every path that stores a manifest validates it, and the schema
 //! is a resource an agent can read.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -46,6 +48,7 @@ async fn setup() -> (Router, String) {
 
 #[tokio::test]
 async fn creating_an_app_with_an_invalid_manifest_lists_every_problem() {
+    let _db = common::TestDb::new();
     let (app, token) = setup().await;
     let mut bad = manifest(&format!("bad-{}", &Uuid::new_v4().to_string()[..6]));
     bad["tables"][0]["fields"][0]["name"] = json!("GPA");
@@ -61,6 +64,7 @@ async fn creating_an_app_with_an_invalid_manifest_lists_every_problem() {
 
 #[tokio::test]
 async fn a_valid_manifest_is_created_and_a_new_app_cannot_claim_a_verified_domain() {
+    let _db = common::TestDb::new();
     let (app, token) = setup().await;
     let slug = format!("ok-{}", &Uuid::new_v4().to_string()[..6]);
     let mut m = manifest(&slug);
@@ -76,6 +80,7 @@ async fn a_valid_manifest_is_created_and_a_new_app_cannot_claim_a_verified_domai
 
 #[tokio::test]
 async fn updating_an_app_validates_the_manifest_too() {
+    let _db = common::TestDb::new();
     let (app, token) = setup().await;
     let slug = format!("upd-{}", &Uuid::new_v4().to_string()[..6]);
     let (s, _) = send(&app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), &token, Some(manifest(&slug))).await;
@@ -96,6 +101,7 @@ async fn updating_an_app_validates_the_manifest_too() {
 
 #[tokio::test]
 async fn the_schema_is_an_mcp_resource() {
+    let _db = common::TestDb::new();
     let (app, token) = setup().await;
     let (_, list) = send(&app, "POST", "/api/mcp", &token, Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "resources/list" }))).await;
     assert!(list["result"]["resources"].as_array().unwrap().iter().any(|r| r["uri"] == "scaffoldry://schema/app-manifest"), "{list}");

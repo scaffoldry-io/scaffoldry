@@ -1,5 +1,7 @@
 //! Approvers phase 1, test 10: a record remembers who created it, on every write path.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -24,8 +26,8 @@ async fn call(app: &axum::Router, method: &str, uri: &str, token: &str, body: Op
 
 #[tokio::test]
 async fn the_created_by_column_exists_after_migration() {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string());
+    let _db = common::TestDb::new();
+    let url = scaffoldry_server::testing::database_url();
     let _ = ServerState::new().expect("state runs the migrations");
     let found = tokio::task::spawn_blocking(move || {
         let mut c = postgres::Client::connect(&url, postgres::NoTls).unwrap();
@@ -56,6 +58,7 @@ const AUTHOR: &str = "jordan.lee@state.edu";
 
 #[tokio::test]
 async fn a_record_created_over_rest_stores_the_callers_eppn() {
+    let _db = common::TestDb::new();
     let app = app_with_demo_data().await;
     let token = issue_test_token_and_user(AUTHOR);
     let (status, body) = call(&app, "POST", &format!("/api/v1/apps/{SLUG}/records"), &token, Some(json!({ "data": { "candidate_name": "Rest Path", "gpa": 3.9 } }))).await;
@@ -70,6 +73,7 @@ async fn a_record_created_over_rest_stores_the_callers_eppn() {
 
 #[tokio::test]
 async fn a_record_created_over_the_table_route_stores_the_callers_eppn() {
+    let _db = common::TestDb::new();
     let app = app_with_demo_data().await;
     let token = issue_test_token_and_user(AUTHOR);
     let (status, body) = call(&app, "POST", &format!("/api/v1/apps/{SLUG}/tables/main/records"), &token, Some(json!({ "data": { "candidate_name": "Table Path", "gpa": 3.5 } }))).await;
@@ -79,6 +83,7 @@ async fn a_record_created_over_the_table_route_stores_the_callers_eppn() {
 
 #[tokio::test]
 async fn a_record_created_over_mcp_stores_the_callers_eppn() {
+    let _db = common::TestDb::new();
     let app = app_with_demo_data().await;
     let token = issue_test_token_and_user(AUTHOR);
     let (status, body) = call(&app, "POST", "/api/mcp", &token, Some(json!({

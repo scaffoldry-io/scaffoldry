@@ -4,6 +4,8 @@
 //! groups with a flag for more. The route gains a date `bucket` in the institution's time zone, a second `group_by`, and
 //! `count_distinct`.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -14,18 +16,15 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -253,8 +252,8 @@ fn equals(field: &str, value: &str) -> String {
 // 1. A summary view over 200,000 rows matches a direct aggregate and has 200 groups at most.
 #[tokio::test]
 async fn a_summary_view_over_200000_rows_matches_a_direct_aggregate_and_holds_200_groups_at_most() {
+    let _db = common::TestDb::new();
     let _dog = Watchdog::arm("a_summary_view_over_200000_rows_matches_a_direct_aggregate_and_holds_200_groups_at_most", 240);
-    let _turn = LOCK.lock().await;
     let w = world(200_000).await;
     let view = make_view(
         &w,
@@ -295,6 +294,7 @@ async fn a_summary_view_over_200000_rows_matches_a_direct_aggregate_and_holds_20
 // 2. A date bucket by month in the institution's time zone puts a record in the right month across a boundary.
 #[tokio::test]
 async fn a_date_bucket_by_month_in_the_institutions_zone_puts_a_record_in_the_right_month() {
+    let _db = common::TestDb::new();
     let _dog = Watchdog::arm("a_date_bucket_by_month_in_the_institutions_zone_puts_a_record_in_the_right_month", 120);
     let w = world(0).await;
     w.state.settings.write().unwrap().insert("platform.timezone".to_string(), json!("America/New_York"));
@@ -348,6 +348,7 @@ async fn a_date_bucket_by_month_in_the_institutions_zone_puts_a_record_in_the_ri
 // 3. count_distinct, and a second group_by.
 #[tokio::test]
 async fn count_distinct_and_a_second_group_by_agree_with_the_rows() {
+    let _db = common::TestDb::new();
     let _dog = Watchdog::arm("count_distinct_and_a_second_group_by_agree_with_the_rows", 120);
     let w = world(1_000).await;
     let (s, v) = aggregate(&w, "function=count_distinct&field=status").await;
@@ -375,6 +376,7 @@ async fn count_distinct_and_a_second_group_by_agree_with_the_rows() {
 // 4. A summary over a field the person cannot see is refused, and a summary needs a group.
 #[tokio::test]
 async fn a_summary_view_needs_a_group_and_an_aggregate_of_a_field_that_exists() {
+    let _db = common::TestDb::new();
     let _dog = Watchdog::arm("a_summary_view_needs_a_group_and_an_aggregate_of_a_field_that_exists", 120);
     let w = world(10).await;
     for (what, config) in [

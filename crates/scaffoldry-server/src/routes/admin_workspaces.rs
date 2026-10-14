@@ -213,18 +213,9 @@ async fn list_workspaces(
         }
     }
 
-    let record_counts: HashMap<String, usize> = if let Some(ref repo) = state.repository {
+    let record_counts: HashMap<String, usize> = { let repo = &state.repository;
         repo.count_records_by_app_slugs(&page_app_slugs)
             .map_err(|e| ServiceError::internal(e.to_string()))?
-    } else {
-        let mut map = HashMap::new();
-        for slug in &page_app_slugs {
-            let n = state.count_app_records(slug).map_err(ServiceError::internal)?;
-            if n > 0 {
-                map.insert(slug.clone(), n);
-            }
-        }
-        map
     };
 
     let collabs_guard = state
@@ -329,18 +320,9 @@ async fn get_workspace(
     };
 
     let app_slugs: Vec<String> = manifests.iter().map(|m| m.slug.clone()).collect();
-    let record_counts: HashMap<String, usize> = if let Some(ref repo) = state.repository {
+    let record_counts: HashMap<String, usize> = { let repo = &state.repository;
         repo.count_records_by_app_slugs(&app_slugs)
             .map_err(|e| ServiceError::internal(e.to_string()))?
-    } else {
-        let mut map = HashMap::new();
-        for slug in &app_slugs {
-            let n = state.count_app_records(slug).map_err(ServiceError::internal)?;
-            if n > 0 {
-                map.insert(slug.clone(), n);
-            }
-        }
-        map
     };
 
     let mut app_rows = Vec::with_capacity(manifests.len());
@@ -468,7 +450,8 @@ async fn transfer_workspace_ownership(
             for c in collabs.iter_mut() {
                 if c.role == "owner" {
                     c.role = "admin".to_string();
-                    if let Some(ref repo) = state.repository {
+                    {
+        let repo = &state.repository;
                         repo.upsert_collaborator(c)
                             .map_err(|e| ServiceError::internal(e.to_string()))?;
                     }
@@ -477,7 +460,8 @@ async fn transfer_workspace_ownership(
 
             if let Some(existing) = collabs.iter_mut().find(|c| c.eppn == target_user.eppn) {
                 existing.role = "owner".to_string();
-                if let Some(ref repo) = state.repository {
+                {
+        let repo = &state.repository;
                     repo.upsert_collaborator(existing)
                         .map_err(|e| ServiceError::internal(e.to_string()))?;
                 }
@@ -492,7 +476,8 @@ async fn transfer_workspace_ownership(
                     department: target_user.department.clone(),
                     added_at: Utc::now().to_rfc3339(),
                 };
-                if let Some(ref repo) = state.repository {
+                {
+        let repo = &state.repository;
                     repo.upsert_collaborator(&new_collab)
                         .map_err(|e| ServiceError::internal(e.to_string()))?;
                 }
@@ -508,7 +493,8 @@ async fn transfer_workspace_ownership(
             }
 
             ws.lead = target_user.name.clone();
-            if let Some(ref repo) = state.repository {
+            {
+        let repo = &state.repository;
                 repo.upsert_workspace(&ws)
                     .map_err(|e| ServiceError::internal(e.to_string()))?;
             }
@@ -531,11 +517,9 @@ fn get_records_per_table(
     state: &SharedState,
     manifest: &AppManifest,
 ) -> Result<(HashMap<String, usize>, Vec<DatasetRecord>), ServiceError> {
-    let records: Vec<DatasetRecord> = if let Some(ref repo) = state.repository {
+    let records: Vec<DatasetRecord> = { let repo = &state.repository;
         repo.list_records(&manifest.slug)
             .map_err(|e| ServiceError::internal(e.to_string()))?
-    } else {
-        state.list_app_records(&manifest.slug).map_err(ServiceError::internal)?
     };
 
     let mut counts: HashMap<String, usize> = HashMap::new();

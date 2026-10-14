@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -9,10 +11,8 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 async fn reset_test_db() {
-    tokio::task::spawn_blocking(|| {
-        let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-        });
+    let db_url = scaffoldry_server::testing::database_url();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&db_url, postgres::NoTls) {
             let _ = client.batch_execute("
                 TRUNCATE TABLE organizations CASCADE;
@@ -48,6 +48,7 @@ async fn login_user(_app: &Router, eppn: &str) -> String {
 
 #[tokio::test]
 async fn test_health_check() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     let response = app
@@ -68,6 +69,7 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn test_scim_2_provisioning_workflow() {
+    let _db = common::TestDb::new();
     let state = ServerState::new().expect("Failed to initialize state");
     let app = build_app_with_state(Arc::new(state)).expect("Failed to build router");
 
@@ -183,6 +185,7 @@ async fn test_scim_2_provisioning_workflow() {
 
 #[tokio::test]
 async fn test_workspaces_and_dataset_collaboration_lifecycle() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     // 1. Create Workspace
@@ -387,6 +390,7 @@ async fn test_workspaces_and_dataset_collaboration_lifecycle() {
 
 #[tokio::test]
 async fn test_cedar_policy_and_governance_endpoints() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     // 1. List Policies
@@ -473,6 +477,7 @@ async fn test_cedar_policy_and_governance_endpoints() {
 
 #[tokio::test]
 async fn test_published_datasets_and_relationships_api() {
+    let _db = common::TestDb::new();
     let state = std::sync::Arc::new(ServerState::new().expect("Failed to initialize state"));
     state.seed_demo().expect("Failed to seed demo data");
     let app = build_app_with_state(state).expect("Failed to build router");
@@ -587,6 +592,7 @@ async fn test_published_datasets_and_relationships_api() {
 
 #[tokio::test]
 async fn test_mcp_server_protocol_tools_and_resources() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     // 1. GET /api/mcp is not an endpoint. The protocol is POST only.
@@ -704,6 +710,7 @@ async fn test_mcp_server_protocol_tools_and_resources() {
 
 #[tokio::test]
 async fn test_app_workflow_automations_and_simulation() {
+    let _db = common::TestDb::new();
     reset_test_db().await;
     let state = std::sync::Arc::new(ServerState::new().expect("Failed to initialize state"));
     state.seed_demo().expect("Failed to seed demo data");
@@ -827,6 +834,7 @@ async fn test_app_workflow_automations_and_simulation() {
 
 #[tokio::test]
 async fn test_governance_decision_ledger_and_oscal_export() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     // 1. GET /api/v1/governance/ledger - verify initial seeded entries and chain validity
@@ -957,6 +965,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
 
 #[tokio::test]
 async fn test_framework_specification_api_and_mcp_integration() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     // 1. GET /api/v1/framework/spec - verify JSON Schema and catalog
@@ -1041,6 +1050,7 @@ async fn test_framework_specification_api_and_mcp_integration() {
 
 #[tokio::test]
 async fn test_standardized_rest_data_and_metadata_api_parity() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     // 1. Create a workspace
@@ -1405,6 +1415,7 @@ async fn test_standardized_rest_data_and_metadata_api_parity() {
 
 #[tokio::test]
 async fn test_authentication_authorization_and_impersonation() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("Failed to build router");
 
     // 1. Directory listing endpoint is deleted (returns 404)
@@ -1567,6 +1578,7 @@ async fn test_authentication_authorization_and_impersonation() {
 
 #[tokio::test]
 async fn test_workspace_sharing_security_and_configuration() {
+    let _db = common::TestDb::new();
     reset_test_db().await;
     let state = std::sync::Arc::new(ServerState::new().expect("Failed to initialize state"));
     state.seed_demo().expect("Failed to seed demo data");
@@ -1715,6 +1727,7 @@ async fn test_workspace_sharing_security_and_configuration() {
 
 #[tokio::test]
 async fn test_automation_retrigger_loop_guard() {
+    let _db = common::TestDb::new();
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("Failed to create ServerState"));
 
     let loop_rule = scaffoldry_core::AutomationRule { version: 0,
@@ -1774,6 +1787,7 @@ async fn test_automation_retrigger_loop_guard() {
 
 #[tokio::test]
 async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
+    let _db = common::TestDb::new();
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("Failed to create ServerState"));
     state.seed_demo().expect("Failed to seed demo data");
     let app = build_app_with_state(state.clone()).expect("Failed to build router");
@@ -1947,6 +1961,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
 
 #[tokio::test]
 async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
+    let _db = common::TestDb::new();
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("Failed to create ServerState"));
 
     let app_slug = "physics-dup-check";
@@ -2020,6 +2035,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
 
 #[tokio::test]
 async fn test_phase2_organization_api_and_scoping() {
+    let _db = common::TestDb::new();
     reset_test_db().await;
     let state = Arc::new(ServerState::new().expect("ServerState::new"));
     let app = build_app_with_state(state.clone()).unwrap();
@@ -2153,6 +2169,7 @@ async fn test_phase2_organization_api_and_scoping() {
 
 #[tokio::test]
 async fn test_phase5_scim_academic_and_position_sync() {
+    let _db = common::TestDb::new();
     let state = ServerState::new().expect("Failed to initialize state");
     let state_arc = Arc::new(state);
     let app = build_app_with_state(state_arc.clone()).expect("Failed to build router");

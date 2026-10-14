@@ -55,10 +55,10 @@ pub fn scim_affiliation(u: &crate::state::ScimUser) -> String {
 /// Whether this person holds a `platform_admin` role, and whether they hold a `compliance` role, on the
 /// root unit.
 fn root_roles(eppn: &str, state: &SharedState) -> (bool, bool) {
-    if let Some(ref repo) = state.repository {
-        let eppn = eppn.to_string();
-        return repo
-            .with_client(move |client| {
+    let eppn = eppn.to_string();
+    state
+        .repository
+        .with_client(move |client| {
                 let row = client.query_one(
                     "SELECT COALESCE(bool_or(r.scoped_affiliation = 'platform_admin'), false), \
                             COALESCE(bool_or(r.scoped_affiliation = 'compliance'), false) \
@@ -68,18 +68,7 @@ fn root_roles(eppn: &str, state: &SharedState) -> (bool, bool) {
                 )?;
                 Ok((row.get(0), row.get(1)))
             })
-            .unwrap_or((false, false));
-    }
-    let roles = state.roles.read().unwrap();
-    let orgs = state.organizations.read().unwrap();
-    let held = |kind: &str| {
-        roles.iter().any(|r| {
-            r.eppn.eq_ignore_ascii_case(eppn)
-                && r.scoped_affiliation == kind
-                && orgs.values().any(|o| o.id == r.organization_id && o.parent_id.is_none())
-        })
-    };
-    (held("platform_admin"), held("compliance"))
+        .unwrap_or((false, false))
 }
 
 pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
@@ -95,11 +84,8 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     }
 
     // Load SCIM user
-    let scim_user = if let Some(ref repo) = state.repository {
+    let scim_user = { let repo = &state.repository;
         repo.get_scim_user_by_username(eppn).ok().flatten()
-    } else {
-        let users = state.users.read().ok()?;
-        users.values().find(|u| u.user_name.eq_ignore_ascii_case(eppn)).cloned()
     };
 
     if let Some(ref u) = scim_user {
@@ -157,16 +143,14 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
 }
 
 pub fn boot_setup_token_needed(state: &ServerState) -> bool {
-    let token_count = if let Some(ref repo) = state.repository {
+    let token_count = { let repo = &state.repository;
         repo.count_api_tokens().unwrap_or(0)
-    } else {
-        state.api_tokens.read().map(|t| t.len() as i64).unwrap_or(0)
     };
     if token_count > 0 {
         return false;
     }
 
-    let has_platform_admin = if let Some(ref repo) = state.repository {
+    let has_platform_admin = { let repo = &state.repository;
         repo.with_client(|client| {
             let row = client.query_one(
                 "SELECT COUNT(*) FROM roles r                  JOIN organizations o ON r.organization_id = o.id                  WHERE r.scoped_affiliation = 'platform_admin'                    AND o.parent_id IS NULL",
@@ -175,13 +159,6 @@ pub fn boot_setup_token_needed(state: &ServerState) -> bool {
             let cnt: i64 = row.get(0);
             Ok(cnt > 0)
         }).unwrap_or(false)
-    } else {
-        let roles = state.roles.read().unwrap();
-        let orgs = state.organizations.read().unwrap();
-        roles.iter().any(|r| {
-            r.scoped_affiliation == "platform_admin"
-                && orgs.values().any(|o| o.id == r.organization_id && o.parent_id.is_none())
-        })
     };
 
     !has_platform_admin
@@ -285,11 +262,10 @@ pub fn default_persona_attributes(eppn: &str) -> (String, String, String, String
 /// Helper for tests to create a valid API token and ensure SCIM persona exists in DB.
 pub fn issue_test_token_and_user(eppn: &str) -> String {
     let eppn_owned = eppn.to_string();
+    // The test's database is named for this thread, so it is read before the work moves to another.
+    let db_url = crate::testing::database_url();
     std::thread::spawn(move || {
         let eppn = &eppn_owned;
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-    });
 
     let raw_token = generate_raw_token();
     let token_hash = hash_token(&raw_token);

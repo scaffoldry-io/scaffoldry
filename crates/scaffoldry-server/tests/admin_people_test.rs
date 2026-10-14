@@ -3,6 +3,8 @@
 //! The tests share one database, so they run one at a time behind a lock and reset the people
 //! tables first. The ledger is append-only and is never reset.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,11 +15,9 @@ use scaffoldry_server::state::{ApiToken, ServerState};
 use scaffoldry_server::build_app_with_state;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const ROOT_UNIT: &str = "00000000-0000-0000-0000-000000000001";
 const SCIM_TOKEN: &str = "test-scim-token";
@@ -26,14 +26,11 @@ struct Ctx {
     app: Router,
     state: Arc<ServerState>,
     admin: String,
-    _guard: MutexGuard<'static, ()>,
 }
 
 async fn ctx() -> Ctx {
-    let guard = LOCK.lock().await;
-    tokio::task::spawn_blocking(|| {
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string());
+    let url = scaffoldry_server::testing::database_url();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&url, postgres::NoTls) {
             let _ = client.batch_execute(
                 "TRUNCATE TABLE scim_users, scim_groups, roles, persons, organizations, workspaces, api_tokens CASCADE;",
@@ -45,7 +42,7 @@ async fn ctx() -> Ctx {
     let admin = issue_test_token_and_user("jordan.lee@state.edu");
     let state = Arc::new(ServerState::new().expect("state"));
     let app = build_app_with_state(state.clone()).expect("router");
-    Ctx { app, state, admin, _guard: guard }
+    Ctx { app, state, admin }
 }
 
 async fn send(app: &Router, method: &str, uri: &str, token: Option<&str>, body: Option<Value>) -> (StatusCode, Value) {
@@ -118,6 +115,7 @@ fn api_token(eppn: &str, kind: &str, raw: &str) -> ApiToken {
 // 1. Paging, order, and the row shape.
 #[tokio::test]
 async fn users_page_by_cursor_in_user_name_order_with_the_full_row() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let prefix = format!("t1{}", &Uuid::new_v4().to_string()[..6]);
     for letter in ["c", "a", "b"] {
@@ -159,6 +157,7 @@ async fn users_page_by_cursor_in_user_name_order_with_the_full_row() {
 
 #[tokio::test]
 async fn users_filter_by_active_hold_affiliation_and_search_matches_the_start_of_a_name() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let prefix = format!("t1f{}", &Uuid::new_v4().to_string()[..6]);
     let student = create_user(&c, &format!("{prefix}-student@state.edu"), "student").await;
@@ -191,6 +190,7 @@ async fn users_filter_by_active_hold_affiliation_and_search_matches_the_start_of
 // 2. SCIM updates a user it already has.
 #[tokio::test]
 async fn scim_post_for_an_existing_user_name_updates_the_row_and_keeps_its_id_and_hold() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let user_name = unique("t2");
     let payload = json!({ "userName": user_name, "active": true, "name": { "formatted": "First Name" } });
@@ -224,6 +224,7 @@ async fn scim_post_for_an_existing_user_name_updates_the_row_and_keeps_its_id_an
 // 3. A hold stops the user's tokens at the next request.
 #[tokio::test]
 async fn a_hold_stops_the_users_tokens_and_scim_cannot_lift_it() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let user_name = unique("t3");
     let user = create_user(&c, &user_name, "faculty").await;
@@ -260,6 +261,7 @@ async fn a_hold_stops_the_users_tokens_and_scim_cannot_lift_it() {
 // 4. Revoking tokens leaves the SCIM credential alone.
 #[tokio::test]
 async fn revoking_tokens_revokes_agent_and_impersonation_tokens_and_not_scim() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let user_name = unique("t4");
     let user = create_user(&c, &user_name, "faculty").await;
@@ -312,6 +314,7 @@ async fn appoint(c: &Ctx, unit: &str, eppn: &str, affiliation: &str, token: &str
 
 #[tokio::test]
 async fn appointments_can_be_revoked_by_the_right_people_and_not_when_scim_owns_them() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_dept(&c, "Chemistry", ROOT_UNIT).await;
     let other = create_dept(&c, "Geology", ROOT_UNIT).await;
@@ -355,6 +358,7 @@ async fn appointments_can_be_revoked_by_the_right_people_and_not_when_scim_owns_
 
 #[tokio::test]
 async fn platform_admin_appointments_are_root_only_and_platform_admin_only() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_dept(&c, "Physics", ROOT_UNIT).await;
     let chair = unique("t5pa");
@@ -391,6 +395,7 @@ async fn platform_admin_appointments_are_root_only_and_platform_admin_only() {
 
 #[test]
 fn the_last_platform_admin_appointment_cannot_be_revoked() {
+    let _db = common::TestDb::new();
     use scaffoldry_server::service::people::{revoke_check, RevokeRefusal};
     use scaffoldry_server::state::RoleRow;
     let root = Uuid::new_v4();
@@ -418,6 +423,7 @@ fn the_last_platform_admin_appointment_cannot_be_revoked() {
 // 6. Every admin route is registered, guarded, and checks the admin before it reads a body.
 #[tokio::test]
 async fn every_people_route_is_in_admin_routes_and_refuses_a_faculty_caller() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let wanted = [
         ("GET", "/admin/users"),
@@ -446,6 +452,7 @@ async fn every_people_route_is_in_admin_routes_and_refuses_a_faculty_caller() {
 // 7. Every write is one ledger entry in the admin's name, with the stated reason.
 #[tokio::test]
 async fn each_write_adds_one_ledger_entry_with_the_reason_and_the_matching_type() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let user_name = unique("t7");
 
@@ -483,6 +490,7 @@ async fn each_write_adds_one_ledger_entry_with_the_reason_and_the_matching_type(
 
 #[tokio::test]
 async fn creating_a_user_that_exists_is_a_conflict_and_input_is_checked() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let name = unique("t7dup");
     create_user(&c, &name, "staff").await;
@@ -499,6 +507,7 @@ async fn creating_a_user_that_exists_is_a_conflict_and_input_is_checked() {
 // The detail response and groups.
 #[tokio::test]
 async fn user_detail_shows_appointments_tokens_without_hashes_and_recent_ledger_entries() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_dept(&c, "Astronomy", ROOT_UNIT).await;
     let name = unique("t8");
@@ -526,6 +535,7 @@ async fn user_detail_shows_appointments_tokens_without_hashes_and_recent_ledger_
 
 #[tokio::test]
 async fn groups_are_listed_read_only_with_a_member_count() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let (status, _) = send(&c.app, "POST", "/scim/v2/Groups", Some(SCIM_TOKEN), Some(json!({ "displayName": "Biology Faculty" }))).await;
     assert_eq!(status, StatusCode::CREATED);

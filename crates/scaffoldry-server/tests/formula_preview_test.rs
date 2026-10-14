@@ -1,5 +1,7 @@
 //! Formula preview route tests: validation, evaluation, position error, and rate limiting
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -88,6 +90,7 @@ impl TestWorld {
 
 #[tokio::test]
 async fn preview_evaluates_valid_expression_with_custom_record() {
+    let _db = common::TestDb::new();
     let world = TestWorld::setup();
     let (status, body) = world
         .preview(json!({
@@ -109,6 +112,7 @@ async fn preview_evaluates_valid_expression_with_custom_record() {
 
 #[tokio::test]
 async fn preview_returns_same_value_as_stored_eval() {
+    let _db = common::TestDb::new();
     let world = TestWorld::setup();
     let record = json!({
         "budget": 50000.0,
@@ -132,6 +136,7 @@ async fn preview_returns_same_value_as_stored_eval() {
 
 #[tokio::test]
 async fn preview_returns_position_for_syntax_error() {
+    let _db = common::TestDb::new();
     let world = TestWorld::setup();
     let (status, body) = world
         .preview(json!({
@@ -150,6 +155,7 @@ async fn preview_returns_position_for_syntax_error() {
 
 #[tokio::test]
 async fn preview_division_by_zero_and_non_numeric_yield_blank() {
+    let _db = common::TestDb::new();
     let world = TestWorld::setup();
     let (status, body) = world
         .preview(json!({
@@ -167,6 +173,7 @@ async fn preview_division_by_zero_and_non_numeric_yield_blank() {
 
 #[tokio::test]
 async fn preview_rate_limited_to_20_per_second() {
+    let _db = common::TestDb::new();
     let world = TestWorld::setup();
     let mut got_429 = false;
 

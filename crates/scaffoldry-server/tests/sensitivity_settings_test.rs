@@ -3,6 +3,8 @@
 //! The settings are stored in the shared database, so the tests take turns and put the two
 //! sensitivity settings back before they start.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,15 +15,12 @@ use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceExt;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 struct Ctx {
     app: Router,
     admin: String,
-    _guard: MutexGuard<'static, ()>,
 }
 
 async fn send(app: &Router, method: &str, uri: &str, token: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -37,8 +36,7 @@ async fn send(app: &Router, method: &str, uri: &str, token: &str, body: Option<V
 }
 
 fn db(f: impl FnOnce(&mut postgres::Client) + Send + 'static) {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string());
+    let url = scaffoldry_server::testing::database_url();
     std::thread::spawn(move || {
         let mut c = postgres::Client::connect(&url, postgres::NoTls).expect("database");
         f(&mut c);
@@ -49,11 +47,10 @@ fn db(f: impl FnOnce(&mut postgres::Client) + Send + 'static) {
 
 /// A server with both sensitivity settings empty, so each test starts from nothing.
 async fn ctx() -> Ctx {
-    let guard = LOCK.lock().await;
     let admin = issue_test_token_and_user("jordan.lee@state.edu");
     let state = Arc::new(ServerState::new().expect("state"));
     let app = build_app_with_state(state).expect("router");
-    let c = Ctx { app, admin, _guard: guard };
+    let c = Ctx { app, admin };
     let (s, b) = send(&c.app, "PUT", "/api/v1/settings/sensitivity.categories", &c.admin, Some(json!([]))).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     let (s, b) = send(&c.app, "PUT", "/api/v1/settings/sensitivity.detectors", &c.admin, Some(json!([]))).await;
@@ -86,7 +83,7 @@ fn sha(bytes: &[u8]) -> String {
 
 #[tokio::test]
 async fn a_new_installation_has_pii_and_pci_on_with_flag_detectors() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     db(|c| {
         c.execute("DELETE FROM platform_settings WHERE key LIKE 'sensitivity.%'", &[]).unwrap();
     });
@@ -108,6 +105,7 @@ async fn a_new_installation_has_pii_and_pci_on_with_flag_detectors() {
 // 6. Switching a preset on.
 #[tokio::test]
 async fn switching_on_a_preset_copies_it_into_settings_with_one_ledger_entry() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let before = ledger_len(&c).await;
     let (s, body) = send(&c.app, "POST", "/api/v1/settings/sensitivity/presets/pci", &c.admin, None).await;
@@ -129,6 +127,7 @@ async fn switching_on_a_preset_copies_it_into_settings_with_one_ledger_entry() {
 
 #[tokio::test]
 async fn every_shipped_preset_can_be_switched_on() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     for id in ["pii", "pci", "phi", "ferpa"] {
         let (s, body) = send(&c.app, "POST", &format!("/api/v1/settings/sensitivity/presets/{id}"), &c.admin, None).await;
@@ -144,6 +143,7 @@ async fn every_shipped_preset_can_be_switched_on() {
 
 #[tokio::test]
 async fn editing_the_copied_category_does_not_touch_the_preset_file() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let file = std::fs::read(preset_path("pci")).expect("the preset file exists");
     let before = sha(&file);
@@ -161,6 +161,7 @@ async fn editing_the_copied_category_does_not_touch_the_preset_file() {
 
 #[tokio::test]
 async fn only_a_platform_admin_switches_a_preset_on() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let faculty = issue_test_token_and_user("faculty.curie@state.edu");
     let (s, _) = send(&c.app, "POST", "/api/v1/settings/sensitivity/presets/pci", &faculty, None).await;
@@ -173,6 +174,7 @@ async fn only_a_platform_admin_switches_a_preset_on() {
 // 4 and 8. A bad save is 400 with the path of the error, and nothing is saved.
 #[tokio::test]
 async fn a_bad_detector_or_category_is_400_with_its_path_and_saves_nothing() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let put = |key: &'static str, v: Value| {
         let (app, admin) = (c.app.clone(), c.admin.clone());
@@ -212,6 +214,7 @@ async fn a_bad_detector_or_category_is_400_with_its_path_and_saves_nothing() {
 
 #[tokio::test]
 async fn a_detector_action_is_flag_warn_or_block_and_all_three_save() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     for action in ["flag", "warn", "block"] {
         let (s, body) = send(&c.app, "PUT", "/api/v1/settings/sensitivity.detectors", &c.admin,
@@ -225,6 +228,7 @@ async fn a_detector_action_is_flag_warn_or_block_and_all_three_save() {
 
 #[tokio::test]
 async fn the_published_schema_and_every_preset_file_exist_and_agree() {
+    let _db = common::TestDb::new();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../governance");
     let schema: Value = serde_json::from_slice(&std::fs::read(root.join("schema/sensitivity-settings.schema.json")).expect("the schema is published")).unwrap();
     assert!(schema["$id"].as_str().unwrap().ends_with("sensitivity-settings.schema.json"));

@@ -3,6 +3,8 @@
 //! The tests share one database. Each uses users and kinds of its own. A kind no runner serves
 //! stays queued, so every test cancels what it queued.
 
+mod common;
+
 use scaffoldry_server::jobs::{cancel_job, enqueue, get_job, JobConfig, JobCtx, JobError, JobKind, JobRunner, JobsError, JOB_KINDS};
 use scaffoldry_server::repository::PostgresRepository;
 use serde_json::{json, Value};
@@ -33,6 +35,7 @@ fn count(repo: &PostgresRepository, statement: String) -> i64 {
 //    the server limit on queued jobs, anyone is refused. Finishing a job frees a place.
 #[test]
 fn the_sixth_job_from_one_user_and_the_server_limit_are_refused() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let user = unique("quota");
     let ids: Vec<Uuid> = (0..5).map(|_| enqueue(&repo, "t_limits_kind", json!({}), &user, None).expect("within the limit")).collect();
@@ -83,6 +86,7 @@ fn purge_kind() -> Vec<JobKind> {
 //    after 90 days. A recent one stays.
 #[test]
 fn purge_jobs_keeps_failed_jobs_longer_than_finished_ones() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let tag = Uuid::new_v4().to_string()[..8].to_string();
     let creator = unique("purge");
@@ -127,6 +131,7 @@ fn purge_jobs_keeps_failed_jobs_longer_than_finished_ones() {
 // 3. Every kind has a plain name and a one-sentence description. A job read back carries them.
 #[test]
 fn every_job_kind_has_a_plain_name_and_a_one_sentence_description() {
+    let _db = common::TestDb::new();
     assert!(JOB_KINDS.iter().any(|k| k.name == "purge_jobs"));
     for kind in JOB_KINDS {
         assert!(!kind.title.trim().is_empty(), "{} has no title", kind.name);
@@ -144,6 +149,7 @@ fn nothing(_ctx: &JobCtx, _p: Value) -> Result<Value, JobError> {
 
 #[test]
 fn a_job_read_back_carries_its_plain_name_and_description() {
+    let _db = common::TestDb::new();
     let repo = repo();
     let user = unique("title");
     let id = enqueue(&repo, "recalc_field", json!({}), &user, None).unwrap();

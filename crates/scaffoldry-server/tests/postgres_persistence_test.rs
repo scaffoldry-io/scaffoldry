@@ -5,6 +5,8 @@
 //! 2. Persistence of workspaces, collaborators, records, sessions, and ledger across restarts.
 //! 3. Performance and correctness at institutional scale (1,000+ workspaces and members).
 
+mod common;
+
 use postgres::{Client, NoTls};
 use scaffoldry_server::state::ServerState;
 use std::sync::Mutex;
@@ -12,9 +14,7 @@ use std::sync::Mutex;
 static DB_LOCK: Mutex<()> = Mutex::new(());
 
 fn get_db_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-    })
+    scaffoldry_server::testing::database_url()
 }
 
 fn connect_db() -> Result<Client, postgres::Error> {
@@ -23,6 +23,7 @@ fn connect_db() -> Result<Client, postgres::Error> {
 
 #[test]
 fn test_ledger_tamper_detection_on_startup() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut client = match connect_db() {
         Ok(c) => c,
@@ -81,6 +82,7 @@ fn test_ledger_tamper_detection_on_startup() {
 
 #[test]
 fn test_postgres_persistence_lifecycle() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _client = match connect_db() {
         Ok(c) => c,
@@ -122,6 +124,7 @@ fn test_postgres_persistence_lifecycle() {
 
 #[test]
 fn test_institutional_scale_workspaces() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _client = match connect_db() {
         Ok(c) => c,
@@ -162,6 +165,7 @@ fn test_institutional_scale_workspaces() {
 
 #[test]
 fn test_postgres_apps_and_datasets_persistence_lifecycle() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _client = match connect_db() {
         Ok(c) => c,
@@ -268,6 +272,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
 
 #[test]
 fn test_schema_migrations_runs_each_file_once() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut client = match connect_db() {
         Ok(c) => c,
@@ -301,6 +306,7 @@ fn test_schema_migrations_runs_each_file_once() {
 
 #[test]
 fn test_ledger_append_only_trigger_blocks_delete() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut client = match connect_db() {
         Ok(c) => c,
@@ -326,6 +332,7 @@ fn test_ledger_append_only_trigger_blocks_delete() {
 
 #[test]
 fn test_workspace_service_persists_to_second_server_state() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _client = match connect_db() {
         Ok(c) => c,
@@ -378,6 +385,7 @@ fn test_workspace_service_persists_to_second_server_state() {
 
 #[test]
 fn test_empty_ledger_on_existing_database_fails_startup_with_tamper_detected() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut client = match connect_db() {
         Ok(c) => c,
@@ -459,6 +467,7 @@ fn test_empty_ledger_on_existing_database_fails_startup_with_tamper_detected() {
 
 #[test]
 fn test_concurrent_worker_pool_executes_parallel_jobs() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let repo = match scaffoldry_server::repository::PostgresRepository::connect(Some(&get_db_url())) {
         Ok(r) => r,
@@ -497,6 +506,7 @@ fn test_concurrent_worker_pool_executes_parallel_jobs() {
 
 #[test]
 fn test_concurrent_ledger_appends_across_twenty_threads() {
+    let _db = common::TestDb::new();
     let _lock = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let repo = match scaffoldry_server::repository::PostgresRepository::connect(Some(&get_db_url())) {
         Ok(r) => r,

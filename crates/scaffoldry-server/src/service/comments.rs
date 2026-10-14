@@ -19,7 +19,7 @@ const AUTHOR_MINUTES: i64 = 15;
 const PAGE: i64 = 500;
 
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
-    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("Comments need PostgreSQL".to_string()))
+    Ok(&*state.repository)
 }
 
 fn internal(e: impl ToString) -> ServiceError {

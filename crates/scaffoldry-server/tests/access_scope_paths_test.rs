@@ -2,6 +2,8 @@
 //!
 //! The app has one rule: a person sees the students they advise. Ann advises 12 of 4,000 rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -22,8 +24,7 @@ const ADMIN: &str = "jordan.lee@state.edu";
 const ROWS: i64 = 4000;
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -216,6 +217,7 @@ async fn list_all(w: &World, token: &str, limit: usize) -> Vec<Value> {
 // 1. A restricted person lists their 12 of 4,000 rows, in pages, and the legacy full list holds the same 12.
 #[tokio::test]
 async fn a_restricted_person_lists_only_their_rows() {
+    let _db = common::TestDb::new();
     let w = world(ROWS).await;
     let rows = list_all(&w, &w.ann_token, 5).await;
     assert_eq!(rows.len(), 12, "12 of {ROWS}");
@@ -232,6 +234,7 @@ async fn a_restricted_person_lists_only_their_rows() {
 // 2. A row outside the scope is not found, and the answer matches a row that does not exist.
 #[tokio::test]
 async fn a_row_outside_the_scope_is_not_found_like_a_row_that_does_not_exist() {
+    let _db = common::TestDb::new();
     let w = world(ROWS).await;
     let (s, _) = send(&w.app, "GET", &format!("/api/v1/apps/{}/records/{}", w.slug, mine(&w)), &w.ann_token, None).await;
     assert_eq!(s, StatusCode::OK);
@@ -248,6 +251,7 @@ async fn a_row_outside_the_scope_is_not_found_like_a_row_that_does_not_exist() {
 // 3. Writes are checked against the scope.
 #[tokio::test]
 async fn writes_are_checked_against_the_scope() {
+    let _db = common::TestDb::new();
     let w = world(ROWS).await;
     let base = format!("/api/v1/apps/{}/records", w.slug);
     let new = |advisor: &str| json!({ "data": { "_table_id": "students", "name": "new", "advisor": advisor } });
@@ -273,6 +277,7 @@ async fn writes_are_checked_against_the_scope() {
 // 4. History, comments, and the link picker for a hidden row are not found, or leave it out.
 #[tokio::test]
 async fn history_comments_and_the_link_picker_leave_out_a_hidden_row() {
+    let _db = common::TestDb::new();
     let w = world(ROWS).await;
     let base = format!("/api/v1/apps/{}", w.slug);
     // Give both rows a comment and a history entry through the admin.
@@ -309,6 +314,7 @@ async fn history_comments_and_the_link_picker_leave_out_a_hidden_row() {
 // 5. The trash lists only what the person could see.
 #[tokio::test]
 async fn the_trash_lists_only_what_the_person_could_see() {
+    let _db = common::TestDb::new();
     let w = world(ROWS).await;
     let base = format!("/api/v1/apps/{}", w.slug);
     // Ann is an editor, so she sees only her own deletions. Delete one of her rows as herself.
@@ -329,6 +335,7 @@ async fn the_trash_lists_only_what_the_person_could_see() {
 // 6. The list of readers is complete: no service function that loads records is missing from it.
 #[test]
 fn every_service_function_that_loads_records_is_listed() {
+    let _db = common::TestDb::new();
     let loaders = [".find_record(", ".list_app_records(", ".list_records_page(", ".query_records(", ".indexed_page(", ".list_history(", ".list_comments(", ".link_option_rows(", ".trash_page("];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut unlisted = Vec::new();
@@ -364,6 +371,7 @@ fn every_service_function_that_loads_records_is_listed() {
 // 7. At 200,000 rows a scoped list is fast and does not scan.
 #[tokio::test]
 async fn a_scoped_list_at_200000_rows_is_fast_and_does_not_scan() {
+    let _db = common::TestDb::new();
     let w = world(200_000).await;
     // Warm the connection, then time the call.
     let (s, _) = send(&w.app, "GET", &format!("/api/v1/apps/{}/tables/students/records?limit=50", w.slug), &w.ann_token, None).await;
@@ -406,6 +414,7 @@ async fn a_scoped_list_at_200000_rows_is_fast_and_does_not_scan() {
 // 8. A process instance on a record the person cannot read is not listed, and cannot be decided.
 #[tokio::test]
 async fn the_process_queue_leaves_out_a_record_the_person_cannot_read() {
+    let _db = common::TestDb::new();
     use scaffoldry_core::workflow::{ProcessInstance, ProcessStatus};
     let state = Arc::new(ServerState::new().expect("state"));
     state.seed_demo().expect("seed");

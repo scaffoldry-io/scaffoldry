@@ -3,6 +3,8 @@
 //! Ann is an editor. Olga is an admin. A row rule hides `secret` rows from everyone but editors, so
 //! Ann alone sees them. Olga viewing as Ann must see what both of them could: no secret rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -22,8 +24,7 @@ const WORKSPACE: &str = "ws-bio-lab";
 const ADMIN: &str = "jordan.lee@state.edu";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 struct Cleanup(String);
@@ -188,6 +189,7 @@ fn target(w: &World) -> String {
 //    own. Ann sees the secret row directly. Olga cannot, so viewing as Ann does not show it either.
 #[tokio::test]
 async fn a_view_as_read_is_the_target_intersected_with_the_caller() {
+    let _db = common::TestDb::new();
     let w = world().await;
     create(&w, &w.slug, "plain").await;
     create(&w, &w.slug, "secret").await;
@@ -203,6 +205,7 @@ async fn a_view_as_read_is_the_target_intersected_with_the_caller() {
 // 2. A write is view_as_read_only, on a route and on a tool.
 #[tokio::test]
 async fn a_write_in_view_as_is_refused() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let id = create(&w, &w.slug, "plain").await;
     let (_, body) = view_as(&w, &w.olga, &w.slug, &target(&w)).await;
@@ -224,6 +227,7 @@ async fn a_write_in_view_as_is_refused() {
 // 3. The token fails on another app.
 #[tokio::test]
 async fn the_token_does_not_reach_another_app() {
+    let _db = common::TestDb::new();
     let w = world().await;
     create(&w, &w.other_slug, "elsewhere").await;
     let (_, body) = view_as(&w, &w.olga, &w.slug, &target(&w)).await;
@@ -237,6 +241,7 @@ async fn the_token_does_not_reach_another_app() {
 // 4. It expires at 30 minutes. Exit revokes it.
 #[tokio::test]
 async fn the_token_lasts_thirty_minutes_and_exit_revokes_it() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (_, body) = view_as(&w, &w.olga, &w.slug, &target(&w)).await;
     let token = body["token"].as_str().unwrap().to_string();
@@ -248,8 +253,9 @@ async fn the_token_lasts_thirty_minutes_and_exit_revokes_it() {
     // Expiry: move the stored expiry into the past.
     {
         let slug = w.slug.clone();
+        let url = db_url();
         let n = std::thread::spawn(move || {
-            let mut c = postgres::Client::connect(&db_url(), postgres::NoTls).unwrap();
+            let mut c = postgres::Client::connect(&url, postgres::NoTls).unwrap();
             c.execute("UPDATE api_tokens SET expires_at = NOW() - interval '1 second' WHERE kind = 'viewas' AND app_slug = $1", &[&slug]).unwrap()
         })
         .join()
@@ -273,6 +279,7 @@ async fn the_token_lasts_thirty_minutes_and_exit_revokes_it() {
 // 5. An editor cannot start view-as. An app admin can.
 #[tokio::test]
 async fn only_an_owner_or_admin_may_start_view_as() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let (s, _) = view_as(&w, &w.ann, &w.slug, &target(&w)).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
@@ -285,6 +292,7 @@ async fn only_an_owner_or_admin_may_start_view_as() {
 // 6. Each start is a ledger entry.
 #[tokio::test]
 async fn each_start_is_a_ledger_entry() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let count = |body: &Value| body["entries"].as_array().unwrap().iter().filter(|e| e["decision_type"] == "ViewAsStarted" && e["app_slug"] == w.slug.as_str()).count();
     let (_, before) = send(&w.app, "GET", "/api/v1/governance/ledger", &w.admin, None).await;
