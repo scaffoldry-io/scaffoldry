@@ -1000,11 +1000,9 @@ async fn test_phase_7_database_holds_no_column_equal_to_token_text() {
     assert_eq!(st, StatusCode::CREATED);
     let token = body["token"].as_str().expect("token").to_string();
 
+    let url = scaffoldry_server::testing::database_url();
     tokio::task::spawn_blocking(move || {
-        let client_res = postgres::Client::connect(
-            "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry",
-            postgres::NoTls,
-        );
+        let client_res = postgres::Client::connect(&url, postgres::NoTls);
         if let Ok(mut client) = client_res {
             let rows = client.query(
                 "SELECT COUNT(*) FROM api_tokens WHERE token_hash = $1 OR label = $1",
