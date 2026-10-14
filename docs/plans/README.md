@@ -89,7 +89,7 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | --- | --- | --- | --- | --- |
 | 58 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search | **COMPLETED** |
 | 59 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
-| 60 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | |
+| 60 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | **COMPLETED** |
 | 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | |
 | 62 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
 | 63 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
@@ -281,7 +281,7 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0059_content_findings.sql` | sensitive content phase 2. Also creates `authorized_stores` and adds `data_labels.categories` |
 | `0060_attachment_content_scan.sql` | sensitive content phase 3 |
 | `0061_attachments.sql` | attachments phase 1. Shipped as `0051_files.sql`, with `0052_file_scans.sql` for phase 2. Migrations up to `0052` are taken on disk, so a number below that in this list is a plan, not a free number: use the next free one |
-| `0062_cache_versions.sql` | stateless server phase 1 |
+| `0062_cache_versions.sql` | stateless server phase 1. Shipped as `0053_cache_versions.sql`, the next free number |
 | `0063_people_indexes.sql` | stateless server phase 2, only if a measured query needs an index |
 | `0064_policy_library.sql` | policy library phase 1 |
 | `0065_policy_fetch.sql` | policy library phase 5 |
