@@ -372,7 +372,13 @@ async fn revoke_appointment(
         "AC-02",
         &reason,
         &record,
-        || state.delete_role(role.id).map_err(|e| ServiceError::Internal(e.to_string())),
+        || match state.repository.revoke_appointment(&role, root).map_err(|e| ServiceError::Internal(e.to_string()))? {
+            crate::repository_people::Revoked::Done => Ok(()),
+            crate::repository_people::Revoked::Gone => Err(ServiceError::NotFound("No such appointment".to_string())),
+            crate::repository_people::Revoked::LastPlatformAdmin => {
+                Err(ServiceError::conflict(crate::service::people::RevokeRefusal::LastPlatformAdmin.message()))
+            }
+        },
     )?;
 
     Ok(Json(serde_json::json!({ "revoked": true })))

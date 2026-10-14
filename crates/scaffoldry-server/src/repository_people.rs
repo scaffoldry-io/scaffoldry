@@ -356,6 +356,46 @@ impl PostgresRepository {
     }
 }
 
+impl PostgresRepository {
+    /// Deletes an appointment. A Platform Admin appointment at `root` is deleted only if another person keeps
+    /// one. The admin rows are locked in id order first, so two revokes at once cannot each see the other as the
+    /// spare.
+    pub fn revoke_appointment(&self, role: &RoleRow, root: uuid::Uuid) -> Result<Revoked, RepositoryError> {
+        let role = role.clone();
+        self.with_client(move |c| {
+            let mut tx = c.transaction()?;
+            if role.scoped_affiliation == "platform_admin" && role.organization_id == root {
+                let admins: Vec<RoleRow> = tx
+                    .query(
+                        &format!("{ROLE_SELECT} WHERE r.organization_id = $1 AND r.scoped_affiliation = 'platform_admin' ORDER BY r.id FOR UPDATE OF r"),
+                        &[&root],
+                    )?
+                    .iter()
+                    .map(role_of)
+                    .collect();
+                if !admins.iter().any(|r| r.id == role.id) {
+                    return Ok(Revoked::Gone);
+                }
+                if !admins.iter().any(|r| r.id != role.id && !r.eppn.eq_ignore_ascii_case(&role.eppn)) {
+                    return Ok(Revoked::LastPlatformAdmin);
+                }
+            }
+            let n = tx.execute("DELETE FROM roles WHERE id = $1", &[&role.id])?;
+            tx.commit()?;
+            Ok(if n == 0 { Revoked::Gone } else { Revoked::Done })
+        })
+    }
+}
+
+/// What `revoke_appointment` decided.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Revoked {
+    Done,
+    /// Someone else removed it first.
+    Gone,
+    LastPlatformAdmin,
+}
+
 /// What `assign_holding` decided.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Holding {
