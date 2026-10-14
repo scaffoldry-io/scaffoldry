@@ -1,0 +1,46 @@
+# Click-through findings — 2026-10-14
+
+A short manual pass through the web desk, against a fresh database with `seed-demo`. Chromium drove the screens. The goal was to see whether a person can use the product. This is not a full test. It covers sign-in, the workspace list, one published app, Datasets, and the admin console's first load.
+
+## What worked
+
+- Sign-in with a pasted token works. The 401s before sign-in are expected.
+- The workspace list and the left rail come from the API and render with no console errors.
+- The API allows the dev origin (CORS preflight returns 200).
+- `seed-demo` and `setup-token` both run and produce a usable state.
+
+## What does not work
+
+These are gaps between what the screen says and what the system does. Items 1 and 2 are the most serious.
+
+| # | Finding | Evidence | Where |
+| --- | --- | --- | --- |
+| 1 | The published-app screen is a mock-up. Its four records are a hardcoded array. "New Proposal" and Kanban moves change React state only. Nothing is sent to the API, and a reload loses them | `PublishedAppView.tsx`: `useState<RecordItem[]>([...APP-101...])`, `handleCreateRecord`, `handleCardStageMove`. No write call seen in the browser. The backend has no app `cs-ai-benchmarks` | `apps/web/src/PublishedAppView.tsx` |
+| 2 | After "New Proposal" the screen says "Record APP-105 committed to sovereign ledger (SHA-256 block attestation)". That is false. No ledger entry is written | `handleCreateRecord` sets that message after a local state change | same file |
+| 3 | Dashboard figures are made up. "+12% this term", "88% target met", and "Target: 7 days" are fixed strings | `PublishedAppView.tsx`, stat-metric `trend_text` | same file |
+| 4 | "Approved Funding $2,290,000" is the sum of every budget, including the two proposals still under review. It has no status filter | The tile config has `aggregation: sum`, `target_field: budget`, and no filter | same file |
+| 5 | The header always shows "MC Prof. Curie, faculty", whoever is signed in | Hardcoded in the header JSX. I was signed in as the setup identity | same file |
+| 6 | The budget field has `min=1000 step=5000`, so 100,000 is refused as invalid. The valid values are 96,000 and 101,000 | Browser validation message | same file |
+| 7 | The Datasets screen is static. Its datasets, row counts ("Total Live Rows: 840"), and sample rows are written in the component. It made no API call, and the API's `/datasets` returns different data | `DatasetExplorer.tsx` has no API import. A click made no `/datasets` call | `apps/web/src/DatasetExplorer.tsx` |
+| 8 | The README's two-command dev setup cannot connect. `vite.config.ts` has no proxy, and the app calls `/api/v1` on its own origin. It works only with `VITE_API_BASE_URL` set | Vite returned its HTML for `/api/v1/me`. Setting the variable fixed it | `README.md`, `apps/web/vite.config.ts` |
+
+## Found in passing
+
+- **The setup identity is hardcoded as `central_admin`.** `resolve_user` returns `affiliation: "central_admin"` for `setup@scaffoldry.local`. This answers the first-boot question in `position-roles.md` phase 1. That phase must give the setup identity a role, or exempt it, or first boot loses its admin.
+- **The Postgres clusters stopped between turns, twice.** Tests need `pg_ctlcluster 16 scaffoldry start` (port 5433). The development docs should say so.
+
+## Not verified
+
+- **A fresh load of `/admin` showed "Dr. Sarah Connor, Faculty" and a "403 Forbidden", though I had signed in as the setup identity.** I did not find the cause. It may be a session that does not survive a full page load, or a fallback to a default persona. If it falls back to a persona, that is worse than a login screen. A reload test would settle it. I stopped before running it.
+- Everything not named above: the Builder, Kanban, forms, workflows, proposals, and every admin tab after the first load. I did not open them.
+- Whether the backend routes that these screens should call do what the tests say, from the browser. The API suite is green (588 tests). The screens above do not use it.
+
+## What this changes in the plan
+
+- The core loop, "open an app, add a record, see it saved and in the ledger", has a working backend and no working screen. The brief that fixes it is `live-data.md` (row 159, "The desk reads records and the directory from the API"). It sits in Wave 4, which has 0 of 36 done. It should move to the front.
+- Items 2, 3, 4, and 5 are honesty bugs, not missing features. Remove the false ledger message and the made-up figures now, before the real wiring lands. A governance product must not claim a ledger entry it did not write.
+- Add to `live-data.md`, or to a new brief: a rule that no screen may show sample data without a visible "sample" label, and a test that fails on a hardcoded record array in a screen component.
+- Add item 8 to `foundation.md` or the README fix list: a Vite proxy for `/api` in development.
+- Resolve the `/admin` identity question before any release.
+
+The earlier schedule estimate (6 to 10 weeks for the whole plan) is unchanged. It assumed the screens were wired. For the core loop, they are not, so the estimate for a usable first pilot should start from `live-data.md`, not from the plan's count of completed briefs.
