@@ -7,6 +7,8 @@
 //! 4. An import sets `CreatedBy` to the importer and the kind to `Import`.
 //! 5. A filter by a collaborator uses the index, with no sequential scan.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -20,19 +22,16 @@ use scaffoldry_server::service::people::{upsert_user, UserFields};
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const SECOND: &str = "jordan.lee@state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -74,13 +73,16 @@ struct World {
 }
 
 async fn world() -> World {
+    // The people first, so the server loads them at boot.
+    let token = issue_test_token_and_user(OWNER);
+    let second_token = issue_test_token_and_user(SECOND);
     let state = Arc::new(ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
     let slug = format!("ft2-{}", &Uuid::new_v4().to_string()[..8]);
     World {
         app: build_app_with_state(state.clone()).expect("router"),
-        token: issue_test_token_and_user(OWNER),
-        second_token: issue_test_token_and_user(SECOND),
+        token,
+        second_token,
         state,
         _cleanup: Cleanup(slug.clone()),
         slug,
@@ -131,7 +133,7 @@ fn manifest_with_fields(slug: &str, fields: Vec<FieldSpec>) -> AppManifest {
 // 1. A write with an unknown address is 400. A held user is refused and named.
 #[tokio::test]
 async fn a_write_with_an_unknown_address_is_400_and_a_held_user_is_refused_and_named() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let caller = scaffoldry_server::service::identity::resolve_user(OWNER, &w.state).expect("caller");
@@ -198,7 +200,7 @@ async fn a_write_with_an_unknown_address_is_400_and_a_held_user_is_refused_and_n
 // 2. A deactivated person renders with `(no longer active)`.
 #[tokio::test]
 async fn a_deactivated_person_renders_with_no_longer_active() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let deactivated_user = "dr.rivera@science.state.edu";
@@ -226,7 +228,7 @@ async fn a_deactivated_person_renders_with_no_longer_active() {
 // 3. `CreatedBy` does not change on update. `LastModifiedBy` does.
 #[tokio::test]
 async fn created_by_does_not_change_on_update_last_modified_by_does() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let manifest = manifest_with_fields(&w.slug, vec![
@@ -283,7 +285,7 @@ async fn created_by_does_not_change_on_update_last_modified_by_does() {
 // 4. An import sets `CreatedBy` to the importer and the kind to `Import`.
 #[tokio::test]
 async fn an_import_sets_created_by_to_the_importer_and_the_kind_to_import() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let manifest = manifest_with_fields(&w.slug, vec![
@@ -316,7 +318,7 @@ async fn an_import_sets_created_by_to_the_importer_and_the_kind_to_import() {
 // 5. A filter by a collaborator uses the index, with no sequential scan.
 #[tokio::test]
 async fn a_filter_by_a_collaborator_uses_the_index_with_no_sequential_scan() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let mut collab_field = FieldSpec::simple("assignee", "Assignee", FieldType::Collaborator { allow_multiple: false }, false, false);
@@ -348,7 +350,7 @@ async fn a_filter_by_a_collaborator_uses_the_index_with_no_sequential_scan() {
 // 6. Collaborator endpoint searches directory by name, restricted to app readers
 #[tokio::test]
 async fn collaborator_endpoint_searches_by_name_and_restricts_to_app_readers() {
-    let _guard = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
 
     let manifest = manifest_with_fields(&w.slug, vec![

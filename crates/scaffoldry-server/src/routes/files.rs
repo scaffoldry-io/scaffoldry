@@ -39,7 +39,7 @@ async fn upload(
     let user = session_user(&state, &headers).ok_or_else(|| pair(ServiceError::unauthorized("Unauthorized")))?;
     authorize_app(&user, &slug, AppAction::WriteRecords, &state).map_err(pair)?;
     crate::guard::origin(&state, &headers).map_err(pair)?;
-    let repo = state.repository.as_deref().ok_or_else(|| pair(ServiceError::Internal("Files need PostgreSQL".to_string())))?;
+    let repo = &*state.repository;
     let dir = files::dir().ok_or_else(|| pair(ServiceError::BadRequest("File storage is not set up on this server.".to_string())))?;
 
     let declared: u64 = headers
@@ -122,7 +122,7 @@ async fn download(State(state): State<SharedState>, headers: HeaderMap, Path((sl
     // Every refusal is the same 404, so a response never says whether a file exists.
     let Ok(ref_id) = ref_id.parse::<Uuid>() else { return not_found() };
     let Ok(record) = crate::service::records::get_record(&user, &slug, &id, &state) else { return not_found() };
-    let Some(repo) = state.repository.as_deref() else { return not_found() };
+    let repo = &state.repository;
     let Ok(Some(file)) = repo.record_file_ref(&slug, &id, ref_id) else { return not_found() };
     // A file waits for its scan. An infected one is deleted, so the lookup above has already refused it.
     if file.scan_state == "pending" {

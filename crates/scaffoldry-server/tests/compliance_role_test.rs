@@ -4,6 +4,8 @@
 //! and the grant is a ledger entry. A SCIM record that says `compliance@...` grants nothing, so the
 //! registry cannot hand out access to the disclosure log or the other compliance routes.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -20,8 +22,7 @@ const ADMIN: &str = "jordan.lee@state.edu";
 const FACULTY: &str = "prof.curie@science.state.edu";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -93,6 +94,7 @@ fn appoint(_w: &World, unit: Uuid) -> String {
 // 1. A SCIM record that says compliance@... grants nothing. The registry cannot hand out this access.
 #[tokio::test]
 async fn a_scim_claim_of_compliance_grants_nothing() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let eppn = w.officer_eppn.clone();
     let updated = db(move |c| {
@@ -112,6 +114,7 @@ async fn a_scim_claim_of_compliance_grants_nothing() {
 //    compliance, it opens the compliance routes, and revoking it takes both away. Each is a ledger entry.
 #[tokio::test]
 async fn a_platform_admin_appoints_and_revokes_a_compliance_officer() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let ledger = |body: &Value, kind: &str| body["entries"].as_array().unwrap().iter().filter(|e| e["decision_type"] == kind).count();
     let (_, before) = send(&w.app, "GET", "/api/v1/governance/ledger", &w.admin, None).await;
@@ -143,6 +146,7 @@ async fn a_platform_admin_appoints_and_revokes_a_compliance_officer() {
 // 3. Only a Platform Admin appoints compliance, and only on the root unit.
 #[tokio::test]
 async fn only_a_platform_admin_appoints_compliance_and_only_on_the_root_unit() {
+    let _db = common::TestDb::new();
     let w = world().await;
     let body = json!({ "eppn": w.officer_eppn, "scoped_affiliation": "compliance" });
 
@@ -181,6 +185,7 @@ async fn state_child(w: &World) -> Uuid {
 // 4. The other affiliations are as they were.
 #[tokio::test]
 async fn the_other_affiliations_are_as_they_were() {
+    let _db = common::TestDb::new();
     let w = world().await;
     assert_eq!(resolve_user(FACULTY, &w.state).unwrap().affiliation, "faculty");
     assert_eq!(resolve_user(ADMIN, &w.state).unwrap().affiliation, "central_admin");

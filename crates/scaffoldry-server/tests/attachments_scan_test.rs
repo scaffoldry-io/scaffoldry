@@ -3,6 +3,8 @@
 //! The scanner is a fake on a temporary socket. It speaks the daemon's streaming protocol and answers as the test says.
 //! The real daemon is never run. The tests share one database and one environment variable, so they run one at a time.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -29,8 +31,7 @@ const WORKSPACE: &str = "ws-bio-lab";
 const EICAR: &[u8] = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -279,7 +280,7 @@ fn ref_id_of(r: &Reply) -> Uuid {
 }
 
 fn scan(f: &Fixture, id: Uuid) -> String {
-    let repo = f.state.repository.clone().expect("repository");
+    let repo = f.state.repository.clone();
     scaffoldry_server::scan::scan_file(&repo, id).expect("scan")
 }
 
@@ -290,6 +291,7 @@ fn state_of(id: Uuid) -> String {
 // 1. A clean answer sets clean. An infected answer removes the blob, marks the reference, and writes a ledger entry.
 #[tokio::test]
 async fn a_clean_answer_is_clean_and_an_infected_answer_removes_the_file() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let _reset = Reset;
     let f = fixture().await;
@@ -338,6 +340,7 @@ async fn a_clean_answer_is_clean_and_an_infected_answer_removes_the_file() {
 // 2. A scanner that does not answer in time is an error result.
 #[tokio::test]
 async fn a_scanner_that_does_not_answer_is_an_error() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let _reset = Reset;
     let f = fixture().await;
@@ -355,6 +358,7 @@ async fn a_scanner_that_does_not_answer_is_an_error() {
 // 3. A pending file cannot be attached or downloaded.
 #[tokio::test]
 async fn a_pending_file_cannot_be_attached_or_downloaded() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let _reset = Reset;
     let f = fixture().await;
@@ -377,6 +381,7 @@ async fn a_pending_file_cannot_be_attached_or_downloaded() {
 // 4. With no scanner a file is skipped. With require_scan an upload is scanner_unavailable.
 #[tokio::test]
 async fn with_no_scanner_a_file_is_skipped_and_require_scan_refuses_uploads() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let _reset = Reset;
     let f = fixture().await;
@@ -408,6 +413,7 @@ async fn with_no_scanner_a_file_is_skipped_and_require_scan_refuses_uploads() {
 // 5. The EICAR string is infected by the fake's matching rule.
 #[tokio::test]
 async fn the_eicar_string_is_treated_as_infected() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let _reset = Reset;
     let f = fixture().await;
@@ -423,6 +429,7 @@ async fn the_eicar_string_is_treated_as_infected() {
 // 6. The Overview reports the scanner.
 #[tokio::test]
 async fn the_overview_reports_the_scanner() {
+    let _db = common::TestDb::new();
     let _g = LOCK.lock().await;
     let _reset = Reset;
     let f = fixture().await;

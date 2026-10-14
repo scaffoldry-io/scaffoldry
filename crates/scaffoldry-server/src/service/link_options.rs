@@ -61,7 +61,7 @@ pub fn link_options(
     state: &SharedState,
 ) -> Result<OptionsPage, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
-    let repo = state.repository.as_deref().ok_or_else(|| ServiceError::Internal("The picker needs PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     let (_, table) = table_fields_lenient(app_slug, table_id, state);
     let (primary, secondary) = labels_of(app_slug, &table, state);
     let fields = searched(app_slug, &table, primary.as_ref(), state);

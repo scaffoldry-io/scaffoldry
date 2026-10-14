@@ -4,6 +4,8 @@
 //! owner's alone, a collaborative view needs an editor to change, a locked view needs an admin.
 //! Saving a view that sorts or filters on a field outside the index builds that index.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -23,8 +25,7 @@ const WORKSPACE: &str = "ws-bio-lab";
 const PLATFORM: &str = "jordan.lee@state.edu";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -264,6 +265,7 @@ async fn migrated_entries(app: &Router, token: &str, slug: &str) -> Vec<String> 
 //    afterwards, its pages follow the move, and the migration is one ledger entry with the count.
 #[tokio::test]
 async fn manifest_views_move_to_their_own_table_once_and_the_ledger_counts_them() {
+    let _db = common::TestDb::new();
     let tag = Uuid::new_v4().to_string()[..8].to_string();
     let slug = format!("av-mig-{tag}");
     let _cleanup = Cleanup(tag);
@@ -282,7 +284,8 @@ async fn manifest_views_move_to_their_own_table_once_and_the_ledger_counts_them(
     ];
     // The manifest is stored the way an earlier release stored it, views and all.
     let first = ServerState::new().expect("state");
-    first.repository.as_ref().expect("postgres").upsert_app_manifest(&m).expect("store");
+    first.seed_demo().expect("the workspace the manifest names");
+    first.repository.upsert_app_manifest(&m).expect("store");
     drop(first);
 
     // The next start finds the manifest with views in it and moves them.
@@ -293,7 +296,7 @@ async fn manifest_views_move_to_their_own_table_once_and_the_ledger_counts_them(
     assert_eq!(entries.len(), 1, "one ledger entry for the app: {entries:?}");
     assert!(entries[0].contains("2 views"), "it carries the count: {}", entries[0]);
 
-    let stored = state.repository.as_ref().unwrap().get_app_manifest(&slug).unwrap().expect("stored");
+    let stored = state.repository.get_app_manifest(&slug).unwrap().expect("stored");
     assert!(stored.views.is_empty(), "the stored manifest holds no views");
 
     let s = slug.clone();
@@ -341,6 +344,7 @@ fn views_path_for(slug: &str) -> String {
 // 2. Who may create and change which view.
 #[tokio::test]
 async fn who_may_create_and_change_which_view() {
+    let _db = common::TestDb::new();
     let w = world(40, false).await;
 
     // A viewer creates a personal view, and cannot create a collaborative or a locked one.
@@ -398,6 +402,7 @@ async fn who_may_create_and_change_which_view() {
 // 3. A personal view is invisible to others, even to an admin.
 #[tokio::test]
 async fn a_personal_view_is_invisible_to_others() {
+    let _db = common::TestDb::new();
     let w = world(40, false).await;
     let (s, mine) = create(&w, &w.viewer, grid("Only mine", "personal", json!({}))).await;
     assert_eq!(s, StatusCode::CREATED, "{mine}");
@@ -428,6 +433,7 @@ async fn a_personal_view_is_invisible_to_others() {
 // 4. A stale version is 409.
 #[tokio::test]
 async fn a_stale_version_is_409() {
+    let _db = common::TestDb::new();
     let w = world(40, false).await;
     let (_, v) = create(&w, &w.editor, grid("Versioned", "collaborative", json!({}))).await;
     let path = format!("{}/{}", views_path(&w), v["id"].as_str().unwrap());
@@ -443,6 +449,7 @@ async fn a_stale_version_is_409() {
 //    enqueues one job. Deleting the only view that needs the field lets the index go.
 #[tokio::test]
 async fn a_view_that_sorts_on_an_unindexed_field_builds_its_index() {
+    let _db = common::TestDb::new();
     let w = world(200_000, false).await;
 
     let (s, plain) = create(&w, &w.admin, grid("By name", "collaborative", json!({}))).await;
@@ -471,6 +478,7 @@ async fn a_view_that_sorts_on_an_unindexed_field_builds_its_index() {
 // 6. A twenty-first indexed field is too_many_indexes, and the response lists the indexed fields no view uses.
 #[tokio::test]
 async fn a_twenty_first_indexed_field_is_refused_with_the_unused_ones_listed() {
+    let _db = common::TestDb::new();
     let w = world(100, true).await;
     let (s, body) = create(&w, &w.admin, grid("Sorted on late", "collaborative", sort_on("late"))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
@@ -488,6 +496,7 @@ async fn a_twenty_first_indexed_field_is_refused_with_the_unused_ones_listed() {
 // 7. A view cannot return a row or a field the person may not read.
 #[tokio::test]
 async fn a_view_cannot_return_a_row_or_field_the_person_may_not_read() {
+    let _db = common::TestDb::new();
     let w = world(40, false).await;
     // Two kanban boards, shared with everyone. One groups by a field everyone may read, one by a hidden field.
     let board = |name: &str, field: &str| json!({ "name": name, "kind": "kanban", "ownership": "collaborative", "table_id": "students", "config": { "kanban_column_field": field } });
@@ -531,6 +540,7 @@ async fn a_view_cannot_return_a_row_or_field_the_person_may_not_read() {
 // 9. The tools list, save and delete views with the same rules. A save checks the version.
 #[tokio::test]
 async fn the_view_tools_follow_the_same_rules() {
+    let _db = common::TestDb::new();
     let w = world(40, false).await;
     let (err, saved) = tool(&w, &w.viewer, "save_view", json!({ "app_slug": w.slug, "name": "Tool view", "kind": "grid", "ownership": "personal", "table_id": "students", "config": {} })).await;
     assert!(!err, "{saved}");
@@ -562,6 +572,7 @@ async fn the_view_tools_follow_the_same_rules() {
 //     stored view wins, so an approval does not undo a change to a view.
 #[tokio::test]
 async fn an_approved_manifest_does_not_put_an_older_copy_of_a_view_back() {
+    let _db = common::TestDb::new();
     use scaffoldry_engine::HostRouter;
     let w = world(40, false).await;
     let (s, v) = create(&w, &w.admin, grid("Current name", "collaborative", sort_on("name"))).await;

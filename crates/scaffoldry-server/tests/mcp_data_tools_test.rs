@@ -2,6 +2,8 @@
 //!
 //! The app is private to each run, so the tests share the database without touching anyone's rows.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -13,19 +15,16 @@ use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const VIEWER: &str = "marcus.vance@state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 /// Direct database work on its own thread. The synchronous client cannot start inside the async
@@ -168,7 +167,7 @@ fn ids(page: &Value) -> Vec<String> {
 // 1. 450 records, limit 200: 200, 200, 50 and no row twice.
 #[tokio::test]
 async fn four_hundred_fifty_records_come_back_in_pages_of_200_200_50_with_no_row_twice() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 450);
 
@@ -198,7 +197,7 @@ async fn four_hundred_fifty_records_come_back_in_pages_of_200_200_50_with_no_row
 
 #[tokio::test]
 async fn a_limit_above_200_is_a_tool_error_and_every_row_carries_id_and_version() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 5);
     let (err, msg) = tool(&f.app, &f.owner, "list_records", json!({ "app_slug": f.slug, "table_id": "t1", "limit": 201 })).await;
@@ -216,7 +215,7 @@ async fn a_limit_above_200_is_a_tool_error_and_every_row_carries_id_and_version(
 // 2. A filter on a field that is not in the manifest is a tool error.
 #[tokio::test]
 async fn a_filter_on_a_field_the_manifest_does_not_have_is_a_tool_error() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 5);
     let hostile = "title'; DROP TABLE dataset_records; --";
@@ -236,7 +235,7 @@ async fn a_filter_on_a_field_the_manifest_does_not_have_is_a_tool_error() {
 
 #[tokio::test]
 async fn filter_and_sort_work_on_a_manifest_field_and_page_by_cursor() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 30);
 
@@ -269,7 +268,7 @@ async fn filter_and_sort_work_on_a_manifest_field_and_page_by_cursor() {
 
 #[tokio::test]
 async fn a_filter_or_sort_on_a_table_over_10000_rows_is_refused_with_the_stated_text() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 10_001);
     let sort = json!({ "field_name": "score", "direction": "Asc" });
@@ -284,7 +283,7 @@ async fn a_filter_or_sort_on_a_table_over_10000_rows_is_refused_with_the_stated_
 // 3. A stale version is a tool error and the row is unchanged.
 #[tokio::test]
 async fn update_with_a_stale_version_is_a_tool_error_and_the_row_is_unchanged() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 3);
     let (_, page) = tool(&f.app, &f.owner, "list_records", json!({ "app_slug": f.slug, "table_id": "t1" })).await;
@@ -307,7 +306,7 @@ async fn update_with_a_stale_version_is_a_tool_error_and_the_row_is_unchanged() 
 // 4. A FERPA field is absent for a viewer.
 #[tokio::test]
 async fn a_ferpa_field_is_absent_from_every_read_for_a_viewer_and_present_for_an_editor() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 3);
 
@@ -350,7 +349,7 @@ async fn a_ferpa_field_is_absent_from_every_read_for_a_viewer_and_present_for_an
 
 #[tokio::test]
 async fn a_viewer_cannot_write_and_delete_needs_the_version() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     fill(&f.slug, 2);
     let (_, page) = tool(&f.app, &f.owner, "list_records", json!({ "app_slug": f.slug, "table_id": "t1" })).await;
@@ -373,7 +372,7 @@ async fn a_viewer_cannot_write_and_delete_needs_the_version() {
 
 #[tokio::test]
 async fn list_apps_and_describe_app_name_the_app_and_its_version() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let (err, apps) = tool(&f.app, &f.owner, "list_apps", json!({ "workspace_id": WORKSPACE })).await;
     assert!(!err, "{apps}");
@@ -391,6 +390,7 @@ async fn list_apps_and_describe_app_name_the_app_and_its_version() {
 // No caller text reaches the statement. Field names and values are bound parameters.
 #[test]
 fn the_statement_holds_no_text_the_caller_sent() {
+    let _db = common::TestDb::new();
     use scaffoldry_engine::FilterOperator;
     use scaffoldry_server::repository::{build_record_query, RecordQuery, SqlParam};
     let hostile = "x'; DROP TABLE dataset_records; --";
@@ -415,7 +415,7 @@ fn the_statement_holds_no_text_the_caller_sent() {
 // No tool returns more than 256 KB of rows.
 #[tokio::test]
 async fn a_page_stops_short_of_256_kb_and_says_where_to_continue() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let f = fixture().await;
     let slug = f.slug.clone();
     db(move |c| {

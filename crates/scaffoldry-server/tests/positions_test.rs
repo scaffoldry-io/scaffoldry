@@ -3,6 +3,8 @@
 //! The tests share one database, so they run one at a time behind a lock and reset the
 //! people, organization and position tables first. The ledger is append-only and is not reset.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -14,11 +16,9 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const ROOT_UNIT: &str = "00000000-0000-0000-0000-000000000001";
 const SCIM_TOKEN: &str = "test-scim-token";
@@ -26,14 +26,11 @@ const SCIM_TOKEN: &str = "test-scim-token";
 struct Ctx {
     app: Router,
     admin: String,
-    _guard: MutexGuard<'static, ()>,
 }
 
 async fn ctx() -> Ctx {
-    let guard = LOCK.lock().await;
-    tokio::task::spawn_blocking(|| {
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string());
+    let url = scaffoldry_server::testing::database_url();
+    tokio::task::spawn_blocking(move || {
         if let Ok(mut client) = postgres::Client::connect(&url, postgres::NoTls) {
             let _ = client.batch_execute(
                 "TRUNCATE TABLE scim_users, scim_groups, roles, persons, organizations, workspaces, api_tokens, position_types CASCADE;",
@@ -45,7 +42,7 @@ async fn ctx() -> Ctx {
     let admin = issue_test_token_and_user("jordan.lee@state.edu");
     let state = Arc::new(ServerState::new().expect("state"));
     let app = build_app_with_state(state).expect("router");
-    Ctx { app, admin, _guard: guard }
+    Ctx { app, admin }
 }
 
 async fn send(app: &Router, method: &str, uri: &str, token: Option<&str>, body: Option<Value>) -> (StatusCode, Value) {
@@ -146,6 +143,7 @@ fn holders_of(listing: &Value, key: &str) -> Vec<String> {
 // 1. Create a position type, assign a holder at a department, read it back.
 #[tokio::test]
 async fn a_holder_assigned_at_a_department_reads_back_from_the_unit() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_unit(&c, "Physics", "Department", ROOT_UNIT).await;
     let chair = unique("p1chair");
@@ -170,6 +168,7 @@ async fn a_holder_assigned_at_a_department_reads_back_from_the_unit() {
 // 2. A position that applies to a College cannot be held at a Department.
 #[tokio::test]
 async fn a_position_cannot_be_held_at_a_unit_type_it_does_not_apply_to() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_unit(&c, "Chemistry", "Department", ROOT_UNIT).await;
     let person = unique("p2");
@@ -183,6 +182,7 @@ async fn a_position_cannot_be_held_at_a_unit_type_it_does_not_apply_to() {
 // 3. A full position is 409 position_full. With replace the old holder is gone.
 #[tokio::test]
 async fn a_full_position_is_refused_unless_replace_vacates_the_old_holder() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_unit(&c, "Geology", "Department", ROOT_UNIT).await;
     let (old, new) = (unique("p3old"), unique("p3new"));
@@ -210,6 +210,7 @@ async fn a_full_position_is_refused_unless_replace_vacates_the_old_holder() {
 // 4. A scim holding cannot be vacated. Re-syncing removes and re-adds it.
 #[tokio::test]
 async fn a_scim_holding_cannot_be_vacated_and_a_resync_restores_it() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_unit(&c, "Astronomy", "Department", ROOT_UNIT).await;
     create_position(&c, "chair", json!(["Department"]), 1).await;
@@ -243,6 +244,7 @@ async fn a_scim_holding_cannot_be_vacated_and_a_resync_restores_it() {
 // 5. A job title never creates a holding. An unknown key inserts nothing and the write is 201.
 #[tokio::test]
 async fn a_title_or_an_unknown_key_grants_nothing() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_unit(&c, "Biology", "Department", ROOT_UNIT).await;
     create_position(&c, "chair", json!(["Department"]), 1).await;
@@ -266,6 +268,7 @@ async fn a_title_or_an_unknown_key_grants_nothing() {
 // 6. Vacancies lists exactly the units with no holder.
 #[tokio::test]
 async fn vacancies_list_exactly_the_units_with_no_holder() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let filled = create_unit(&c, "Mathematics", "Department", ROOT_UNIT).await;
     let empty = create_unit(&c, "Statistics", "Department", ROOT_UNIT).await;
@@ -286,6 +289,7 @@ async fn vacancies_list_exactly_the_units_with_no_holder() {
 // 7. An Org Unit Admin in scope can assign inside their unit and is 403 outside it.
 #[tokio::test]
 async fn an_org_unit_admin_assigns_inside_their_unit_only() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let mine = create_unit(&c, "Music", "Department", ROOT_UNIT).await;
     let theirs = create_unit(&c, "Drama", "Department", ROOT_UNIT).await;
@@ -308,6 +312,7 @@ async fn an_org_unit_admin_assigns_inside_their_unit_only() {
 // Position type rules.
 #[tokio::test]
 async fn position_types_are_validated_patched_and_audited() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_unit(&c, "History", "Department", ROOT_UNIT).await;
     let person = unique("p8");
@@ -365,6 +370,7 @@ async fn position_types_are_validated_patched_and_audited() {
 
 #[tokio::test]
 async fn a_holder_must_be_an_active_user_and_can_be_vacated() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     let dept = create_unit(&c, "Legal", "Department", ROOT_UNIT).await;
     create_position(&c, "chair", json!(["Department"]), 2).await;
@@ -391,6 +397,7 @@ async fn a_holder_must_be_an_active_user_and_can_be_vacated() {
 // Every admin route is registered and guarded.
 #[tokio::test]
 async fn every_position_route_is_in_admin_routes_and_refuses_a_faculty_caller() {
+    let _db = common::TestDb::new();
     let c = ctx().await;
     for (method, path) in [
         ("GET", "/admin/positions"),
@@ -410,6 +417,7 @@ async fn every_position_route_is_in_admin_routes_and_refuses_a_faculty_caller() 
 
 #[test]
 fn the_decision_types_for_positions_and_delegations_exist() {
+    let _db = common::TestDb::new();
     for name in ["PositionChanged", "DelegationChanged"] {
         let parsed = DecisionType::parse(name).unwrap_or_else(|| panic!("{name} is in DecisionType::ALL"));
         assert_eq!(parsed.as_str(), name);

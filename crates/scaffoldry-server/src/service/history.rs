@@ -144,10 +144,7 @@ fn parse_time(name: &str, value: Option<String>) -> Result<Option<String>, Servi
 }
 
 fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &SharedState) -> Result<HistoryPage, ServiceError> {
-    let repo = state
-        .repository
-        .as_deref()
-        .ok_or_else(|| ServiceError::Internal("History needs PostgreSQL".to_string()))?;
+    let repo = &*state.repository;
     query.filter.from = parse_time("from", query.filter.from.take())?;
     query.filter.to = parse_time("to", query.filter.to.take())?;
     let before = parse_cursor(query.cursor.as_deref())?;

@@ -387,7 +387,8 @@ async fn update_user(
         u.title = Some(t.to_string());
     }
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_scim_user(u)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
@@ -424,7 +425,8 @@ async fn delete_user(
 ) -> Result<StatusCode, StatusCode> {
     let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
     if let Some(u) = users.remove(&id) {
-        if let Some(ref repo) = state.repository {
+        {
+        let repo = &state.repository;
             repo.delete_scim_user(&id)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
@@ -479,7 +481,8 @@ async fn create_group(
     };
 
     state.groups.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), group.clone());
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_scim_group(&group)
             .map_err(|_| ServiceError::internal("Failed to persist SCIM group").into_pair())?;
     }
@@ -523,7 +526,8 @@ async fn update_group(
         g.members = m.clone();
     }
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.upsert_scim_group(g)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
@@ -542,7 +546,8 @@ async fn delete_group(
 ) -> Result<StatusCode, StatusCode> {
     let mut groups = state.groups.write().unwrap_or_else(|p| p.into_inner());
     if groups.remove(&id).is_some() {
-        if let Some(ref repo) = state.repository {
+        {
+        let repo = &state.repository;
             repo.delete_scim_group(&id)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }

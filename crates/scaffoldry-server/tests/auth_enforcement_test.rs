@@ -2,6 +2,8 @@
 //! Every API route except health and login must reject callers that lack a valid session.
 //! Identity must come from the session only, never from headers or request bodies.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -75,6 +77,7 @@ async fn login(_app: &Router, eppn: &str) -> String {
 
 #[tokio::test]
 async fn protected_routes_reject_requests_without_a_session() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let routes = [
         ("GET", "/api/v1/workspaces"),
@@ -99,6 +102,7 @@ async fn protected_routes_reject_requests_without_a_session() {
 
 #[tokio::test]
 async fn unknown_bearer_token_is_rejected() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let (status, _) = send(&app, "GET", "/api/v1/workspaces", Some("sct_not_a_real_token"), &[], None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -106,6 +110,7 @@ async fn unknown_bearer_token_is_rejected() {
 
 #[tokio::test]
 async fn health_and_login_stay_public() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let (status, _) = send(&app, "GET", "/healthz", None, &[], None).await;
     assert_eq!(status, StatusCode::OK);
@@ -115,6 +120,7 @@ async fn health_and_login_stay_public() {
 
 #[tokio::test]
 async fn caller_header_cannot_forge_an_identity() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
 
     // Without a session the header alone must not authenticate anyone.
@@ -143,6 +149,7 @@ async fn caller_header_cannot_forge_an_identity() {
 
 #[tokio::test]
 async fn record_identity_comes_from_the_session_not_the_body() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -179,6 +186,7 @@ async fn record_identity_comes_from_the_session_not_the_body() {
 
 #[tokio::test]
 async fn scim_requires_the_provisioning_credential_and_fails_closed() {
+    let _db = common::TestDb::new();
     use scaffoldry_server::build_app_with_state;
     use scaffoldry_server::state::{ApiToken, ServerState};
     use std::sync::Arc;
@@ -223,6 +231,7 @@ async fn scim_requires_the_provisioning_credential_and_fails_closed() {
 
 #[tokio::test]
 async fn token_issuance_cannot_forge_central_admin_or_arbitrary_privileges() {
+    let _db = common::TestDb::new();
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().unwrap());
     // 1. Arbitrary user resolved by identity does NOT become central_admin
     let _mallory_token = scaffoldry_server::service::identity::issue_test_token_and_user("mallory@evil.example.admin");
@@ -241,6 +250,7 @@ async fn token_issuance_cannot_forge_central_admin_or_arbitrary_privileges() {
 
 #[tokio::test]
 async fn app_and_dataset_routes_enforce_cedar_policy_authorization() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let student = login(&app, "student.smith@science.state.edu").await;
     let faculty = login(&app, "prof.curie@science.state.edu").await;
@@ -368,6 +378,7 @@ async fn app_and_dataset_routes_enforce_cedar_policy_authorization() {
 
 #[tokio::test]
 async fn governance_ledger_principal_comes_strictly_from_session_never_request_body() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let student = login(&app, "student.smith@science.state.edu").await;
     let admin = login(&app, "jordan.lee@state.edu").await;
@@ -414,6 +425,7 @@ async fn governance_ledger_principal_comes_strictly_from_session_never_request_b
 
 #[tokio::test]
 async fn test_phase_5_app_workspace_scoping_and_stored_row_access() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -659,6 +671,7 @@ async fn test_phase_5_app_workspace_scoping_and_stored_row_access() {
 
 #[tokio::test]
 async fn test_phase_6_open_routes_enforcement() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -921,6 +934,7 @@ async fn test_phase_6_open_routes_enforcement() {
 
 #[tokio::test]
 async fn test_phase_7_minted_token_works_and_delete_revokes() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -961,6 +975,7 @@ async fn test_phase_7_minted_token_works_and_delete_revokes() {
 
 #[tokio::test]
 async fn test_phase_7_expired_token_is_401() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     // Attempting to authenticate with an expired token is 401
     let fake_expired_token = format!("scf_{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
@@ -970,6 +985,7 @@ async fn test_phase_7_expired_token_is_401() {
 
 #[tokio::test]
 async fn test_phase_7_database_holds_no_column_equal_to_token_text() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -984,11 +1000,9 @@ async fn test_phase_7_database_holds_no_column_equal_to_token_text() {
     assert_eq!(st, StatusCode::CREATED);
     let token = body["token"].as_str().expect("token").to_string();
 
+    let url = scaffoldry_server::testing::database_url();
     tokio::task::spawn_blocking(move || {
-        let client_res = postgres::Client::connect(
-            "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry",
-            postgres::NoTls,
-        );
+        let client_res = postgres::Client::connect(&url, postgres::NoTls);
         if let Ok(mut client) = client_res {
             let rows = client.query(
                 "SELECT COUNT(*) FROM api_tokens WHERE token_hash = $1 OR label = $1",
@@ -1002,6 +1016,7 @@ async fn test_phase_7_database_holds_no_column_equal_to_token_text() {
 
 #[tokio::test]
 async fn test_phase_7_agent_token_gets_403_on_post_auth_tokens() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -1031,6 +1046,7 @@ async fn test_phase_7_agent_token_gets_403_on_post_auth_tokens() {
 
 #[tokio::test]
 async fn test_phase_7_inactive_scim_user_token_is_401() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let _admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -1080,6 +1096,7 @@ async fn test_phase_7_inactive_scim_user_token_is_401() {
 
 #[tokio::test]
 async fn test_phase_7_legacy_post_auth_token_is_404() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let (st, _) = send(
         &app,
@@ -1094,6 +1111,7 @@ async fn test_phase_7_legacy_post_auth_token_is_404() {
 
 #[tokio::test]
 async fn test_phase_7_second_boot_prints_no_setup_token() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let _admin = login(&app, "jordan.lee@state.edu").await;
     // With admin present in DB, check_boot_setup_token returns None
@@ -1103,6 +1121,7 @@ async fn test_phase_7_second_boot_prints_no_setup_token() {
 
 #[tokio::test]
 async fn test_phase_8_settings_cors_allowed_origins_preflight_and_ledger() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -1163,6 +1182,7 @@ async fn test_phase_8_settings_cors_allowed_origins_preflight_and_ledger() {
 
 #[tokio::test]
 async fn test_phase_8_put_settings_dev_mode_is_400() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let admin = login(&app, "jordan.lee@state.edu").await;
 
@@ -1179,6 +1199,7 @@ async fn test_phase_8_put_settings_dev_mode_is_400() {
 
 #[tokio::test]
 async fn test_phase_8_faculty_caller_gets_403_on_get_settings() {
+    let _db = common::TestDb::new();
     let app = build_app().expect("router");
     let faculty = login(&app, "prof.curie@science.state.edu").await;
 
@@ -1192,27 +1213,20 @@ async fn test_phase_8_faculty_caller_gets_403_on_get_settings() {
 
 #[test]
 fn test_phase_8_fresh_database_has_zero_workspaces() {
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string()
-    });
+    let _db = common::TestDb::new();
+    let db_url = scaffoldry_server::testing::database_url();
     if let Ok(mut client) = postgres::Client::connect(&db_url, postgres::NoTls) {
         let _ = client.batch_execute("TRUNCATE TABLE workspaces CASCADE;");
     }
     let state = ServerState::new().expect("ServerState::new on fresh database");
     assert_eq!(state.workspaces.read().unwrap().len(), 0, "Fresh database after boot must have zero workspaces");
-    let repo_count = state.repository.as_ref().map(|r| r.list_workspaces().unwrap().len()).unwrap_or(0);
+    let repo_count = state.repository.list_workspaces().unwrap().len();
     assert_eq!(repo_count, 0, "PostgreSQL repository must have zero workspaces after fresh boot");
 }
 
 #[test]
 fn test_phase_8_unreachable_database_url_returns_error() {
-    let _orig = std::env::var("DATABASE_URL").ok();
-    std::env::set_var("DATABASE_URL", "postgres://scaffoldry:wrong_password@127.0.0.1:5433/scaffoldry");
-    let res = ServerState::new();
-    if let Some(ref o) = _orig {
-        std::env::set_var("DATABASE_URL", o);
-    } else {
-        std::env::remove_var("DATABASE_URL");
-    }
-    assert!(res.is_err(), "ServerState::new must return error when DATABASE_URL is unreachable");
+    // A server that cannot reach its database does not start. No database is needed to show it.
+    let res = ServerState::connect("postgres://scaffoldry:wrong_password@127.0.0.1:5433/scaffoldry");
+    assert!(res.is_err(), "ServerState::connect must return error when the database is unreachable");
 }

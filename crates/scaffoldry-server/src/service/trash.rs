@@ -19,7 +19,7 @@ pub const DEFAULT_PAGE: usize = 50;
 const MAX_PAGE: usize = 200;
 
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
-    state.repository.as_deref().ok_or_else(|| ServiceError::Internal("The trash needs PostgreSQL".to_string()))
+    Ok(&*state.repository)
 }
 
 fn internal(e: impl ToString) -> ServiceError {

@@ -2,6 +2,8 @@
 //!
 //! Each test uses a private app with a fresh slug and deletes its rows when it ends.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -14,18 +16,15 @@ use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-static LOCK: Mutex<()> = Mutex::const_new(());
 
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -219,7 +218,7 @@ fn as_f64(v: &Value) -> f64 {
 // 1. A formula is stored when the record is written, and stored again when it changes.
 #[tokio::test]
 async fn a_formula_is_written_into_the_record_and_follows_an_update() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let b = create(&w, "budgets", json!({ "name": "Grant", "budget": 100, "spent": 30 })).await;
     let id = id_of(&b);
@@ -232,7 +231,7 @@ async fn a_formula_is_written_into_the_record_and_follows_an_update() {
 // 2. A parent's stored rollup changes with its children, and its version does not.
 #[tokio::test]
 async fn a_rollup_is_stored_in_the_parent_and_the_parents_version_does_not_move() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let p1 = id_of(&create(&w, "parents", json!({ "name": "P1" })).await);
     let p2 = id_of(&create(&w, "parents", json!({ "name": "P2" })).await);
@@ -254,7 +253,7 @@ async fn a_rollup_is_stored_in_the_parent_and_the_parents_version_does_not_move(
 // 3. A page of 200 rows with one lookup runs two statements: the page and the lookup.
 #[tokio::test]
 async fn a_page_of_200_rows_with_a_lookup_runs_exactly_two_statements() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let p = id_of(&create(&w, "parents", json!({ "name": "Dean" })).await);
     for i in 0..200 {
@@ -278,7 +277,7 @@ async fn a_page_of_200_rows_with_a_lookup_runs_exactly_two_statements() {
 // 4. A value a caller sends for a computed field is replaced.
 #[tokio::test]
 async fn a_value_sent_for_a_computed_field_is_replaced_by_the_computed_one() {
-    let _turn = LOCK.lock().await;
+    let _db = common::TestDb::new();
     let w = world().await;
     let b = create(&w, "budgets", json!({ "name": "Grant", "budget": 100, "spent": 30, "remaining": 999_999 })).await;
     let id = id_of(&b);

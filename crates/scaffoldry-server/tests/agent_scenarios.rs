@@ -10,6 +10,8 @@
 //! The runner talks to `/api/mcp` over the router with a persona's bearer token. It does not call
 //! service functions. A test below reads this file's source to hold it to that.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -20,7 +22,6 @@ use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -37,8 +38,7 @@ const PERSONAS: &[(&str, &str)] = &[
 ];
 
 fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
+    scaffoldry_server::testing::database_url()
 }
 
 fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
@@ -474,11 +474,9 @@ fn failures(rows: &[(Scenario, Outcome)]) -> Vec<String> {
         .collect()
 }
 
-static HARNESS: OnceCell<Harness> = OnceCell::const_new();
-static SUITE: Mutex<()> = Mutex::const_new(());
-
-async fn harness() -> &'static Harness {
-    HARNESS.get_or_init(Harness::boot).await
+/// A server of its own on a database of its own, for each test.
+async fn harness() -> Harness {
+    Harness::boot().await
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -488,14 +486,14 @@ async fn harness() -> &'static Harness {
 // 1. The runner executes the twenty scenarios and all pass.
 #[tokio::test]
 async fn the_scenarios_all_pass() {
-    let _turn = SUITE.lock().await;
+    let _db = common::TestDb::new();
     let h = harness().await;
     let scenarios = load_scenarios();
     assert!(scenarios.len() >= 20, "twenty scenarios: found {}", scenarios.len());
 
     let mut rows = Vec::new();
     for s in scenarios {
-        let outcome = run_scenario(h, &s).await;
+        let outcome = run_scenario(&h, &s).await;
         rows.push((s, outcome));
     }
     println!("\n{:<44} result", "scenario");
@@ -516,11 +514,11 @@ async fn the_scenarios_all_pass() {
 // 2. A wrong expectation fails with a diff of expected and actual.
 #[tokio::test]
 async fn a_wrong_expectation_fails_with_a_diff() {
-    let _turn = SUITE.lock().await;
+    let _db = common::TestDb::new();
     let h = harness().await;
     let mut s = load_scenarios().into_iter().find(|s| s.id == "enter-records").expect("the enter-records scenario");
     s.raw["steps"].as_array_mut().unwrap().last_mut().unwrap()["expect"] = json!({ "records": { "len": 99 } });
-    match run_scenario(h, &s).await {
+    match run_scenario(&h, &s).await {
         Outcome::Fail(d) => {
             assert!(d.contains("expected") && d.contains("actual"), "{d}");
             assert!(d.contains("99"), "{d}");
@@ -532,7 +530,7 @@ async fn a_wrong_expectation_fails_with_a_diff() {
 // 3. Unsupported is listed and does not fail. Supported and failing does.
 #[tokio::test]
 async fn unsupported_scenarios_are_listed_and_do_not_fail_the_suite() {
-    let _turn = SUITE.lock().await;
+    let _db = common::TestDb::new();
     let h = harness().await;
     let fixture = Scenario {
         id: "fixture-unsupported".to_string(),
@@ -540,7 +538,7 @@ async fn unsupported_scenarios_are_listed_and_do_not_fail_the_suite() {
         persona: "faculty-owner".to_string(),
         raw: json!({ "id": "fixture-unsupported", "status": "unsupported", "unsupported_reason": "No aggregate tool exists.", "steps": [] }),
     };
-    let outcome = run_scenario(h, &fixture).await;
+    let outcome = run_scenario(&h, &fixture).await;
     assert_eq!(outcome, Outcome::Unsupported("No aggregate tool exists.".to_string()));
 
     let broken = Scenario {
@@ -549,7 +547,7 @@ async fn unsupported_scenarios_are_listed_and_do_not_fail_the_suite() {
         persona: "faculty-owner".to_string(),
         raw: json!({ "id": "fixture-broken", "status": "supported", "steps": [ { "tool": "no_such_tool", "args": {} } ] }),
     };
-    let rows = vec![(fixture, outcome), (broken.clone(), run_scenario(h, &broken).await)];
+    let rows = vec![(fixture, outcome), (broken.clone(), run_scenario(&h, &broken).await)];
     let path = write_gap_register(&rows, "agent-gaps-fixture.md");
     let text = std::fs::read_to_string(path).unwrap();
     assert!(text.contains("fixture-unsupported") && text.contains("No aggregate tool exists."), "{text}");
@@ -562,10 +560,11 @@ async fn unsupported_scenarios_are_listed_and_do_not_fail_the_suite() {
 // 4. Two scenarios run at once without sharing state.
 #[tokio::test]
 async fn two_scenarios_run_in_parallel_without_sharing_state() {
+    let _db = common::TestDb::new();
     let h = harness().await;
     let s = load_scenarios().into_iter().find(|s| s.id == "enter-records").expect("the enter-records scenario");
     // Each run lists its own app and expects exactly its own three records.
-    let (a, b) = tokio::join!(run_scenario(h, &s), run_scenario(h, &s));
+    let (a, b) = tokio::join!(run_scenario(&h, &s), run_scenario(&h, &s));
     assert_eq!(a, Outcome::Pass, "{a:?}");
     assert_eq!(b, Outcome::Pass, "{b:?}");
 }
@@ -573,6 +572,7 @@ async fn two_scenarios_run_in_parallel_without_sharing_state() {
 // 5. `no_error_leaks` fails on a panic or a stack frame, and on a secret.
 #[test]
 fn no_error_leaks_fails_on_a_panic_a_stack_frame_or_a_secret() {
+    let _db = common::TestDb::new();
     assert!(check_no_leaks(&["{\"result\":\"fine\"}".to_string()], &["sct_secret".to_string()]).is_ok());
     for leak in [
         "thread 'tokio-runtime-worker' panicked at crates/scaffoldry-server/src/x.rs:10:5",
@@ -587,6 +587,7 @@ fn no_error_leaks_fails_on_a_panic_a_stack_frame_or_a_secret() {
 // 6. The runner uses the real endpoint and does not call service functions.
 #[test]
 fn the_runner_calls_the_http_endpoint_and_not_the_service_layer() {
+    let _db = common::TestDb::new();
     let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/agent_scenarios.rs")).unwrap();
     // Only code before this test counts. This test names the forbidden paths itself.
     let code = source.split("// 6. The runner uses").next().unwrap();

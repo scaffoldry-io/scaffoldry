@@ -434,7 +434,8 @@ async fn put_workspace_guards(
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         repo.insert_workspace_guard(&record).map_err(|e| ServiceError::internal(e.to_string()))?;
     }
 

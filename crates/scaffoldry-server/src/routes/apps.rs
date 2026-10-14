@@ -165,11 +165,7 @@ async fn get_app(
 
 /// The manifest as JSON, with the version a save must name.
 pub(crate) fn with_version(state: &SharedState, manifest: &AppManifest) -> Value {
-    let version = state
-        .repository
-        .as_ref()
-        .and_then(|r| r.app_manifest_version(&manifest.slug).ok().flatten())
-        .unwrap_or(1);
+    let version = state.repository.app_manifest_version(&manifest.slug).ok().flatten().unwrap_or(1);
     let mut v = serde_json::to_value(manifest).unwrap_or(Value::Null);
     if let Some(map) = v.as_object_mut() {
         map.insert("version".to_string(), Value::from(version));
@@ -212,7 +208,8 @@ async fn update_app(
     };
 
     // The save names the version it read. A newer one is a conflict before anything is proposed.
-    if let Some(ref repo) = state.repository {
+    {
+        let repo = &state.repository;
         match repo.app_manifest_version(&slug).map_err(|e| ServiceError::internal(e.to_string()).into_pair())? {
             Some(live) if live != expected_version => {
                 return Err(ServiceError::StaleVersion {
