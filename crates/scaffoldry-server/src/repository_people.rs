@@ -395,6 +395,42 @@ pub enum Revoked {
     LastPlatformAdmin,
 }
 
+/// The latest ledger entry that granted a membership, for the report of direct grants.
+#[derive(Debug, Clone)]
+pub struct GrantEntry {
+    pub workspace_id: String,
+    pub target: String,
+    pub app_slug: String,
+    pub principal: String,
+    pub timestamp: String,
+    pub rationale: String,
+}
+
+impl PostgresRepository {
+    /// For each workspace, member, and app, the latest entry that added them. One statement.
+    pub fn membership_grant_entries(&self) -> Result<Vec<GrantEntry>, RepositoryError> {
+        self.with_client(|c| {
+            let q = "SELECT DISTINCT ON (payload->>'workspace_id', payload->>'target_eppn', COALESCE(payload->>'app_slug', '')) \
+                            payload->>'workspace_id', payload->>'target_eppn', COALESCE(payload->>'app_slug', ''), \
+                            principal, timestamp_iso, rationale \
+                     FROM governance_ledger \
+                     WHERE decision_type IN ('WorkspaceMemberAdded', 'AccessRoleGranted') AND payload->>'target_eppn' IS NOT NULL \
+                     ORDER BY payload->>'workspace_id', payload->>'target_eppn', COALESCE(payload->>'app_slug', ''), sequence DESC";
+            Ok(c.query(q, &[])?
+                .iter()
+                .map(|r| GrantEntry {
+                    workspace_id: r.get(0),
+                    target: r.get(1),
+                    app_slug: r.get(2),
+                    principal: r.get(3),
+                    timestamp: r.get(4),
+                    rationale: r.get(5),
+                })
+                .collect())
+        })
+    }
+}
+
 /// What `assign_holding` decided.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Holding {

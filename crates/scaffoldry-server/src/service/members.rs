@@ -178,6 +178,12 @@ fn memberships(workspace: &str, state: &SharedState) -> Vec<CollaboratorRecord> 
     all.into_iter().filter(|c| c.app_slug.is_empty()).collect()
 }
 
+/// Every membership in every workspace that names one person, whether it covers the workspace or one app.
+pub fn direct_memberships(state: &SharedState) -> Vec<CollaboratorRecord> {
+    let all = state.collaborators.read().unwrap_or_else(|p| p.into_inner());
+    all.values().flatten().filter(|c| split_principal(&c.eppn).0 == Kind::User).cloned().collect()
+}
+
 /// The memberships limited to one app of the workspace.
 fn app_memberships(workspace: &str, app: &str, state: &SharedState) -> Vec<CollaboratorRecord> {
     let all = state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default();

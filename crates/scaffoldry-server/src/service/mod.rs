@@ -24,6 +24,7 @@ pub mod calc;
 pub mod view_as;
 pub mod views;
 pub mod link_options;
+pub mod grants;
 pub mod members;
 pub mod scope;
 pub mod trash;

@@ -424,3 +424,39 @@ async fn app_memberships_follow_their_rules_and_remove_one_scope_at_a_time() {
     assert_eq!(send(&w.app, "DELETE", &uri, &w.owner, None).await.0, StatusCode::NO_CONTENT);
     assert_eq!(w.level(&cy_token).await, "read", "removing the app membership leaves the workspace-wide one");
 }
+
+// 3. An admin can list every grant that names a person, and who made it.
+#[tokio::test]
+async fn an_admin_lists_direct_person_grants_with_who_made_them() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let admin = issue_test_token_and_user("jordan.lee@state.edu");
+    let (dee, _) = w.person("dee");
+    let dept = w.unit(None, "dept");
+    let (holder, _) = w.person("holder");
+    w.role_at(&holder, dept, Some("chair"));
+
+    assert_eq!(w.share("user", &dee, "Viewer").await.0, StatusCode::CREATED);
+    assert_eq!(w.share_app("user", &dee, "Editor", &w.slug).await.0, StatusCode::CREATED);
+    assert_eq!(w.share("position", &format!("chair@{dept}"), "Viewer").await.0, StatusCode::CREATED);
+
+    let (status, body) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows: Vec<&Value> = body["grants"].as_array().expect("grants").iter().filter(|g| g["who"] == dee.as_str()).collect();
+    assert_eq!(rows.len(), 2, "one workspace-wide and one app grant for the person: {body}");
+    let whole = rows.iter().find(|g| g["scope"] == "workspace").expect("a workspace-wide grant");
+    let app = rows.iter().find(|g| g["scope"] == "app").expect("an app grant");
+    assert_eq!(whole["role"], "Viewer");
+    assert_eq!(app["role"], "Editor");
+    assert_eq!(app["app_slug"], w.slug.as_str());
+    for g in [whole, app] {
+        assert_eq!(g["granted_by"], OWNER, "the ledger names who made it: {g}");
+        assert!(g["granted_at"].as_str().is_some_and(|t| !t.is_empty()), "and when: {g}");
+        assert_eq!(g["kind"], "membership");
+    }
+    assert!(!body["grants"].as_array().unwrap().iter().any(|g| g["who"].as_str().is_some_and(|x| x.contains("chair@"))), "a position is not a person: {body}");
+
+    // Only a Platform Admin may read it.
+    let (status, _) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &w.owner, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

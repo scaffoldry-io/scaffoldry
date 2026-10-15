@@ -438,3 +438,25 @@ async fn a_new_instance_records_its_starter_and_flags_a_vacant_step_with_a_log_l
     assert_eq!(inst.no_approver.as_deref(), Some("position_vacant"));
     assert!(inst.log.iter().any(|l| l.contains("position_vacant")), "the first time it is set, a log line says so: {:?}", inst.log);
 }
+
+// A named approver and a named assignee are direct grants to a person. The admin report lists both.
+#[tokio::test]
+async fn the_direct_grants_report_lists_named_approvers_and_assignees() {
+    let _db = common::TestDb::new();
+    let (w, p) = world().await;
+    let named = w.waiting(w.rule("rg1", Some(ApproverSpec::Person { eppn: p.okafor.clone() }), "chair"), "rec-g1", &p.sam, None, None);
+    let assigned = w.waiting(w.rule("rg2", Some(ApproverSpec::Person { eppn: p.rivera.clone() }), "chair"), "rec-g2", &p.sam, None, Some(&p.dean));
+
+    let (s, body) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &w.admin, None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let rows = body["grants"].as_array().expect("grants");
+    let find = |kind: &str, who: &str| rows.iter().find(|g| g["kind"] == kind && g["who"] == who);
+
+    let approver = find("approver", &p.okafor).expect("the named approver is listed");
+    assert_eq!(approver["rule_id"], "rg1");
+    assert_eq!(approver["app_slug"], APP);
+    assert!(find("approver", &p.rivera).is_some(), "so is the second rule's approver");
+    let assignee = find("assignment", &p.dean).expect("the assignee is listed");
+    assert_eq!(assignee["instance_id"], assigned.as_str());
+    assert!(!rows.iter().any(|g| g["kind"] == "assignment" && g["instance_id"] == named.as_str()), "an unassigned instance is not a grant");
+}

@@ -109,11 +109,20 @@ Two points to settle with phase 2a, both found by reading `scope.rs`, neither te
 - `person_of` gives rules bare position keys. A rule for "chair" cannot tell Chemistry's chair from Physics's. Decide whether `Person` carries `key@unit` pairs.
 - `person_of` lists only the units where the person holds a role, not the units below. Cedar's check expands to descendants with `unit_ids_for`. Decide whether row rules should match.
 
-## Phase 3 — direct grants are visible and carry a reason
+## Phase 3 — direct grants are visible (3a done), and carry a reason (3b not done)
 
-Failing test first: an admin lists direct person grants and gets every `user` membership, every `Person` approver, and every `assigned_to`, each with who made it, when, and why. The same list marks which grants are app-scoped and which are workspace-wide.
+**3a, done.** `GET /api/v1/admin/direct-grants` lists every grant that names a person. Only a Platform Admin may call it. Each row has a kind:
+- `membership`: a person named in a workspace or app membership. The row says whether it is workspace-wide or limited to an app, the role, who made it, when, and the ledger's rationale. Who and when come from the latest ledger entry for that member and scope, found with one statement. A membership with no ledger entry shows no granter and the time it was added.
+- `approver`: an approver rule that names a person, with the app, rule, and step. Rules change by proposal, so no granter is shown here.
+- `assignment`: an open instance assigned to a person.
 
-Change: one read-only admin list. A direct grant made through the API requires a reason. Grants that exist today show a blank reason and are marked "before reasons were required".
+Position, group, and unit memberships are not listed. They are not direct grants.
+
+Tests: the membership list with who made each grant, and the refusal for a non-admin, in `member_principals_test.rs`. The approver and assignee rows in `approver_engine_test.rs`. The first failed before the change, on the missing route. The second I wrote after the code and did not watch fail.
+
+**3b, not done.** Requiring a reason on a new direct grant changes the add-member request that the web desk sends today, and the desk has no field for it. It needs an API change, a desk change, and a rule for clients that do not send a reason. It is a decision, not a step. The report already shows the ledger's rationale, which today is generated text, not a reason a person wrote.
+
+Not done in 3a: the desk has no screen for this list. It is an API only.
 
 ## Phase 4 — department attribute becomes a unit (optional)
 
@@ -143,4 +152,4 @@ Do this only if you want it. It changes who can see departmental workspaces. Wor
 
 ## Prompt for the session
 
-Read this file and `docs/plans/foundation.md` "Decisions already made". Phases 1 and 2a are done. Settle the open question under 2a first. Then do phase 3. Write the failing test, show it fail for the stated reason, make it pass, run the full workspace suite, and stop. Do not start phase 2b without a separate decision.
+Read this file and `docs/plans/foundation.md` "Decisions already made". Phases 1, 2a, and 3a are done. Settle the open question under 2a, and decide 3b, before more work. Phase 2b and phase 4 each need a separate decision.
