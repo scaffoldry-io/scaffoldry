@@ -30,7 +30,9 @@ Items 2, 3, and 5 are fixed. The published-app screen no longer claims a ledger 
 
 Items 6 and 8 are fixed too. The budget field's step is now 1,000, so 100,000 is valid. Vite forwards `/api` to `http://127.0.0.1:8080`, so the README's two commands connect without `VITE_API_BASE_URL`. Both have tests. I checked the proxy rule in the config only. I did not run the two servers together after the change.
 
-Still open: items 1, 4, and 7, and the unverified `/admin` identity question. Item 1 is the real fix. The label only stops the screen from misleading people.
+The `/admin` identity question is resolved. The desk asked the server who a token belongs to only at sign-in. After a reload the stored token came back, but the person shown reset to the built-in "Dr. Sarah Connor, faculty". The screen then displayed and gated as that person while API calls carried the real token. The desk now asks the server on load and shows that person. A 401 ends the session. A network failure does not. Three tests cover it. The "403 Forbidden" I saw is consistent with the desk gating on the wrong person. I did not confirm that separately in a browser.
+
+Still open: items 1, 4, and 7. Item 1 is the real fix. The label only stops the screen from misleading people.
 
 ## Found in passing
 

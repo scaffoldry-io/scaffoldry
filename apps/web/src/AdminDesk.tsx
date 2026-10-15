@@ -81,6 +81,20 @@ const PERSONAS: Persona[] = [
   },
 ];
 
+// The person a server user is, for the desk. A known demo persona keeps its richer attributes.
+function personaOfServerUser(user: { eppn: string; name?: string; affiliation?: string; department?: string }): Persona {
+  const found = PERSONAS.find((p) => p.eppn === user.eppn);
+  if (found) return found;
+  return {
+    eppn: user.eppn,
+    name: user.name || user.eppn,
+    affiliation: (user.affiliation || "faculty") as Persona["affiliation"],
+    department: user.department || "General",
+    roleTitle: user.affiliation || "Member",
+    isAdmin: user.affiliation === "central_admin",
+  };
+}
+
 export const getUserWorkspaceRole = (
   ws: Workspace,
   persona: Persona
@@ -760,6 +774,27 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   const [pasteToken, setPasteToken] = useState("");
   const [signInError, setSignInError] = useState<string | null>(null);
 
+  // A reload restores the stored token but not who it belongs to. Ask the server, and drop a token it refuses.
+  useEffect(() => {
+    if (!authToken || initialEppn) return;
+    let cancelled = false;
+    apiClient
+      .getCurrentUser()
+      .then((me) => {
+        if (!cancelled && me?.user) setActivePersona(personaOfServerUser(me.user));
+      })
+      .catch((err: { status?: number }) => {
+        // Only a refusal means the token is bad. An unreachable server must not end the session.
+        if (cancelled || err?.status !== 401) return;
+        setAuthToken(null);
+        setAuthTokenState(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleTokenSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pasteToken.trim()) return;
@@ -768,21 +803,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       setAuthToken(pasteToken.trim());
       const me = await apiClient.getCurrentUser();
       setAuthTokenState(pasteToken.trim());
-      if (me?.user) {
-        const found = PERSONAS.find((p) => p.eppn === me.user.eppn);
-        if (found) {
-          setActivePersona(found);
-        } else {
-          setActivePersona({
-            eppn: me.user.eppn,
-            name: me.user.name || me.user.eppn,
-            affiliation: me.user.affiliation || "faculty",
-            department: me.user.department || "General",
-            roleTitle: me.user.affiliation || "Member",
-            isAdmin: me.user.affiliation === "central_admin",
-          });
-        }
-      }
+      if (me?.user) setActivePersona(personaOfServerUser(me.user));
     } catch (err: any) {
       setAuthToken(null);
       setSignInError(err?.message || "Invalid token");
