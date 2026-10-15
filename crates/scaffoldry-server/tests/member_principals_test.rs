@@ -125,16 +125,33 @@ impl World {
         .await
     }
 
+    /// A membership limited to one app.
+    async fn share_app(&self, principal_type: &str, principal_id: &str, role: &str, app: &str) -> (StatusCode, Value) {
+        send(
+            &self.app,
+            "POST",
+            &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"),
+            &self.owner,
+            Some(json!({ "principal_type": principal_type, "principal_id": principal_id, "role": role, "app_slug": app })),
+        )
+        .await
+    }
+
     /// What a person can do in the workspace's app: `none`, `read`, or `write`.
     async fn level(&self, token: &str) -> &'static str {
-        let (read, _) = send(&self.app, "GET", &format!("/api/v1/apps/{}/records", self.slug), token, None).await;
+        self.level_in(token, &self.slug).await
+    }
+
+    /// The same for any app in the workspace.
+    async fn level_in(&self, token: &str, slug: &str) -> &'static str {
+        let (read, _) = send(&self.app, "GET", &format!("/api/v1/apps/{slug}/records"), token, None).await;
         if !read.is_success() {
             return "none";
         }
         let (write, _) = send(
             &self.app,
             "POST",
-            &format!("/api/v1/apps/{}/records", self.slug),
+            &format!("/api/v1/apps/{slug}/records"),
             token,
             Some(json!({ "data": { "_table_id": "t", "name": "x" } })),
         )
@@ -347,4 +364,63 @@ async fn every_grant_writes_one_ledger_entry() {
         assert_eq!(w.share(t, &id, "Viewer").await.0, StatusCode::CREATED, "{t}");
     }
     assert_eq!(w.ledger_count(DecisionType::AccessRoleGranted), before + 3);
+}
+
+// 2a. A membership can be limited to one app. It reaches that app, no other app, and no workspace action.
+#[tokio::test]
+async fn a_membership_limited_to_one_app_reaches_only_that_app() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let other_app = format!("mq-{}", w.tag);
+    w.state.engine.write().unwrap().register_manifest(manifest(&other_app)).unwrap();
+
+    let chem = w.unit(None, "chem");
+    let phys = w.unit(None, "phys");
+    let (ann, ann_token) = w.person("ann");
+    let (bob, bob_token) = w.person("bob");
+    w.role_at(&ann, chem, Some("chair"));
+    w.role_at(&bob, phys, Some("chair"));
+
+    let chair = format!("chair@{chem}");
+    let (status, body) = w.share_app("position", &chair, "Admin", &w.slug).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    assert_eq!(w.level_in(&ann_token, &w.slug).await, "write", "the chair reaches the app named");
+    assert_eq!(w.level_in(&ann_token, &other_app).await, "none", "and not another app in the same workspace");
+    assert_eq!(w.level_in(&bob_token, &w.slug).await, "none", "and a chair elsewhere reaches nothing");
+
+    // An Admin on one app does not manage the workspace.
+    let (status, _) = send(
+        &w.app,
+        "POST",
+        &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"),
+        &ann_token,
+        Some(json!({ "principal_type": "user", "principal_id": bob, "role": "Viewer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "an app grant is not a workspace grant");
+
+}
+
+// 2a. The rules around an app membership: the app must be in the workspace, an app membership cannot be an owner,
+// a principal may hold both kinds, and removing one kind leaves the other.
+#[tokio::test]
+async fn app_memberships_follow_their_rules_and_remove_one_scope_at_a_time() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let (cy, cy_token) = w.person("cy");
+
+    let (status, _) = w.share_app("user", &cy, "Viewer", "no-such-app").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the app must belong to the workspace");
+    let (status, _) = w.share_app("user", &cy, "Owner", &w.slug).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a membership limited to one app cannot be an owner");
+
+    assert_eq!(w.share("user", &cy, "Viewer").await.0, StatusCode::CREATED);
+    assert_eq!(w.share_app("user", &cy, "Editor", &w.slug).await.0, StatusCode::CREATED, "both kinds at once");
+    assert_eq!(w.share_app("user", &cy, "Editor", &w.slug).await.0, StatusCode::BAD_REQUEST, "but not the same kind twice");
+    assert_eq!(w.level(&cy_token).await, "write", "the higher of the two applies in the app");
+
+    let uri = format!("/api/v1/workspaces/{WORKSPACE}/collaborators/{cy}?app={}", w.slug);
+    assert_eq!(send(&w.app, "DELETE", &uri, &w.owner, None).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(w.level(&cy_token).await, "read", "removing the app membership leaves the workspace-wide one");
 }

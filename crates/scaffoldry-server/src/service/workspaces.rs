@@ -62,6 +62,9 @@ pub struct CollaboratorPayload {
     pub name: Option<String>,
     pub scoped_affiliation: Option<String>,
     pub department: Option<String>,
+    /// Limits the membership to one app of the workspace. Empty or absent means the whole workspace.
+    #[serde(default)]
+    pub app_slug: Option<String>,
 }
 
 pub fn list_workspaces(
@@ -322,6 +325,7 @@ pub fn create_workspace(
         scoped_affiliation: caller.affiliation.clone(),
         department: caller.department.clone(),
         added_at: now,
+        app_slug: String::new(),
     };
 
     {
@@ -557,6 +561,18 @@ pub fn list_collaborators(
     Ok(collabs_guard.get(workspace_id).cloned().unwrap_or_default())
 }
 
+/// The app a membership names, when it names one. The app must belong to the workspace.
+fn app_of_membership(app: Option<&str>, workspace_id: &str, state: &SharedState) -> Result<String, ServiceError> {
+    use scaffoldry_engine::HostRouter;
+    let Some(app) = app.map(str::trim).filter(|a| !a.is_empty()) else { return Ok(String::new()) };
+    let engine = state.engine.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let belongs = engine.resolve_by_slug(app).is_some_and(|m| m.workspace_id.as_deref() == Some(workspace_id));
+    if !belongs {
+        return Err(ServiceError::BadRequest(format!("App '{app}' is not in workspace {workspace_id}")));
+    }
+    Ok(app.to_string())
+}
+
 pub fn add_collaborator(
     caller: &AuthUser,
     workspace_id: &str,
@@ -623,17 +639,20 @@ pub fn add_collaborator(
     };
     check_principal(kind, &principal_id)?;
     let key = members::stored_key(kind, &principal_id);
+    let app = app_of_membership(payload.app_slug.as_deref(), workspace_id, state)?;
 
-    if collabs.iter().any(|c| c.eppn.eq_ignore_ascii_case(&key)) {
-        return Err(ServiceError::BadRequest(format!(
-            "{key} is already a member of workspace {workspace_id}",
-        )));
+    if collabs.iter().any(|c| c.eppn.eq_ignore_ascii_case(&key) && c.app_slug == app) {
+        let scope = if app.is_empty() { format!("workspace {workspace_id}") } else { format!("app {app}") };
+        return Err(ServiceError::BadRequest(format!("{key} is already a member of {scope}")));
     }
 
     let role_str = payload.role.unwrap_or_else(|| "Viewer".to_string());
     let role = Role::parse(&role_str).ok_or_else(|| ServiceError::BadRequest("role must be viewer, commenter, editor, admin, or owner".to_string()))?;
     if kind != Kind::User && role == Role::Owner {
         return Err(ServiceError::BadRequest("Only a person can be an owner".to_string()));
+    }
+    if !app.is_empty() && role == Role::Owner {
+        return Err(ServiceError::BadRequest("A membership limited to one app cannot be an owner".to_string()));
     }
     let name_str = payload.name.unwrap_or_else(|| key.clone());
     let affiliation_str = payload
@@ -652,24 +671,27 @@ pub fn add_collaborator(
         scoped_affiliation: affiliation_str,
         department: dept_str,
         added_at: Utc::now().to_rfc3339(),
+        app_slug: app.clone(),
     };
 
     state.append_ledger_entry(RecordDecisionInput {
         principal: caller.eppn.clone(),
         organization_code: ws.code,
-        app_slug: None,
+        app_slug: Some(app.clone()).filter(|a| !a.is_empty()),
         decision_type: if kind == Kind::User { DecisionType::WorkspaceMemberAdded } else { DecisionType::AccessRoleGranted },
         oscal_control_id: "AC-02".to_string(),
         rationale: format!(
-            "Principal {} added {} as {} to workspace {}",
-            caller.eppn, key, role_str, ws.name
+            "Principal {} added {} as {} to {}",
+            caller.eppn, key, role_str,
+            if app.is_empty() { format!("workspace {}", ws.name) } else { format!("app {app} in workspace {}", ws.name) }
         ),
         payload: &json!({
             "workspace_id": workspace_id,
             "target_eppn": key,
             "principal_type": kind.as_str(),
             "principal_id": principal_id,
-            "role": role_str
+            "role": role_str,
+            "app_slug": app
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
@@ -755,7 +777,7 @@ pub fn update_collaborator_role(
     }
     let member = collabs
         .iter_mut()
-        .find(|m| m.eppn == target_eppn)
+        .find(|m| m.eppn == target_eppn && m.app_slug.is_empty())
         .ok_or_else(|| ServiceError::NotFound(format!("Member '{target_eppn}' not found")))?;
 
     member.role = new_role.to_string();
@@ -794,10 +816,12 @@ pub fn update_collaborator_role(
     Ok(updated)
 }
 
+/// Removes one membership. `app` is empty for the workspace-wide one, or names the app a limited one reaches.
 pub fn remove_collaborator(
     caller: &AuthUser,
     workspace_id: &str,
     target_eppn: &str,
+    app: &str,
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     let ws = {
@@ -847,12 +871,12 @@ pub fn remove_collaborator(
         });
     }
 
-    if is_last_user_owner(&collabs, target_eppn) {
+    if app.is_empty() && is_last_user_owner(&collabs, target_eppn) {
         return Err(ServiceError::Conflict("A workspace keeps at least one person as owner".to_string()));
     }
     let mut remaining = collabs;
     let initial_len = remaining.len();
-    remaining.retain(|m| m.eppn != target_eppn);
+    remaining.retain(|m| !(m.eppn == target_eppn && m.app_slug == app));
 
     if remaining.len() == initial_len {
         return Err(ServiceError::NotFound(format!("Member '{target_eppn}' not found")));
@@ -870,13 +894,14 @@ pub fn remove_collaborator(
         ),
         payload: &json!({
             "workspace_id": workspace_id,
-            "removed_eppn": target_eppn
+            "removed_eppn": target_eppn,
+            "app_slug": app
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
     {
         let repo = &state.repository;
-        repo.remove_collaborator(workspace_id, target_eppn).map_err(|e| ServiceError::Internal(e.to_string()))?;
+        repo.remove_collaborator(workspace_id, target_eppn, app).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
     {
@@ -912,6 +937,7 @@ pub fn manage_workspace_member(
                     name: name.map(str::to_string),
                     scoped_affiliation: None,
                     department: None,
+                    app_slug: None,
                 },
                 state,
             )?;
@@ -923,7 +949,7 @@ pub fn manage_workspace_member(
             Ok(serde_json::to_value(res).unwrap_or(json!({ "status": "updated" })))
         }
         "remove" | "delete" => {
-            remove_collaborator(caller, workspace_id, eppn, state)?;
+            remove_collaborator(caller, workspace_id, eppn, "", state)?;
             Ok(json!({ "status": "removed", "eppn": eppn, "workspace_id": workspace_id }))
         }
         other => Err(ServiceError::BadRequest(format!(

@@ -172,9 +172,11 @@ async fn remove_collaborator(
     user: Option<Extension<AuthUser>>,
     headers: HeaderMap,
     Path((id, eppn)): Path<(String, String)>,
+    axum::extract::Query(scope): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<StatusCode, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
-    workspace_service::remove_collaborator(&caller, &id, &eppn, &state)?;
+    let app = scope.get("app").map(String::as_str).unwrap_or("");
+    workspace_service::remove_collaborator(&caller, &id, &eppn, app, &state)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

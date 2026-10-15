@@ -67,6 +67,7 @@ async fn world() -> World {
         scoped_affiliation: "faculty".to_string(),
         department: "physics".to_string(),
         added_at: String::new(),
+        app_slug: String::new(),
     });
     let app = build_app_with_state(state).expect("router");
     let slug = format!("prop-{}", &Uuid::new_v4().to_string()[..8]);

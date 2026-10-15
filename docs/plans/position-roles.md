@@ -69,18 +69,26 @@ Tests, in `platform_admin_source_test.rs`:
 
 Not done in this phase: a browser pass of first boot, and a read of each of the 35 sites for a separate flaw.
 
-## Phase 2a — grant one app
+## Phase 2a — grant one app (done, with one open question)
 
-Failing test first: `chair@Chemistry` is a member of workspace W, limited to app A. The holder can write records in A. The holder cannot read app B in W. The holder cannot manage W. A holder of `chair` at Physics cannot reach A.
+A membership can be limited to one app. It works for every principal kind: person, group, unit, position.
 
-Change:
-- Migration: `workspace_collaborators.app_slug TEXT NULL`.
-- The membership uniqueness must include the app, so one principal can hold a workspace-wide role and a narrower one. I have not read that constraint's definition. Read it first.
-- `member_role` takes the app. An app-scoped membership counts only for that app. `authorize_app` passes the slug. `authorize_workspace` ignores app-scoped memberships.
-- Row rules: `scope_for` passes the app to the role lookup, so a rule exception for "editor" uses the role held on that app.
-- Every record reader on the `RECORD_READERS` list already applies the row scope. Each also needs to take the app-aware role. The existing test that lists readers should fail until it does.
+What changed:
+- Migration `0055_member_app_scope.sql`: `workspace_collaborators.app_slug`, `NOT NULL DEFAULT ''`. Empty means the whole workspace. The unique key is now `(workspace_id, eppn, app_slug)`, so one principal can hold both a workspace-wide and an app-limited membership. An empty string is used instead of NULL because a NULL in a unique key counts as distinct.
+- `member_role` still means the workspace-wide role. Every workspace-level path is unchanged, and an app grant never reaches them. `member_role_in_app` is the highest of the workspace-wide role and the roles limited to that app.
+- App-level paths use it: `authorize_app`, both row-rule lookups and the field-visibility lookup in `scope.rs`, and the viewer check in `records.rs`. Row rules still only narrow.
+- Adding a member accepts `app_slug`. The app must belong to the workspace. An app membership cannot be an owner. The ledger entry carries the app.
+- Removing a member takes `?app=` and removes only that scope. Changing a role touches the workspace-wide membership only. To change an app membership, remove it and add it again.
 
-Open question, not verified: what an app-only member can see of the workspace around the app, such as its name and navigation. Read the workspace routes before this phase.
+Tests, in `member_principals_test.rs`:
+- A chair given Admin on app A can write A, cannot reach app B in the same workspace, and cannot add members to the workspace. A chair of another unit reaches nothing. This failed before the change, because the app was ignored.
+- The app must be in the workspace, an app membership cannot be an owner, a principal can hold both kinds, and removal takes one scope at a time. I wrote this after the code and did not watch it fail.
+
+Open question, now measured. An app-only member does not see the workspace in `GET /workspaces`, and `GET /workspaces/{id}` returns 403. They can reach the app by its address only. The desk will not show them the app. Options, for a decision:
+- Show the workspace in the list for an app-only member, with only the apps they reach, and its name and nothing else.
+- Add a separate "My apps" list that does not touch workspace routes.
+
+Also not done: app-limited members are not in `people_with_roles`, so they are not offered as approvers by workspace role. A decision comes with the list above.
 
 ## Phase 2b — a position type grants a role (optional, off by default)
 
@@ -135,4 +143,4 @@ Do this only if you want it. It changes who can see departmental workspaces. Wor
 
 ## Prompt for the session
 
-Read this file and `docs/plans/foundation.md` "Decisions already made". Phase 1 is done. Do phase 2a only. Read the membership uniqueness constraint and the workspace routes first. Write the failing test, show it fail for the stated reason, make it pass, run the full workspace suite, and stop. Do not start phase 2b.
+Read this file and `docs/plans/foundation.md` "Decisions already made". Phases 1 and 2a are done. Settle the open question under 2a first. Then do phase 3. Write the failing test, show it fail for the stated reason, make it pass, run the full workspace suite, and stop. Do not start phase 2b without a separate decision.

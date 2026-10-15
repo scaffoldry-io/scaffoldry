@@ -111,6 +111,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -121,6 +122,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
             scoped_affiliation: "staff".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -131,6 +133,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
             scoped_affiliation: "student".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
     ];
     state.collaborators.write().unwrap().insert(id.to_string(), collabs.clone());
@@ -576,6 +579,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -586,6 +590,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "staff".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -596,6 +601,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "student".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -606,6 +612,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "employee".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
     ];
     c.state.collaborators.write().unwrap().insert("ws-impact".to_string(), collabs.clone());

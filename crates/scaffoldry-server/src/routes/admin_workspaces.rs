@@ -475,6 +475,7 @@ async fn transfer_workspace_ownership(
                     scoped_affiliation: target_user.affiliation.clone(),
                     department: target_user.department.clone(),
                     added_at: Utc::now().to_rfc3339(),
+                    app_slug: String::new(),
                 };
                 {
         let repo = &state.repository;

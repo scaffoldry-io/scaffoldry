@@ -171,8 +171,31 @@ pub fn workspace_ids(state: &SharedState) -> Vec<String> {
     state.collaborators.read().unwrap_or_else(|p| p.into_inner()).keys().cloned().collect()
 }
 
+/// The memberships that cover the whole workspace. One limited to an app is not among them, so it never grants a
+/// workspace-level action.
 fn memberships(workspace: &str, state: &SharedState) -> Vec<CollaboratorRecord> {
-    state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default()
+    let all = state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default();
+    all.into_iter().filter(|c| c.app_slug.is_empty()).collect()
+}
+
+/// The memberships limited to one app of the workspace.
+fn app_memberships(workspace: &str, app: &str, state: &SharedState) -> Vec<CollaboratorRecord> {
+    let all = state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default();
+    all.into_iter().filter(|c| c.app_slug == app).collect()
+}
+
+/// A person's role in one app: the highest of their workspace-wide memberships and those limited to this app.
+pub fn member_role_in_app(user: &AuthUser, workspace: &str, app: &str, state: &SharedState) -> Option<Role> {
+    member_role_of_in_app(&user.eppn, workspace, app, state)
+}
+
+/// The same for a person named by address.
+pub fn member_role_of_in_app(eppn: &str, workspace: &str, app: &str, state: &SharedState) -> Option<Role> {
+    let limited = app_memberships(workspace, app, state)
+        .into_iter()
+        .filter_map(|c| Role::parse(&c.role).filter(|_| includes(&c, eppn, state)))
+        .max();
+    limited.max(member_role_of(eppn, workspace, state))
 }
 
 /// The highest role among every membership that matches the person. This is the only place that
@@ -252,6 +275,7 @@ pub fn people_records(workspace: &str, state: &SharedState) -> Vec<CollaboratorR
                 scoped_affiliation: "member".to_string(),
                 department: String::new(),
                 added_at: String::new(),
+                app_slug: String::new(),
             });
             rec.role = role.as_str().to_string();
             rec

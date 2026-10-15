@@ -114,7 +114,7 @@ Added after the click-through in [clickthrough-findings.md](clickthrough-finding
 | 1c-2 | [live-data.md](live-data.md) | new, after 3 | The Datasets screen reads `/datasets`. It shows the real datasets and row counts | |
 | 1c-3 | [ux-standards.md](ux-standards.md) | new, after 3 | No screen shows sample data without a visible "Sample data" label. A test fails on a hardcoded record array in a screen component | |
 | 1c-4 | [position-roles.md](position-roles.md) | 1 | Platform admin comes from a held role. The setup identity ends when the first admin is appointed. A title on a record is not counted as an admin | **COMPLETED** |
-| 1c-5 | [position-roles.md](position-roles.md) | 2a | A position, group, unit, or person can be granted one app, not only a whole workspace | |
+| 1c-5 | [position-roles.md](position-roles.md) | 2a | A position, group, unit, or person can be granted one app, not only a whole workspace. Open: an app-only member cannot find the app in the desk | **COMPLETED** for the server. The desk question is open |
 | 1c-6 | [position-roles.md](position-roles.md) | 3 | An admin lists every direct person grant, and which grants are app-scoped | |
 
 Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Done already from the click-through: the false ledger message, made-up dashboard figures, hardcoded header user, and "Live" labels are gone from the published-app screen. The Vite dev proxy exists. The budget field accepts round values. A reload shows the person the stored token belongs to.

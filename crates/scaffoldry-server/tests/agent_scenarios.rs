@@ -109,6 +109,7 @@ impl Harness {
                     scoped_affiliation: "faculty".to_string(),
                     department: "physics".to_string(),
                     added_at: String::new(),
+                    app_slug: String::new(),
                 });
             }
         }

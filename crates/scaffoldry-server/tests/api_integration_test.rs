@@ -1821,6 +1821,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: "".to_string(),
+            app_slug: String::new(),
         },
         scaffoldry_server::state::CollaboratorRecord {
             id: "collab-smith-phys".to_string(),
@@ -1831,6 +1832,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
             scoped_affiliation: "student".to_string(),
             department: "biology".to_string(),
             added_at: "".to_string(),
+            app_slug: String::new(),
         },
     ]);
     let rule_id = "rule-candidate-decision";

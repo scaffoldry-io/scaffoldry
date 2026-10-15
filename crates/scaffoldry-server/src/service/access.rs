@@ -230,7 +230,7 @@ pub fn authorize_app(
             .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{ws_id}' not found")))?
     };
 
-    let role = crate::service::members::member_role(caller, &ws_id, state);
+    let role = crate::service::members::member_role_in_app(caller, &ws_id, slug, state);
     let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()).unwrap_or_default());
 
     let action_name = match action {

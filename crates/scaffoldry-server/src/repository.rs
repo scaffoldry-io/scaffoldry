@@ -57,6 +57,7 @@ const SCHEMA_0051: &str = include_str!("../../scaffoldry-core/migrations/0051_fi
 const SCHEMA_0052: &str = include_str!("../../scaffoldry-core/migrations/0052_file_scans.sql");
 const SCHEMA_0053: &str = include_str!("../../scaffoldry-core/migrations/0053_cache_versions.sql");
 const SCHEMA_0054: &str = include_str!("../../scaffoldry-core/migrations/0054_people_indexes.sql");
+const SCHEMA_0055: &str = include_str!("../../scaffoldry-core/migrations/0055_member_app_scope.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -784,7 +785,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 39] = [
+                        let migrations: [(&str, &str); 40] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -820,6 +821,7 @@ impl PostgresRepository {
                             ("0052_file_scans.sql", SCHEMA_0052),
                             ("0053_cache_versions.sql", SCHEMA_0053),
                             ("0054_people_indexes.sql", SCHEMA_0054),
+                            ("0055_member_app_scope.sql", SCHEMA_0055),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -1335,7 +1337,7 @@ impl PostgresRepository {
         let ws_id = workspace_id.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT id, workspace_id, eppn, name, role, scoped_affiliation, department, added_at::text \
+                "SELECT id, workspace_id, eppn, name, role, scoped_affiliation, department, added_at::text, app_slug \
                  FROM workspace_collaborators WHERE workspace_id = $1 ORDER BY added_at ASC",
                 &[&ws_id],
             )?;
@@ -1349,6 +1351,7 @@ impl PostgresRepository {
                 scoped_affiliation: r.get(5),
                 department: r.get(6),
                 added_at: r.get(7),
+                app_slug: r.get(8),
             }).collect())
         })
     }
@@ -1359,28 +1362,30 @@ impl PostgresRepository {
         let (kind, id) = (kind.as_str().to_string(), id.to_string());
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department, principal_type, principal_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-                 ON CONFLICT (workspace_id, eppn) DO UPDATE SET \
+                "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department, principal_type, principal_id, app_slug) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                 ON CONFLICT (workspace_id, eppn, app_slug) DO UPDATE SET \
                     role = EXCLUDED.role, \
                     name = EXCLUDED.name, \
                     scoped_affiliation = EXCLUDED.scoped_affiliation, \
                     department = EXCLUDED.department, \
                     principal_type = EXCLUDED.principal_type, \
                     principal_id = EXCLUDED.principal_id",
-                &[&c.id, &c.workspace_id, &c.eppn, &c.name, &c.role, &c.scoped_affiliation, &c.department, &kind, &id],
+                &[&c.id, &c.workspace_id, &c.eppn, &c.name, &c.role, &c.scoped_affiliation, &c.department, &kind, &id, &c.app_slug],
             )?;
             Ok(())
         })
     }
 
-    pub fn remove_collaborator(&self, workspace_id: &str, eppn: &str) -> Result<(), RepositoryError> {
+    /// Removes one membership: the workspace-wide one when `app` is empty, else the one limited to that app.
+    pub fn remove_collaborator(&self, workspace_id: &str, eppn: &str, app: &str) -> Result<(), RepositoryError> {
         let ws_id = workspace_id.to_string();
         let eppn_str = eppn.to_string();
+        let app = app.to_string();
         self.with_client(move |client| {
             client.execute(
-                "DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn = $2",
-                &[&ws_id, &eppn_str],
+                "DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn = $2 AND app_slug = $3",
+                &[&ws_id, &eppn_str, &app],
             )?;
             Ok(())
         })

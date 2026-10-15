@@ -102,7 +102,7 @@ fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &
     if rules.is_empty() {
         return RowScope::AllowAll;
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
+    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
     row_scope(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table, op)
 }
 
@@ -216,7 +216,7 @@ fn field_visibility_for(caller: &AuthUser, app_slug: &str, table: &str, state: &
     if rules.is_empty() {
         return Default::default();
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
+    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
     scaffoldry_core::access::field_visibility(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table)
 }
 
@@ -288,7 +288,7 @@ pub fn preview_access(
         person_of(caller, state)
     };
 
-    let role = ws_id.and_then(|w| members::member_role_of(&person.address, w, state));
+    let role = ws_id.and_then(|w| members::member_role_of_in_app(&person.address, w, app_slug, state));
     let role_str = role.as_ref().map(|r| r.as_str());
     let is_platform_admin = person.affiliation == "central_admin";
 

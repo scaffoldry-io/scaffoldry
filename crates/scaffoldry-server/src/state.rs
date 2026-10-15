@@ -152,6 +152,9 @@ pub struct CollaboratorRecord {
     pub department: String,
     #[serde(default)]
     pub added_at: String,
+    /// The one app this membership reaches. Empty means the whole workspace.
+    #[serde(default)]
+    pub app_slug: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1223,6 +1226,7 @@ impl ServerState {
                     scoped_affiliation: "faculty".to_string(),
                     department: "biology".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
                 CollaboratorRecord {
                     id: "collab-bio-2".to_string(),
@@ -1233,6 +1237,7 @@ impl ServerState {
                     scoped_affiliation: "student".to_string(),
                     department: "biology".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
                 CollaboratorRecord {
                     id: "collab-bio-3".to_string(),
@@ -1243,6 +1248,7 @@ impl ServerState {
                     scoped_affiliation: "staff".to_string(),
                     department: "Office of Sponsored Programs".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
@@ -1276,6 +1282,7 @@ impl ServerState {
                     scoped_affiliation: "student".to_string(),
                     department: "physics".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
@@ -1309,6 +1316,7 @@ impl ServerState {
                     scoped_affiliation: "staff".to_string(),
                     department: "compliance".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
                 CollaboratorRecord {
                     id: "collab-comp-2".to_string(),
@@ -1319,6 +1327,7 @@ impl ServerState {
                     scoped_affiliation: "compliance".to_string(),
                     department: "Institutional Review Board".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
@@ -1352,6 +1361,7 @@ impl ServerState {
                     scoped_affiliation: "faculty".to_string(),
                     department: "Computer Science".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
