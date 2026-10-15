@@ -26,8 +26,8 @@ We keep both ways in. A workspace can still name a person directly, and a worksp
 | Row rules narrow what a member reads in an app. They never grant. They read the person's unit ids, position keys, groups, department, and affiliation | `service/scope.rs`, `access-rules.md` |
 | A position principal is written `key@unit-id` | `members.rs`, `Kind::Position` |
 | An approver rule can name a position and walk up the unit tree | `ApproverSpec::Position` |
-| Platform admin in Cedar comes from `caller.affiliation == "central_admin"`, a field on the SCIM user | `access.rs`, `decide` |
-| A `platform_admin` role row also exists, and unit scope reads it. Cedar does not | `identity.rs`, `unit_in_scope` |
+| `resolve_user` sets a person's affiliation to `central_admin` only when they hold a `platform_admin` role on the root unit. A record cannot grant it. About 35 server sites and the Cedar policies read that derived value. This note first said it came from a field on the SCIM user. That was wrong, and phase 1 found it | `identity.rs`, `resolve_user`, `root_roles` |
+| Before phase 1, two things did not follow that rule: the setup identity was `central_admin` forever, and the admin count also counted users whose SCIM title said `central_admin` | `identity.rs`, `repository_people.rs` |
 | Departmental read and write compare `principal.department` to `resource.department`, both strings | `scaffoldry-policy/src/lib.rs` |
 
 ## Standard
@@ -43,7 +43,7 @@ Searched and not found: a published schema for "a position in a university that 
 | Question | Answer |
 | --- | --- |
 | Do direct person grants stay? | Yes. Both paths stay |
-| Can a person hold a right as a field on their record? | Not for platform admin, after phase 1 |
+| Can a person hold a right as a field on their record? | Not for platform admin. This was already true except for the setup identity and an admin count. Phase 1 fixed both |
 | Can access be given to one app instead of a whole workspace? | Yes. A membership gets an optional app. No app means the whole workspace, as now. This works for every principal kind |
 | What is the main way a position gets access? | A membership naming `key@unit`, limited to the apps it needs |
 | Does a position type grant a role by itself? | Optional, and off by default. It is a broad grant across a unit's workspaces. It needs a preview of how many workspaces it reaches before it saves |
@@ -52,17 +52,22 @@ Searched and not found: a published schema for "a position in a university that 
 | What if a person gets a role from two places? | The highest wins. This is how it works now |
 | Does a held position grant platform admin? | No. Platform admin stays a `roles` row at the root unit. See the open question |
 
-## Phase 1 — platform admin from a held role
+## Phase 1 — platform admin from a held role (done)
 
-Failing test first: a user whose SCIM affiliation says `central_admin` but who holds no `platform_admin` role at the root unit is not a platform admin. A user with the role and any affiliation is.
+This note first described a larger change: move Cedar and about 35 server sites off `affiliation == "central_admin"`. Reading `resolve_user` showed the premise was wrong. The affiliation is already derived from a held `platform_admin` role on the root unit, and `scim_affiliation` can only return eduPerson affiliations, so no record can grant it. Rewriting 35 sites to read a boolean instead of a derived string would be churn with no gain in safety. It is not done. If the string ever confuses a reader, an `is_platform_admin` field on `AuthUser` is a safe later cleanup.
 
-Change: `decide` sets `is_platform_admin` from the stored role. Cedar policies that compare `scoped_affiliation == "central_admin"` read `is_platform_admin` instead.
+What was wrong, and is fixed:
 
-Risk in this phase: `central_admin` appears in ten source files, not only `access.rs`: `guards.rs`, `lib.rs` (policy), `identity.rs`, `organizations.rs`, `scope.rs`, `access.rs`, `proposals.rs`, `workspaces.rs`, `admin.rs`, and `repository_people.rs`. Each is in scope. The web desk also gates on `affiliation === "central_admin"` in `AdminDesk.tsx`.
+- **The setup identity never ended.** `resolve_user` gave `setup@scaffoldry.local` `central_admin` for as long as a token existed. It now works only while no one holds `platform_admin` on the root unit. When the first admin is appointed it stops resolving, and its token gets a 401. If the database cannot say whether an admin exists, the identity is refused.
+- **The admin count counted titles.** `platform_admin_names` also returned users whose SCIM title said `central_admin`. The overview showed that as a platform admin. It now counts held roles only.
 
-First boot: `resolve_user` returns a fixed identity for `setup@scaffoldry.local` with `affiliation: "central_admin"`. No role row backs it. Phase 1 must give that identity a way in that does not depend on the affiliation field, such as an explicit setup flag that the check honours until a real admin exists. A first-boot test that proves an admin can sign in and appoint another comes before the change.
+Tests, in `platform_admin_source_test.rs`:
+- A record that says `central_admin`, by title and by affiliation, grants nothing. This passed before the change and pins the behaviour.
+- The setup identity is an admin on first boot and stops resolving once the first admin is appointed. This failed before the change.
+- `platform_admin_names` lists the holder and not the titled user. This failed before the change.
+- First boot through the API: the setup token works, appoints the first admin with `POST /orgs/{root}/appointments`, and then gets a 401. I wrote this test after the fix and did not watch it fail. The unit test above, which checks the same change, did fail first.
 
-The test token helper in `identity.rs` writes the role row for `central_admin` personas, so tests that use it already have one.
+Not done in this phase: a browser pass of first boot, and a read of each of the 35 sites for a separate flaw.
 
 ## Phase 2a — grant one app
 
@@ -116,7 +121,7 @@ Do this only if you want it. It changes who can see departmental workspaces. Wor
 | "A position grant is broad. One seat can open every workspace in a unit." | The main path is a membership limited to one app. The type-level grant is optional and off by default. When used, it is scoped to the unit and below, shows how many workspaces it reaches before saving, and is a ledger entry with a reason |
 | "We must not over-provision. A position that needs one app should not get the workspace." | Phase 2a. An app-scoped grant reaches that app only. Manage and delete stay workspace-level. Row rules still narrow inside the app |
 | "People change seats. Access must follow." | It does. The grant is computed from the roles table on each check, as `Kind::Position` is today. No copy of the grant is stored on the person |
-| "Removing the affiliation shortcut for admins could lock us out." | Phase 1 tests first boot and the test helper. Do not merge without a first-boot test that proves an admin exists |
+| "A setup identity that is admin forever is a standing backdoor." | It was. It now ends when the first admin is appointed, and it is refused if the database cannot say whether one exists. A test proves both ends |
 | "Cedar already decides access. Why add a second place?" | There is no second decider. `member_role` already feeds Cedar the `member_role` and `is_member` fields. Phase 2 changes its input, not Cedar |
 | "Departments differ in size and shape." | The role set is per position type, so each institution defines its own. The built-in names are only the five workspace roles |
 | "Audit wants to see who could do what on a given date." | Position changes and the new grant field are ledger entries. Holder history is in `roles`. A point-in-time query is not built. See below |
@@ -125,9 +130,9 @@ Do this only if you want it. It changes who can see departmental workspaces. Wor
 
 - **Platform admin as a position.** An institution may want "CIO" to carry platform admin. This design keeps it a role row. A position-granted platform role is possible later, and is a high-risk grant that deserves its own review.
 - **Point-in-time access reports.** The ledger and `roles` hold the facts. No query joins them. Not in scope.
-- **Other routes.** I read `access.rs`, `members.rs`, the Cedar policies, and the position and identity code. I did not audit every route for affiliation checks. Phase 1 starts from the ten files listed there. Any other hit is in scope.
+- **Other routes.** I listed every `central_admin` use in the Rust sources. All but the setup identity and the admin count read the derived value. I did not read each of the 35 sites for a separate flaw.
 - **Direct grants of platform rights.** Phase 3 lists workspace-level direct grants only. Admin rights by role row are already visible in the roles list.
 
 ## Prompt for the session
 
-Read this file and `docs/plans/foundation.md` "Decisions already made". Do phase 1 only. Write the failing test, show it fail for the stated reason, make it pass, run the full workspace suite, and stop. Do not start phase 2a. Start phase 1 with the first-boot test.
+Read this file and `docs/plans/foundation.md` "Decisions already made". Phase 1 is done. Do phase 2a only. Read the membership uniqueness constraint and the workspace routes first. Write the failing test, show it fail for the stated reason, make it pass, run the full workspace suite, and stop. Do not start phase 2b.

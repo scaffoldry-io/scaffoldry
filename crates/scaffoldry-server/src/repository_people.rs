@@ -236,13 +236,12 @@ impl PostgresRepository {
         })
     }
 
-    /// The names of those who hold a `platform_admin` appointment on the root unit, and of users whose title says
-    /// `central_admin`.
+    /// The names of those who hold a `platform_admin` appointment on the root unit. A title on a record grants
+    /// nothing and is not counted.
     pub fn platform_admin_names(&self) -> Result<Vec<String>, RepositoryError> {
         self.with_client(|c| {
             let q = "SELECT p.eppn FROM roles r JOIN persons p ON r.person_id = p.id JOIN organizations o ON r.organization_id = o.id \
-                     WHERE r.scoped_affiliation = 'platform_admin' AND o.parent_id IS NULL AND p.eppn IS NOT NULL \
-                     UNION SELECT user_name FROM scim_users WHERE payload->>'title' = 'central_admin'";
+                     WHERE r.scoped_affiliation = 'platform_admin' AND o.parent_id IS NULL AND p.eppn IS NOT NULL";
             Ok(c.query(q, &[])?.iter().map(|r| r.get::<_, String>(0)).collect())
         })
     }
