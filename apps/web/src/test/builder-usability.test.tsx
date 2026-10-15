@@ -223,6 +223,18 @@ describe("PublishedAppView Standalone Runtime Usability", () => {
     expect(screen.queryByText("Prof. Curie")).not.toBeInTheDocument();
   });
 
+  it("the budget field accepts a round budget such as 100,000", () => {
+    render(<PublishedAppView app={mockApp} />);
+    fireEvent.click(screen.getByText("+ New Proposal"));
+    const budget = screen.getByRole("spinbutton") as HTMLInputElement;
+    const min = Number(budget.min || 0);
+    const step = Number(budget.step || 1);
+    // A number input accepts min + k * step. A step larger than the unit makes ordinary values invalid.
+    for (const value of [1000, 50000, 100000, 250000]) {
+      expect((value - min) % step, `${value} must be valid for min ${min}, step ${step}`).toBe(0);
+    }
+  });
+
   it("renders relational lookup badges and links foreign key in intake modal", () => {
     render(
       <PublishedAppView

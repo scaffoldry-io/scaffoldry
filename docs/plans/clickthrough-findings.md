@@ -28,7 +28,9 @@ These are gaps between what the screen says and what the system does. Items 1 an
 
 Items 2, 3, and 5 are fixed. The published-app screen no longer claims a ledger entry. It says the record was "added to this preview only. It is not saved." The made-up trend figures and the hardcoded "Prof. Curie" header are gone. The "Live" badge and the "Live Dataset" chip now read "Sample data". Two tests had locked in the old claims ("committed to sovereign ledger" and "Live"). They now assert the honest wording. The web suite passes (245 tests) and the typecheck is clean.
 
-Still open: items 1, 4, 6, 7, and 8, and the unverified `/admin` identity question. Item 1 is the real fix. The label only stops the screen from misleading people.
+Items 6 and 8 are fixed too. The budget field's step is now 1,000, so 100,000 is valid. Vite forwards `/api` to `http://127.0.0.1:8080`, so the README's two commands connect without `VITE_API_BASE_URL`. Both have tests. I checked the proxy rule in the config only. I did not run the two servers together after the change.
+
+Still open: items 1, 4, and 7, and the unverified `/admin` identity question. Item 1 is the real fix. The label only stops the screen from misleading people.
 
 ## Found in passing
 

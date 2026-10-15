@@ -626,7 +626,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
                   <input
                     type="number"
                     min={1000}
-                    step={5000}
+                    step={1000}
                     value={newBudget}
                     onChange={(e) => setNewBudget(Number(e.target.value))}
                     className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
