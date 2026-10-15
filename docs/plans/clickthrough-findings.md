@@ -24,6 +24,12 @@ These are gaps between what the screen says and what the system does. Items 1 an
 | 7 | The Datasets screen is static. Its datasets, row counts ("Total Live Rows: 840"), and sample rows are written in the component. It made no API call, and the API's `/datasets` returns different data | `DatasetExplorer.tsx` has no API import. A click made no `/datasets` call | `apps/web/src/DatasetExplorer.tsx` |
 | 8 | The README's two-command dev setup cannot connect. `vite.config.ts` has no proxy, and the app calls `/api/v1` on its own origin. It works only with `VITE_API_BASE_URL` set | Vite returned its HTML for `/api/v1/me`. Setting the variable fixed it | `README.md`, `apps/web/vite.config.ts` |
 
+## Fixed since
+
+Items 2, 3, and 5 are fixed. The published-app screen no longer claims a ledger entry. It says the record was "added to this preview only. It is not saved." The made-up trend figures and the hardcoded "Prof. Curie" header are gone. The "Live" badge and the "Live Dataset" chip now read "Sample data". Two tests had locked in the old claims ("committed to sovereign ledger" and "Live"). They now assert the honest wording. The web suite passes (245 tests) and the typecheck is clean.
+
+Still open: items 1, 4, 6, 7, and 8, and the unverified `/admin` identity question. Item 1 is the real fix. The label only stops the screen from misleading people.
+
 ## Found in passing
 
 - **The setup identity is hardcoded as `central_admin`.** `resolve_user` returns `affiliation: "central_admin"` for `setup@scaffoldry.local`. This answers the first-boot question in `position-roles.md` phase 1. That phase must give the setup identity a role, or exempt it, or first boot loses its admin.

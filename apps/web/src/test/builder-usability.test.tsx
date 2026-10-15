@@ -178,7 +178,7 @@ describe("PublishedAppView Standalone Runtime Usability", () => {
     // Assert published header
     expect(screen.getByTestId("published-app-runtime")).toBeInTheDocument();
     expect(screen.getByText("Physics Department Research Grants")).toBeInTheDocument();
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getAllByText("Sample data").length).toBeGreaterThan(0);
 
     // Assert records displayed
     expect(screen.getByText("Quantum Optomechanics Qubit Study")).toBeInTheDocument();
@@ -215,7 +215,12 @@ describe("PublishedAppView Standalone Runtime Usability", () => {
 
     // Assert new record appears in the published view
     expect(screen.getByText("Topological Superconductivity in Dirac Semimetals")).toBeInTheDocument();
-    expect(screen.getByText(/committed to sovereign ledger/i)).toBeInTheDocument();
+    // The screen holds sample data and saves nothing, so it must not say a record reached the ledger.
+    expect(screen.queryByText(/committed to sovereign ledger/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/not saved/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/sample data/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/\+12% this term|88% target met|Target: 7 days/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Prof. Curie")).not.toBeInTheDocument();
   });
 
   it("renders relational lookup badges and links foreign key in intake modal", () => {

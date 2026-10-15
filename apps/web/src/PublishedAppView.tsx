@@ -106,7 +106,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
               title: "Total Proposals",
               slot: "main",
               layout: { width: "third", order: 1 },
-              config: { aggregation: "count", subtitle: "Active submissions", trend_text: "+12% this term", accent_color: "blue" },
+              config: { aggregation: "count", subtitle: "Active submissions", accent_color: "blue" },
             },
             {
               id: "s2",
@@ -114,7 +114,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
               title: "Approved Funding",
               slot: "main",
               layout: { width: "third", order: 2 },
-              config: { aggregation: "sum", target_field: "budget", subtitle: "Allocated grants", trend_text: "88% target met", accent_color: "emerald" },
+              config: { aggregation: "sum", target_field: "budget", subtitle: "Allocated grants", accent_color: "emerald" },
             },
             {
               id: "s3",
@@ -122,7 +122,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
               title: "Under Review",
               slot: "main",
               layout: { width: "third", order: 3 },
-              config: { aggregation: "count", filter_status: "Under Review", subtitle: "Pending board decision", trend_text: "Target: 7 days", accent_color: "amber" },
+              config: { aggregation: "count", filter_status: "Under Review", subtitle: "Pending board decision", accent_color: "amber" },
             },
             {
               id: "g1",
@@ -182,7 +182,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
     setRecords((prev) => [newRecord, ...prev]);
     setIsSubmitModalOpen(false);
     setNewTitle("");
-    setSubmissionFeedback(`Record ${newRecord.id} committed to sovereign ledger (SHA-256 block attestation).`);
+    setSubmissionFeedback(`Record ${newRecord.id} added to this preview only. It is not saved.`);
     setTimeout(() => setSubmissionFeedback(null), 4000);
   };
 
@@ -217,8 +217,8 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-bold">
                   {app.orgCode}
                 </span>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                  Live
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  Sample data
                 </span>
               </div>
               <p className="text-[11px] text-slate-500">{app.department}</p>
@@ -272,16 +272,6 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
               ⚙ Edit in Builder
             </button>
           )}
-
-          <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
-            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200 flex items-center justify-center text-xs font-bold">
-              MC
-            </div>
-            <div className="hidden md:block text-left text-[11px] leading-tight">
-              <span className="font-semibold block text-slate-800 dark:text-slate-200">Prof. Curie</span>
-              <span className="text-slate-400 font-mono">faculty</span>
-            </div>
-          </div>
         </div>
       </header>
 
@@ -406,7 +396,7 @@ export const PublishedAppView: React.FC<PublishedAppViewProps> = ({
                             </span>
                           </div>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
-                            Live Dataset
+                            Sample data
                           </span>
                         </div>
 
