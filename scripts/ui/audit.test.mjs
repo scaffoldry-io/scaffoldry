@@ -106,3 +106,17 @@ test("a click that opens nothing new adds no findings", async () => {
   await page.close();
   assert.deepEqual(found, []);
 });
+
+test("a toast on top of a full-screen modal is fine, and one hidden under it is reported", async () => {
+  const modal = '<div style="position:fixed;inset:0;background:#ddd;z-index:20">Studio</div>';
+  const toast = (z) => `<div style="position:fixed;bottom:20px;right:20px;width:200px;height:50px;background:#222;color:#fff;z-index:${z}">Saved</div>`;
+  const on = await audit(modal + toast(50));
+  assert.deepEqual(on.filter((f) => f.rule.startsWith("overlay")), [], JSON.stringify(on));
+  const under = await audit(modal + toast(10));
+  assert.ok(under.some((f) => f.rule === "overlay-hidden" && /Saved/.test(f.detail)), JSON.stringify(under));
+});
+
+test("an ordinary notice with role=status that is below the fold is not an overlay", async () => {
+  const found = await audit(`<div style="height:2000px">Long page</div><div role="status">Nothing is wrong here</div><div role="alert">Neither here</div>`);
+  assert.deepEqual(found.filter((f) => f.rule.startsWith("overlay")), [], JSON.stringify(found));
+});

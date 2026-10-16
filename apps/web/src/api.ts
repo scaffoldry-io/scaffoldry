@@ -1087,7 +1087,19 @@ export const apiClient = {
   /** The apps the signed-in person can reach, and how. */
   listMyApps: async (): Promise<MyApp[]> => {
     const res = await request<{ apps: MyApp[] }>("/me/apps");
-    return Array.isArray(res?.apps) ? res.apps : [];
+    // An answer that is not a list of apps is not an answer. The desk must not read it as "no apps".
+    if (!res || !Array.isArray(res.apps)) throw new ApiError(0, "The server's app list was not in the expected form.");
+    return res.apps;
+  },
+
+  /** Creates an app in a workspace. 201 means it is live. 202 means it is a proposal waiting for approval. */
+  createApp: async (workspaceId: string, manifest: Record<string, unknown>): Promise<{ status: number; data: any }> => {
+    return requestFull<any>(`/workspaces/${encodeURIComponent(workspaceId)}/apps`, { method: "POST", body: JSON.stringify(manifest) });
+  },
+
+  /** One app's definition: its tables, fields, and views. */
+  getApp: async (slug: string): Promise<any> => {
+    return request<any>(`/apps/${encodeURIComponent(slug)}`);
   },
 
   getWorkspace: async (id: string): Promise<{ workspace: Workspace; collaborators: Collaborator[] }> => {

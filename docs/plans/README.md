@@ -125,6 +125,14 @@ Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase
 | 1c-8 | "New App", "New App Studio", and "Co-Build New App" each create an app only in the browser's memory, with a made-up slug and domain, and say "Created new app". The toast covers the studio panel | A new app is created on the server, or the button says it is a draft that is not saved. One toast area that does not cover a panel |
 | 1c-9 | Unnamed fields in Security and Settings, an unnamed button in the opened navigation, on phone a banner mostly outside the window on `/admin`, and clipped text with no tooltip | Every control has a name. Nothing sits outside the window. Clipped text has a tooltip |
 
+Rows 1c-7 to 1c-9 are done, and checked with `npm run ui:all`: the MCP check passes, all nine UI smoke checks pass, and the audit is down from 29 findings to 8.
+
+- **1c-7.** The desk takes its apps from `GET /me/apps` and loads each definition from `GET /apps/{slug}`. It no longer asks the server about built-in sample apps, and it does not apply its own access check to apps the server listed. If the server's list does not arrive, it falls back to the built-in sample apps and says so in a banner. The Decisions panel waits until the list has settled. The built-in apps still show for a moment while the list loads. Opening a built-in app, and "use this dataset in a new app", still create local copies only.
+- **1c-8.** "New App", "New App Studio", and "Co-Build New App" call `POST /workspaces/{id}/apps`. A 201 shows "Created new app". A 202 shows "Submitted for approval. The app is not live until someone approves it." A refusal says the app was not created. The made-up domain is gone. I checked this against a real server: the app was created, appeared in My apps, and took a record.
+- **1c-9.** The four workspace settings fields, and the collapsed "New App Studio" button, have names. Ledger hashes have a full-hash tooltip. The phone banner was a false alarm in the audit and the audit rule is fixed.
+
+Still showing in the audit, all minor: the header logo does nothing when clicked, and a few tabs and filters change nothing because they are already selected. Those are false alarms, or close to it.
+
 Done already from the click-through: the false ledger message, made-up dashboard figures, hardcoded header user, and "Live" labels are gone from the published-app screen. The Vite dev proxy exists. The budget field accepts round values. A reload shows the person the stored token belongs to.
 
 ### Wave 2 — the data platform

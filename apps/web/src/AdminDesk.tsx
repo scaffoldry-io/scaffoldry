@@ -82,6 +82,30 @@ const PERSONAS: Persona[] = [
   },
 ];
 
+// An app from the server, as the desk holds it. The definition comes from GET /apps/{slug}. Without it the app has no tables.
+function registeredAppOf(mine: MyApp, manifest: any | null): RegisteredApp {
+  const m = manifest ?? {};
+  return {
+    slug: mine.slug,
+    title: mine.title,
+    orgCode: m.organization_code ?? "",
+    department: mine.department,
+    customDomain: m.custom_domain ?? "",
+    verified: !!m.custom_domain_verified,
+    hermCapability: m.herm_capability_id ?? "",
+    cedsDomain: "",
+    status: m.status ?? "Published",
+    updatedAt: "",
+    recordsCount: 0,
+    workspaceId: mine.workspace_id,
+    collaborators: [],
+    manifest: {
+      tables: [], views: [], ceds_mappings: {}, custom_domain_verified: false, organization_code: "", ...m,
+      slug: mine.slug, title: mine.title, description: m.description ?? mine.description, department: mine.department,
+    },
+  } as RegisteredApp;
+}
+
 // The person a server user is, for the desk. A known demo persona keeps its richer attributes.
 function personaOfServerUser(user: { eppn: string; name?: string; affiliation?: string; department?: string }): Persona {
   const found = PERSONAS.find((p) => p.eppn === user.eppn);
@@ -806,20 +830,34 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       return [];
     }
   });
+  // Whether the desk's apps came from the server. When they did not, the desk shows built-in sample apps, and says so.
+  const [appsStatus, setAppsStatus] = useState<"loading" | "server" | "built-in">("loading");
+  const appsFromServer = appsStatus === "server";
   useEffect(() => {
     if (!authToken) {
       setMyApps([]);
+      setAppsStatus("built-in");
       return;
     }
     let cancelled = false;
-    apiClient
-      .listMyApps()
-      .then((list) => {
-        if (!cancelled) setMyApps(list);
-      })
-      .catch(() => {
-        if (!cancelled) setMyApps([]);
-      });
+    (async () => {
+      try {
+        const list = await apiClient.listMyApps();
+        if (cancelled) return;
+        setMyApps(list);
+        const full = await Promise.all(
+          list.map(async (a) => registeredAppOf(a, await apiClient.getApp(a.slug).catch(() => null)))
+        );
+        if (cancelled) return;
+        setApps(full);
+        setAppsStatus("server");
+      } catch {
+        if (!cancelled) {
+          setMyApps([]);
+          setAppsStatus("built-in");
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -1222,6 +1260,10 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Workspace and App-Level Security Filtered Applications
+  // When the apps came from the server, the server already decided which this person may reach, so the desk does not
+  // decide again. Only the built-in sample apps are checked here.
+  const mayOpenApp = (app: RegisteredApp) => appsFromServer || canUserAccessApp(app, activePersona, workspaces);
+
   const workspaceApps = apps.filter((app) => {
     // Workspace boundary filter
     if (activeWorkspaceId !== "all" && app.workspaceId !== activeWorkspaceId) {
@@ -1230,7 +1272,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
     // App-level Cedar security rules enforcement:
     // Only display applications that the current persona is authorized to access under institutional Cedar ABAC.
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       return false;
     }
 
@@ -1244,7 +1286,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
   // Open App in Co-Builder Studio (Full-Page Builder)
   const handleOpenStudio = (app: RegisteredApp) => {
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
       return;
     }
@@ -1255,7 +1297,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
   // Open App in Standalone Published Runtime
   const handleOpenPublishedApp = (app: RegisteredApp) => {
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
       return;
     }
@@ -1264,58 +1306,55 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   const handleOpenApp = (app: RegisteredApp) => {
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
       return;
     }
     setActiveWorkspaceApp(app);
   };
 
-  // Create New App in Active Workspace
-  const handleCreateNewApp = () => {
-    const newSlug = `app-${Date.now().toString().slice(-4)}`;
-    const newApp: RegisteredApp = {
+  // Create New App in Active Workspace. The server creates it, or holds it as a proposal. The desk says which.
+  const handleCreateNewApp = async () => {
+    if (activeWorkspaceId === "all") {
+      showToast("Open a workspace first, then create the app in it.");
+      return;
+    }
+    const newSlug = `app-${Math.random().toString(36).slice(2, 8)}`;
+    const department = currentWorkspace.department;
+    const field = { name: "record_title", label: "Title / Summary", field_type: "Text", required: true, ferpa_sensitive: false };
+    const manifest = {
       slug: newSlug,
-      title: "Untitled Department Application",
-      orgCode: `DEPT-${currentWorkspace.department.toUpperCase()}`,
-      department: currentWorkspace.department,
-      customDomain: `${newSlug}.${currentWorkspace.department}.science.state.edu`,
-      verified: false,
-      hermCapability: "2.1.0 (Academic Operations)",
-      cedsDomain: "PostsecondaryStudent",
-      status: "Draft",
-      updatedAt: new Date().toISOString().split("T")[0],
-      recordsCount: 0,
-      workspaceId: currentWorkspace.id,
-      collaborators: [
-        { eppn: activePersona.eppn, name: activePersona.name, role: "owner", department: activePersona.department },
-      ],
-      manifest: {
-        slug: newSlug,
-        title: "Untitled Department Application",
-        description: "New collaborative application manifest ready for field design.",
-        organization_code: `DEPT-${currentWorkspace.department.toUpperCase()}`,
-        department: currentWorkspace.department,
-        custom_domain: `${newSlug}.${currentWorkspace.department}.science.state.edu`,
-        custom_domain_verified: false,
-        views: [
-          {
-            id: "main-view",
-            title: "Data Submission Form",
-            view_type: "Form",
-            fields: [
-              { name: "record_title", label: "Title / Summary", field_type: "Text", required: true, ferpa_sensitive: false },
-            ],
-          },
-        ],
-        ceds_mappings: {},
-      },
+      title: "Untitled Application",
+      description: "A new application. Add fields to design it.",
+      organization_code: `DEPT-${department.toUpperCase()}`,
+      department,
+      workspace_id: currentWorkspace.id,
+      custom_domain_verified: false,
+      tables: [{ id: "main", name: "Records", slug: "records", fields: [field], primary_field: "record_title", sample_records: [] }],
+      relationships: [],
+      views: [{ id: "main-view", table_id: "main", title: "All records", view_type: "Grid", fields: [field] }],
+      ceds_mappings: {},
+      pages: [],
+      access: {},
     };
-    setApps([newApp, ...apps]);
-    setActiveStudioApp(newApp);
-    setStudioTab("schema");
-    setStudioOpen(true);
-    showToast(`Created new app "${newApp.title}". Ready to co-build.`);
+    try {
+      const { status, data } = await apiClient.createApp(currentWorkspace.id, manifest);
+      if (status === 202) {
+        showToast("Submitted for approval. The app is not live until someone approves it.");
+        return;
+      }
+      const created = registeredAppOf(
+        { slug: data?.slug ?? newSlug, title: data?.title ?? manifest.title, description: manifest.description, department, workspace_id: currentWorkspace.id, scope: "workspace" },
+        data ?? manifest
+      );
+      setApps((prev) => [created, ...prev]);
+      setActiveStudioApp(created);
+      setStudioTab("schema");
+      setStudioOpen(true);
+      showToast(`Created new app "${created.title}". Ready to co-build.`);
+    } catch (e) {
+      showToast(`Could not create the app. ${e instanceof Error ? e.message : ""}`.trim());
+    }
   };
 
   // Add Field in Co-Builder Studio
@@ -1516,7 +1555,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       INITIAL_WORKSPACES.find((w) => w.id === targetApp?.workspaceId) ||
       currentWorkspace;
 
-    if (targetApp && !canUserAccessApp(targetApp, activePersona, workspaces)) {
+    if (targetApp && !mayOpenApp(targetApp)) {
       return (
         <div data-testid="workspace-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
           <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
@@ -1588,7 +1627,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       INITIAL_WORKSPACES.find((w) => w.id === targetApp?.workspaceId) ||
       currentWorkspace;
 
-    if (targetApp && !canUserAccessApp(targetApp, activePersona, workspaces)) {
+    if (targetApp && !mayOpenApp(targetApp)) {
       return (
         <div data-testid="workspace-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
           <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
@@ -2573,6 +2612,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                     <button
                       type="button"
                       onClick={handleCreateNewApp}
+                      title="New App Studio"
+                      aria-label="New App Studio"
                       className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
                     >
                       <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2607,6 +2648,11 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
         {/* MAIN CANVAS */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100/50 dark:bg-slate-950">
+          {appsStatus === "built-in" && (
+            <div data-testid="offline-sample-banner" role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              The server's app list did not load. These are built-in sample apps, and nothing done with them is saved.
+            </div>
+          )}
           {/* DISCREET ADMIN CONSOLE VIEW (/admin) */}
           {isAdminPath ? (
             <AdminConsole
@@ -2771,7 +2817,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
               {/* Process Desk Decisions Queue Panel */}
               <ProcessDesk
-                apps={workspaceApps}
+                apps={appsStatus === "loading" ? [] : workspaceApps}
                 callerPersona={activePersona}
                 callerWorkspaceRole={userRoleInCurrentWs}
               />

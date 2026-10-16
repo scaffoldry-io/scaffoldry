@@ -21,7 +21,7 @@ The audit prints rules grouped, three examples each, and the path of a JSON file
 - `doubled-symbol`: a button with an icon and a label that starts with `+`, so the plus is drawn twice.
 - `unnamed-control`: a button, link, or field with no text, label, title, or placeholder.
 - `placeholder-text`: `undefined`, `NaN`, `[object Object]`, `lorem ipsum`, `TODO`, `coming soon` on screen.
-- `overlay-overlap`, `overlay-offscreen`, `too-many-overlays`: popups and toasts that cover each other, sit outside the window, or pile up. These are checked after each click, because that is when popups appear.
+- `overlay-overlap`, `overlay-offscreen`, `overlay-hidden`, `too-many-overlays`: popups and toasts that cover each other, sit outside the window, hide under something, or pile up. A small toast on top of a full-screen modal is fine and is not reported. A notice in the page flow is not an overlay, whatever its role. These are checked after each click, because that is when popups appear.
 - `horizontal-overflow`: the page scrolls sideways.
 - `clipped-text`: text cut off with an ellipsis and no tooltip.
 - `duplicate-control`: the same two-word button twice on one screen.

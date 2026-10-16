@@ -39,7 +39,7 @@ function inPage(opts) {
     const named = el.getAttribute("aria-label") || el.getAttribute("title") || label(el) || el.getAttribute("alt") ||
       el.querySelector("img[alt]:not([alt=''])") || (el.labels && el.labels.length) || el.getAttribute("placeholder") ||
       (el.tagName === "INPUT" && ["submit", "button"].includes(el.type) && el.value);
-    if (!named) add("unnamed-control", `<${el.tagName.toLowerCase()}>${el.className ? " ." + String(el.className).split(" ")[0] : ""}`);
+    if (!named) add("unnamed-control", el.outerHTML.replace(/\s+/g, " ").replace(/ class="[^"]*"/, "").slice(0, 110));
   }
 
   // Text that should never reach a person.
@@ -55,7 +55,8 @@ function inPage(opts) {
     if (!visible(el) || !(el.innerText || "").trim()) return false;
     const s = getComputedStyle(el);
     const z = parseInt(s.zIndex, 10);
-    return s.position === "fixed" || el.matches('[role="dialog"], [role="alert"], [role="status"]') || (s.position === "absolute" && z >= 30);
+    // Floating layers only. A notice that sits in the page flow is not an overlay, whatever its role.
+    return s.position === "fixed" || (s.position === "absolute" && z >= 30) || (el.matches('[role="dialog"]') && s.position !== "static");
   }).filter((el, _, all) => !all.some((o) => o !== el && o.contains(el)));
   const box = (el) => el.getBoundingClientRect();
   for (const el of layers) {
@@ -64,14 +65,26 @@ function inPage(opts) {
     const h = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
     if (w * h < 0.7 * r.width * r.height) add("overlay-offscreen", `"${label(el).slice(0, 40)}" is mostly outside the window`);
   }
+  const area = (r) => r.width * r.height;
+  const viewport = innerWidth * innerHeight;
+  const onTop = (el) => {
+    const r = box(el);
+    const top = document.elementFromPoint(Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2)), Math.min(innerHeight - 1, Math.max(0, r.top + r.height / 2)));
+    return !!top && (el === top || el.contains(top));
+  };
   for (let i = 0; i < layers.length; i++) {
     for (let j = i + 1; j < layers.length; j++) {
       const a = box(layers[i]), b = box(layers[j]);
       const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
       const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-      if (w > 0 && h > 0 && w * h > 0.2 * Math.min(a.width * a.height, b.width * b.height)) {
-        add("overlay-overlap", `"${label(layers[i]).slice(0, 30)}" and "${label(layers[j]).slice(0, 30)}" cover each other`);
+      if (!(w > 0 && h > 0 && w * h > 0.2 * Math.min(area(a), area(b)))) continue;
+      const [small, big] = area(a) <= area(b) ? [layers[i], layers[j]] : [layers[j], layers[i]];
+      // A small layer on top of a screen-sized one is a toast over a modal. That is normal. Underneath it, it is lost.
+      if (area(box(small)) < 0.25 * viewport && area(box(big)) > 0.6 * viewport) {
+        if (!onTop(small)) add("overlay-hidden", `"${label(small).slice(0, 40)}" is hidden under "${label(big).slice(0, 30)}"`);
+        continue;
       }
+      add("overlay-overlap", `"${label(layers[i]).slice(0, 30)}" and "${label(layers[j]).slice(0, 30)}" cover each other`);
     }
   }
   if (layers.length > (opts.maxOverlays ?? 3)) add("too-many-overlays", `${layers.length} overlays are showing at once`);
