@@ -23,18 +23,27 @@ The transport is plain request and response JSON over HTTP POST. A GET returns 4
 | Protocol tests | `cargo test -p scaffoldry-server --test mcp_protocol_test` | Ping returns an empty result. A bad body gets a JSON-RPC parse error or an invalid-request error. No token is refused. A list result is an object under `items` | Free |
 | Agent scenarios | `cargo test -p scaffoldry-server --test agent_scenarios` | Twenty scripted faculty requests run through the endpoint with real personas. In-process, no spec validation | Free |
 | Wire check | `npm run ui:mcp` | A booted server, spoken to over HTTP the way a client does: initialize, the initialized notification, the tool list and its size, read tools, errors, ping, parse errors, GET | Free |
-| Real client | `npm run mcp:client` | The Claude Code CLI attaches over HTTP, calls `list_workspaces`, and its answer matches the REST API | About a tenth of a cent |
+| Write checks | `npm run ui:mcp` (the "MCP writes" part) | Through the tools: propose an app, approve it, create five rows, edit one, make a stale edit and get the error that names the current version, delete one, and list what is left | Free |
+| Real client | `npm run mcp:client` | The Claude Code CLI attaches over HTTP. It reads with `list_workspaces`, and its count matches REST. It writes with `create_record`, and the row is found through REST with the id it reported | About half a cent |
 
-The real client check found a fault the others missed. The server returned a bare list as `structuredContent`, and the client rejected it. Run it after any change to how results are returned.
+The real client check found a fault the others missed on its first run. The server returned a bare list as `structuredContent`, and the client rejected it. Run it after any change to how results are returned.
 
 ## Numbers worth knowing
 
 - 31 tools. The tool list costs a client about 3,800 tokens of context, on every session that loads it.
 - Read tools carry `readOnlyHint`. Write tools do not.
 
+## Fixtures
+
+The write checks are also the fixtures. `scripts/mcp/fixtures.mjs` makes an app called Fixture Register with four rows (one with accents, one edited, one deleted) using only MCP tools. `npm run ui:smoke` and `npm run ui:audit` run it first, so the screens have real data, and the smoke flow checks that the rows, the edit, and the deletion show in the desk. That is the whole path: tool call, database, screen.
+
+## Oddities noticed
+
+- A stale version through MCP comes back with the code `bad_request`. The message is clear ("The current version is 2"), but an agent that branches on codes cannot tell it from a malformed request. A code of its own, such as `conflict`, would help.
+- A proposal made through MCP is held as a proposal. An administrator can approve their own when every check passes, which the fixtures rely on. A change that fails a check would need a second person.
+
 ## Not done
 
 - A tool-list budget as a test that fails when the list grows past a limit, and error hints (README row 131).
-- Writing through a real client. The real-client check calls a read tool. Create and update are covered by the scenarios, not over the wire.
-- Using MCP tools to set up fixtures for the UI audit, such as an app with records, instead of building them through screens. An app is created with `propose_app_change`, and `create_record` adds rows.
+- Update and delete through a real client. The real client writes with `create_record`. Update and delete are covered over the wire, not by a model.
 - A session id, a server-sent stream, and `outputSchema` on tools. None is required.

@@ -9,6 +9,8 @@ import os from "node:os";
 import path from "node:path";
 import { boot } from "../dev/boot.mjs";
 import { mcpSmoke } from "../mcp/smoke.mjs";
+import { mcpClient } from "../mcp/client.mjs";
+import { seedFixtures } from "../mcp/fixtures.mjs";
 import { launch, auditPage, deadControls } from "./audit.mjs";
 
 const mode = process.argv.slice(2).find((a) => !a.startsWith("--")) || "audit";
@@ -25,9 +27,9 @@ const context = async (browser, size, token, issues) => {
   return { ctx, page };
 };
 
-async function audit(env, browser) {
+async function audit(env, browser, fx) {
   const me = await (await fetch(`${env.api}/me/apps`, { headers: { authorization: `Bearer ${env.token}` } })).json().catch(() => ({}));
-  const apps = (me.apps || []).slice(0, 2).map((a) => `/app/${a.slug}`);
+  const apps = [...new Set([...(me.apps || []).map((a) => a.slug).slice(0, 2), ...(fx ? [fx.app] : [])])].map((slug) => `/app/${slug}`);
   const screens = ["/", "/my-apps", "/datasets", "/admin", "/admin/org", "/admin/ledger", "/admin/jobs", ...apps];
   const findings = [];
   for (const [sizeName, size] of Object.entries(SIZES)) {
@@ -62,7 +64,7 @@ async function audit(env, browser) {
   return findings.length === 0;
 }
 
-async function smoke(env, browser) {
+async function smoke(env, browser, fx) {
   const results = [];
   const check = (name, ok, detail = "") => results.push({ name, ok: !!ok, detail });
   const issues = [];
@@ -94,6 +96,14 @@ async function smoke(env, browser) {
     const t = await text(page);
     check(`${what} opens`, expect.test(t) && !/403 Forbidden/.test(t));
   }
+  if (fx) {
+    await page.goto(`${env.web}/app/${fx.app}`, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(2000);
+    const t = await text(page);
+    check("rows written through MCP appear in the desk", t.includes("Fixture row 1") && t.includes("Café Ünïcode row"), "the app screen did not show the rows");
+    check("the row deleted through MCP does not appear", !t.includes("Fixture row 5"));
+    check("the edit made through MCP shows", /\b99\b/.test(t), "amount 99 not shown");
+  }
   check("no console or request errors during the flow", issues.filter((i) => !/HTTP 401/.test(i)).length === 0, issues.filter((i) => !/HTTP 401/.test(i)).slice(0, 2).join("; "));
   await ctx.close();
   return results;
@@ -108,7 +118,7 @@ async function mcp(env) {
 
 const show = (title, results) => {
   console.log(title);
-  for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"} ${r.name}${r.detail ? ` (${r.detail})` : ""}`);
+  for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"} ${r.name}${!r.ok && r.detail ? ` (${r.detail})` : ""}`);
   return results.every((r) => r.ok);
 };
 
@@ -116,10 +126,14 @@ const env = await boot({ web: mode !== "mcp" });
 let browser;
 let ok = true;
 try {
+  // Fixtures are made through MCP tools, so the same steps are the write test.
+  const { results: writes, fixture } = await seedFixtures(await mcpClient({ url: `${env.api}/mcp`, token: env.token }));
+  if (mode === "mcp" || mode === "all") ok = show("MCP writes:", writes) && ok;
+  else if (writes.some((r) => !r.ok)) ok = show("Fixtures:", writes.filter((r) => !r.ok)) && ok;
   if (mode === "mcp" || mode === "all") ok = show("MCP:", await mcp(env)) && ok;
   if (mode !== "mcp") browser = await launch();
-  if (mode === "smoke" || mode === "all") ok = show("UI smoke:", await smoke(env, browser)) && ok;
-  if (mode === "audit" || mode === "all") ok = (await audit(env, browser)) && ok;
+  if (mode === "smoke" || mode === "all") ok = show("UI smoke:", await smoke(env, browser, fixture)) && ok;
+  if (mode === "audit" || mode === "all") ok = (await audit(env, browser, fixture)) && ok;
 } catch (e) {
   console.log(`FAIL harness: ${e.message}`);
   ok = false;
