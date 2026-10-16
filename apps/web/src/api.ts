@@ -317,6 +317,16 @@ export const setAuthToken = (token: string | null, persist = true) => {
   }
 };
 
+/** A stored record. `version` changes by one on every save. */
+export interface AppRecord {
+  id: string;
+  app_slug?: string;
+  data: Record<string, any>;
+  version: number;
+  created_at?: string;
+  created_by?: string | null;
+}
+
 /** An app the signed-in person can reach. `scope` says how: through a workspace role, on this app only, or as an administrator. */
 export interface MyApp {
   slug: string;
@@ -1047,6 +1057,31 @@ export const apiClient = {
   // Workspaces
   listWorkspaces: async (): Promise<Workspace[]> => {
     return request<Workspace[]>("/workspaces");
+  },
+
+  // Records of an app. A save names the version it read, and the server answers 409 when it is stale.
+  listRecords: async (slug: string): Promise<AppRecord[]> => {
+    const res = await request<{ records: AppRecord[] }>(`/apps/${encodeURIComponent(slug)}/records`);
+    return Array.isArray(res?.records) ? res.records : [];
+  },
+
+  getRecord: async (slug: string, id: string): Promise<AppRecord> => {
+    return request<AppRecord>(`/apps/${encodeURIComponent(slug)}/records/${encodeURIComponent(id)}`);
+  },
+
+  createRecord: async (slug: string, data: Record<string, unknown>): Promise<AppRecord> => {
+    return request<AppRecord>(`/apps/${encodeURIComponent(slug)}/records`, { method: "POST", body: JSON.stringify({ data }) });
+  },
+
+  updateRecord: async (slug: string, id: string, version: number, data: Record<string, unknown>): Promise<AppRecord> => {
+    return request<AppRecord>(`/apps/${encodeURIComponent(slug)}/records/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, data }),
+    });
+  },
+
+  deleteRecord: async (slug: string, id: string): Promise<void> => {
+    await request<null>(`/apps/${encodeURIComponent(slug)}/records/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   /** The apps the signed-in person can reach, and how. */

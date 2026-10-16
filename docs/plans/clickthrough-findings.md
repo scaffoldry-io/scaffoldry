@@ -32,7 +32,9 @@ Items 6 and 8 are fixed too. The budget field's step is now 1,000, so 100,000 is
 
 The `/admin` identity question is resolved. The desk asked the server who a token belongs to only at sign-in. After a reload the stored token came back, but the person shown reset to the built-in "Dr. Sarah Connor, faculty". The screen then displayed and gated as that person while API calls carried the real token. The desk now asks the server on load and shows that person. A 401 ends the session. A network failure does not. Three tests cover it. The "403 Forbidden" I saw is consistent with the desk gating on the wrong person. I did not confirm that separately in a browser.
 
-Still open: items 1, 4, and 7. Item 1 is the real fix. The label only stops the screen from misleading people.
+Item 1 has its foundation. `api.ts` now has list, get, create, update, and delete calls for an app's records, and `useAppRecords` loads them, adds created rows, saves with the version it read, and on a 409 reloads the row, shows "Someone else saved this record. Reloaded.", and does not send the typed value again. It invents no rows: before a load finishes or when it fails there are none. Five tests cover it. No screen uses it yet, so the published-app screen is still the mock-up. Switching that screen, and `MultiViewWorkspace`, to the hook is the next slice. It rewrites tests that assert the mock-up's behaviour, and it needs a decision on what the published-app screen shows for an app of any shape.
+
+Still open: items 1 (the screens), 4, and 7. Item 1 is the real fix. The label only stops the screen from misleading people.
 
 ## Found in passing
 
