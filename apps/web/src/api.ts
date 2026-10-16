@@ -317,6 +317,16 @@ export const setAuthToken = (token: string | null, persist = true) => {
   }
 };
 
+/** An app the signed-in person can reach. `scope` says how: through a workspace role, on this app only, or as an administrator. */
+export interface MyApp {
+  slug: string;
+  title: string;
+  description: string;
+  department: string;
+  workspace_id: string;
+  scope: "admin" | "workspace" | "app";
+}
+
 export const getAuthToken = (): string | null => {
   if (activeToken) return activeToken;
   if (typeof window !== "undefined") {
@@ -1037,6 +1047,12 @@ export const apiClient = {
   // Workspaces
   listWorkspaces: async (): Promise<Workspace[]> => {
     return request<Workspace[]>("/workspaces");
+  },
+
+  /** The apps the signed-in person can reach, and how. */
+  listMyApps: async (): Promise<MyApp[]> => {
+    const res = await request<{ apps: MyApp[] }>("/me/apps");
+    return Array.isArray(res?.apps) ? res.apps : [];
   },
 
   getWorkspace: async (id: string): Promise<{ workspace: Workspace; collaborators: Collaborator[] }> => {

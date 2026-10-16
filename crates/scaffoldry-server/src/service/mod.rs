@@ -26,6 +26,7 @@ pub mod views;
 pub mod link_options;
 pub mod grants;
 pub mod members;
+pub mod my_apps;
 pub mod scope;
 pub mod trash;
 pub mod undo;

@@ -22,6 +22,7 @@ use crate::service::ServiceError;
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/workspaces/{id}/apps", post(create_app_in_workspace))
+        .route("/me/apps", get(list_my_apps))
         .route("/apps/{slug}", get(get_app).put(update_app))
         .route("/apps/{slug}/publish", post(publish_app))
         .route("/apps/{slug}/automations", get(list_app_automations).post(create_app_automation))
@@ -498,4 +499,13 @@ async fn list_app_collaborators(
         .map_err(ServiceError::into_pair)?;
 
     Ok(Json(json!({ "collaborators": collabs })))
+}
+
+/// The apps the caller can reach, for the My apps list.
+async fn list_my_apps(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    Ok(Json(serde_json::json!({ "apps": crate::service::my_apps::my_apps(&user, &state) })))
 }

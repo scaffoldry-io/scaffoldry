@@ -84,9 +84,11 @@ Tests, in `member_principals_test.rs`:
 - A chair given Admin on app A can write A, cannot reach app B in the same workspace, and cannot add members to the workspace. A chair of another unit reaches nothing. This failed before the change, because the app was ignored.
 - The app must be in the workspace, an app membership cannot be an owner, a principal can hold both kinds, and removal takes one scope at a time. I wrote this after the code and did not watch it fail.
 
-Open question, now measured. An app-only member does not see the workspace in `GET /workspaces`, and `GET /workspaces/{id}` returns 403. They can reach the app by its address only. The desk will not show them the app. Options, for a decision:
-- Show the workspace in the list for an app-only member, with only the apps they reach, and its name and nothing else.
-- Add a separate "My apps" list that does not touch workspace routes.
+Decided: a separate "My apps" list, not a change to the workspace routes. An app-only member still does not see the workspace in `GET /workspaces`, and `GET /workspaces/{id}` still returns 403. `GET /api/v1/me/apps` lists every app the caller can reach, each with how: `workspace` (a workspace-wide role), `app` (a membership limited to that app), or `admin`. The desk has a "My apps" page and a rail entry. It shows no workspace details, only the workspace id on each app.
+
+Pinned apps: the desk already pinned workspaces, in this browser's local storage. Apps can now be pinned the same way, from the My apps page. Pinned apps show in their own "Pinned apps" group in the rail, above Data and Studio Tools, and first on the My apps page. Limit: pins are per browser, as workspace pins are. A pin does not follow a person to another browser. Storing pins on the server would fix that and is a separate decision.
+
+Desk fix made on the way: `/app/{slug}` used to open the first app when the slug was not in the desk's list. For a person reached through an app grant, that would show the wrong app. It now says the app cannot open in the desk yet. The published-app screen is still a mock-up (`1c-1`), so opening an app from My apps shows that screen only for apps the desk already knows.
 
 Also not done: app-limited members are not in `people_with_roles`, so they are not offered as approvers by workspace role. A decision comes with the list above.
 
@@ -120,7 +122,7 @@ Position, group, and unit memberships are not listed. They are not direct grants
 
 Tests: the membership list with who made each grant, and the refusal for a non-admin, in `member_principals_test.rs`. The approver and assignee rows in `approver_engine_test.rs`. The first failed before the change, on the missing route. The second I wrote after the code and did not watch fail.
 
-**3b, not done.** Requiring a reason on a new direct grant changes the add-member request that the web desk sends today, and the desk has no field for it. It needs an API change, a desk change, and a rule for clients that do not send a reason. It is a decision, not a step. The report already shows the ledger's rationale, which today is generated text, not a reason a person wrote.
+**3b, decided: the reason is optional.** The add-member request accepts an optional `reason`. When given, the ledger records it as the rationale and the report shows it. Without one, the ledger keeps its generated wording, so nothing that sends no reason today changes. The desk has no field for it yet. Test: a grant with a reason and one without, in `member_principals_test.rs`. It failed first, because the reason was ignored.
 
 Not done in 3a: the desk has no screen for this list. It is an API only.
 
@@ -152,4 +154,4 @@ Do this only if you want it. It changes who can see departmental workspaces. Wor
 
 ## Prompt for the session
 
-Read this file and `docs/plans/foundation.md` "Decisions already made". Phases 1, 2a, and 3a are done. Settle the open question under 2a, and decide 3b, before more work. Phase 2b and phase 4 each need a separate decision.
+Read this file and `docs/plans/foundation.md` "Decisions already made". Phases 1, 2a, and 3 are done. Phase 2b and phase 4 each need a separate decision. Still open: a desk screen for the direct-grants list, and a desk field for the optional reason.

@@ -460,3 +460,56 @@ async fn an_admin_lists_direct_person_grants_with_who_made_them() {
     let (status, _) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &w.owner, None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// 3b. A reason on a direct grant is optional. When given, the ledger and the admin report carry it.
+#[tokio::test]
+async fn a_direct_grant_may_carry_a_reason_and_does_not_need_one() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let admin = issue_test_token_and_user("jordan.lee@state.edu");
+    let (eli, _) = w.person("eli");
+    let (fay, _) = w.person("fay");
+
+    let with = json!({ "principal_type": "user", "principal_id": eli, "role": "Viewer", "reason": "Covering for a sabbatical" });
+    let (status, body) = send(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"), &w.owner, Some(with)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(w.share("user", &fay, "Viewer").await.0, StatusCode::CREATED, "a grant without a reason still works");
+
+    let (_, body) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &admin, None).await;
+    let rows = body["grants"].as_array().expect("grants");
+    let row = |who: &str| rows.iter().find(|g| g["who"] == who).unwrap_or_else(|| panic!("no row for {who}: {body}"));
+    assert_eq!(row(&eli)["rationale"], "Covering for a sabbatical");
+    assert!(row(&fay)["rationale"].as_str().is_some_and(|r| r.contains("added")), "without one, the ledger keeps its own wording: {}", row(&fay));
+}
+
+// 4. My apps: the apps a person can reach, including one reached by an app-only membership.
+#[tokio::test]
+async fn my_apps_lists_the_apps_a_person_can_reach_and_how() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let other_app = format!("mq-{}", w.tag);
+    w.state.engine.write().unwrap().register_manifest(manifest(&other_app)).unwrap();
+    let (gus, gus_token) = w.person("gus");
+    let (_hal, hal_token) = w.person("hal");
+    assert_eq!(w.share_app("user", &gus, "Viewer", &w.slug).await.0, StatusCode::CREATED);
+
+    let slugs = |body: &Value| -> Vec<(String, String)> {
+        body["apps"].as_array().expect("apps").iter().map(|a| (a["slug"].as_str().unwrap().to_string(), a["scope"].as_str().unwrap().to_string())).collect()
+    };
+
+    let (status, body) = send(&w.app, "GET", "/api/v1/me/apps", &gus_token, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mine = slugs(&body);
+    assert!(mine.contains(&(w.slug.clone(), "app".to_string())), "the app named, reached by an app membership: {mine:?}");
+    assert!(!mine.iter().any(|(s, _)| *s == other_app), "not the other app in the same workspace: {mine:?}");
+
+    let (_, body) = send(&w.app, "GET", "/api/v1/me/apps", &w.owner, None).await;
+    let owner = slugs(&body);
+    assert!(owner.contains(&(w.slug.clone(), "workspace".to_string())) && owner.contains(&(other_app.clone(), "workspace".to_string())), "{owner:?}");
+
+    let (_, body) = send(&w.app, "GET", "/api/v1/me/apps", &hal_token, None).await;
+    assert!(!slugs(&body).iter().any(|(s, _)| *s == w.slug || *s == other_app), "a person with no grant sees neither");
+
+    let (status, _) = send(&w.app, "GET", "/api/v1/me/apps", "not-a-token", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

@@ -65,6 +65,9 @@ pub struct CollaboratorPayload {
     /// Limits the membership to one app of the workspace. Empty or absent means the whole workspace.
     #[serde(default)]
     pub app_slug: Option<String>,
+    /// Why the grant is made. Optional. When given, the ledger records it as the rationale.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 pub fn list_workspaces(
@@ -680,11 +683,14 @@ pub fn add_collaborator(
         app_slug: Some(app.clone()).filter(|a| !a.is_empty()),
         decision_type: if kind == Kind::User { DecisionType::WorkspaceMemberAdded } else { DecisionType::AccessRoleGranted },
         oscal_control_id: "AC-02".to_string(),
-        rationale: format!(
-            "Principal {} added {} as {} to {}",
-            caller.eppn, key, role_str,
-            if app.is_empty() { format!("workspace {}", ws.name) } else { format!("app {app} in workspace {}", ws.name) }
-        ),
+        rationale: match payload.reason.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+            Some(reason) => reason.to_string(),
+            None => format!(
+                "Principal {} added {} as {} to {}",
+                caller.eppn, key, role_str,
+                if app.is_empty() { format!("workspace {}", ws.name) } else { format!("app {app} in workspace {}", ws.name) }
+            ),
+        },
         payload: &json!({
             "workspace_id": workspace_id,
             "target_eppn": key,
@@ -938,6 +944,7 @@ pub fn manage_workspace_member(
                     scoped_affiliation: None,
                     department: None,
                     app_slug: None,
+                    reason: None,
                 },
                 state,
             )?;
