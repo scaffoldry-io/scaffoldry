@@ -14,7 +14,9 @@
     "ui:smoke": "node scripts/ui/run.mjs smoke",
     "ui:mcp": "node scripts/ui/run.mjs mcp",
     "ui:all": "node scripts/ui/run.mjs all",
-    "ui:test": "node --test scripts/ui/audit.test.mjs"
+    "ui:test": "node --test scripts/ui/audit.test.mjs",
+    "mcp:serve": "node scripts/mcp/serve.mjs",
+    "mcp:client": "node scripts/mcp/client-check.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.56.1"

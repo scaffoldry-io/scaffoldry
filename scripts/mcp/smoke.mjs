@@ -32,9 +32,24 @@ export async function mcpSmoke({ url, token }) {
   const reads = tools.filter((t) => t.annotations?.readOnlyHint && !(t.inputSchema.required || []).length).slice(0, 4);
   for (const t of reads) {
     const r = await call("tools/call", { name: t.name, arguments: {} });
-    const ok = r.status === 200 && r.json?.result && !r.json.result.isError && r.json.result.structuredContent !== undefined;
-    check(`read tool ${t.name} returns structured content`, ok, ok ? "" : r.text.slice(0, 120));
+    const sc = r.json?.result?.structuredContent;
+    const ok = r.status === 200 && r.json?.result && !r.json.result.isError && sc && typeof sc === "object" && !Array.isArray(sc);
+    check(`read tool ${t.name} returns structured content as an object`, ok, ok ? "" : r.text.slice(0, 120));
   }
+
+  const ping = await call("ping");
+  check("ping answers with an empty result", ping.json?.result && Object.keys(ping.json.result).length === 0, ping.text.slice(0, 80));
+
+  const raw = await fetch(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: "{not json" });
+  const rawJson = await raw.json().catch(() => null);
+  check("malformed JSON is a JSON-RPC parse error, code -32700", rawJson?.error?.code === -32700, `status ${raw.status}`);
+
+  for (const method of ["resources/list", "prompts/list"]) {
+    const r = await call(method);
+    check(`${method} answers`, !!r.json?.result, r.text.slice(0, 80));
+  }
+  const get = await fetch(url, { headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" } });
+  check("a GET is either a stream or a clean 405, so clients know there is no server stream", get.status === 405 || get.headers.get("content-type")?.includes("text/event-stream"), `status ${get.status}`);
 
   const unknown = await call("tools/call", { name: "no_such_tool", arguments: {} });
   check("an unknown tool is a tool error, not a crash", unknown.status === 200 && (unknown.json?.result?.isError || unknown.json?.error), `status ${unknown.status}`);

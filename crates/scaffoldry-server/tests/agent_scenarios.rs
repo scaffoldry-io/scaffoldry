@@ -140,7 +140,10 @@ impl Harness {
                 raw: text,
             };
         }
-        Called { is_error: false, code: None, message: String::new(), result: result["structuredContent"].clone(), raw: text }
+        // The plain result is the text content. structuredContent wraps a list or a lone value in an object, as the
+        // spec requires, so a scenario reads the text to see what the tool returned.
+        let plain = result["content"][0]["text"].as_str().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_else(|| result["structuredContent"].clone());
+        Called { is_error: false, code: None, message: String::new(), result: plain, raw: text }
     }
 
     async fn post(&self, uri: &str, persona: &str, body: &Value) -> (StatusCode, String) {

@@ -42,4 +42,4 @@ Write the page with the fault first, in `scripts/ui/audit.test.mjs`, and see the
 
 ## MCP
 
-`/api/v1/mcp` is a working JSON-RPC endpoint with 31 tools, and `ui:mcp` checks it over the wire. Not done: attaching a real client (Claude Code or the desktop app) to it, and the protocol conformance suite (README row 131). Using MCP tools to set up fixtures for the audit, such as creating an app and records, is the next step, because it is far cheaper than creating them through the screen.
+See `docs/mcp-client.md`. `npm run ui:mcp` checks the endpoint over the wire, and `npm run mcp:client` runs a real Claude Code client against it.
