@@ -60,3 +60,7 @@ Still open: item 7 (Datasets is static), and the rest of the desk's built-in sam
 - Resolve the `/admin` identity question before any release.
 
 The earlier schedule estimate (6 to 10 weeks for the whole plan) is unchanged. It assumed the screens were wired. For the core loop, they are not, so the estimate for a usable first pilot should start from `live-data.md`, not from the plan's count of completed briefs.
+
+## Fixed after the audit existed
+
+The audit found two faults that no one had listed. `ProcessDesk` sent its requests with no token, so the Decisions panel always got 401 and said "No decisions waiting". It now sends the signed-in token on the list and on decide, with a test for each. The header "+ New App" drew its plus twice, and is fixed with a guard test that runs with the normal suite. The audit's remaining findings are in `docs/plans/README.md` as rows 1c-7 to 1c-9.

@@ -117,7 +117,15 @@ Added after the click-through in [clickthrough-findings.md](clickthrough-finding
 | 1c-5 | [position-roles.md](position-roles.md) | 2a | A position, group, unit, or person can be granted one app, not only a whole workspace. An app-only member finds the app in My apps, and can pin it | **COMPLETED**. Pins are per browser |
 | 1c-6 | [position-roles.md](position-roles.md) | 3 | An admin lists every direct person grant, and which grants are app-scoped. A reason on a direct grant is optional | **COMPLETED** for the API. A desk screen and a desk reason field are not done |
 
-Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Done already from the click-through: the false ledger message, made-up dashboard figures, hardcoded header user, and "Live" labels are gone from the published-app screen. The Vite dev proxy exists. The budget field accepts round values. A reload shows the person the stored token belongs to.
+Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Found by the UI audit (`docs/ui-review.md`), not yet fixed:
+
+| Row | What is wrong | What is true after the fix |
+| --- | --- | --- |
+| 1c-7 | The desk's app and workspace lists are built into `AdminDesk.tsx`. It asks the server about apps the server does not have, such as `cs-ai-benchmarks`, and gets 404 on every load | The desk lists only what the server returns |
+| 1c-8 | "New App", "New App Studio", and "Co-Build New App" each create an app only in the browser's memory, with a made-up slug and domain, and say "Created new app". The toast covers the studio panel | A new app is created on the server, or the button says it is a draft that is not saved. One toast area that does not cover a panel |
+| 1c-9 | Unnamed fields in Security and Settings, an unnamed button in the opened navigation, on phone a banner mostly outside the window on `/admin`, and clipped text with no tooltip | Every control has a name. Nothing sits outside the window. Clipped text has a tooltip |
+
+Done already from the click-through: the false ledger message, made-up dashboard figures, hardcoded header user, and "Live" labels are gone from the published-app screen. The Vite dev proxy exists. The budget field accepts round values. A reload shows the person the stored token belongs to.
 
 ### Wave 2 — the data platform
 
