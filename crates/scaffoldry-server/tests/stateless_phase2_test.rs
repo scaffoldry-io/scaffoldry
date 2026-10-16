@@ -152,6 +152,9 @@ async fn two_instances_filling_a_one_seat_position_leave_one_holder() {
     }
 }
 
+/// A guard against a missing index at 50,000 rows, not a speed target.
+const LIMIT: Duration = Duration::from_millis(250);
+
 // 5. One user among 50,000 costs one statement. A People page costs three at most.
 #[test]
 fn one_user_among_fifty_thousand_is_one_statement_and_a_page_is_three() {
@@ -167,7 +170,10 @@ fn one_user_among_fifty_thousand_is_one_statement_and_a_page_is_three() {
     assert_eq!(found.id, "u25000");
     assert_eq!(state.repository.statements() - before, 1);
     println!("one user among 50,000: {one:?}");
-    assert!(one < Duration::from_millis(20), "{one:?}");
+    // The statement counts above are the exact claim. The time is a coarse guard against a missing index, which costs
+    // seconds at this size. It is wide because the full suite runs many tests at once, and 20 ms and 50 ms both
+    // failed there (28.8 ms and 66 ms) while passing alone in 1 to 13 ms.
+    assert!(one < LIMIT, "{one:?}");
 
     let before = state.repository.statements();
     let t = Instant::now();
@@ -177,7 +183,7 @@ fn one_user_among_fifty_thousand_is_one_statement_and_a_page_is_three() {
     assert!(next.is_some());
     assert!(state.repository.statements() - before <= 3, "{} statements", state.repository.statements() - before);
     println!("a People page of 50 among 50,000: {page:?}");
-    assert!(page < Duration::from_millis(50), "{page:?}");
+    assert!(page < LIMIT, "{page:?}");
 
     let t = Instant::now();
     let found = state.repository.search_users(&UserFilter { prefix: Some("user4999".into()), ..Default::default() }, 0, 51).unwrap();
