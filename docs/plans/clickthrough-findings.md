@@ -38,7 +38,9 @@ Items 1 and 4 are done, by replacing the screen. The published-app screen no lon
 
 Not verified: I did not click through this in a browser. The tests use a stubbed server. The kanban, calendar, and gallery views were not tested against real rows, and the kanban view still moves cards by writing a field named `status`, which an app may not have. Deleting a record has no button on this screen. Link and lookup fields were not checked.
 
-Still open: item 7 (Datasets is static), and the rest of the desk's built-in sample data, such as the seeded app and workspace lists in `AdminDesk.tsx`. Item 1 is the real fix. The label only stops the screen from misleading people.
+Item 7 is fixed. The Datasets screen reads `GET /datasets` and each dataset's relationships. It shows a loading line, an error with Retry, or "No datasets are published yet". The department filter lists the server's departments. Three tests cover it, and the UI smoke check opens the screen against a real server. The app studio's dataset picker (`CoBuilderStudioModal.tsx`) still uses the built-in samples.
+
+Still open: the rest of the desk's built-in sample data, such as the seeded app and workspace lists in `AdminDesk.tsx`. Item 1 is the real fix. The label only stops the screen from misleading people.
 
 ## Found in passing
 

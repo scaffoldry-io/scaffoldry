@@ -1,6 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { apiClient } from "./api";
 import { DatasetRelationship, PublishedDataset } from "./types";
 
+/** Sample datasets. Only the app studio's picker still uses them. The Datasets screen reads the server. */
 export const SEEDED_DATASETS: PublishedDataset[] = [
   {
     id: "faculty",
@@ -97,51 +99,43 @@ export const SEEDED_DATASETS: PublishedDataset[] = [
   },
 ];
 
-export const SEEDED_RELATIONSHIPS: DatasetRelationship[] = [
-  {
-    id: "rel_course_instructor",
-    name: "Course Instructor Reference",
-    source_dataset_id: "courses",
-    target_dataset_id: "faculty",
-    source_field: "instructor_eppn",
-    target_field: "eppn",
-    relationship_type: "OneToMany",
-    display_field: "full_name",
-  },
-  {
-    id: "rel_course_program",
-    name: "Course Program Affiliation",
-    source_dataset_id: "courses",
-    target_dataset_id: "programs",
-    source_field: "program_code",
-    target_field: "code",
-    relationship_type: "OneToMany",
-    display_field: "degree_name",
-  },
-  {
-    id: "rel_grant_pi",
-    name: "Research PI Reference",
-    source_dataset_id: "grants",
-    target_dataset_id: "faculty",
-    source_field: "pi_eppn",
-    target_field: "eppn",
-    relationship_type: "OneToMany",
-    display_field: "full_name",
-  },
-];
-
 interface DatasetExplorerProps {
   onUseInApp?: (dataset: PublishedDataset) => void;
 }
 
 export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) => {
-  const [datasets] = useState<PublishedDataset[]>(SEEDED_DATASETS);
-  const [relationships] = useState<DatasetRelationship[]>(SEEDED_RELATIONSHIPS);
-  const [selectedDatasetId, setSelectedDatasetId] = useState<string>("courses");
+  const [datasets, setDatasets] = useState<PublishedDataset[]>([]);
+  const [relationships, setRelationships] = useState<DatasetRelationship[]>([]);
+  const [load, setLoad] = useState<{ state: "loading" | "ready" | "error"; message?: string }>({ state: "loading" });
+  const [reloads, setReloads] = useState(0);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterDept, setFilterDept] = useState("all");
   const [viewMode, setViewMode] = useState<"catalog" | "lattice">("catalog");
   const [activeTab, setActiveTab] = useState<"records" | "schema" | "relationships">("records");
+
+  useEffect(() => {
+    let live = true;
+    setLoad({ state: "loading" });
+    apiClient
+      .listDatasets()
+      .then(async (list) => {
+        // Relationships come per dataset. Each one is listed from both ends, so keep one copy by id.
+        const perDataset = await Promise.all(list.map((d) => apiClient.listDatasetRelationships(d.id)));
+        if (!live) return;
+        const byId = new Map<string, DatasetRelationship>();
+        perDataset.flat().forEach((r) => byId.set(r.id, r));
+        setDatasets(list);
+        setRelationships([...byId.values()]);
+        setLoad({ state: "ready" });
+      })
+      .catch((e) => {
+        if (live) setLoad({ state: "error", message: e instanceof Error ? e.message : "The datasets did not load." });
+      });
+    return () => {
+      live = false;
+    };
+  }, [reloads]);
 
   const selectedDataset = datasets.find((d) => d.id === selectedDatasetId) || datasets[0];
 
@@ -166,6 +160,26 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
     const other = datasets.find((d) => d.id === otherId);
     return other ? other.name : otherId;
   };
+
+  if (load.state === "loading") {
+    return <div className="flex-1 p-6 text-sm text-slate-500 dark:text-slate-400">Loading datasets…</div>;
+  }
+  if (load.state === "error") {
+    return (
+      <div className="flex-1 p-6 text-sm" role="alert">
+        <p className="text-rose-700 dark:text-rose-300">The datasets did not load. {load.message}</p>
+        <button
+          onClick={() => setReloads((n) => n + 1)}
+          className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (!selectedDataset) {
+    return <div className="flex-1 p-6 text-sm text-slate-500 dark:text-slate-400">No datasets are published yet.</div>;
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-slate-50 dark:bg-[#0b0f19] text-slate-800 dark:text-slate-100">
@@ -247,10 +261,11 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
               className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Departments</option>
-              <option value="Academic Affairs">Academic Affairs</option>
-              <option value="Registrar">Office of the Registrar</option>
-              <option value="Sponsored Research">Sponsored Research</option>
-              <option value="Provost">Provost & Council</option>
+              {[...new Set(datasets.map((d) => d.department))].sort().map((dept) => (
+                <option key={dept} value={dept}>
+                  {dept}
+                </option>
+              ))}
             </select>
           </div>
         </div>
