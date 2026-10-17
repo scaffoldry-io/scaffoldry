@@ -282,7 +282,7 @@ Wire it in.
 | Method | Path | Who | Behavior |
 | --- | --- | --- | --- |
 | GET | `/admin/access/grants` | Platform Admin, `compliance`, Org Unit Admin for their subtree | Query `holder`, `anchor`, `hierarchy`, `source`, `state`, cursor |
-| POST | `/admin/access/grants` | as in "Decisions already made" | Validates against the schema. An Org Unit Admin may anchor only inside their subtree and grant at most `admin`: otherwise `403 grant_outside_scope`. Every new grant widens, so it is stored as a pending `access_changes` row |
+| POST | `/admin/access/grants` | as in "Decisions already made" | Validates against the schema. An Org Unit Admin may anchor only inside their subtree and grant at most `admin`: otherwise `403 grant_outside_scope`. Every new grant widens, so it is stored as a pending `access_changes` row. A grant whose holder is the root unit of a hierarchy, or a group of everyone, is refused with `400 grant_too_broad` unless its anchor is one container and its role is `viewer`. Access for everyone is a workspace's institutional visibility, which already exists |
 | POST | `/admin/access/grants/{id}/revoke` | the same | Narrows. Applied at once. Sets `revoked_at` and `revoked_by`. Grants are never deleted |
 | POST | `/admin/access/changes/{id}/decide` | a different person with the same right | `confirm` or `reject`. The proposer gets `403`. On confirm, in one transaction: ledger `AccessGrantChanged`, then the row |
 

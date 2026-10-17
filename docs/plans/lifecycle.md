@@ -214,6 +214,25 @@ Tests.
 7. Placing and releasing are ledger entries written before the change.
 8. A `pin_hold` job killed halfway resumes and pins each record once.
 
+## Phase 5 — when an owner leaves
+
+People change jobs. Their workspaces and apps must not be left without an owner, and access must not linger.
+
+1. `GET /admin/ownership/orphans`: workspaces whose every owner is inactive, on hold, or has no appointment, and apps and outside clients whose proposer or owner is in that state. Platform Admin or `compliance`. One SQL statement.
+2. `POST /admin/ownership/transfer/preview` with `from`, `to`, and optionally a list of workspaces. Changes nothing. Returns, per workspace: whether `to` already has a role, what `to` gains, what `from` loses, the open proposals and process steps waiting on `from`, the outside clients and tokens `from` created, and any blocker: `to` is inactive, `to` is the same person, or the transfer would leave a workspace with no owner.
+3. `POST /admin/ownership/transfer` with the same body and a `reason`. Refused when the preview has a blocker. In one transaction, in this order: a ledger entry, then `from`'s roles are revoked, then `to` is made owner, then `from`'s agent tokens for those workspaces are revoked. Revocation comes first, so a failure part way leaves `from` without access, never both.
+4. A workspace cannot lose its last owner by any route: removing, demoting, or holding the last owner is refused with `409 last_owner`. Put the check in the one function that changes memberships.
+5. Usage, history and the ledger keep their actors. Nothing is reattributed.
+6. Console: an **Ownership** tab in the workspaces section, with the orphan list, `Preview transfer`, and `Transfer`. `Transfer` is enabled only after a preview with no blocker, for the same values.
+
+Tests.
+
+1. A workspace whose only owner is put on hold appears in the orphan list.
+2. The preview lists the open proposal waiting on `from` and changes nothing. Count rows before and after.
+3. A transfer revokes `from` before it adds `to`. Make the add fail in the test and check that `from` is still revoked and the ledger entry exists.
+4. Removing the last owner is `409 last_owner` through the member route, the admin route, and the directory sync.
+5. History written by `from` before the transfer still names `from`.
+
 ## How to prompt Gemini
 
 ```
