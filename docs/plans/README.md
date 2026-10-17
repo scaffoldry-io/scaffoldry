@@ -153,7 +153,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 83 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules | **COMPLETED** |
 | 84 | [views.md](views.md) | 3 | A million rows in a window. Uses `@tanstack/react-virtual`, approved by Johann (MIT) | **COMPLETED** |
 | 85 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts | **COMPLETED** |
-| 86 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
+| 86 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs | **COMPLETED** |
 | 87 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers | **COMPLETED** |
 | 88 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon | **COMPLETED** |
 | 89 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app | **COMPLETED** |
@@ -311,8 +311,9 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0058_flow_state.sql` | workflows phase 3 |
 | `0059_content_findings.sql` | sensitive content phase 2. Also creates `authorized_stores` and adds `data_labels.categories` |
 | `0060_attachment_content_scan.sql` | sensitive content phase 3 |
-| `0061_attachments.sql` | attachments phase 1. Shipped as `0051_files.sql`, with `0052_file_scans.sql` for phase 2. Migrations up to `0052` are taken on disk, so a number below that in this list is a plan, not a free number: use the next free one |
+| `0061_attachments.sql` | attachments phase 1. Shipped as `0051_files.sql`, with `0052_file_scans.sql` for phase 2. Migrations up to `0054` are taken on disk, so a number below that in this list is a plan, not a free number: use the next free one |
 | `0062_cache_versions.sql` | stateless server phase 1. Shipped as `0053_cache_versions.sql`, the next free number |
+| `0054_imports.sql` | import export phase 1. Shipped as `0054_imports.sql`, the next free number |
 | `0063_people_indexes.sql` | stateless server phase 2, only if a measured query needs an index |
 | `0064_policy_library.sql` | policy library phase 1 |
 | `0065_policy_fetch.sql` | policy library phase 5 |
