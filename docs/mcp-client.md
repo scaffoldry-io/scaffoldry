@@ -44,6 +44,6 @@ The write checks are also the fixtures. `scripts/mcp/fixtures.mjs` makes an app 
 
 ## Not done
 
-- A tool-list budget as a test that fails when the list grows past a limit, and error hints (README row 131).
+- Error hints (README row 131). The tool-list budget is a test: `the_tool_list_stays_inside_its_budget` fails when the list passes 18,000 bytes (about 4,500 tokens). It is 15,343 bytes now.
 - Update and delete through a real client. The real client writes with `create_record`. Update and delete are covered over the wire, not by a model.
 - A session id, a server-sent stream, and `outputSchema` on tools. None is required.

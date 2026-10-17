@@ -212,7 +212,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
 | 130 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
-| 131 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests. Started: ping, parse errors, invalid requests, object `structuredContent`, a wire check, and a real-client check pass (`docs/mcp-client.md`). A tool-list budget and error hints are not done |
+| 131 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests. Started: ping, parse errors, invalid requests, object `structuredContent`, a wire check, and a real-client check pass (`docs/mcp-client.md`). A tool-list budget test passes. Error hints are not done |
 | 132 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
 | 133 | [integrations.md](integrations.md) | 4 | Webhooks behind an allowlist and a proposal, with signing, retries, and a call log |
 | 134 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels |

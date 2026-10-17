@@ -356,6 +356,21 @@ async fn seeded_app() -> Router {
     scaffoldry_server::build_app_with_state(state).expect("router")
 }
 
+/// A client loads the whole tool list into its context on every session. About four bytes make a token,
+/// so this limit is about 4,500 tokens. A change that needs more raises the limit here, in the open.
+const TOOL_LIST_BYTE_BUDGET: usize = 18_000;
+
+#[tokio::test]
+async fn the_tool_list_stays_inside_its_budget() {
+    let _db = common::TestDb::new();
+    let app = seeded_app().await;
+    let token = login_user(&app, "jordan.lee@state.edu").await;
+    let (_, res) = mcp_call(&app, &token, "tools/list", None).await;
+    let bytes = serde_json::to_vec(&res["result"]["tools"]).unwrap().len();
+    eprintln!("tool list: {} tools, {bytes} bytes", TOOLS.len());
+    assert!(bytes <= TOOL_LIST_BYTE_BUDGET, "the tool list is {bytes} bytes, over the {TOOL_LIST_BYTE_BUDGET} budget");
+}
+
 #[tokio::test]
 async fn tools_list_returns_exactly_the_registry_with_read_only_hints() {
     let _db = common::TestDb::new();
