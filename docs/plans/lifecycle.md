@@ -110,7 +110,7 @@ Tests.
 
 ## Phase 3 — retention and proof
 
-Migration `0050_retention.sql`:
+Migration `*_retention.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS retention_policies (
@@ -163,7 +163,7 @@ Tests.
 
 ## Phase 4 — legal holds
 
-Migration `0051_legal_holds.sql`:
+Migration `*_legal_holds.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS legal_holds (

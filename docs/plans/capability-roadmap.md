@@ -45,6 +45,8 @@ Third-party libraries are different. They are dependencies, they follow the lice
 | The institution's own policies, as rules people can read, each tied to its source and kept current | Policy is Cedar text and a free-text `@source` note | `policy-library.md` |
 | Who must approve a change, set by the institution and tightened by a unit, with the load shown first | Fixed in code: any second owner | `authority.md` |
 | Access by position and hierarchy, on every object, with an explanation of every decision | Workspace membership only, and several paths that fail open | `access-model.md` |
+| Apps built and hosted anywhere using institutional data the governed way | Only a person's long-lived agent token, which names no app | `external-apps.md` |
+| Seeing a proposed app before approving it, and approving exactly what was seen | A list of changes and checks as text | `proposal-preview.md` |
 
 ## Choices
 

@@ -65,7 +65,7 @@ No standard defines this. Record the search in the first commit message: the Twe
 
 ## Phase 1 — the mechanism, an honest boot, and a database per test
 
-Migration `crates/scaffoldry-core/migrations/0062_cache_versions.sql`:
+Migration `crates/scaffoldry-core/migrations/0053_cache_versions.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS cache_versions (
@@ -137,7 +137,7 @@ These are never cached. A university has tens of thousands of people and a regis
 4. The People list in the console pages in SQL with `search_users`. Remove the `ponytail` note in `admin-console.md` phase 3 that says the list is built in memory, and say why in the pull request.
 5. `update_token_last_used` stays a single `UPDATE`. It bumps nothing.
 6. Replace `WRITE_LOCK` in `service/positions.rs`. An appointment that must not exceed a position type's holder limit runs `SELECT ... FOR UPDATE` on the `position_types` row, counts the holders, and inserts, in one transaction.
-7. Add an index only where `EXPLAIN` on a table of 50,000 people shows a sequential scan. Put it in `crates/scaffoldry-core/migrations/0063_people_indexes.sql`. If no index is needed, do not create the file, and say so in the pull request.
+7. Add an index only where `EXPLAIN` on a table of 50,000 people shows a sequential scan. Put it in `crates/scaffoldry-core/migrations/0054_people_indexes.sql`. If no index is needed, do not create the file, and say so in the pull request.
 
 Tests.
 

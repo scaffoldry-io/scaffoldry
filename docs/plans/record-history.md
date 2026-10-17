@@ -185,7 +185,7 @@ Tests.
 
 ## Phase 4 — the disclosure log
 
-Migration `0029_disclosure_log.sql`:
+Migration `0048_disclosure_log.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS disclosure_log (

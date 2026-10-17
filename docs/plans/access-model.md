@@ -54,7 +54,8 @@ Record the search in the first commit message of phase 2: NIST SP 800-162, SP 80
 
 | Fact | Where |
 | --- | --- |
-| `member_role` is the only place that turns a workspace's memberships into a person's role. Memberships can name a person, a group, a unit with its descendants, or a position at one unit | `service/members.rs` |
+| `member_role` turns a workspace's memberships into a person's workspace-wide role. `member_role_in_app` adds memberships limited to one app, from `workspace_collaborators.app_slug` (migration `0055_member_app_scope.sql`, `position-roles.md` phase 2a). Memberships can name a person, a group, a unit with its descendants, or a position at one unit | `service/members.rs` |
+| Platform admin comes only from a held `platform_admin` role on the root unit. The setup identity stops working once the first admin is appointed. `GET /admin/direct-grants` lists every grant that names a person | `position-roles.md` phases 1 and 3, `service/identity.rs` |
 | Cedar decides workspace and app actions from 25 policies compiled into the binary, plus forbid-only workspace guards. Every entity has `"parents": []`. A record is one entity per app, never per row | `service/access.rs` `decide`, `scaffoldry-policy/src/lib.rs`, `entities.rs` |
 | Policies 1, 3, 9, 14 and 16 compare a free-text `department` string from SCIM. Guards and org scope use the unit tree | `scaffoldry-policy/src/lib.rs`, `service/identity.rs` |
 | Cedar sees a person's units with all their ancestors. Row and column rules see only their direct units | `entities.rs` `unit_ids_for`, `service/scope.rs` `person_of` |
@@ -108,7 +109,7 @@ No new model. Six defects, each with a test that fails today.
 2. **Every check goes through `decide`.** Replace the twelve direct `authorize_*` calls listed above. Delete the old wrappers from `scaffoldry-policy`, so a new call cannot compile. Replace the guards brief's grep with a test that parses the source and fails on any call to a removed wrapper, however it is split across lines.
 3. **A forbid always wins.** Delete the `unit_in_scope` fallback in `authorize_app`. An Org Unit Admin's access becomes a Cedar `permit` for a principal whose `admin_unit_ids` contain the workspace's unit or an ancestor of it. A guard's forbid overrides it.
 4. **Sensitivity reaches Cedar.** `read_app` and `export` on an app carry `is_ferpa_sensitive` and `categories` computed from the app's fields with `effective_ferpa_sensitive`. A guard that fails to compile fails the request with `internal`. It is never skipped.
-5. **One set of units.** One function returns a person's units with their ancestors. Cedar and row and column rules both call it. A row rule `unit In person.unit_ids` matches a person in Physics when the value is the College of Science.
+5. **One set of units.** One function returns a person's units with their ancestors. Cedar and row and column rules both call it. A row rule `unit In person.unit_ids` matches a person in Physics when the value is the College of Science. Row rules also get each position as `key@unit`, beside the bare key, so a rule can tell Chemistry's chair from Physics's. This settles the two open points in `position-roles.md`.
 6. **SCIM grants no admin role.** SCIM may no longer create `platform_admin` or `unit_admin` appointments, as PR 104 did for `compliance`. Existing rows with `source = scim` and one of those values are kept and listed in the pull request. A Platform Admin re-appoints or removes them. Do not delete them in a migration.
 
 Tests.
@@ -274,7 +275,7 @@ The pure functions, in `crates/scaffoldry-core/src/reach.rs`:
 
 Wire it in.
 
-1. `member_role` becomes `role_at`. Every caller keeps its shape. Workspace collaborator rows are read as `container` grants on the workspace, with `source = membership`, by the same function. Do not move them into `access_grants` in this phase.
+1. `member_role` and `member_role_in_app` both become calls to `role_at`. Every caller keeps its shape: the workspace-wide question asks about the workspace, the app question asks about the app. Workspace collaborator rows are read as `container` grants by the same function, on the workspace when `app_slug` is empty and on that app otherwise, with `source = membership`. Do not move them into `access_grants` in this phase. Workspace-level actions still ignore grants anchored on an app, as `position-roles.md` phase 2a decided.
 2. A `unit_admin` appointment is a grant derived when the holder set is built: holder the person, role `admin`, anchor `unit` at the appointment's unit, whole subtree, `source = appointment`. It is not stored. Remove the Cedar `permit` added in phase 1 and its `admin_unit_ids`.
 3. Policies 22 to 25 read the role from `role_at`. A Platform Admin's access is unchanged.
 4. Routes, each with `reason`:
