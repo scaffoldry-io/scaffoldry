@@ -131,7 +131,7 @@ Tests.
 
 ## Phase 2 — scan stored records and review findings
 
-Migration `crates/scaffoldry-core/migrations/0059_content_findings.sql`:
+Migration `crates/scaffoldry-core/migrations/*_content_findings.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS content_findings (
@@ -221,7 +221,7 @@ Tests, with `fetch` stubbed for the screen.
 
 **Import.** The dry run in `import-export.md` phase 1 reports, for each column, the detectors that matched and how many rows. The wizard shows it before commit. A `block` detector makes the matching rows rejected rows in the report.
 
-**Files.** Migration `crates/scaffoldry-core/migrations/0060_attachment_content_scan.sql` adds `content_scan_state` to the attachment table: `clean`, `found`, `unsupported`, or `skipped`. After the antivirus result, a job `scan_file_content` reads the text of a plain-text attachment and upserts findings with source `file`. Other types are `unsupported`, and the file screen says `Content not scanned` as text.
+**Files.** Migration `crates/scaffoldry-core/migrations/*_attachment_content_scan.sql` adds `content_scan_state` to the attachment table: `clean`, `found`, `unsupported`, or `skipped`. After the antivirus result, a job `scan_file_content` reads the text of a plain-text attachment and upserts findings with source `file`. Other types are `unsupported`, and the file screen says `Content not scanned` as text.
 
 Tests.
 

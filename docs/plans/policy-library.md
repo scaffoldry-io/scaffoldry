@@ -68,7 +68,7 @@ Record the search in the first commit message: OSCAL 1.1.2 catalog and back-matt
 
 ## Phase 1 — policies, sources, snapshots, rules, and citations
 
-Migration `crates/scaffoldry-core/migrations/0064_policy_library.sql`:
+Migration `crates/scaffoldry-core/migrations/*_policy_library.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS library_policies (
@@ -305,7 +305,7 @@ Tests.
 
 Needs `integrations.md` phase 1. Every connection goes through `net::egress` and the outbound allowlist.
 
-Migration `crates/scaffoldry-core/migrations/0065_policy_fetch.sql` adds to `library_sources`: `last_checked_at TIMESTAMPTZ`, `last_status VARCHAR(16)`, `consecutive_failures INTEGER NOT NULL DEFAULT 0`, and `next_check_at TIMESTAMPTZ`.
+Migration `crates/scaffoldry-core/migrations/*_policy_fetch.sql` adds to `library_sources`: `last_checked_at TIMESTAMPTZ`, `last_status VARCHAR(16)`, `consecutive_failures INTEGER NOT NULL DEFAULT 0`, and `next_check_at TIMESTAMPTZ`.
 
 A job kind `library_fetch` in `JOB_KINDS`, and a schedule that runs it hourly. Each run claims `url` sources whose `next_check_at` has passed.
 

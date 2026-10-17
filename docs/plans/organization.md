@@ -33,6 +33,8 @@ Units form a tree. People form a matrix.
 
 Do not build a matrix of organization nodes. A unit with several parents makes "who is the admin above this workspace" unanswerable, and Cedar cannot evaluate it in one walk.
 
+`access-model.md` phase 2 changes one thing here: there may be several hierarchies, each with its own root. This tree is the `academic` hierarchy. A unit still has exactly one parent.
+
 ## Standard
 
 NCES CEDS: an education organization has one parent organization. The column is already `organizations.parent_id` in `crates/scaffoldry-core/migrations/0001_initial_schema.sql`.
