@@ -69,26 +69,8 @@ pub fn set_rules(app_slug: &str, rules: Vec<RowRule>, state: &SharedState) {
 
 /// What the rules know about a person.
 pub fn person_of(caller: &AuthUser, state: &SharedState) -> Person {
-    let roles: Vec<crate::state::RoleRow> = state
-        .roles
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .iter()
-        .filter(|r| r.eppn.eq_ignore_ascii_case(&caller.eppn))
-        .cloned()
-        .collect();
-    let group_ids: Vec<String> = {
-        let groups = state.groups.read().unwrap_or_else(|p| p.into_inner());
-        let users = state.users.read().unwrap_or_else(|p| p.into_inner());
-        let my_id = users.values().find(|u| u.user_name.eq_ignore_ascii_case(&caller.eppn)).map(|u| u.id.clone());
-        groups
-            .values()
-            .filter(|g| {
-                g.members.iter().filter_map(|m| m.get("value").and_then(Value::as_str)).any(|v| v.eq_ignore_ascii_case(&caller.eppn) || my_id.as_deref() == Some(v))
-            })
-            .map(|g| g.id.clone())
-            .collect()
-    };
+    let roles = state.roles_of(&caller.eppn);
+    let group_ids = state.group_ids_of(&caller.eppn);
     Person {
         address: caller.eppn.clone(),
         department: caller.department.clone(),
@@ -120,7 +102,7 @@ fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &
     if rules.is_empty() {
         return RowScope::AllowAll;
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
+    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
     row_scope(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table, op)
 }
 
@@ -234,7 +216,7 @@ fn field_visibility_for(caller: &AuthUser, app_slug: &str, table: &str, state: &
     if rules.is_empty() {
         return Default::default();
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
+    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
     scaffoldry_core::access::field_visibility(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table)
 }
 
@@ -306,7 +288,7 @@ pub fn preview_access(
         person_of(caller, state)
     };
 
-    let role = ws_id.and_then(|w| members::member_role_of(&person.address, w, state));
+    let role = ws_id.and_then(|w| members::member_role_of_in_app(&person.address, w, app_slug, state));
     let role_str = role.as_ref().map(|r| r.as_str());
     let is_platform_admin = person.affiliation == "central_admin";
 

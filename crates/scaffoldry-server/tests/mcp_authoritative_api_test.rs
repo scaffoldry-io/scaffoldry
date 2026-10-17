@@ -480,7 +480,9 @@ async fn a_result_is_structured_content_and_one_matching_text_block() {
     assert_eq!(content.len(), 1);
     assert_eq!(content[0]["type"], "text");
     let from_text: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
-    assert_eq!(from_text, res["result"]["structuredContent"]);
+    // The text is the plain result. A list is wrapped as {"items": [...]} in structuredContent, because the spec wants an object.
+    let expected = if from_text.is_array() { json!({ "items": from_text }) } else { from_text.clone() };
+    assert_eq!(expected, res["result"]["structuredContent"]);
 }
 
 async fn raw_post(app: &Router, token: &str, payload: Value) -> (StatusCode, Vec<u8>) {

@@ -420,6 +420,48 @@ fn the_last_platform_admin_appointment_cannot_be_revoked() {
     assert_eq!(revoke_check(&scim, std::slice::from_ref(&scim), root), Err(RevokeRefusal::OwnedByRegistry));
 }
 
+// Two Platform Admins revoke each other at the same moment. Each check sees the other as a second admin, so
+// without a lock both deletes go through and nobody is left.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_platform_admins_cannot_revoke_each_other_into_none() {
+    let _db = common::TestDb::new();
+    let c = ctx().await;
+    let (a, b) = (unique("race-a"), unique("race-b"));
+    let (ta, tb) = (issue_test_token_and_user(&a), issue_test_token_and_user(&b));
+    let root = Uuid::parse_str(ROOT_UNIT).unwrap();
+    let admins_left = |c: &Ctx| -> usize {
+        c.state.repository.roles_in_units(&[root]).unwrap().iter().filter(|r| r.scoped_affiliation == "platform_admin").count()
+    };
+    for round in 0..20 {
+        c.state.repository.with_client(|cl| { cl.batch_execute("DELETE FROM roles WHERE scoped_affiliation = 'platform_admin'")?; Ok(()) }).unwrap();
+        for who in [&a, &b] {
+            c.state
+                .persist_role(&scaffoldry_server::state::RoleRow {
+                    id: Uuid::new_v4(),
+                    person_id: Uuid::new_v4(),
+                    eppn: who.clone(),
+                    organization_id: root,
+                    role_title: "Platform Administrator".to_string(),
+                    scoped_affiliation: "platform_admin".to_string(),
+                    is_primary: true,
+                    source: "api".to_string(),
+                    position_key: None,
+                })
+                .unwrap();
+        }
+        assert_eq!(admins_left(&c), 2, "round {round}: setup");
+        let revoke = |target: String, token: String| {
+            let app = c.app.clone();
+            tokio::spawn(async move {
+                send(&app, "DELETE", &format!("/api/v1/orgs/{ROOT_UNIT}/appointments/{target}/platform_admin"), Some(&token), None).await.0
+            })
+        };
+        let (x, y) = (revoke(b.clone(), ta.clone()), revoke(a.clone(), tb.clone()));
+        let (x, y) = (x.await.unwrap(), y.await.unwrap());
+        assert!(admins_left(&c) >= 1, "round {round}: the platform has no admin left ({x}, {y})");
+    }
+}
+
 // 6. Every admin route is registered, guarded, and checks the admin before it reads a body.
 #[tokio::test]
 async fn every_people_route_is_in_admin_routes_and_refuses_a_faculty_caller() {

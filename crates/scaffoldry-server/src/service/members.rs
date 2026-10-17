@@ -102,37 +102,66 @@ fn within(unit: Uuid, ancestor: Uuid, orgs: &std::collections::HashMap<Uuid, cra
     false
 }
 
+/// Every unit at or below `unit`.
+fn units_within(unit: Uuid, state: &SharedState) -> Vec<Uuid> {
+    let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+    orgs.keys().copied().filter(|id| within(*id, unit, &orgs)).collect()
+}
+
 /// The addresses a membership means right now.
 pub fn people_of(c: &CollaboratorRecord, state: &SharedState) -> Vec<String> {
     let (kind, id) = split_principal(&c.eppn);
     match kind {
         Kind::User => vec![id.to_string()],
         Kind::Group => {
-            let groups = state.groups.read().unwrap_or_else(|p| p.into_inner());
-            let users = state.users.read().unwrap_or_else(|p| p.into_inner());
-            let by_id: BTreeMap<&str, &str> = users.values().map(|u| (u.id.as_str(), u.user_name.as_str())).collect();
-            groups
-                .get(id)
-                .map(|g| {
-                    g.members
-                        .iter()
-                        .filter_map(|m| m.get("value").and_then(Value::as_str))
-                        .map(|v| by_id.get(v).copied().unwrap_or(v).to_string())
-                        .collect()
-                })
+            let Ok(Some(group)) = state.repository.group_by_id(id) else { return Vec::new() };
+            let values: Vec<String> =
+                group.members.iter().filter_map(|m| m.get("value").and_then(Value::as_str)).map(str::to_string).collect();
+            let by_id: BTreeMap<String, String> = state
+                .repository
+                .users_by_ids(&values)
                 .unwrap_or_default()
+                .into_iter()
+                .map(|u| (u.id, u.user_name))
+                .collect();
+            values.into_iter().map(|v| by_id.get(&v).cloned().unwrap_or(v)).collect()
         }
         Kind::Unit => {
             let Ok(unit) = Uuid::parse_str(id) else { return Vec::new() };
-            let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
-            let roles = state.roles.read().unwrap_or_else(|p| p.into_inner());
-            roles.iter().filter(|r| within(r.organization_id, unit, &orgs)).map(|r| r.eppn.clone()).collect()
+            let units = units_within(unit, state);
+            state.repository.roles_in_units(&units).unwrap_or_default().into_iter().map(|r| r.eppn).collect()
         }
         Kind::Position => {
             let Some((key, unit)) = id.split_once('@') else { return Vec::new() };
             let Ok(unit) = Uuid::parse_str(unit) else { return Vec::new() };
-            let roles = state.roles.read().unwrap_or_else(|p| p.into_inner());
-            roles.iter().filter(|r| r.organization_id == unit && r.position_key.as_deref() == Some(key)).map(|r| r.eppn.clone()).collect()
+            state.repository.roles_at(unit, key).unwrap_or_default().into_iter().map(|r| r.eppn).collect()
+        }
+    }
+}
+
+/// Whether the membership means this person. It asks the database about the person, not about everyone.
+fn includes(c: &CollaboratorRecord, eppn: &str, state: &SharedState) -> bool {
+    let (kind, id) = split_principal(&c.eppn);
+    match kind {
+        Kind::User => id.eq_ignore_ascii_case(eppn),
+        Kind::Group => {
+            let Ok(Some(group)) = state.repository.group_by_id(id) else { return false };
+            let my_id = state.user_by_name(eppn).map(|u| u.id);
+            group
+                .members
+                .iter()
+                .filter_map(|m| m.get("value").and_then(Value::as_str))
+                .any(|v| v.eq_ignore_ascii_case(eppn) || my_id.as_deref() == Some(v))
+        }
+        Kind::Unit => {
+            let Ok(unit) = Uuid::parse_str(id) else { return false };
+            let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+            state.roles_of(eppn).iter().any(|r| within(r.organization_id, unit, &orgs))
+        }
+        Kind::Position => {
+            let Some((key, unit)) = id.split_once('@') else { return false };
+            let Ok(unit) = Uuid::parse_str(unit) else { return false };
+            state.roles_of(eppn).iter().any(|r| r.organization_id == unit && r.position_key.as_deref() == Some(key))
         }
     }
 }
@@ -142,8 +171,37 @@ pub fn workspace_ids(state: &SharedState) -> Vec<String> {
     state.collaborators.read().unwrap_or_else(|p| p.into_inner()).keys().cloned().collect()
 }
 
+/// The memberships that cover the whole workspace. One limited to an app is not among them, so it never grants a
+/// workspace-level action.
 fn memberships(workspace: &str, state: &SharedState) -> Vec<CollaboratorRecord> {
-    state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default()
+    let all = state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default();
+    all.into_iter().filter(|c| c.app_slug.is_empty()).collect()
+}
+
+/// Every membership in every workspace that names one person, whether it covers the workspace or one app.
+pub fn direct_memberships(state: &SharedState) -> Vec<CollaboratorRecord> {
+    let all = state.collaborators.read().unwrap_or_else(|p| p.into_inner());
+    all.values().flatten().filter(|c| split_principal(&c.eppn).0 == Kind::User).cloned().collect()
+}
+
+/// The memberships limited to one app of the workspace.
+fn app_memberships(workspace: &str, app: &str, state: &SharedState) -> Vec<CollaboratorRecord> {
+    let all = state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default();
+    all.into_iter().filter(|c| c.app_slug == app).collect()
+}
+
+/// A person's role in one app: the highest of their workspace-wide memberships and those limited to this app.
+pub fn member_role_in_app(user: &AuthUser, workspace: &str, app: &str, state: &SharedState) -> Option<Role> {
+    member_role_of_in_app(&user.eppn, workspace, app, state)
+}
+
+/// The same for a person named by address.
+pub fn member_role_of_in_app(eppn: &str, workspace: &str, app: &str, state: &SharedState) -> Option<Role> {
+    let limited = app_memberships(workspace, app, state)
+        .into_iter()
+        .filter_map(|c| Role::parse(&c.role).filter(|_| includes(&c, eppn, state)))
+        .max();
+    limited.max(member_role_of(eppn, workspace, state))
 }
 
 /// The highest role among every membership that matches the person. This is the only place that
@@ -151,7 +209,7 @@ fn memberships(workspace: &str, state: &SharedState) -> Vec<CollaboratorRecord> 
 pub fn member_role(user: &AuthUser, workspace: &str, state: &SharedState) -> Option<Role> {
     memberships(workspace, state)
         .iter()
-        .filter_map(|c| Role::parse(&c.role).filter(|_| people_of(c, state).iter().any(|p| p.eq_ignore_ascii_case(&user.eppn))))
+        .filter_map(|c| Role::parse(&c.role).filter(|_| includes(c, &user.eppn, state)))
         .max()
 }
 
@@ -159,7 +217,7 @@ pub fn member_role(user: &AuthUser, workspace: &str, state: &SharedState) -> Opt
 pub fn member_role_of(eppn: &str, workspace: &str, state: &SharedState) -> Option<Role> {
     memberships(workspace, state)
         .iter()
-        .filter_map(|c| Role::parse(&c.role).filter(|_| people_of(c, state).iter().any(|p| p.eq_ignore_ascii_case(eppn))))
+        .filter_map(|c| Role::parse(&c.role).filter(|_| includes(c, eppn, state)))
         .max()
 }
 
@@ -181,12 +239,7 @@ pub fn describe(c: &CollaboratorRecord, state: &SharedState) -> Value {
     let (kind, id) = split_principal(&c.eppn);
     let label = match kind {
         Kind::User => c.name.clone(),
-        Kind::Group => state
-            .groups
-            .read()
-            .ok()
-            .and_then(|g| g.get(id).map(|g| g.display_name.clone()))
-            .unwrap_or_else(|| id.to_string()),
+        Kind::Group => state.repository.group_by_id(id).ok().flatten().map(|g| g.display_name).unwrap_or_else(|| id.to_string()),
         Kind::Unit => Uuid::parse_str(id)
             .ok()
             .and_then(|u| state.organizations.read().ok().and_then(|o| o.get(&u).map(|o| o.name.clone())))
@@ -205,19 +258,30 @@ pub fn describe(c: &CollaboratorRecord, state: &SharedState) -> Value {
 /// plain row. For the readers that act on people, such as approver rules and guard previews.
 pub fn people_records(workspace: &str, state: &SharedState) -> Vec<CollaboratorRecord> {
     let direct = memberships(workspace, state);
-    people_with_roles(workspace, state)
+    let people = people_with_roles(workspace, state);
+    let own_of = |eppn: &str| direct.iter().find(|c| split_principal(&c.eppn).0 == Kind::User && c.eppn.eq_ignore_ascii_case(eppn));
+    // The names of those who come in through a group, unit or position, read in one statement.
+    let unnamed: Vec<String> = people.keys().filter(|e| own_of(e).is_none()).cloned().collect();
+    let known: BTreeMap<String, String> = state
+        .repository
+        .users_by_names(&unnamed)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|u| (u.user_name.to_lowercase(), crate::service::people::display_name(&u)))
+        .collect();
+    people
         .into_iter()
         .map(|(eppn, role)| {
-            let own = direct.iter().find(|c| split_principal(&c.eppn).0 == Kind::User && c.eppn.eq_ignore_ascii_case(&eppn));
-            let mut rec = own.cloned().unwrap_or_else(|| CollaboratorRecord {
+            let mut rec = own_of(&eppn).cloned().unwrap_or_else(|| CollaboratorRecord {
                 id: Uuid::new_v4().to_string(),
                 workspace_id: workspace.to_string(),
                 eppn: eppn.clone(),
-                name: crate::service::people::find_by_user_name(state, &eppn).map(|u| crate::service::people::display_name(&u)).unwrap_or_else(|| eppn.clone()),
+                name: known.get(&eppn.to_lowercase()).cloned().unwrap_or_else(|| eppn.clone()),
                 role: String::new(),
                 scoped_affiliation: "member".to_string(),
                 department: String::new(),
                 added_at: String::new(),
+                app_slug: String::new(),
             });
             rec.role = role.as_str().to_string();
             rec

@@ -209,7 +209,7 @@ Needs phase 1 and `foundation.md` phase 5 (apps belong to workspaces).
 | POST | `/admin/workspaces/{id}/transfer-ownership` | Body `eppn`, `reason`. The new owner must resolve through `resolve_user`. They become `owner`, added as a collaborator if missing. Existing owners become `admin`. The workspace always keeps one owner. Ledger `WorkspaceMemberRoleUpdated` |
 | GET | `/admin/apps` | Query `search`, `workspace`, `cursor`, `limit`. Row: slug, title, workspace, version, table count, page count, custom page count, record count per table, updated |
 
-`ponytail`: the user and manifest lists are built in memory from `ServerState` and sorted per request. That is comfortable to a few thousand users and apps. Move the sort into SQL when a list is measured above 100 ms.
+`ponytail`: the manifest list is built in memory from `ServerState` and sorted per request. That is comfortable to a few thousand apps. Move the sort into SQL when it is measured above 100 ms. The People list is no longer built in memory: `stateless-server.md` phase 2 pages it in SQL.
 
 Frontend: `admin/Workspaces.tsx`.
 

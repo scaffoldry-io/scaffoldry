@@ -90,7 +90,7 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | 58 | [row-scale.md](row-scale.md) | 4–5 | Totals and group counts in one statement. Full-text search | **COMPLETED** |
 | 59 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
 | 60 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | **COMPLETED** |
-| 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | |
+| 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | **COMPLETED** |
 | 62 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
 | 63 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
 | 64 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | |
@@ -103,6 +103,37 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | 71 | [policy-library.md](policy-library.md) | 4 | Everyone reads the rules as sentences, linked to policy and source, marked Enforced or Guidance | |
 | 72 | [authority.md](authority.md) | 3 | The builder is told who decides, why, and what would change it. An agent can ask first | |
 | 73 | [authority.md](authority.md) | 4 | A simulated institution of 5,000 people, and the same measures from real decisions | |
+
+### Wave 1c — make the desk real
+
+Added after the click-through in [clickthrough-findings.md](clickthrough-findings.md). The server has the records, ledger, and rules. Two core screens do not use them. Until these rows are done, the product has no working loop for "open an app, add a record, see it saved." Rows are labelled `1c-n` so the numbers above and below do not move. Row 159 below moves here as 1c-1.
+
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 1c-1 | [live-data.md](live-data.md) | 3 | The published-app screen reads and writes records through the API. It has no hardcoded record array. A new record is stored and has a ledger entry. Kanban moves are stored. The totals come from the stored rows, and "Approved Funding" counts only the statuses the app defines as approved | **COMPLETED** for the published-app screen and the workspace grid. Not clicked through in a browser. Kanban, calendar, gallery, delete, and link fields are untested against real rows |
+| 1c-2 | [live-data.md](live-data.md) | new, after 3 | The Datasets screen reads `/datasets`. It shows the real datasets and row counts | |
+| 1c-3 | [ux-standards.md](ux-standards.md) | new, after 3 | No screen shows sample data without a visible "Sample data" label. A test fails on a hardcoded record array in a screen component | |
+| 1c-4 | [position-roles.md](position-roles.md) | 1 | Platform admin comes from a held role. The setup identity ends when the first admin is appointed. A title on a record is not counted as an admin | **COMPLETED** |
+| 1c-5 | [position-roles.md](position-roles.md) | 2a | A position, group, unit, or person can be granted one app, not only a whole workspace. An app-only member finds the app in My apps, and can pin it | **COMPLETED**. Pins are per browser |
+| 1c-6 | [position-roles.md](position-roles.md) | 3 | An admin lists every direct person grant, and which grants are app-scoped. A reason on a direct grant is optional | **COMPLETED** for the API. A desk screen and a desk reason field are not done |
+
+Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Found by the UI audit (`docs/ui-review.md`), not yet fixed:
+
+| Row | What is wrong | What is true after the fix |
+| --- | --- | --- |
+| 1c-7 | The desk's app and workspace lists are built into `AdminDesk.tsx`. It asks the server about apps the server does not have, such as `cs-ai-benchmarks`, and gets 404 on every load | The desk lists only what the server returns |
+| 1c-8 | "New App", "New App Studio", and "Co-Build New App" each create an app only in the browser's memory, with a made-up slug and domain, and say "Created new app". The toast covers the studio panel | A new app is created on the server, or the button says it is a draft that is not saved. One toast area that does not cover a panel |
+| 1c-9 | Unnamed fields in Security and Settings, an unnamed button in the opened navigation, on phone a banner mostly outside the window on `/admin`, and clipped text with no tooltip | Every control has a name. Nothing sits outside the window. Clipped text has a tooltip |
+
+Rows 1c-7 to 1c-9 are done, and checked with `npm run ui:all`: the MCP check passes, all nine UI smoke checks pass, and the audit is down from 29 findings to 8.
+
+- **1c-7.** The desk takes its apps from `GET /me/apps` and loads each definition from `GET /apps/{slug}`. It no longer asks the server about built-in sample apps, and it does not apply its own access check to apps the server listed. If the server's list does not arrive, it falls back to the built-in sample apps and says so in a banner. The Decisions panel waits until the list has settled. The built-in apps still show for a moment while the list loads. Opening a built-in app, and "use this dataset in a new app", still create local copies only.
+- **1c-8.** "New App", "New App Studio", and "Co-Build New App" call `POST /workspaces/{id}/apps`. A 201 shows "Created new app". A 202 shows "Submitted for approval. The app is not live until someone approves it." A refusal says the app was not created. The made-up domain is gone. I checked this against a real server: the app was created, appeared in My apps, and took a record.
+- **1c-9.** The four workspace settings fields, and the collapsed "New App Studio" button, have names. Ledger hashes have a full-hash tooltip. The phone banner was a false alarm in the audit and the audit rule is fixed.
+
+Still showing in the audit, all minor: the header logo does nothing when clicked, and a few tabs and filters change nothing because they are already selected. Those are false alarms, or close to it.
+
+Done already from the click-through: the false ledger message, made-up dashboard figures, hardcoded header user, and "Live" labels are gone from the published-app screen. The Vite dev proxy exists. The budget field accepts round values. A reload shows the person the stored token belongs to.
 
 ### Wave 2 — the data platform
 
@@ -181,7 +212,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
 | 130 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
-| 131 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests |
+| 131 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests. Started: ping, parse errors, invalid requests, object `structuredContent`, a wire check, and a real-client check pass (`docs/mcp-client.md`). A tool-list budget and error hints are not done |
 | 132 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
 | 133 | [integrations.md](integrations.md) | 4 | Webhooks behind an allowlist and a proposal, with signing, retries, and a call log |
 | 134 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels |
@@ -209,7 +240,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 156 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
 | 157 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
 | 158 | [workflows.md](workflows.md) | 11 | Console panel for flows |
-| 159 | [live-data.md](live-data.md) | 3 | The desk reads records and the directory from the API |
+| 159 | [live-data.md](live-data.md) | 3 | Moved to Wave 1c as 1c-1. The desk reads records and the directory from the API |
 | 160 | [foundation.md](foundation.md) | 10 | Tokens from the institution's identity provider are verified. Adds `jsonwebtoken` |
 | 161 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
 | 162 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |

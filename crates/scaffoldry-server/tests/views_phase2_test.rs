@@ -133,6 +133,7 @@ fn collaborator(eppn: &str, role: &str) -> CollaboratorRecord {
         scoped_affiliation: "faculty".to_string(),
         department: "biology".to_string(),
         added_at: String::new(),
+        app_slug: String::new(),
     }
 }
 

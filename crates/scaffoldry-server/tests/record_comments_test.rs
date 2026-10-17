@@ -104,6 +104,7 @@ async fn fixture() -> Fixture {
         scoped_affiliation: "staff".to_string(),
         department: "biology".to_string(),
         added_at: chrono::Utc::now().to_rfc3339(),
+        app_slug: String::new(),
     });
     Fixture {
         app: build_app_with_state(state.clone()).expect("router"),

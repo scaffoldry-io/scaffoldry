@@ -538,7 +538,7 @@ fn check_rules_part(
         for step in &rule.steps {
             if let StepKind::UserTask { role, approver, .. } = &step.kind {
                 let spec = scaffoldry_core::approver::effective_approver(role, approver);
-                let ctx = crate::service::approvers::context(state, slug, "", Some(&caller.eppn));
+                let ctx = crate::service::approvers::context(state, slug, "", Some(&caller.eppn), &[]);
                 let resolution = scaffoldry_core::approver::resolve_approvers(&spec, &ctx);
                 if resolution.approvers.is_empty() {
                     approvers.push(format!("rule '{}', step '{}': nobody can decide this today", rule.name, step.id));
