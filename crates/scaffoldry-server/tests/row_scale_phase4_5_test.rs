@@ -132,6 +132,7 @@ async fn world() -> World {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -142,6 +143,7 @@ async fn world() -> World {
             scoped_affiliation: "student".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -152,6 +154,7 @@ async fn world() -> World {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
     ];
     state.collaborators.write().unwrap().insert(WORKSPACE.to_string(), collabs);

@@ -680,7 +680,8 @@ async fn test_mcp_server_protocol_tools_and_resources() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let call_res: Value = serde_json::from_slice(&body).unwrap();
-    assert!(call_res["result"]["structuredContent"].is_array());
+    // The spec says structuredContent is an object, so a list sits under items.
+    assert!(call_res["result"]["structuredContent"]["items"].is_array());
 
     // 5. Resources List
     let res_payload = json!({
@@ -1821,6 +1822,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: "".to_string(),
+            app_slug: String::new(),
         },
         scaffoldry_server::state::CollaboratorRecord {
             id: "collab-smith-phys".to_string(),
@@ -1831,6 +1833,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
             scoped_affiliation: "student".to_string(),
             department: "biology".to_string(),
             added_at: "".to_string(),
+            app_slug: String::new(),
         },
     ]);
     let rule_id = "rule-candidate-decision";

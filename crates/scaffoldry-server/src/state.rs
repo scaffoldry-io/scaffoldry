@@ -152,6 +152,9 @@ pub struct CollaboratorRecord {
     pub department: String,
     #[serde(default)]
     pub added_at: String,
+    /// The one app this membership reaches. Empty means the whole workspace.
+    #[serde(default)]
+    pub app_slug: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,8 +198,6 @@ pub struct AuthSession {
 }
 
 pub struct ServerState {
-    pub users: RwLock<HashMap<String, ScimUser>>,
-    pub groups: RwLock<HashMap<String, ScimGroup>>,
     /// Row rules by app slug. Until rules join the manifest (access-rules phase 5), this is where an
     /// app's rules live. Read them through `service::scope::rules_of`.
     pub access_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::RowRule>>>,
@@ -218,13 +219,10 @@ pub struct ServerState {
     pub ledger: RwLock<Vec<LedgerEntry>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
-    pub sessions: RwLock<HashMap<String, AuthSession>>,
-    pub api_tokens: RwLock<HashMap<String, ApiToken>>,
     pub repository: Arc<crate::repository::PostgresRepository>,
     /// The version of each cached collection this instance holds, in the order of `cache::NAMES`.
     pub cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()],
     pub organizations: RwLock<HashMap<uuid::Uuid, OrganizationNode>>,
-    pub roles: RwLock<Vec<RoleRow>>,
     pub position_types: RwLock<HashMap<String, PositionType>>,
     /// Sensitivity labels by `(app, table, field)`. They can only raise a field's sensitivity.
     /// Empty until the label table exists (admin console phase 4, later part).
@@ -283,8 +281,6 @@ impl ServerState {
             .map_err(|e| format!("Failed to initialize PolicyEngine: {e}"))?;
 
         let mut app_views_cache: HashMap<String, Vec<crate::repository_views::StoredView>> = HashMap::new();
-        let mut users = HashMap::new();
-        let mut groups = HashMap::new();
         let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
         let default_root_org = OrganizationNode {
             id: default_root_id,
@@ -321,7 +317,6 @@ impl ServerState {
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
-        let mut api_tokens = HashMap::new();
         let scim_hash = crate::service::identity::hash_token("test-scim-token");
         let default_scim_token = ApiToken {
             token_hash: scim_hash.clone(),
@@ -336,7 +331,6 @@ impl ServerState {
             revoked_at: None,
         app_slug: None,
         };
-        api_tokens.insert(scim_hash, default_scim_token.clone());
 
         let mut settings_map = HashMap::new();
         settings_map.insert("cors.allowed_origins".to_string(), serde_json::json!([]));
@@ -431,17 +425,10 @@ impl ServerState {
         for org in repo.list_organizations().map_err(|e| read("the organizations", e))? {
             organizations.insert(org.id, org);
         }
-        let roles: Vec<RoleRow> = repo.list_roles().map_err(|e| read("the roles", e))?;
         for pt in repo.list_position_types().map_err(|e| read("the position types", e))? {
             position_types.insert(pt.key.clone(), pt);
         }
 
-        for u in repo.list_scim_users().map_err(|e| read("the people", e))? {
-            users.insert(u.id.clone(), u);
-        }
-        for g in repo.list_scim_groups().map_err(|e| read("the groups", e))? {
-            groups.insert(g.id.clone(), g);
-        }
         for g in repo.list_all_workspace_guards().map_err(|e| read("the workspace guards", e))? {
             guards.entry(g.workspace_id.clone()).or_default().push(g);
         }
@@ -477,7 +464,6 @@ impl ServerState {
             workspaces.insert(ws.id.clone(), ws);
         }
 
-        let sessions: HashMap<String, AuthSession> = repo.list_sessions().map_err(|e| read("the sessions", e))?;
         repo.insert_api_token(&default_scim_token).map_err(|e| read("the provisioning token", e))?;
 
         // The ledger is the stored one. A database with none gets the genesis entry.
@@ -494,8 +480,6 @@ impl ServerState {
         });
 
         Ok(Self {
-            users: RwLock::new(users),
-            groups: RwLock::new(groups),
             access_rules: RwLock::new(HashMap::new()),
             app_views: RwLock::new(app_views_cache),
             count_timeout_ms: std::sync::atomic::AtomicU64::new(std::env::var("SCAFFOLDRY_COUNT_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(2_000)),
@@ -511,12 +495,9 @@ impl ServerState {
             ledger: RwLock::new(ledger),
             engine: RwLock::new(engine),
             policy_engine,
-            sessions: RwLock::new(sessions),
-            api_tokens: RwLock::new(api_tokens),
             repository,
             cache_seen,
             organizations: RwLock::new(organizations),
-            roles: RwLock::new(roles),
             position_types: RwLock::new(position_types),
             labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
             settings: RwLock::new(settings_map),
@@ -547,12 +528,7 @@ impl ServerState {
     }
 
     pub fn delete_scim_roles(&self, eppn: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut guard = self.roles.write().unwrap();
-        guard.retain(|r| !(r.eppn == eppn && r.source == "scim"));
-        {
-        let repo = &self.repository;
-            repo.delete_scim_roles_for_user(eppn)?;
-        }
+        self.repository.delete_scim_roles_for_user(eppn)?;
         Ok(())
     }
 
@@ -672,26 +648,35 @@ impl ServerState {
     }
 
     pub fn delete_role(&self, id: uuid::Uuid) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.roles.write().unwrap().retain(|r| r.id != id);
-        {
-        let repo = &self.repository;
-            repo.delete_role(id)?;
-        }
+        self.repository.delete_role(id)?;
         Ok(())
     }
 
     pub fn persist_role(&self, role: &RoleRow) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut guard = self.roles.write().unwrap();
-        if let Some(pos) = guard.iter().position(|r| r.id == role.id) {
-            guard[pos] = role.clone();
-        } else {
-            guard.push(role.clone());
-        }
-        {
-        let repo = &self.repository;
-            repo.upsert_role(role)?;
-        }
+        self.repository.upsert_role(role)?;
         Ok(())
+    }
+
+    /// The appointments and holdings of one person.
+    pub fn roles_of(&self, eppn: &str) -> Vec<RoleRow> {
+        self.repository.roles_of_person(eppn).unwrap_or_default()
+    }
+
+    /// The ids of the groups a person belongs to. A group lists a member by id or by user name.
+    pub fn group_ids_of(&self, eppn: &str) -> Vec<String> {
+        let mut values = vec![eppn.to_string()];
+        values.extend(self.user_by_name(eppn).map(|u| u.id));
+        self.repository.group_ids_with_member(&values).unwrap_or_default()
+    }
+
+    /// The user with this id, read now.
+    pub fn user_by_id(&self, id: &str) -> Option<ScimUser> {
+        self.repository.user_by_id(id).ok().flatten()
+    }
+
+    /// The user with this name, ignoring case.
+    pub fn user_by_name(&self, name: &str) -> Option<ScimUser> {
+        self.repository.user_by_name(name).ok().flatten()
     }
 
     pub fn persist_workspace(&self, ws: WorkspaceRecord) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -798,16 +783,12 @@ impl ServerState {
     }
 
     pub fn persist_scim_user(&self, user: ScimUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.users.write().map_err(|_| "users lock poisoned")?.insert(user.id.clone(), user.clone());
-        {
-        let repo = &self.repository;
-            repo.upsert_scim_user(&user)?;
-        }
+        self.repository.upsert_scim_user(&user)?;
         Ok(())
     }
 
     pub fn get_scim_user(&self, id: &str) -> Option<ScimUser> {
-        self.users.read().ok()?.get(id).cloned()
+        self.user_by_id(id)
     }
 
     
@@ -910,36 +891,16 @@ impl ServerState {
     }
 
     pub fn persist_api_token(&self, token: &ApiToken) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        {
-        let repo = &self.repository;
-            repo.insert_api_token(token)?;
-        }
-        if let Ok(mut tokens) = self.api_tokens.write() {
-            tokens.insert(token.token_hash.clone(), token.clone());
-        }
+        self.repository.insert_api_token(token)?;
         Ok(())
     }
 
     pub fn get_api_token(&self, hash: &str) -> Option<ApiToken> {
-        {
-        let repo = &self.repository;
-            if let Ok(Some(token)) = repo.get_api_token(hash) {
-                return Some(token);
-            }
-        }
-        self.api_tokens.read().ok().and_then(|t| t.get(hash).cloned())
+        self.repository.get_api_token(hash).ok().flatten()
     }
 
     pub fn update_token_last_used(&self, hash: &str, now: chrono::DateTime<chrono::Utc>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        {
-        let repo = &self.repository;
-            repo.update_token_last_used(hash, now)?;
-        }
-        if let Ok(mut tokens) = self.api_tokens.write() {
-            if let Some(t) = tokens.get_mut(hash) {
-                t.last_used_at = Some(now);
-            }
-        }
+        self.repository.update_token_last_used(hash, now)?;
         Ok(())
     }
 
@@ -1265,6 +1226,7 @@ impl ServerState {
                     scoped_affiliation: "faculty".to_string(),
                     department: "biology".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
                 CollaboratorRecord {
                     id: "collab-bio-2".to_string(),
@@ -1275,6 +1237,7 @@ impl ServerState {
                     scoped_affiliation: "student".to_string(),
                     department: "biology".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
                 CollaboratorRecord {
                     id: "collab-bio-3".to_string(),
@@ -1285,6 +1248,7 @@ impl ServerState {
                     scoped_affiliation: "staff".to_string(),
                     department: "Office of Sponsored Programs".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
@@ -1318,6 +1282,7 @@ impl ServerState {
                     scoped_affiliation: "student".to_string(),
                     department: "physics".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
@@ -1351,6 +1316,7 @@ impl ServerState {
                     scoped_affiliation: "staff".to_string(),
                     department: "compliance".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
                 CollaboratorRecord {
                     id: "collab-comp-2".to_string(),
@@ -1361,6 +1327,7 @@ impl ServerState {
                     scoped_affiliation: "compliance".to_string(),
                     department: "Institutional Review Board".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
@@ -1394,6 +1361,7 @@ impl ServerState {
                     scoped_affiliation: "faculty".to_string(),
                     department: "Computer Science".to_string(),
                     added_at: now.clone(),
+                    app_slug: String::new(),
                 },
             ],
         );
@@ -1487,29 +1455,11 @@ impl ServerState {
     }
     /// Every token the user holds, of every kind and state, newest first.
     pub fn list_all_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
-        {
-        let repo = &self.repository;
-            if let Ok(list) = repo.list_all_api_tokens_for_eppn(eppn) {
-                return list;
-            }
-        }
-        self.api_tokens.read().map(|tokens| {
-            let mut list: Vec<ApiToken> = tokens.values().filter(|t| t.eppn == eppn).cloned().collect();
-            list.sort_by_key(|t| std::cmp::Reverse(t.created_at));
-            list
-        }).unwrap_or_default()
+        self.repository.list_all_api_tokens_for_eppn(eppn).unwrap_or_default()
     }
 
     pub fn list_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
-        {
-        let repo = &self.repository;
-            if let Ok(list) = repo.list_api_tokens_for_eppn(eppn) {
-                return list;
-            }
-        }
-        self.api_tokens.read().map(|tokens| {
-            tokens.values().filter(|t| t.eppn == eppn && t.kind == "agent" && t.revoked_at.is_none()).cloned().collect()
-        }).unwrap_or_default()
+        self.repository.list_api_tokens_for_eppn(eppn).unwrap_or_default()
     }
 }
 

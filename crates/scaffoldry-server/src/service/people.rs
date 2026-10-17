@@ -5,6 +5,7 @@ use crate::service::admin::{admin_write, decode_cursor, encode_cursor};
 use crate::service::identity::scim_affiliation;
 use crate::service::organizations::{is_platform_admin, OrgCaller};
 use crate::service::ServiceError;
+use crate::repository_people::UserFilter;
 use crate::state::{ApiToken, AuthUser, OrganizationNode, RoleRow, ScimUser, SharedState};
 use chrono::Utc;
 use scaffoldry_core::ledger::DecisionType;
@@ -37,15 +38,7 @@ pub struct UserFields {
 }
 
 pub fn find_by_user_name(state: &SharedState, user_name: &str) -> Option<ScimUser> {
-    let users = state.users.read().unwrap_or_else(|p| p.into_inner());
-    users.values().find(|u| {
-        u.user_name.eq_ignore_ascii_case(user_name)
-            || u.emails.iter().any(|e| {
-                e.get("value")
-                    .and_then(Value::as_str)
-                    .is_some_and(|v| v.eq_ignore_ascii_case(user_name))
-            })
-    }).cloned()
+    state.repository.user_by_name_or_email(user_name).ok().flatten()
 }
 
 pub fn render_collaborator(addr: &str, state: &SharedState) -> String {
@@ -62,7 +55,7 @@ pub fn render_collaborator(addr: &str, state: &SharedState) -> String {
 }
 
 pub fn find_by_id(state: &SharedState, id: &str) -> Option<ScimUser> {
-    state.users.read().unwrap_or_else(|p| p.into_inner()).get(id).cloned()
+    state.user_by_id(id)
 }
 
 fn persist(state: &SharedState, user: &ScimUser) -> Result<(), ServiceError> {
@@ -77,50 +70,45 @@ fn persist(state: &SharedState, user: &ScimUser) -> Result<(), ServiceError> {
 /// Creates the user, or updates the one that already has this `userName`. An update keeps the
 /// id and the administrative hold. Returns the user and whether it was created.
 pub fn upsert_user(state: &SharedState, fields: UserFields) -> Result<(ScimUser, bool), ServiceError> {
-    let (user, created) = {
-        let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
-        let existing = users
-            .values()
-            .find(|u| u.user_name.eq_ignore_ascii_case(&fields.user_name))
-            .map(|u| u.id.clone());
-        match existing {
-            Some(id) => {
-                let u = users.get_mut(&id).expect("the id was just read");
-                if let Some(v) = fields.name {
-                    u.name = v;
-                }
-                if let Some(v) = fields.active {
-                    u.active = v;
-                }
-                if let Some(v) = fields.emails {
-                    u.emails = v;
-                }
-                if let Some(v) = fields.roles {
-                    u.roles = v;
-                }
-                if let Some(v) = fields.enterprise {
-                    u.enterprise_extension = Some(v);
-                }
-                if let Some(v) = fields.title {
-                    u.title = Some(v);
-                }
-                (u.clone(), false)
+    let existing = state
+        .repository
+        .user_by_name(&fields.user_name)
+        .map_err(|e| ServiceError::Internal(format!("Failed to read user: {e}")))?;
+    let (user, created) = match existing {
+        Some(mut u) => {
+            if let Some(v) = fields.name {
+                u.name = v;
             }
-            None => {
-                let u = ScimUser {
-                    id: Uuid::new_v4().to_string(),
-                    user_name: fields.user_name,
-                    name: fields.name.unwrap_or_else(|| json!({})),
-                    active: fields.active.unwrap_or(true),
-                    admin_hold: false,
-                    emails: fields.emails.unwrap_or_default(),
-                    roles: fields.roles.unwrap_or_default(),
-                    enterprise_extension: fields.enterprise,
-                    title: fields.title,
-                };
-                users.insert(u.id.clone(), u.clone());
-                (u, true)
+            if let Some(v) = fields.active {
+                u.active = v;
             }
+            if let Some(v) = fields.emails {
+                u.emails = v;
+            }
+            if let Some(v) = fields.roles {
+                u.roles = v;
+            }
+            if let Some(v) = fields.enterprise {
+                u.enterprise_extension = Some(v);
+            }
+            if let Some(v) = fields.title {
+                u.title = Some(v);
+            }
+            (u, false)
+        }
+        None => {
+            let u = ScimUser {
+                id: Uuid::new_v4().to_string(),
+                user_name: fields.user_name,
+                name: fields.name.unwrap_or_else(|| json!({})),
+                active: fields.active.unwrap_or(true),
+                admin_hold: false,
+                emails: fields.emails.unwrap_or_default(),
+                roles: fields.roles.unwrap_or_default(),
+                enterprise_extension: fields.enterprise,
+                title: fields.title,
+            };
+            (u, true)
         }
     };
     persist(state, &user)?;
@@ -139,14 +127,8 @@ pub fn sync_roles(state: &SharedState, user: &ScimUser) {
 }
 
 fn set_hold(state: &SharedState, id: &str, hold: bool) -> Result<ScimUser, ServiceError> {
-    let user = {
-        let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
-        let u = users
-            .get_mut(id)
-            .ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
-        u.admin_hold = hold;
-        u.clone()
-    };
+    let mut user = find_by_id(state, id).ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
+    user.admin_hold = hold;
     persist(state, &user)?;
     Ok(user)
 }
@@ -180,7 +162,9 @@ struct Directory {
 }
 
 impl Directory {
-    fn read(state: &SharedState) -> Self {
+    /// The units, and the appointments of the people named. The units are the cached tree. The appointments are one
+    /// statement.
+    fn read(state: &SharedState, people: &[String]) -> Self {
         let orgs = state
             .organizations
             .read()
@@ -188,7 +172,7 @@ impl Directory {
             .values()
             .map(|o| (o.id, o.clone()))
             .collect();
-        let roles = state.roles.read().unwrap_or_else(|p| p.into_inner()).clone();
+        let roles = state.repository.roles_of_people(people).unwrap_or_default();
         Self { orgs, roles }
     }
 
@@ -276,54 +260,41 @@ pub struct UserQuery {
     pub limit: Option<usize>,
 }
 
-/// One page of users sorted by `user_name`. Returns the rows and the cursor for the next page.
+/// One page of users sorted by `user_name`. Returns the rows and the cursor for the next page. The database filters,
+/// sorts and cuts the page. Three statements: the users, their appointments, their tokens.
 pub fn list_users(state: &SharedState, q: &UserQuery) -> Result<(Vec<Value>, Option<String>), ServiceError> {
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = match &q.cursor {
         Some(c) => decode_cursor(c)?,
         None => 0,
     };
-    let search = q.search.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase);
-    let dir = Directory::read(state);
+    let filter = UserFilter {
+        prefix: q.search.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase),
+        active: q.active,
+        hold: q.hold,
+        affiliation: q.affiliation.clone(),
+        unit: q.unit,
+        platform_admin: q.platform_admin,
+        unit_admin: q.unit_admin,
+        ..Default::default()
+    };
+    let mut page = state
+        .repository
+        .search_users(&filter, offset as i64, limit as i64 + 1)
+        .map_err(|e| ServiceError::Internal(format!("Failed to read users: {e}")))?;
+    let next = (page.len() > limit).then(|| encode_cursor(offset + limit));
+    page.truncate(limit);
 
-    let mut matched: Vec<ScimUser> = state
-        .users
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .values()
-        .filter(|u| {
-            if let Some(s) = &search {
-                let starts = |v: &str| v.to_lowercase().starts_with(s.as_str());
-                if !(starts(&u.user_name) || starts(&display_name(u)) || starts(&email(u))) {
-                    return false;
-                }
-            }
-            if q.active.is_some_and(|a| a != u.active) || q.hold.is_some_and(|h| h != u.admin_hold) {
-                return false;
-            }
-            if q.affiliation.as_deref().is_some_and(|a| !scim_affiliation(u).eq_ignore_ascii_case(a)) {
-                return false;
-            }
-            let b = basics(&dir, u);
-            if q.unit.is_some_and(|unit| !b.units.contains(&unit)) {
-                return false;
-            }
-            if q.platform_admin.is_some_and(|p| p != b.platform_admin) {
-                return false;
-            }
-            if q.unit_admin.is_some_and(|a| a != !b.unit_admin_of.is_empty()) {
-                return false;
-            }
-            true
+    let names: Vec<String> = page.iter().map(|u| u.user_name.clone()).collect();
+    let dir = Directory::read(state, &names);
+    let tokens = state.repository.tokens_of_people(&names).unwrap_or_default();
+    let rows = page
+        .iter()
+        .map(|u| {
+            let mine: Vec<ApiToken> = tokens.iter().filter(|t| t.eppn == u.user_name).cloned().collect();
+            row(&dir, u, &mine)
         })
-        .cloned()
         .collect();
-    matched.sort_by_key(|u| (u.user_name.to_lowercase(), u.id.clone()));
-
-    let total = matched.len();
-    let page: Vec<ScimUser> = matched.into_iter().skip(offset).take(limit).collect();
-    let next = (offset + page.len() < total).then(|| encode_cursor(offset + page.len()));
-    let rows = page.iter().map(|u| row(&dir, u, &state.list_all_api_tokens(&u.user_name))).collect();
     Ok((rows, next))
 }
 
@@ -346,7 +317,7 @@ fn ledger_rows(state: &SharedState, principal: &str) -> Vec<Value> {
 /// 20 ledger entries where the user is the principal.
 pub fn user_detail(state: &SharedState, id: &str) -> Result<Value, ServiceError> {
     let u = find_by_id(state, id).ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
-    let dir = Directory::read(state);
+    let dir = Directory::read(state, std::slice::from_ref(&u.user_name));
     let tokens = state.list_all_api_tokens(&u.user_name);
 
     let appointments: Vec<Value> = dir
@@ -393,11 +364,12 @@ pub fn user_detail(state: &SharedState, id: &str) -> Result<Value, ServiceError>
 }
 
 pub fn list_groups(state: &SharedState) -> Vec<Value> {
-    let mut groups: Vec<_> = state.groups.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
-    groups.sort_by_key(|g| g.display_name.to_lowercase());
-    groups
-        .iter()
-        .map(|g| json!({ "id": g.id, "name": g.display_name, "member_count": g.members.len() }))
+    state
+        .repository
+        .group_summaries()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, name, members)| json!({ "id": id, "name": name, "member_count": members }))
         .collect()
 }
 
@@ -452,7 +424,7 @@ pub fn create_user(state: &SharedState, admin: &AuthUser, new: NewUser, reason: 
         sync_roles(state, &user);
         Ok(user)
     })?;
-    let dir = Directory::read(state);
+    let dir = Directory::read(state, std::slice::from_ref(&user.user_name));
     Ok(row(&dir, &user, &[]))
 }
 
@@ -468,7 +440,7 @@ pub fn set_user_hold(
     let user = admin_write(state, admin, DecisionType::UserAccessChanged, "AC-02", reason, &payload, || {
         set_hold(state, id, hold)
     })?;
-    let dir = Directory::read(state);
+    let dir = Directory::read(state, std::slice::from_ref(&user.user_name));
     Ok(row(&dir, &user, &state.list_all_api_tokens(&user.user_name)))
 }
 
@@ -548,40 +520,23 @@ pub fn may_manage_appointment(
     scoped_affiliation == "unit_admin" && crate::service::organizations::unit_in_scope(&org_caller, unit, orgs, roles)
 }
 
+/// The most people one search for a collaborator considers. A narrower search finds the rest.
+const COLLABORATOR_CANDIDATES: i64 = 200;
+
 pub fn list_app_collaborators(
     app_slug: &str,
     query: &str,
     state: &SharedState,
 ) -> Result<Vec<Value>, ServiceError> {
     let q = query.trim().to_lowercase();
-    let mut all_users: Vec<ScimUser> = { let repo = &state.repository;
-        repo.list_scim_users().unwrap_or_default()
-    };
-    if let Ok(mem) = state.users.read() {
-        for u in mem.values() {
-            if !all_users.iter().any(|existing| existing.user_name.eq_ignore_ascii_case(&u.user_name)) {
-                all_users.push(u.clone());
-            }
-        }
-    }
+    let filter = UserFilter { contains: Some(q).filter(|q| !q.is_empty()), active: Some(true), hold: Some(false), ..Default::default() };
+    let candidates = state.repository.search_users(&filter, 0, COLLABORATOR_CANDIDATES).unwrap_or_default();
 
     let mut out = Vec::new();
-    for u in all_users {
-        if !u.active || u.admin_hold {
-            continue;
-        }
+    for u in candidates {
         let d_name = display_name(&u);
         let user_email = email(&u);
         let user_name = u.user_name.clone();
-
-        if !q.is_empty() {
-            let matches_q = d_name.to_lowercase().contains(&q)
-                || user_email.to_lowercase().contains(&q)
-                || user_name.to_lowercase().contains(&q);
-            if !matches_q {
-                continue;
-            }
-        }
 
         if let Some(candidate) = crate::service::identity::resolve_user(&user_name, state) {
             if crate::service::access::authorize_app(&candidate, app_slug, crate::service::access::AppAction::Read, state).is_ok() {

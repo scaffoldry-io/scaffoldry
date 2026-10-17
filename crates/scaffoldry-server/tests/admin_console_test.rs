@@ -230,6 +230,11 @@ async fn test_overview_counts_match_fixture() {
             },
         );
     }
+    // A role has a foreign key to its unit, so the units are stored, not only held in memory.
+    let stored: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
+    for o in stored.iter().filter(|o| o.parent_id.is_none()).chain(stored.iter().filter(|o| o.parent_id.is_some())) {
+        state.persist_organization(o).unwrap();
+    }
 
     // 2. Setup 3 users: 1 central admin (active), 1 on hold, 1 regular active
     let admin_eppn = "admin.lead@state.edu";
@@ -237,10 +242,9 @@ async fn test_overview_counts_match_fixture() {
     let active_eppn = "faculty.user@state.edu";
 
     {
-        let mut users = state.users.write().unwrap();
-        users.clear();
-        users.insert(
-            "u-admin".to_string(),
+        state.repository.with_client(|c| { c.batch_execute("DELETE FROM scim_users")?; Ok(()) }).unwrap();
+        let mut users = Vec::new();
+        users.push(
             scaffoldry_server::state::ScimUser {
                 id: "u-admin".to_string(),
                 user_name: admin_eppn.to_string(),
@@ -253,8 +257,7 @@ async fn test_overview_counts_match_fixture() {
                 title: Some("central_admin".to_string()),
             },
         );
-        users.insert(
-            "u-hold".to_string(),
+        users.push(
             scaffoldry_server::state::ScimUser {
                 id: "u-hold".to_string(),
                 user_name: on_hold_eppn.to_string(),
@@ -267,8 +270,7 @@ async fn test_overview_counts_match_fixture() {
                 title: Some("student".to_string()),
             },
         );
-        users.insert(
-            "u-active".to_string(),
+        users.push(
             scaffoldry_server::state::ScimUser {
                 id: "u-active".to_string(),
                 user_name: active_eppn.to_string(),
@@ -281,10 +283,13 @@ async fn test_overview_counts_match_fixture() {
                 title: Some("faculty".to_string()),
             },
         );
+        for u in users {
+            state.persist_scim_user(u).unwrap();
+        }
     }
 
     // Assign platform_admin role on root org to admin_eppn
-    state.roles.write().unwrap().push(RoleRow {
+    state.persist_role(&RoleRow {
         id: Uuid::new_v4(),
         person_id: Uuid::new_v4(),
         organization_id: root_id,
@@ -294,7 +299,8 @@ async fn test_overview_counts_match_fixture() {
         is_primary: true,
         source: "api".to_string(),
         position_key: None,
-    });
+    })
+    .unwrap();
 
     // 3. Setup 1 workspace
     {
@@ -323,9 +329,8 @@ async fn test_overview_counts_match_fixture() {
     // Issue token for admin_eppn
     let admin_token = "sct_fixture_admin_token";
     let token_hash = scaffoldry_server::service::identity::hash_token(admin_token);
-    state.api_tokens.write().unwrap().insert(
-        token_hash.clone(),
-        scaffoldry_server::state::ApiToken {
+    state.persist_api_token(
+        &scaffoldry_server::state::ApiToken {
             id: Uuid::new_v4(),
             token_hash,
             kind: "agent".to_string(),
@@ -338,7 +343,8 @@ async fn test_overview_counts_match_fixture() {
             revoked_at: None,
         app_slug: None,
         },
-    );
+    )
+    .unwrap();
 
     let app = build_app_with_state(state).expect("app router");
     let (status, body) = send_req(&app, "GET", "/api/v1/admin/overview", Some(admin_token), None).await;

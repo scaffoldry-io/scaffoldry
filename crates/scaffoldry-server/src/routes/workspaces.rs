@@ -172,9 +172,11 @@ async fn remove_collaborator(
     user: Option<Extension<AuthUser>>,
     headers: HeaderMap,
     Path((id, eppn)): Path<(String, String)>,
+    axum::extract::Query(scope): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<StatusCode, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
-    workspace_service::remove_collaborator(&caller, &id, &eppn, &state)?;
+    let app = scope.get("app").map(String::as_str).unwrap_or("");
+    workspace_service::remove_collaborator(&caller, &id, &eppn, app, &state)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -201,7 +203,7 @@ fn check_can_manage_guards(caller: &AuthUser, ws: &WorkspaceRecord, state: &Shar
 
     if let Some(org_id) = ws.organization_id {
         let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().map(|g| g.values().cloned().collect()).unwrap_or_default();
-        let roles: Vec<crate::state::RoleRow> = state.roles.read().map(|g| g.clone()).unwrap_or_default();
+        let roles = state.roles_of(&caller.eppn);
         let org_caller = crate::service::organizations::OrgCaller {
             eppn: caller.eppn.clone(),
             affiliation: caller.affiliation.clone(),
@@ -220,18 +222,7 @@ fn check_can_manage_guards(caller: &AuthUser, ws: &WorkspaceRecord, state: &Shar
 }
 
 fn principal_ctx_for(user: &AuthUser, state: &SharedState) -> PrincipalCtx {
-    let role_unit_ids: Vec<String> = {
-        let r_read = state.roles.read().ok();
-        let mut ids = Vec::new();
-        if let Some(roles) = r_read {
-            for r in roles.iter() {
-                if r.eppn.eq_ignore_ascii_case(&user.eppn) {
-                    ids.push(r.organization_id.to_string());
-                }
-            }
-        }
-        ids
-    };
+    let role_unit_ids: Vec<String> = state.roles_of(&user.eppn).iter().map(|r| r.organization_id.to_string()).collect();
 
     let org_parents: std::collections::HashMap<String, Option<String>> = {
         let o_read = state.organizations.read().ok();

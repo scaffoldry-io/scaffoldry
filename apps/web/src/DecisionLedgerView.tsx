@@ -109,7 +109,7 @@ export const DecisionLedgerView: React.FC<Props> = ({
           </div>
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Head Block Hash</span>
-            <span className="font-mono text-[11px] text-blue-600 dark:text-blue-400 truncate block">
+            <span className="font-mono text-[11px] text-blue-600 dark:text-blue-400 truncate block" title={entries.length > 0 ? entries[entries.length - 1].entry_hash : undefined}>
               {entries.length > 0 ? entries[entries.length - 1].entry_hash.slice(0, 16) + "..." : "None"}
             </span>
           </div>
@@ -180,7 +180,7 @@ export const DecisionLedgerView: React.FC<Props> = ({
                     className="font-mono text-[11px] bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 transition-colors flex items-center gap-1"
                     title="Click to copy SHA-256 entry hash"
                   >
-                    <span>{entry.entry_hash.slice(0, 10)}...{entry.entry_hash.slice(-6)}</span>
+                    <span title={entry.entry_hash}>{entry.entry_hash.slice(0, 10)}...{entry.entry_hash.slice(-6)}</span>
                     <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>

@@ -78,7 +78,7 @@ pub fn fields_read(rule: &AutomationRule) -> BTreeSet<String> {
 /// Every problem that would stop a rule from being saved. Empty means it can be saved.
 pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &AutomationRule) -> Vec<String> {
     let mut problems = Vec::new();
-    let known = crate::service::approvers::known_sets(state);
+    let known = crate::service::approvers::known_sets(state, rule);
     let names = field_names(manifest);
     let computed = computed_names(manifest);
 
