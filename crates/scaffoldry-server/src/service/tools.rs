@@ -794,7 +794,7 @@ fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ServiceError>
 fn stale_as_text(err: ServiceError) -> ServiceError {
     match err {
         ServiceError::StaleVersion { message, version } => {
-            ServiceError::BadRequest(format!("{message} The current version is {version}."))
+            ServiceError::Conflict(format!("{message} The current version is {version}."))
         }
         other => other,
     }
