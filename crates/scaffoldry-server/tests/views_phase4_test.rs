@@ -176,6 +176,7 @@ async fn world(rows: i64) -> World {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: String::new(),
+            app_slug: String::new(),
         }],
     );
     let s = slug.clone();

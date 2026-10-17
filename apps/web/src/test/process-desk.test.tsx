@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { ProcessDesk } from "../ProcessDesk";
 import { Persona, RegisteredApp } from "../types";
+import { setAuthToken } from "../api";
 
 const mockPersona: Persona = {
   eppn: "sarah.connor@state.edu",
@@ -272,5 +273,34 @@ describe("Approvers: the desk shows what the server returned", () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] });
     render(<ProcessDesk apps={[mockApp]} callerPersona={mockPersona} callerWorkspaceRole="chair" />);
     expect(await screen.findByText("No decisions waiting")).toBeInTheDocument();
+  });
+});
+
+describe("ProcessDesk asks as the person who is signed in", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setAuthToken("signed-in-token");
+  });
+
+  const waiting = {
+    id: "r:rec-1", rule_id: "r", app_slug: "cs-admissions", record_id: "rec-1", status: "Waiting",
+    waiting_step_id: "s", role: "chair", prompt: "Please review", log: [],
+  };
+
+  it("sends the token when it lists waiting decisions and when it decides one", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({ ok: true, status: 200, json: async () => (String(url).includes("status=Waiting") ? [waiting] : { ...waiting, status: "Completed" }) })
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    render(<ProcessDesk apps={[mockApp]} callerPersona={mockPersona} callerWorkspaceRole="chair" />);
+    await waitFor(() => expect(screen.getByTestId("process-approve-r:rec-1")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("process-approve-r:rec-1"));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/decide"))).toBe(true));
+
+    const headerOf = ([, options]: [unknown, RequestInit | undefined]) => (options?.headers as Record<string, string> | undefined)?.Authorization;
+    const list = fetchMock.mock.calls.find(([u]) => String(u).includes("status=Waiting"))!;
+    const decide = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/decide"))!;
+    expect(headerOf(list as [unknown, RequestInit])).toBe("Bearer signed-in-token");
+    expect(headerOf(decide as [unknown, RequestInit])).toBe("Bearer signed-in-token");
   });
 });

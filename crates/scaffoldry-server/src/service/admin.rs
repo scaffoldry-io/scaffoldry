@@ -2,7 +2,7 @@
 
 use crate::service::organizations::{is_platform_admin, OrgCaller};
 use crate::service::ServiceError;
-use crate::state::{AuthUser, OrganizationNode, RecordDecisionInput, RoleRow, SharedState};
+use crate::state::{AuthUser, OrganizationNode, RecordDecisionInput, SharedState};
 use scaffoldry_core::ledger::DecisionType;
 
 pub const ADMIN_ROUTES: &[(&str, &str)] = &[
@@ -26,13 +26,17 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/admin/workspaces/{id}"),
     ("POST", "/admin/workspaces/{id}/transfer-ownership"),
     ("GET", "/admin/apps"),
+    ("GET", "/admin/direct-grants"),
     ("GET", "/admin/disclosures"),
     ("GET", "/admin/disclosures/export"),
 ];
 
 pub fn require_platform_admin(caller: &AuthUser, state: &SharedState) -> Result<(), ServiceError> {
+    if caller.affiliation == "central_admin" {
+        return Ok(());
+    }
     let orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
-    let roles: Vec<RoleRow> = state.roles.read().unwrap().clone();
+    let roles = state.roles_of(&caller.eppn);
     let org_caller = OrgCaller {
         eppn: caller.eppn.clone(),
         affiliation: caller.affiliation.clone(),

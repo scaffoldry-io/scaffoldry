@@ -414,6 +414,7 @@ async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
         scoped_affiliation: "faculty".to_string(),
         department: "Engineering".to_string(),
         added_at: "2026-10-10T00:00:00Z".to_string(),
+        app_slug: String::new(),
     };
     {
         let repo = &c.state.repository;

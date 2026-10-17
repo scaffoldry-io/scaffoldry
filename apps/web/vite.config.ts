@@ -10,6 +10,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: "0.0.0.0",
+    // The app calls /api/v1 on its own origin. The API server is a separate process in development.
+    proxy: { "/api": "http://127.0.0.1:8080" },
   },
   test: {
     globals: true,

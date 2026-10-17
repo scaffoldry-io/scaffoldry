@@ -198,7 +198,7 @@ pub fn import_analyze(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
                 "unknown",
                 &json!([]),
                 &json!([]),
-                &json!({ "error": err_msg }),
+                &json!({ "failure": err_msg }),
             );
             return Err(JobError::Permanent(err_msg.to_string()));
         }

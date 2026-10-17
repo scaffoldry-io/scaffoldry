@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Persona, RegisteredApp } from "./types";
+import { getAuthToken } from "./api";
+
+/** The signed-in person's token, as the header every API request carries. */
+const authHeaders = (): Record<string, string> => {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 export interface ProcessInstance {
   id: string;
@@ -35,7 +42,7 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps }) => {
         const results = await Promise.all(
           apps.map(async (app) => {
             try {
-              const res = await fetch(`/api/v1/apps/${app.slug}/processes?status=Waiting&mine=true`);
+              const res = await fetch(`/api/v1/apps/${app.slug}/processes?status=Waiting&mine=true`, { headers: authHeaders() });
               if (res.ok) {
                 const data = await res.json();
                 return Array.isArray(data) ? data : [];
@@ -65,7 +72,7 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps }) => {
         `/api/v1/apps/${inst.app_slug}/processes/${inst.id}/decide`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({ decision }),
         }
       );

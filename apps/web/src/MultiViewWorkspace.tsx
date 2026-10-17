@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
 import { RegisteredApp } from "./types";
 import { DataGrid } from "./DataGrid";
+import { useAppRecords } from "./useAppRecords";
 
 interface Props {
   app: RegisteredApp;
@@ -17,87 +18,6 @@ interface TabularRecord {
   [key: string]: unknown;
 }
 
-const SEEDED_RECORDS_BY_SLUG: Record<string, TabularRecord[]> = {
-  "admissions-fellowship-eval": [
-    {
-      id: "rec-101",
-      applicant_id: "STU-88219",
-      applicant_name: "Eleanor Vance",
-      gpa: 3.92,
-      department: "Physics",
-      reviewer_faculty: "dr.smith@university.edu",
-      committee_decision: "Approved",
-      submission_date: "2026-10-02",
-      stipend_amount: 38000,
-    },
-    {
-      id: "rec-102",
-      applicant_id: "STU-88220",
-      applicant_name: "Julian Bashir",
-      gpa: 3.84,
-      department: "Biology",
-      reviewer_faculty: "dr.curie@science.state.edu",
-      committee_decision: "Under Review",
-      submission_date: "2026-10-03",
-      stipend_amount: 36500,
-    },
-    {
-      id: "rec-103",
-      applicant_id: "STU-88221",
-      applicant_name: "Ada Lovelace",
-      gpa: 4.0,
-      department: "Computer Science",
-      reviewer_faculty: "dr.alan@university.edu",
-      committee_decision: "Approved",
-      submission_date: "2026-10-04",
-      stipend_amount: 42000,
-    },
-    {
-      id: "rec-104",
-      applicant_id: "STU-88222",
-      applicant_name: "Arthur Dent",
-      gpa: 3.15,
-      department: "Physics",
-      reviewer_faculty: "dr.smith@university.edu",
-      committee_decision: "Draft",
-      submission_date: "2026-10-05",
-      stipend_amount: 32000,
-    },
-  ],
-  "lab-safety-inspection": [
-    {
-      id: "rec-201",
-      lab_id: "LAB-BIO-402",
-      inspector: "Dr. Marie Curie",
-      hazard_level: "High",
-      chemical_inventory_certified: true,
-      inspection_date: "2026-10-01",
-      status: "Approved",
-      deficiencies_count: 0,
-    },
-    {
-      id: "rec-202",
-      lab_id: "LAB-PHYS-108",
-      inspector: "Dr. Sarah Smith",
-      hazard_level: "Moderate",
-      chemical_inventory_certified: true,
-      inspection_date: "2026-10-03",
-      status: "Under Review",
-      deficiencies_count: 2,
-    },
-    {
-      id: "rec-203",
-      lab_id: "LAB-CHEM-301",
-      inspector: "Dr. Alan Turing",
-      hazard_level: "Critical",
-      chemical_inventory_certified: false,
-      inspection_date: "2026-10-04",
-      status: "Action Required",
-      deficiencies_count: 5,
-    },
-  ],
-};
-
 export const MultiViewWorkspace: React.FC<Props> = ({
   app,
   onBack,
@@ -107,46 +27,20 @@ export const MultiViewWorkspace: React.FC<Props> = ({
   const [viewMode, setViewMode] = useState<TabularViewMode>("grid");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Dynamic records stored in state
-  const [records, setRecords] = useState<TabularRecord[]>(() => {
-    if (SEEDED_RECORDS_BY_SLUG[app.slug]) {
-      return SEEDED_RECORDS_BY_SLUG[app.slug];
-    }
-    // Generate starter records based on fields
-    const fields = app.manifest.views[0]?.fields || [];
-    return [
-      {
-        id: "rec-001",
-        ...Object.fromEntries(
-          fields.map((f, i) => [
-            f.name,
-            f.field_type === "Number"
-              ? (i + 1) * 15
-              : f.field_type === "Relation"
-              ? "dr.smith@university.edu"
-              : `${f.label} Sample 1`,
-          ])
-        ),
-        status: "Approved",
-        submission_date: "2026-10-02",
-      },
-      {
-        id: "rec-002",
-        ...Object.fromEntries(
-          fields.map((f, i) => [
-            f.name,
-            f.field_type === "Number"
-              ? (i + 1) * 25
-              : f.field_type === "Relation"
-              ? "dr.curie@science.state.edu"
-              : `${f.label} Sample 2`,
-          ])
-        ),
-        status: "Under Review",
-        submission_date: "2026-10-04",
-      },
-    ];
-  });
+  // The stored rows of this app. Nothing is seeded or generated: the grid shows what the server holds.
+  const { records: stored, loading, error, notice, clearNotice, reload, create, save } = useAppRecords(app.slug);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const tableId = app.manifest.views[0]?.table_id ?? app.manifest.tables?.[0]?.id ?? "";
+
+  const records: TabularRecord[] = useMemo(
+    () => stored.map((r) => ({ id: r.id, ...Object.fromEntries(Object.entries(r.data).filter(([k]) => k !== "_table_id")) })),
+    [stored]
+  );
+
+  const run = (work: Promise<unknown>) => {
+    setActionError(null);
+    work.catch((e: unknown) => setActionError(e instanceof Error ? e.message : "That change could not be saved."));
+  };
 
   const fields = app.manifest.views[0]?.fields || [];
 
@@ -159,43 +53,29 @@ export const MultiViewWorkspace: React.FC<Props> = ({
     );
   }, [records, searchQuery]);
 
-  // Handle cell edit
+  // Handle cell edit. The save carries the version that was read, and the whole row, so nothing else changes.
   const handleUpdateCell = (recordId: string, fieldName: string, value: unknown) => {
-    setRecords((prev) =>
-      prev.map((r) => (r.id === recordId ? { ...r, [fieldName]: value } : r))
-    );
+    const current = stored.find((r) => r.id === recordId);
+    if (!current) return;
+    run(save(recordId, { ...current.data, [fieldName]: value }));
   };
 
-  // Add new blank record
+  // Add a blank record on the server
   const handleAddNewRecord = () => {
-    const newId = `rec-${Date.now().toString().slice(-4)}`;
-    const newRow: TabularRecord = {
-      id: newId,
-      ...Object.fromEntries(
-        fields.map((f) => [
-          f.name,
-          f.field_type === "Number" ? 0 : f.field_type === "Boolean" ? false : "",
-        ])
-      ),
-      status: "Draft",
-      submission_date: new Date().toISOString().split("T")[0],
-    };
-    setRecords((prev) => [newRow, ...prev]);
+    const blank = Object.fromEntries(
+      fields.map((f) => [f.name, f.field_type === "Number" ? 0 : f.field_type === "Boolean" ? false : ""])
+    );
+    run(create({ _table_id: tableId, ...blank }));
   };
 
   // Handle Form View submission
   const handleFormSubmit = (data: Record<string, unknown>) => {
-    const newId = `rec-${Date.now().toString().slice(-4)}`;
-    const newRow: TabularRecord = {
-      id: newId,
-      ...data,
-      status: "Approved",
-      submission_date: new Date().toISOString().split("T")[0],
-    };
-    setRecords((prev) => [newRow, ...prev]);
-    if (onRecordCreated) onRecordCreated(newRow);
+    run(
+      create({ _table_id: tableId, ...data }).then((rec) => {
+        if (onRecordCreated) onRecordCreated({ id: rec.id, ...Object.fromEntries(Object.entries(rec.data).filter(([k]) => k !== "_table_id")) });
+      })
+    );
   };
-
 
   // Export records as CSV
   const handleExportCsv = () => {
@@ -390,6 +270,25 @@ export const MultiViewWorkspace: React.FC<Props> = ({
 
         </div>
       </div>
+
+      {/* What the server said about the rows */}
+      {loading && <div className="px-4 md:px-6 py-2 text-xs text-slate-500">Loading records…</div>}
+      {error && (
+        <div role="alert" className="mx-4 md:mx-6 mt-3 flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <span>The records could not be loaded. {error}</span>
+          <button type="button" onClick={() => void reload()} className="font-semibold underline cursor-pointer">
+            Retry
+          </button>
+        </div>
+      )}
+      {(notice || actionError) && (
+        <div role="status" className="mx-4 md:mx-6 mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <span>{notice || actionError}</span>
+          <button type="button" onClick={() => { clearNotice(); setActionError(null); }} className="font-semibold underline cursor-pointer">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Main Viewport Container */}
       <div className="flex-1 overflow-auto p-4 md:p-6">

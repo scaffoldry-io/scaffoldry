@@ -111,6 +111,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -121,6 +122,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
             scoped_affiliation: "staff".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -131,6 +133,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
             scoped_affiliation: "student".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
     ];
     state.collaborators.write().unwrap().insert(id.to_string(), collabs.clone());
@@ -383,9 +386,13 @@ async fn test_05_deny_access_outside_units() {
         });
     }
 
+    for id in [college_id, dept1_id, other_college_id, dept2_id] {
+        let node = c.state.organizations.read().unwrap().get(&id).cloned().unwrap();
+        c.state.persist_organization(&node).unwrap();
+    }
     {
-        let mut roles = c.state.roles.write().unwrap();
-        roles.push(RoleRow {
+        let roles = &c.state;
+        roles.persist_role(&RoleRow {
             id: Uuid::new_v4(),
             person_id: Uuid::new_v4(),
             organization_id: dept1_id,
@@ -395,8 +402,9 @@ async fn test_05_deny_access_outside_units() {
             source: "scim".to_string(),
             eppn: "faculty.curie@state.edu".to_string(),
             position_key: None,
-        });
-        roles.push(RoleRow {
+        })
+        .unwrap();
+        roles.persist_role(&RoleRow {
             id: Uuid::new_v4(),
             person_id: Uuid::new_v4(),
             organization_id: dept2_id,
@@ -406,7 +414,8 @@ async fn test_05_deny_access_outside_units() {
             source: "scim".to_string(),
             eppn: "albert.einstein@state.edu".to_string(),
             position_key: None,
-        });
+        })
+        .unwrap();
     }
 
     let put_body = json!({
@@ -570,6 +579,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "faculty".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -580,6 +590,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "staff".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -590,6 +601,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "student".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
         CollaboratorRecord {
             id: Uuid::new_v4().to_string(),
@@ -600,6 +612,7 @@ async fn test_08_impact_route_lists_only_changes() {
             scoped_affiliation: "employee".to_string(),
             department: "biology".to_string(),
             added_at: now.clone(),
+            app_slug: String::new(),
         },
     ];
     c.state.collaborators.write().unwrap().insert("ws-impact".to_string(), collabs.clone());

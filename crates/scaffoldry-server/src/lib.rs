@@ -14,6 +14,7 @@ pub mod repository_files;
 pub mod repository_calc;
 pub mod repository_index;
 pub mod repository_links;
+pub mod repository_people;
 pub mod repository_proposals;
 pub mod repository_trash;
 pub mod repository_undo;

@@ -221,9 +221,7 @@ async fn scim_requires_the_provisioning_credential_and_fails_closed() {
 
     // No credential configured: SCIM is closed, not open.
     let state = ServerState::new().expect("state");
-    if let Ok(mut tokens) = state.api_tokens.write() {
-        tokens.clear();
-    }
+    state.repository.with_client(|c| { c.batch_execute("DELETE FROM api_tokens")?; Ok(()) }).unwrap();
     let app = build_app_with_state(Arc::new(state)).expect("router");
     let (status, _) = send(&app, "GET", uri, Some("anything"), &[], None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

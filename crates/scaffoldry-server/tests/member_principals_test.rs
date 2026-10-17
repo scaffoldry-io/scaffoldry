@@ -12,7 +12,7 @@ use scaffoldry_core::ledger::DecisionType;
 use scaffoldry_engine::{AppManifest, AppTable, FieldSpec, FieldType};
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
-use scaffoldry_server::state::{OrganizationNode, RoleRow, ScimGroup, ServerState};
+use scaffoldry_server::state::{OrganizationNode, PositionType, RoleRow, ScimGroup, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -125,16 +125,33 @@ impl World {
         .await
     }
 
+    /// A membership limited to one app.
+    async fn share_app(&self, principal_type: &str, principal_id: &str, role: &str, app: &str) -> (StatusCode, Value) {
+        send(
+            &self.app,
+            "POST",
+            &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"),
+            &self.owner,
+            Some(json!({ "principal_type": principal_type, "principal_id": principal_id, "role": role, "app_slug": app })),
+        )
+        .await
+    }
+
     /// What a person can do in the workspace's app: `none`, `read`, or `write`.
     async fn level(&self, token: &str) -> &'static str {
-        let (read, _) = send(&self.app, "GET", &format!("/api/v1/apps/{}/records", self.slug), token, None).await;
+        self.level_in(token, &self.slug).await
+    }
+
+    /// The same for any app in the workspace.
+    async fn level_in(&self, token: &str, slug: &str) -> &'static str {
+        let (read, _) = send(&self.app, "GET", &format!("/api/v1/apps/{slug}/records"), token, None).await;
         if !read.is_success() {
             return "none";
         }
         let (write, _) = send(
             &self.app,
             "POST",
-            &format!("/api/v1/apps/{}/records", self.slug),
+            &format!("/api/v1/apps/{slug}/records"),
             token,
             Some(json!({ "data": { "_table_id": "t", "name": "x" } })),
         )
@@ -143,23 +160,40 @@ impl World {
     }
 
     fn group(&self, id: &str, members: &[&str]) {
-        self.state.groups.write().unwrap().insert(
-            id.to_string(),
-            ScimGroup { id: id.to_string(), display_name: id.to_string(), members: members.iter().map(|m| json!({ "value": m })).collect() },
-        );
+        self.state
+            .repository
+            .upsert_scim_group(&ScimGroup {
+                id: id.to_string(),
+                display_name: id.to_string(),
+                members: members.iter().map(|m| json!({ "value": m })).collect(),
+            })
+            .unwrap();
     }
 
     fn unit(&self, parent: Option<Uuid>, name: &str) -> Uuid {
         let id = Uuid::new_v4();
-        self.state.organizations.write().unwrap().insert(
-            id,
-            OrganizationNode { id, parent_id: parent, name: format!("{name}-{}", self.tag), code: name.to_uppercase(), org_type: "Department".to_string() },
-        );
+        let node = OrganizationNode { id, parent_id: parent, name: format!("{name}-{}", self.tag), code: format!("{}-{}", name.to_uppercase(), self.tag), org_type: "Department".to_string() };
+        self.state.persist_organization(&node).unwrap();
         id
     }
 
     fn role_at(&self, eppn: &str, unit: Uuid, position: Option<&str>) {
-        self.state.roles.write().unwrap().push(RoleRow {
+        // A held position has a foreign key to its type, so the type is stored first.
+        if let Some(key) = position {
+            self.state
+                .persist_position_type(&PositionType {
+                    key: key.to_string(),
+                    name: key.to_string(),
+                    description: String::new(),
+                    org_types: vec![],
+                    max_holders: 50,
+                    retired_at: None,
+                    created_by: "test".to_string(),
+                    created_at: "2026-01-01T00:00:00Z".to_string(),
+                })
+                .unwrap();
+        }
+        self.state.persist_role(&RoleRow {
             id: Uuid::new_v4(),
             person_id: Uuid::new_v4(),
             eppn: eppn.to_string(),
@@ -169,7 +203,8 @@ impl World {
             is_primary: true,
             source: "manual".to_string(),
             position_key: position.map(str::to_string),
-        });
+        })
+        .unwrap();
     }
 
     fn ledger_count(&self, decision: DecisionType) -> usize {
@@ -249,7 +284,9 @@ async fn a_position_follows_the_holder() {
     assert_eq!(w.share("position", &format!("chair@{dept}"), "Editor").await.0, StatusCode::CREATED);
     assert_eq!(w.level(&ann_token).await, "write");
     assert_eq!(w.level(&bob_token).await, "none");
-    w.state.roles.write().unwrap().retain(|r| r.eppn != ann);
+    for r in w.state.roles_of(&ann) {
+        w.state.delete_role(r.id).unwrap();
+    }
     w.role_at(&bob, dept, Some("chair"));
     assert_eq!(w.level(&ann_token).await, "none");
     assert_eq!(w.level(&bob_token).await, "write");
@@ -327,4 +364,152 @@ async fn every_grant_writes_one_ledger_entry() {
         assert_eq!(w.share(t, &id, "Viewer").await.0, StatusCode::CREATED, "{t}");
     }
     assert_eq!(w.ledger_count(DecisionType::AccessRoleGranted), before + 3);
+}
+
+// 2a. A membership can be limited to one app. It reaches that app, no other app, and no workspace action.
+#[tokio::test]
+async fn a_membership_limited_to_one_app_reaches_only_that_app() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let other_app = format!("mq-{}", w.tag);
+    w.state.engine.write().unwrap().register_manifest(manifest(&other_app)).unwrap();
+
+    let chem = w.unit(None, "chem");
+    let phys = w.unit(None, "phys");
+    let (ann, ann_token) = w.person("ann");
+    let (bob, bob_token) = w.person("bob");
+    w.role_at(&ann, chem, Some("chair"));
+    w.role_at(&bob, phys, Some("chair"));
+
+    let chair = format!("chair@{chem}");
+    let (status, body) = w.share_app("position", &chair, "Admin", &w.slug).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    assert_eq!(w.level_in(&ann_token, &w.slug).await, "write", "the chair reaches the app named");
+    assert_eq!(w.level_in(&ann_token, &other_app).await, "none", "and not another app in the same workspace");
+    assert_eq!(w.level_in(&bob_token, &w.slug).await, "none", "and a chair elsewhere reaches nothing");
+
+    // An Admin on one app does not manage the workspace.
+    let (status, _) = send(
+        &w.app,
+        "POST",
+        &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"),
+        &ann_token,
+        Some(json!({ "principal_type": "user", "principal_id": bob, "role": "Viewer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "an app grant is not a workspace grant");
+
+}
+
+// 2a. The rules around an app membership: the app must be in the workspace, an app membership cannot be an owner,
+// a principal may hold both kinds, and removing one kind leaves the other.
+#[tokio::test]
+async fn app_memberships_follow_their_rules_and_remove_one_scope_at_a_time() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let (cy, cy_token) = w.person("cy");
+
+    let (status, _) = w.share_app("user", &cy, "Viewer", "no-such-app").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the app must belong to the workspace");
+    let (status, _) = w.share_app("user", &cy, "Owner", &w.slug).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a membership limited to one app cannot be an owner");
+
+    assert_eq!(w.share("user", &cy, "Viewer").await.0, StatusCode::CREATED);
+    assert_eq!(w.share_app("user", &cy, "Editor", &w.slug).await.0, StatusCode::CREATED, "both kinds at once");
+    assert_eq!(w.share_app("user", &cy, "Editor", &w.slug).await.0, StatusCode::BAD_REQUEST, "but not the same kind twice");
+    assert_eq!(w.level(&cy_token).await, "write", "the higher of the two applies in the app");
+
+    let uri = format!("/api/v1/workspaces/{WORKSPACE}/collaborators/{cy}?app={}", w.slug);
+    assert_eq!(send(&w.app, "DELETE", &uri, &w.owner, None).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(w.level(&cy_token).await, "read", "removing the app membership leaves the workspace-wide one");
+}
+
+// 3. An admin can list every grant that names a person, and who made it.
+#[tokio::test]
+async fn an_admin_lists_direct_person_grants_with_who_made_them() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let admin = issue_test_token_and_user("jordan.lee@state.edu");
+    let (dee, _) = w.person("dee");
+    let dept = w.unit(None, "dept");
+    let (holder, _) = w.person("holder");
+    w.role_at(&holder, dept, Some("chair"));
+
+    assert_eq!(w.share("user", &dee, "Viewer").await.0, StatusCode::CREATED);
+    assert_eq!(w.share_app("user", &dee, "Editor", &w.slug).await.0, StatusCode::CREATED);
+    assert_eq!(w.share("position", &format!("chair@{dept}"), "Viewer").await.0, StatusCode::CREATED);
+
+    let (status, body) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &admin, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows: Vec<&Value> = body["grants"].as_array().expect("grants").iter().filter(|g| g["who"] == dee.as_str()).collect();
+    assert_eq!(rows.len(), 2, "one workspace-wide and one app grant for the person: {body}");
+    let whole = rows.iter().find(|g| g["scope"] == "workspace").expect("a workspace-wide grant");
+    let app = rows.iter().find(|g| g["scope"] == "app").expect("an app grant");
+    assert_eq!(whole["role"], "Viewer");
+    assert_eq!(app["role"], "Editor");
+    assert_eq!(app["app_slug"], w.slug.as_str());
+    for g in [whole, app] {
+        assert_eq!(g["granted_by"], OWNER, "the ledger names who made it: {g}");
+        assert!(g["granted_at"].as_str().is_some_and(|t| !t.is_empty()), "and when: {g}");
+        assert_eq!(g["kind"], "membership");
+    }
+    assert!(!body["grants"].as_array().unwrap().iter().any(|g| g["who"].as_str().is_some_and(|x| x.contains("chair@"))), "a position is not a person: {body}");
+
+    // Only a Platform Admin may read it.
+    let (status, _) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &w.owner, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+// 3b. A reason on a direct grant is optional. When given, the ledger and the admin report carry it.
+#[tokio::test]
+async fn a_direct_grant_may_carry_a_reason_and_does_not_need_one() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let admin = issue_test_token_and_user("jordan.lee@state.edu");
+    let (eli, _) = w.person("eli");
+    let (fay, _) = w.person("fay");
+
+    let with = json!({ "principal_type": "user", "principal_id": eli, "role": "Viewer", "reason": "Covering for a sabbatical" });
+    let (status, body) = send(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"), &w.owner, Some(with)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(w.share("user", &fay, "Viewer").await.0, StatusCode::CREATED, "a grant without a reason still works");
+
+    let (_, body) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &admin, None).await;
+    let rows = body["grants"].as_array().expect("grants");
+    let row = |who: &str| rows.iter().find(|g| g["who"] == who).unwrap_or_else(|| panic!("no row for {who}: {body}"));
+    assert_eq!(row(&eli)["rationale"], "Covering for a sabbatical");
+    assert!(row(&fay)["rationale"].as_str().is_some_and(|r| r.contains("added")), "without one, the ledger keeps its own wording: {}", row(&fay));
+}
+
+// 4. My apps: the apps a person can reach, including one reached by an app-only membership.
+#[tokio::test]
+async fn my_apps_lists_the_apps_a_person_can_reach_and_how() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let other_app = format!("mq-{}", w.tag);
+    w.state.engine.write().unwrap().register_manifest(manifest(&other_app)).unwrap();
+    let (gus, gus_token) = w.person("gus");
+    let (_hal, hal_token) = w.person("hal");
+    assert_eq!(w.share_app("user", &gus, "Viewer", &w.slug).await.0, StatusCode::CREATED);
+
+    let slugs = |body: &Value| -> Vec<(String, String)> {
+        body["apps"].as_array().expect("apps").iter().map(|a| (a["slug"].as_str().unwrap().to_string(), a["scope"].as_str().unwrap().to_string())).collect()
+    };
+
+    let (status, body) = send(&w.app, "GET", "/api/v1/me/apps", &gus_token, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mine = slugs(&body);
+    assert!(mine.contains(&(w.slug.clone(), "app".to_string())), "the app named, reached by an app membership: {mine:?}");
+    assert!(!mine.iter().any(|(s, _)| *s == other_app), "not the other app in the same workspace: {mine:?}");
+
+    let (_, body) = send(&w.app, "GET", "/api/v1/me/apps", &w.owner, None).await;
+    let owner = slugs(&body);
+    assert!(owner.contains(&(w.slug.clone(), "workspace".to_string())) && owner.contains(&(other_app.clone(), "workspace".to_string())), "{owner:?}");
+
+    let (_, body) = send(&w.app, "GET", "/api/v1/me/apps", &hal_token, None).await;
+    assert!(!slugs(&body).iter().any(|(s, _)| *s == w.slug || *s == other_app), "a person with no grant sees neither");
+
+    let (status, _) = send(&w.app, "GET", "/api/v1/me/apps", "not-a-token", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

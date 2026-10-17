@@ -67,6 +67,7 @@ async fn world() -> World {
         scoped_affiliation: "faculty".to_string(),
         department: "physics".to_string(),
         added_at: String::new(),
+        app_slug: String::new(),
     });
     let app = build_app_with_state(state).expect("router");
     let slug = format!("prop-{}", &Uuid::new_v4().to_string()[..8]);
@@ -118,7 +119,7 @@ async fn tool(app: &Router, token: &str, name: &str, args: Value) -> (bool, Valu
     if result["isError"] == true {
         return (true, result["content"][0]["text"].clone());
     }
-    (false, result["structuredContent"].clone())
+    (false, result["content"][0]["text"].as_str().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_else(|| result["structuredContent"].clone()))
 }
 
 /// A live app, made by the owner through the existing route.

@@ -56,7 +56,9 @@ const SCHEMA_0050: &str = include_str!("../../scaffoldry-core/migrations/0050_vi
 const SCHEMA_0051: &str = include_str!("../../scaffoldry-core/migrations/0051_files.sql");
 const SCHEMA_0052: &str = include_str!("../../scaffoldry-core/migrations/0052_file_scans.sql");
 const SCHEMA_0053: &str = include_str!("../../scaffoldry-core/migrations/0053_cache_versions.sql");
-const SCHEMA_0054: &str = include_str!("../../scaffoldry-core/migrations/0054_imports.sql");
+const SCHEMA_0054: &str = include_str!("../../scaffoldry-core/migrations/0054_people_indexes.sql");
+const SCHEMA_0055: &str = include_str!("../../scaffoldry-core/migrations/0055_member_app_scope.sql");
+const SCHEMA_0056: &str = include_str!("../../scaffoldry-core/migrations/0056_imports.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -784,7 +786,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 39] = [
+                        let migrations: [(&str, &str); 41] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -819,7 +821,9 @@ impl PostgresRepository {
                             ("0051_files.sql", SCHEMA_0051),
                             ("0052_file_scans.sql", SCHEMA_0052),
                             ("0053_cache_versions.sql", SCHEMA_0053),
-                            ("0054_imports.sql", SCHEMA_0054),
+                            ("0054_people_indexes.sql", SCHEMA_0054),
+                            ("0055_member_app_scope.sql", SCHEMA_0055),
+                            ("0056_imports.sql", SCHEMA_0056),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -1335,7 +1339,7 @@ impl PostgresRepository {
         let ws_id = workspace_id.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT id, workspace_id, eppn, name, role, scoped_affiliation, department, added_at::text \
+                "SELECT id, workspace_id, eppn, name, role, scoped_affiliation, department, added_at::text, app_slug \
                  FROM workspace_collaborators WHERE workspace_id = $1 ORDER BY added_at ASC",
                 &[&ws_id],
             )?;
@@ -1349,6 +1353,7 @@ impl PostgresRepository {
                 scoped_affiliation: r.get(5),
                 department: r.get(6),
                 added_at: r.get(7),
+                app_slug: r.get(8),
             }).collect())
         })
     }
@@ -1359,28 +1364,30 @@ impl PostgresRepository {
         let (kind, id) = (kind.as_str().to_string(), id.to_string());
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department, principal_type, principal_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-                 ON CONFLICT (workspace_id, eppn) DO UPDATE SET \
+                "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department, principal_type, principal_id, app_slug) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                 ON CONFLICT (workspace_id, eppn, app_slug) DO UPDATE SET \
                     role = EXCLUDED.role, \
                     name = EXCLUDED.name, \
                     scoped_affiliation = EXCLUDED.scoped_affiliation, \
                     department = EXCLUDED.department, \
                     principal_type = EXCLUDED.principal_type, \
                     principal_id = EXCLUDED.principal_id",
-                &[&c.id, &c.workspace_id, &c.eppn, &c.name, &c.role, &c.scoped_affiliation, &c.department, &kind, &id],
+                &[&c.id, &c.workspace_id, &c.eppn, &c.name, &c.role, &c.scoped_affiliation, &c.department, &kind, &id, &c.app_slug],
             )?;
             Ok(())
         })
     }
 
-    pub fn remove_collaborator(&self, workspace_id: &str, eppn: &str) -> Result<(), RepositoryError> {
+    /// Removes one membership: the workspace-wide one when `app` is empty, else the one limited to that app.
+    pub fn remove_collaborator(&self, workspace_id: &str, eppn: &str, app: &str) -> Result<(), RepositoryError> {
         let ws_id = workspace_id.to_string();
         let eppn_str = eppn.to_string();
+        let app = app.to_string();
         self.with_client(move |client| {
             client.execute(
-                "DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn = $2",
-                &[&ws_id, &eppn_str],
+                "DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn = $2 AND app_slug = $3",
+                &[&ws_id, &eppn_str, &app],
             )?;
             Ok(())
         })
@@ -2347,45 +2354,7 @@ impl PostgresRepository {
 
     pub fn upsert_role(&self, role: &RoleRow) -> Result<(), RepositoryError> {
         let role = role.clone();
-        self.with_client(move |client| {
-            let person_rows = client.query("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?;
-            let person_id = if let Some(row) = person_rows.first() {
-                row.get::<_, uuid::Uuid>(0)
-            } else {
-                let new_pid = role.person_id;
-                let email = role.eppn.clone();
-                client.execute(
-                    "INSERT INTO persons (id, first_name, last_name, email, eppn) \
-                     VALUES ($1, 'User', 'User', $2, $3) \
-                     ON CONFLICT (eppn) DO NOTHING",
-                    &[&new_pid, &email, &role.eppn],
-                )?;
-                new_pid
-            };
-
-            client.execute(
-                "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source, position_key) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-                 ON CONFLICT (id) DO UPDATE SET \
-                    organization_id = EXCLUDED.organization_id, \
-                    role_title = EXCLUDED.role_title, \
-                    scoped_affiliation = EXCLUDED.scoped_affiliation, \
-                    is_primary = EXCLUDED.is_primary, \
-                    source = EXCLUDED.source, \
-                    position_key = EXCLUDED.position_key",
-                &[
-                    &role.id,
-                    &person_id,
-                    &role.organization_id,
-                    &role.role_title,
-                    &role.scoped_affiliation,
-                    &role.is_primary,
-                    &role.source,
-                    &role.position_key,
-                ],
-            )?;
-            Ok(())
-        })
+        self.with_client(move |client| upsert_role_in(client, &role))
     }
 
     pub fn list_position_types(&self) -> Result<Vec<crate::state::PositionType>, RepositoryError> {
@@ -2938,4 +2907,75 @@ impl PostgresRepository {
             Ok(())
         })
     }
+}
+
+/// A token row read with its times as text: `token_hash, id, kind, eppn, label, original_admin, created_at, expires_at,
+/// last_used_at, revoked_at, app_slug`.
+pub(crate) fn api_token_of_text_row(r: &postgres::Row) -> Result<crate::state::ApiToken, RepositoryError> {
+    let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .or_else(|_| chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%#z"))
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now())
+    };
+    let created: String = r.get(6);
+    let expires: String = r.get(7);
+    let last_used: Option<String> = r.get(8);
+    let revoked: Option<String> = r.get(9);
+    Ok(crate::state::ApiToken {
+        token_hash: r.get(0),
+        id: r.get(1),
+        kind: r.get(2),
+        eppn: r.get(3),
+        label: r.get(4),
+        original_admin: r.get(5),
+        created_at: parse_time(&created),
+        expires_at: parse_time(&expires),
+        last_used_at: last_used.map(|s| parse_time(&s)),
+        revoked_at: revoked.map(|s| parse_time(&s)),
+        app_slug: r.get(10),
+    })
+}
+
+/// Writes one appointment or holding, and the person it belongs to when the platform has not met them. It runs on
+/// a connection or inside a transaction.
+pub(crate) fn upsert_role_in(client: &mut impl postgres::GenericClient, role: &RoleRow) -> Result<(), RepositoryError> {
+    let person_rows = client.query("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?;
+    let person_id = if let Some(row) = person_rows.first() {
+        row.get::<_, uuid::Uuid>(0)
+    } else {
+        let new_pid = role.person_id;
+        let email = role.eppn.clone();
+        client.execute(
+            "INSERT INTO persons (id, first_name, last_name, email, eppn) \
+             VALUES ($1, 'User', 'User', $2, $3) \
+             ON CONFLICT (eppn) DO NOTHING",
+            &[&new_pid, &email, &role.eppn],
+        )?;
+        // Another server may have added the person a moment ago, under another id.
+        client.query_one("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?.get::<_, uuid::Uuid>(0)
+    };
+
+    client.execute(
+        "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source, position_key) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         ON CONFLICT (id) DO UPDATE SET \
+            organization_id = EXCLUDED.organization_id, \
+            role_title = EXCLUDED.role_title, \
+            scoped_affiliation = EXCLUDED.scoped_affiliation, \
+            is_primary = EXCLUDED.is_primary, \
+            source = EXCLUDED.source, \
+            position_key = EXCLUDED.position_key",
+        &[
+            &role.id,
+            &person_id,
+            &role.organization_id,
+            &role.role_title,
+            &role.scoped_affiliation,
+            &role.is_primary,
+            &role.source,
+            &role.position_key,
+        ],
+    )?;
+    Ok(())
 }
