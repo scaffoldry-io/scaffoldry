@@ -39,7 +39,7 @@ The write checks are also the fixtures. `scripts/mcp/fixtures.mjs` makes an app 
 
 ## Oddities noticed
 
-- A stale version through MCP comes back with the code `bad_request`. The message is clear ("The current version is 2"), but an agent that branches on codes cannot tell it from a malformed request. A code of its own, such as `conflict`, would help.
+- A stale version through MCP comes back with the code `version_conflict`, the same as over HTTP. The message names the current version.
 - A proposal made through MCP is held as a proposal. An administrator can approve their own when every check passes, which the fixtures rely on. A change that fails a check would need a second person.
 
 ## Not done
