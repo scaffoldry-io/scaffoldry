@@ -73,9 +73,11 @@ struct Fixture {
     _dir: PathBuf,
     token: String,
     other_token: String,
+    _db: common::TestDb,
 }
 
 async fn fixture() -> Fixture {
+    let db = common::TestDb::new();
     let dir = std::env::temp_dir().join(format!("scaffoldry-export-files-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("SCAFFOLDRY_FILES_DIR", &dir);
@@ -132,6 +134,7 @@ async fn fixture() -> Fixture {
         _dir: dir,
         token: issue_test_token_and_user(USER),
         other_token: issue_test_token_and_user(OTHER_USER),
+        _db: db,
     }
 }
 
@@ -432,6 +435,38 @@ async fn test_sensitive_export_writes_disclosure_and_ledger_entry_no_values() {
     assert_eq!(payload["table_id"], "items");
     // Does NOT contain record values
     assert!(!payload.to_string().contains("123-45-6789"));
+}
+
+#[tokio::test]
+async fn test_export_logs_a_field_a_label_made_sensitive() {
+    let f = fixture().await;
+    f.state.labels.write().unwrap().insert(
+        (f.slug.clone(), "items".to_string(), "amount".to_string()),
+        scaffoldry_engine::DataLabel { ferpa_sensitive: true, note: String::new(), set_by: USER.to_string() },
+    );
+    insert_record_via_api(&f, json!({ "title": "Study", "amount": 7500 })).await;
+
+    let req = Request::post(format!("/api/v1/apps/{}/exports", f.slug))
+        .header(header::AUTHORIZATION, format!("Bearer {}", f.token))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "table_id": "items", "fields": ["title", "amount"], "format": "csv" }).to_string()))
+        .unwrap();
+    let resp = f.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v: Value = serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let job_id: Uuid = v["job_id"].as_str().unwrap().parse().unwrap();
+
+    let runner = JobRunner::start(&f.state.repository, JOB_KINDS, fast()).unwrap();
+    let done = wait_for_job(&f.state.repository, job_id);
+    runner.stop();
+    assert_eq!(done.state, "done");
+
+    let disc = f.state.repository.list_disclosures(scaffoldry_server::repository_disclosure::DisclosureFilter {
+        app: Some(f.slug.clone()),
+        ..Default::default()
+    }, 10, 0).unwrap();
+    assert_eq!(disc.len(), 1);
+    assert_eq!(disc[0].fields, vec!["amount".to_string()]);
 }
 
 #[tokio::test]

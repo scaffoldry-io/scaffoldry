@@ -283,13 +283,12 @@ pub fn export_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         scan_state: "skipped",
     }).map_err(|e| JobError::Permanent(format!("Failed to record file ref: {e}")))?;
 
-    let sensitive_exported: Vec<String> = allowed_fields
-        .iter()
-        .filter(|fname| {
-            table.fields.iter().any(|f| &f.name == *fname && (f.ferpa_sensitive || !f.categories.is_empty()))
-        })
-        .cloned()
-        .collect();
+    // The request decided which fields are sensitive, through labels and categories as well as the manifest.
+    let sensitive: Vec<String> = payload.get("sensitive_fields")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let sensitive_exported: Vec<String> = allowed_fields.iter().filter(|f| sensitive.contains(f)).cloned().collect();
 
     if !sensitive_exported.is_empty() {
         repo.insert_disclosure(NewDisclosure {

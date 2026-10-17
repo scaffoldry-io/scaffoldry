@@ -70,6 +70,7 @@ async fn create_export(
 
     let field_vis = crate::service::scope::field_visibility_of(&user, &slug, &target_table_id, &state);
     let disallowed_fields = field_vis.hidden_names();
+    let sensitive_fields = crate::service::records::sensitive_fields_of(&slug, &target_table_id, &state);
 
     let rules = crate::service::scope::rules_of(&slug, &state);
     let person = crate::service::scope::person_of(&user, &state);
@@ -91,6 +92,7 @@ async fn create_export(
             "caller_person": person,
             "row_rules": rules,
             "disallowed_fields": disallowed_fields,
+            "sensitive_fields": sensitive_fields,
             "mock_row_count": payload.mock_row_count,
         }),
         &user.eppn,

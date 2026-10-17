@@ -1344,6 +1344,7 @@ fn run_export_records(
 
     let field_vis = crate::service::scope::field_visibility_of(caller, &app_slug, &table.id, state);
     let disallowed_fields = field_vis.hidden_names();
+    let sensitive_fields = crate::service::records::sensitive_fields_of(&app_slug, &table.id, state);
 
     let rules = crate::service::scope::rules_of(&app_slug, state);
     let person = crate::service::scope::person_of(caller, state);
@@ -1364,6 +1365,7 @@ fn run_export_records(
             "caller_person": person,
             "row_rules": rules,
             "disallowed_fields": disallowed_fields,
+            "sensitive_fields": sensitive_fields,
         }),
         &caller.eppn,
         None,
