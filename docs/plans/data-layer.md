@@ -177,6 +177,30 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 
 Phases 1 and 2 add no feature. They put the code where the rest stands.
 
+## Prior art
+
+I searched on 2026-10-18. Vendor pages and university policies are marketing or local practice, not standards. Where I rely on what I already know and could not confirm in the search, I say so.
+
+| Source | What it does | What it means here |
+| --- | --- | --- |
+| Workday | A security group is built from a role and constrained to the organizations where the role is assigned, with or without subordinate organizations. Data is secured by functional domain. A special group is needed when a constrained group is too broad, such as HR partners who must not see the HR organization | Closest match to the grant here: role, function (domain), reach. Its exception groups show that reach needs an **exclusion**, or groups multiply |
+| PeopleSoft Campus Solutions | Row security by a department tree. A parent department gives access to the departments below it, and individual departments can be left out. The tree need not equal the org chart. After a permission list changes, an administrator runs a refresh process | Same inheritance and reach. Two lessons: the security tree and the org chart can differ, and precomputed access goes stale |
+| Immuta | Subscription policies decide whether a person can use a dataset at all. Data policies decide what they see inside: rows and masked columns, driven by attributes such as role and department. Catalogs such as Collibra and Alation supply metadata that policies use | The same two layers as here: the client or person grant, and the row and column rules |
+| Snowflake | Tag a column, and the masking policy attached to the tag applies at once. Automatic classification proposes tags. Row access policies filter rows. Access history audits reads | Policy attaches to the category, not to each field. AI proposes tags as accepted practice. We add a person's confirmation |
+| Salesforce | A baseline for records, widened by a role hierarchy and sharing rules. Field-level security is separate from record access | Record access and field access are different questions, as in the unit and function axes here |
+| Higher-ed data governance policies | A **trustee** for each data domain sets policy. **Stewards** manage the data day to day. Data is classed as public, sensitive, or restricted | Our function is their domain. Our steward is theirs. Add the trustee, and map each category to a class for reporting |
+
+Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security and virtual private database, data-mesh "federated computational governance" (I know it as a practice, but the search found nothing), and how any of them handle AI agents as clients.
+
+**Has anyone solved it?** The parts, yes. Workday and PeopleSoft solve role, organization, and inheritance. Snowflake and Immuta solve tag-driven policy. Higher-ed policy solves stewardship. I did not find one product that does all of them at one data API that apps, automations, and AI agents must all pass through, with positions as the grant, an AI proposing tags, and OSCAL evidence. I cannot show that none exists.
+
+**Changes this suggests**
+1. **Exclusions.** A reach may say `this unit and below, except these units`. Workday needed special groups for this.
+2. **Staleness.** Compute a person's covered units from live roles, or key any cache to the existing cache versions. A refresh job that someone must remember is a known failure.
+3. **The security tree may differ from the org chart.** Decide whether the unit tree used for reach is the org tree. Joint appointments and centers that span departments are the usual reason they differ.
+4. **A row with more than one unit.** Joint appointments need it. The single unit column above does not allow it. This is an open question.
+5. **A trustee.** A function has a trustee who sets policy and a steward who runs it. They may be the same position.
+
 ## Enterprise objections
 
 | Objection | Answer |
