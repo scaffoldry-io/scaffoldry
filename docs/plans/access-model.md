@@ -533,8 +533,8 @@ CREATE TABLE IF NOT EXISTS access_request_rules (
 
 `route` is `auto`, `self`, or `approver`. `status` is `Waiting for person`, `Pending`, `Approved`, `Rejected`, `Withdrawn`, or `Expired`.
 
-1. **Rules that approve alone.** A rule is a closed set of conditions, all of which must hold: the highest role it allows, the highest sensitivity of the object, whether the object must be in the requester's own unit or below it, the longest duration, and optionally affiliations. Rules are set like the authority matrix: the institution sets them, a unit may only add conditions, and a second person confirms each change. A request that fits a rule is approved at once with `route = auto`, and the grant records the rule.
-2. **The default rule**, created at migration and shown in the console: "A viewer request for an app at Internal or below, in the requester's own unit or below, for up to 30 days, is approved automatically." An institution can retire it. Johann may change this default.
+1. **Rules that approve alone.** A rule is a closed set of conditions, all of which must hold: the highest role it allows, the highest sensitivity of the object, the workspace visibilities it covers (a rule can never cover `restricted`), whether the object must be in the requester's own unit or below it, the longest duration, and optionally affiliations. Rules are set like the authority matrix: the institution sets them, a unit may only add conditions, and a second person confirms each change. A request that fits a rule is approved at once with `route = auto`, and the grant records the rule.
+2. **The default rule**, created at migration and shown in the console: "A viewer request for an app at Internal or below, in the requester's own unit or below, in a workspace whose visibility is departmental or institutional, for up to 30 days, is approved automatically." **A request for an app in a restricted workspace is never approved automatically. It always routes to that workspace's owner.** An institution can retire the rule. Settled 2026-10-18.
 3. **Within the person's own rights.** When an AI tool working with a narrowed session asks for something the person may already do, `route = self`. The person confirms in the desk, or in the AI tool when it supports MCP elicitation. The approval widens only that session, until it ends. No grant is stored.
 4. **Everything else goes to a person.** The request becomes a change with signals `request_write`, `request_sensitive`, and `request_outside_unit` as they apply. `authority::required` names who decides. Add the three to the sentence table beside `FLAGGED_CHECKS`. The requester is never the approver.
 5. **Approval makes a grant** with `source = request`, the requested role and clearance, and `valid_until` after `days`, at most the setting `access.request_max_days` (integer 1 to 365, default 90). It expires by itself.
@@ -546,6 +546,7 @@ Tests.
 
 1. A viewer request inside the requester's own unit, for an Internal app, for 14 days, is approved at once by the default rule, and the grant expires after 14 days.
 2. An editor request is not approved by the default rule and is routed to the people `authority::required` names.
+2a. A viewer request for an Internal app in a restricted workspace, in the requester's own unit, for 14 days, is not approved by the default rule and is routed to the workspace's owner. A rule that names `restricted` is refused when it is saved.
 3. A request filed by an AI tool waits for the person, and an approver cannot decide it before then.
 4. A `self` request widens only the session that asked, and a new session does not have it.
 5. The requester cannot approve their own request, even as an owner.
@@ -556,7 +557,7 @@ Tests.
 
 Most of this brief's structure should be written by an administrator's AI tool, checked by the server, and confirmed by a person.
 
-1. **Draft tools.** `draft_access_change` takes one change of a kind this brief defines: a grant, a revocation, coordinates, a seal, a mask, a request rule, or a hierarchy. The caller must have the right to propose that change in the console. It stores a pending `access_changes` row with `proposed_via = agent` and the client from `external-apps.md` phase 8 when there is one, and returns the change as sentences, its checks, and the impact from phase 7. It applies nothing. `preview_access_change` returns the same without storing.
+1. **Draft tools.** `draft_access_change` takes one change of a kind this brief defines: a grant, a revocation, coordinates, a seal, a mask, a request rule, or a hierarchy. The caller must have the right to propose that change in the console. It stores a pending `access_changes` row with `proposed_via = agent`, the person it was drafted for, the tool (the client from `external-apps.md` phase 8 when there is one), and the task sentence, and returns the change as sentences, its checks, and the impact from phase 7. **A draft expires 7 days after it is stored and can no longer be confirmed.** It applies nothing. `preview_access_change` returns the same without storing.
 2. **Suggestions, computed, not guessed.** `GET /admin/access/suggestions`, and the read-only tool `access_suggestions`, list what could be simpler. Each comes from a query, not a model:
    - Memberships already covered by a grant.
    - Groups of person memberships that match one position at one unit, which a `holder_unit` grant could replace.
@@ -575,6 +576,7 @@ Tests.
 4. Each suggestion kind finds its seeded case and not its neighbor.
 5. Replacing the suggested memberships with the suggested `holder_unit` grant leaves every fixture person's role unchanged on every object. Check with the reference evaluator from phase 5.
 6. A widening draft cannot be confirmed by the person who asked their AI tool to draft it.
+7. A stored draft records the person, the tool, and the task. A draft 7 days old is expired: confirming it is refused with a message that says it expired, and no access changes.
 
 ## How to prompt the build agent
 
