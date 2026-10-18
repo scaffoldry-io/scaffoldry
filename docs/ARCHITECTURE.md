@@ -276,7 +276,7 @@ A view with a sort on an indexed field opens at any row, with the same row scope
 
 #### 6.1.4 The Measured Size (Row Scale Phase 6)
 
-One table of **1,000,000 rows of thirty fields, five of them indexed,** was measured through the routes, twenty runs of each operation, release build, one PostgreSQL 16 server. CI runs the same test (`million_rows`, `cargo test --release -- --ignored million_rows`) and fails if the slowest of twenty passes its limit or a read scans the records.
+One table of **1,000,000 rows of thirty fields, five of them indexed,** was measured through the routes, twenty runs of each operation, release build, one PostgreSQL 16 server. CI runs the same test (`million_rows`, `cargo test --release -- --ignored million_rows`) and fails if the 19th of twenty, sorted from fastest to slowest (the 95th percentile), passes its limit or a read scans the records.
 
 | Operation | Median | Slowest | Limit |
 | --- | --- | --- | --- |

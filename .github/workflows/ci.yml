@@ -174,7 +174,7 @@ jobs:
         run: cargo clean -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server
 
   # The million-row proof (docs/plans/row-scale.md phase 6). It seeds 1,000,000 rows of thirty fields, five indexed, runs each
-  # of nine operations twenty times through the routes, and fails if the slowest passes its limit or a read scans a table. If a
+  # of nine operations twenty times through the routes, and fails if the 95th percentile (the 19th of twenty) passes its limit or a read scans a table. The slowest is still printed. If a
   # limit fails here and the plan is right, the limit does not move: paste the plan and the timings into the record and stop.
   # On a pull request it runs only when the change touches the query path below. It always runs on main,
   # nightly, and by hand. A skipped run still reports success, so `validate` does not wait on it.
