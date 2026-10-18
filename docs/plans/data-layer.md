@@ -436,6 +436,23 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 3. **Moving data around governance.** Do you agree with the layers, and with refusing a write instead of raising the target's label? The cost is that a refused write can stop a running automation. How strict should layer 3 be by default: hold a run to everything it has read, or only to declared mappings?
 4. **Who is the "local governance function"?** I made data governance a function, with a steward at each unit that has one. A unit with none would use the nearest above, which brings back the override worry. Should a unit be able to opt out of inheriting that, and say its functions need no outside approval?
 
+## How datasets are shared and extended locally (not understood yet)
+
+I checked the code and the earlier briefs on 2026-10-19. The honest answer is that we have a plan for one half of this and nothing for the other.
+
+**What exists.** Nothing real. The desk's "use this dataset in a new application" and "link a published dataset" buttons only change state in the browser. They call no server route. A link field they add (`Relation`, with `linked_dataset_id`) is a local copy of a field description, not a stored link. The Datasets screen now reads the server's catalog, but the catalog holds metadata and sample rows. It holds no live rows and no grants.
+
+**What `connections.md` plans.** A dataset is a governed, read-only copy of an authoritative source system (student information, HR, grants), refreshed on a schedule. It lives in a system app that only Platform Admins own. Only the sync writes to it. A source that changes shape stops the sync and makes a proposal. Apps use a dataset by a `Link` field into it, with lookups and rollups. A local unit never adds a column to the dataset. It adds its own table and links to the record. None of this is built (rows 135 to 139).
+
+**What that leaves open.**
+1. **Two meanings of "dataset".** `connections.md` means a read-only, synced copy of an outside system. This note means any governed group of rows, including editable ones a unit owns. They need one definition. I would use one: a dataset is a governed table with an owning function and unit, and its source is either a sync or local entry. A synced one is read-only.
+2. **Who decides the labels.** `connections.md` says a Platform Admin sets sensitivity at the connection. This note says the steward for the function and unit owns labels. I would let the administrator set the first labels, then hand them to the steward.
+3. **How a unit shares data it owns.** There is no mechanism. This note gives one: an app is granted a dataset, and a person's grants and the labels decide the rest. I do not know whether that matches how units want to share. Do they offer a dataset to the whole institution, to named units, or only on request?
+4. **How a unit adds its own fields about someone else's record.** The pattern in the briefs is a local table that links to the central record, with the central fields shown by lookup. That is a sidecar. Open parts: who may see a local sidecar row beyond its unit (the central owner?), how the sidecar is labeled when it describes a sensitive central record, and what happens to it when the central record is deleted or merged.
+5. **What people actually do today.** I do not know the real cases at your institution. I expect some of these: a department keeps its own spreadsheet about each faculty member, a unit wants extra columns on a central list, a unit needs its own code table, and someone pastes an extract into a new sheet. The last one is the path around governance.
+
+**What I would do before building.** Take five real examples from your organization and walk each through the model. For each one, write down who owns the data, who needs to see it, what the local unit adds, and what the central owner should be able to see back. If four of the five fit the sidecar pattern, it is right. If not, the model changes.
+
 ## Not decided, and not verified
 
 - **Performance.** Nothing here is measured. The indexed unit column is a design choice I have not tried. The `million_rows_test` limits do not move.
