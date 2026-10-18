@@ -18,6 +18,7 @@ These are your words, in order.
 3. **A tagged row is the default.** The row's own tag decides. **A dataset can override.**
 4. **AI tools evaluate the data against policy and review the tagging.**
 5. **Apps and automations need no policy review, except for decisions that affect data.**
+6. **A row generally carries its organization in a column.** When the column is missing or empty, the row takes the dataset's unit.
 
 ## How I read "override"
 
@@ -67,6 +68,18 @@ A request carries two identities: the **person** and the **client** (an app, an 
 
 All three must pass. A client grant never widens what a person may read. A person's rights never widen what a client was granted. This keeps the rule you already have: rules narrow and never grant.
 
+### The row's organization
+
+Each row generally carries the unit it belongs to, in a column. A dataset says which column that is. When a row has no value there, the row belongs to the dataset's owning unit. A dataset with no such column is wholly the owning unit's.
+
+This unit is what a label requirement's reach is measured against. A requirement of `registrar, unit and below` is met by a registrar whose unit is the row's unit or above it. A Physics registrar does not meet it for a row whose column names Chemistry.
+
+How I would build it:
+- The column holds a unit id. It is stored as a real indexed column on the row, copied from the field when the row is written, not read out of the JSON each time. Then a label requirement compiles to SQL the way row rules do, and the `million_rows_test` limits can hold. This is a choice for you to veto.
+- A value that names no unit is refused when written. It is not silently treated as missing, because that would move the row to the dataset's unit, which may be broader or narrower than the writer meant.
+- If a unit is retired later, rows keep their id. The AI review raises a finding for them, and a steward decides. Until then the row stays with the retired unit's place in the tree.
+- Importing a spreadsheet maps a column to this field like any other. An import that leaves it blank takes the dataset's unit and says so in the preview.
+
 ### Row tags
 
 A tag is a set of category ids. A row's tag is stored with the row. A write may set it. A steward may set it in bulk. The label requirement for a category (who may read it) comes from `position-roles.md` phase 5: a role or position and a reach in the organization.
@@ -109,7 +122,7 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 | --- | --- | --- |
 | 1 | An app table is a dataset with an id. A list of datasets returns it, and a record read through the dataset id returns the same row as through the app path | Datasets become stored things with ids. Existing app tables get one each by migration. No behavior changes. The two paths agree |
 | 2 | A script that adds a `SELECT` on `dataset_records` outside the data crate fails the audit | The data crate. Records code moves in. The audit enforces the one door |
-| 3 | A row tagged `PHI` is not returned to a reader the requirement excludes. A dataset floor raises an untagged row. A write cannot lower a floor | Row tags and dataset labels, with the effective-label function from this note. The `is_ferpa_sensitive` flag stays, derived from the effective label, so Cedar keeps working |
+| 3 | A row tagged `PHI` is not returned to a reader the requirement excludes. A dataset floor raises an untagged row. A write cannot lower a floor. A Chemistry row is read by the Chemistry registrar and not the Physics one. A row with the column empty is read by the dataset's unit's registrar. A row naming no unit is refused | Row tags, the row's unit column, and dataset labels, with the effective-label function from this note. The `is_ferpa_sensitive` flag stays, derived from the effective label, so Cedar keeps working |
 | 4 | An app with no grant gets 403. An app with a read grant cannot write. A person outside the label requirement gets nothing through an app that has the grant | App grants. The two-identity check |
 | 5 | The AI review writes a finding for a row that matches a category, stores no value, and changes no tag | The review job, using the existing job runner and the existing finding shape |
 | 6 | A steward confirms a finding and the tag applies and is a ledger entry with a reason. A removal needs a second person | The review screen and the decisions |
@@ -132,13 +145,13 @@ Phases 1 and 2 add no feature. They put the code where the rest stands.
 
 1. **Override.** Is my reading above right: a floor and a default on the dataset, and no lowering?
 2. **Self-applying raises.** May an AI proposal that only raises protection apply at once and be reviewed afterward? It protects faster. It also means an AI tool changes who can read data without a person. I lean yes for raising, never for lowering, with a daily review list for the steward.
-3. **Where does the row's unit come from?** Needed for the reach in a label requirement. The dataset's owning unit, or a field on the row. I lean to the dataset's unit first.
+3. **Decided: a column on the row, and the dataset's unit when it is missing.** Open detail: whether a value that names no unit is refused at write (my lean, above) or accepted and flagged.
 4. **Who is a steward?** A role on the dataset, or a position at the owning unit. I lean to a position, so the duty follows the seat.
 5. **Does an automation act as a person or as itself?** I lean to itself, as a client with its own grant, and the person who started it as the person.
 
 ## Not decided, and not verified
 
-- **Performance.** Nothing here is measured. The `million_rows_test` limits do not move.
+- **Performance.** Nothing here is measured. The indexed unit column is a design choice I have not tried. The `million_rows_test` limits do not move.
 - **OSCAL mapping.** The control ids in `position-roles.md` phase 5 are not checked against `oscal-catalog.md`.
 - **Existing data.** I have not counted rows or apps. Phase 1's migration must be tested on a copy of real data before it runs on any institution's.
 - **Cedar.** The note keeps Cedar for questions about workspaces and apps. I have not worked out which dataset questions, if any, belong in Cedar. The audit says mutations must meet Cedar, and phase 2 must keep that true.

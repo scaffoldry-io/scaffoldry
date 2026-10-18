@@ -182,7 +182,7 @@ The requirement is governance data, so it follows `governance-data-is-oscal`. Th
 
 ### Open questions
 
-1. Where does a row's organization tag come from? The dataset's owning unit is simple. A field on the row (a `department` link to a unit) lets one dataset serve many units. I lean to the dataset's unit first, and a row field only when a rule needs it.
+1. (Decided in [data-layer.md](data-layer.md): a column on the row, and the dataset's unit when it is missing.) Where does a row's organization tag come from? The dataset's owning unit is simple. A field on the row (a `department` link to a unit) lets one dataset serve many units. I lean to the dataset's unit first, and a row field only when a rule needs it.
 2. If a requirement is set and the data has no tag, who may read? I lean to deny, and say so in the error.
 3. Does a platform admin read labeled data? Today they see everything. I lean to keep that, with every read of labeled data by an admin written as a disclosure.
 
