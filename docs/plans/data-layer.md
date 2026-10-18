@@ -430,6 +430,9 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 | Audience fields (access by being named in a row) | Accepted, if performant. A test gates it |
 | Cross-listing and similar | The receiving unit's steward accepts. A synced value from the student system is authoritative |
 | Training and similar conditions | Stored as dated values on the person record, owned by a function, from a sync or by hand |
+| Conditions owned lower down | Yes. A suborg may add and maintain conditions for its own people and data, in addition to the central ones |
+| Delegated provisioning | A steward may delegate a dataset to a suborg, which adds its own rules. See "Delegated rules" |
+| Connectors | File feeds first. Connectors to the major platforms later |
 | A change of major | Notes stay with the unit that provided the service. The new unit may request them. Units vary in how freely they share, so each sets its own policy from the closed set |
 
 ## Open questions (all about parts after version 1)
@@ -527,6 +530,47 @@ A label's requirement may carry **conditions**: facts about the person that must
 - **How it is checked fast.** The current conditions sit on the person record, as a small map from condition to expiry date. They are loaded when the person signs in. A check is a date comparison at read time. No job has to run for a lapse to take effect, and no extra query is made. A sync or the owner updates the map when a record changes.
 
 **Dated access in general.** A grant, a share, and a condition all carry a start and an end date. The platform shows them together as a person's access, with dates, so that an auditor can ask who had access on a given day. The ledger and these dated records already hold the facts. A point-in-time report over them is a later feature.
+
+### Delegated rules
+
+Many suborgs need to manage rules, and some are handed a dataset to provision internally. The model is **layers**.
+
+- A steward may **delegate** a dataset, or part of one, to the steward of a suborg. Each delegation sets a **ceiling**: the most access the suborg may hand out.
+- A suborg may always **add restrictions** to its own rows: a narrower audience, an extra condition, an extra approval. It cannot remove or loosen a rule from a layer above.
+- A suborg may **add grants and audience policies** only up to the ceiling.
+- Each rule records the layer that added it. The evaluation page and the access report show the layers, so an auditor can see which rules are central and which are local.
+- Conditions follow the same layers. The Registrar's FERPA training condition stays central. A department may add one of its own, such as a lab safety course, and maintain the dates for its own people.
+
+I read "additive" as: rules stack, and a lower layer never removes a higher one. Please say if you meant something else.
+
+### Student workers
+
+A student who holds a job has two capacities in one identity. Student workers generally must not see instructor and peer data, because it is sensitive. Some jobs need it.
+
+What it needs:
+1. **Being a student grants nothing, and by default excludes.** A label's requirement can exclude student identities. A position can be designated **student-eligible** by the data's steward. Only grants through such a position reach the data. A student worker in the registrar's office gets what that position was approved for, and nothing from the student side.
+2. **Access comes from the position held for the job,** never from the person's other capacity. This is already how grants work. The rule above is what keeps a student from reaching data by being an employee at a desk where it is not needed.
+3. **Peer data** is the harder part. A student worker should not read records of classmates or of instructors they teach under. A simple default is the exclusion above. A sharper rule would compare the worker's classes with the row's subject. I would not build that until a pilot needs it.
+4. **FERPA.** I recall that records of students employed because of their student status can count as education records. I have not checked this in this session. Your compliance office should confirm how it applies before anything relies on it.
+
+### External collaborators
+
+Research collaborators from outside the institution need access to some research datasets. They are not the guests in `guests.md`. A guest is an applicant who submits one form and sees only their own records. A collaborator reads a shared dataset for a project's length.
+
+What it needs:
+1. **A principal kind for people outside the directory,** sponsored by an internal person who is accountable for them.
+2. **Always dated.** A collaborator's grant has an end date, usually the project's. It records the agreement it rests on, such as a data use agreement, with its reference and end date.
+3. **A key credential, not a password.** The collaborator registers a public key and signs requests with their private key. The platform stores only the public key. Keys expire and can be rotated and revoked. The same mechanism serves system users for automations, so there is one credential type for non-directory principals. I know OAuth 2.0 "private key JWT" client authentication as the standard for this, from memory. I have not checked it in this session. `foundation.md` phase 10 already plans verified tokens.
+4. **Federated login where it exists.** A collaborator at another university may sign in through their own institution's identity provider. That is likely better than a key for them. I would support both.
+5. **Narrow by default.** Their access is a grant on named datasets and fields, through the same function and field rules. Export is off unless the grant says so. Every access is a logged disclosure. A grant needs the sponsor and the dataset's steward to approve.
+
+## Open questions from the scenarios
+
+1. **"Additive."** Do I have it right: rules stack, and a lower layer can add restrictions freely and add grants up to a ceiling, but never remove a higher rule?
+2. **Capacity.** Should a person choose which capacity they are acting in for a session (student, or student worker)? I lean no, and to rely on position-based grants and the student-eligible designation.
+3. **Peer.** Is "peer" any other student, or students in the worker's own classes or cohort?
+4. **Collaborator credentials.** Are most external collaborators from other universities, which suggests federated login, or from companies and individuals, which suggests keys?
+5. **The agreement.** Should a grant to an external collaborator be impossible without a recorded agreement reference and end date?
 
 ## Not decided, and not verified
 
