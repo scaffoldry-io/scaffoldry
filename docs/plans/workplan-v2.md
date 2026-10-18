@@ -35,7 +35,7 @@ A lot is built already. The new notes extend it. They do not replace it.
 | Row rules as data, one `row_scope`, a SQL and Rust equivalence test, no filter or sort on a hidden column, column rules, view as another user | 52 to 57 | This is the single place access is decided for rows. Audience fields and label requirements extend it. They do not add a second evaluator |
 | Positions, holders, vacancies, approver resolution | 21, 23, 24 | Stewards are these positions |
 | Sensitivity categories, presets, and detectors as settings | 33 | Label requirements attach to these categories |
-| Groups, units, and positions as members, one `member_role` | 52 | Phase 2b of the position note is built on it |
+| Groups, units, and positions as members, one `member_role` | 52 | `access-model.md` phase 4 grants roles to positions on top of it |
 | A job runner, the ledger, caches keyed by version | Wave 1 | The change process and the scheduled notices run on these |
 
 ## Where the new notes overlap existing briefs

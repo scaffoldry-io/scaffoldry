@@ -43,29 +43,7 @@ fn row(pt: &PositionType, holder_count: usize) -> Value {
         "holder_count": holder_count,
         "created_by": pt.created_by,
         "created_at": pt.created_at,
-        "workspace_role": pt.workspace_role,
     })
-}
-
-/// How many workspaces a grant from this position type reaches today: those at or below a unit where someone holds
-/// the position. A workspace with no unit is never reached.
-fn workspaces_reached(state: &SharedState, key: &str) -> usize {
-    let units = state.repository.holder_units(key).unwrap_or_default();
-    if units.is_empty() {
-        return 0;
-    }
-    let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
-    let reached = |mut at: Option<uuid::Uuid>| {
-        for _ in 0..64 {
-            match at {
-                Some(id) if units.contains(&id) => return true,
-                Some(id) => at = orgs.get(&id).and_then(|o| o.parent_id),
-                None => return false,
-            }
-        }
-        false
-    };
-    state.workspaces.read().unwrap_or_else(|p| p.into_inner()).values().filter(|w| reached(w.organization_id)).count()
 }
 
 fn holder_count(counts: &std::collections::HashMap<String, i64>, key: &str) -> usize {
@@ -115,14 +93,7 @@ pub fn list_positions(state: &SharedState) -> Vec<Value> {
     let mut types: Vec<PositionType> =
         state.position_types.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
     types.sort_by(|a, b| a.key.cmp(&b.key));
-    types
-        .iter()
-        .map(|pt| {
-            let mut r = row(pt, holder_count(&counts, &pt.key));
-            r["workspaces_reached"] = json!(workspaces_reached(state, &pt.key));
-            r
-        })
-        .collect()
+    types.iter().map(|pt| row(pt, holder_count(&counts, &pt.key))).collect()
 }
 
 pub struct NewPosition {
@@ -152,7 +123,6 @@ pub fn create_position(state: &SharedState, admin: &AuthUser, new: NewPosition, 
         retired_at: None,
         created_by: admin.eppn.clone(),
         created_at: Utc::now().to_rfc3339(),
-        workspace_role: None,
     };
     let payload = json!({ "action": "create_position", "key": pt.key, "org_types": pt.org_types, "max_holders": pt.max_holders });
     admin_write(state, admin, DecisionType::PositionChanged, "AC-02", reason, &payload, || {
@@ -174,8 +144,6 @@ pub struct PositionPatch {
     pub max_holders: Option<i64>,
     pub org_types: Option<Vec<String>>,
     pub retired: Option<bool>,
-    /// `Some(Some(role))` grants that workspace role to holders. `Some(None)` removes the grant.
-    pub workspace_role: Option<Option<String>>,
 }
 
 pub fn patch_position(
@@ -207,25 +175,13 @@ pub fn patch_position(
         }
         pt.org_types = org_types;
     }
-    if let Some(grant) = patch.workspace_role {
-        if let Some(role) = &grant {
-            let role = role.to_lowercase();
-            if !crate::service::members::POSITION_GRANT_ROLES.contains(&role.as_str()) {
-                return Err(ServiceError::bad_request(format!(
-                    "A position can grant one of: {}. Owner is a person's to give",
-                    crate::service::members::POSITION_GRANT_ROLES.join(", ")
-                )));
-            }
-        }
-        pt.workspace_role = grant.map(|r| r.to_lowercase());
-    }
     match patch.retired {
         Some(true) if pt.retired_at.is_none() => pt.retired_at = Some(Utc::now().to_rfc3339()),
         Some(false) => pt.retired_at = None,
         _ => {}
     }
 
-    let payload = json!({ "action": "patch_position", "key": key, "retired": pt.retired_at.is_some(), "max_holders": pt.max_holders, "workspace_role": pt.workspace_role });
+    let payload = json!({ "action": "patch_position", "key": key, "retired": pt.retired_at.is_some(), "max_holders": pt.max_holders });
     admin_write(state, admin, DecisionType::PositionChanged, "AC-02", reason, &payload, || {
         // The row is locked while the holders are counted, so a holder cannot arrive in between.
         state.repository.change_position_type(&pt).map_err(|e| match e {
@@ -235,9 +191,7 @@ pub fn patch_position(
         state.position_types.write().unwrap_or_else(|p| p.into_inner()).insert(pt.key.clone(), pt.clone());
         Ok(())
     })?;
-    let mut r = row(&pt, held);
-    r["workspaces_reached"] = json!(workspaces_reached(state, key));
-    Ok(r)
+    Ok(row(&pt, held))
 }
 
 /// One row for each unit a position applies to that has no holder.

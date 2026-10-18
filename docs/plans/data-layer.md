@@ -35,7 +35,7 @@ Written on 2026-10-19 after checking this note against the briefs in the README.
 - **`row_scope` and `field_visibility`** (`access-rules.md`, rows 52 to 57) are the one place row and field access is decided. Audience fields, label requirements, and shares are added there, compiled to the same SQL, and checked by the same equivalence test. No second evaluator.
 - **Positions, holders, and approver resolution** (rows 21, 23, 24) are what stewards are.
 - **Sensitivity categories and detectors as settings** (row 33) are what label requirements attach to.
-- **`member_role`** (row 52) and phase 2b of `position-roles.md` already let a position grant a workspace role.
+- **`member_role`** (row 52) lets a position be a member. A position that grants a role on its own is `access-model.md` phase 4, as a `holder_unit` grant. A first version of that was built here and withdrawn.
 
 **Reused, not built yet**
 - **The policy library** (`policy-library.md`, rows 66 to 68, 71) is where this note's policy documents should live, as a new bound-object kind. It already holds the rule that an agent drafts and a person who did not submit it approves.
@@ -524,7 +524,7 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 | --- | --- |
 | "If apps need no review, anyone can build anything and leak data." | An app can only reach datasets it was granted, and a grant is governed. Labeled data is checked on every read by the data layer, whatever the app. The app cannot bypass it |
 | "An AI tool will mislabel data." | It only proposes. A proposal changes nothing until a person confirms it. The one exception under discussion, raising protection only, can only make data safer, and a person can undo it with a reason |
-| "A dataset floor will lock out the people who need the data." | The steward sees who a floor reaches before saving, as in `position-roles.md` phase 2b. A platform admin keeps a way in, and every admin read of labeled data is a disclosure |
+| "A dataset floor will lock out the people who need the data." | The steward sees who a floor reaches before saving, as `access-model.md` phase 13 shows a requester the effect first. A platform admin keeps a way in, and every admin read of labeled data is a disclosure |
 | "Row tags will be slow at a million rows." | Not measured. The tag set is indexed with the record index, and a label requirement compiles to SQL the way row rules do. It must pass `million_rows_test` before phase 3 is called done |
 | "This is a rewrite." | Phases 1 and 2 move code and add ids. They change no behavior and each has its own tests. The new behavior starts at phase 3 |
 | "Who decides what the policy says?" | The organization does, in settings and OSCAL. The AI tool reads the policy; it does not write it |

@@ -58,7 +58,6 @@ const SCHEMA_0052: &str = include_str!("../../scaffoldry-core/migrations/0052_fi
 const SCHEMA_0053: &str = include_str!("../../scaffoldry-core/migrations/0053_cache_versions.sql");
 const SCHEMA_0054: &str = include_str!("../../scaffoldry-core/migrations/0054_people_indexes.sql");
 const SCHEMA_0055: &str = include_str!("../../scaffoldry-core/migrations/0055_member_app_scope.sql");
-const SCHEMA_0057: &str = include_str!("../../scaffoldry-core/migrations/0057_position_type_role.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
@@ -786,7 +785,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 41] = [
+                        let migrations: [(&str, &str); 40] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -823,7 +822,6 @@ impl PostgresRepository {
                             ("0053_cache_versions.sql", SCHEMA_0053),
                             ("0054_people_indexes.sql", SCHEMA_0054),
                             ("0055_member_app_scope.sql", SCHEMA_0055),
-                            ("0057_position_type_role.sql", SCHEMA_0057),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -2360,7 +2358,7 @@ impl PostgresRepository {
     pub fn list_position_types(&self) -> Result<Vec<crate::state::PositionType>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query(
-                "SELECT key, name, description, org_types, max_holders, retired_at::text, created_by, created_at::text, workspace_role \
+                "SELECT key, name, description, org_types, max_holders, retired_at::text, created_by, created_at::text \
                  FROM position_types ORDER BY key",
                 &[],
             )?;
@@ -2375,7 +2373,6 @@ impl PostgresRepository {
                     retired_at: r.get(5),
                     created_by: r.get(6),
                     created_at: r.get(7),
-                    workspace_role: r.get(8),
                 })
                 .collect())
         })
@@ -2387,16 +2384,15 @@ impl PostgresRepository {
             let org_types = serde_json::to_value(&pt.org_types).unwrap_or(serde_json::Value::Null);
             let retired = pt.retired_at.is_some();
             client.execute(
-                "INSERT INTO position_types (key, name, description, org_types, max_holders, retired_at, created_by, workspace_role) \
-                 VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::bool THEN NOW() END, $7, $8) \
+                "INSERT INTO position_types (key, name, description, org_types, max_holders, retired_at, created_by) \
+                 VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::bool THEN NOW() END, $7) \
                  ON CONFLICT (key) DO UPDATE SET \
                     name = EXCLUDED.name, \
                     description = EXCLUDED.description, \
                     org_types = EXCLUDED.org_types, \
                     max_holders = EXCLUDED.max_holders, \
-                    workspace_role = EXCLUDED.workspace_role, \
                     retired_at = CASE WHEN $6::bool THEN COALESCE(position_types.retired_at, NOW()) END",
-                &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &retired, &pt.created_by, &pt.workspace_role],
+                &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &retired, &pt.created_by],
             )?;
             Ok(())
         })

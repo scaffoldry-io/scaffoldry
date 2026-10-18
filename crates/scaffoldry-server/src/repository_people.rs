@@ -201,14 +201,6 @@ impl PostgresRepository {
         })
     }
 
-    /// The units where at least one person holds this position.
-    pub fn holder_units(&self, key: &str) -> Result<Vec<Uuid>, RepositoryError> {
-        let key = key.to_string();
-        self.with_client(move |c| {
-            Ok(c.query("SELECT DISTINCT organization_id FROM roles WHERE position_key = $1", &[&key])?.iter().map(|r| r.get(0)).collect())
-        })
-    }
-
     pub fn roles_at(&self, unit: Uuid, key: &str) -> Result<Vec<RoleRow>, RepositoryError> {
         let key = key.to_string();
         self.with_client(move |c| {
@@ -320,9 +312,9 @@ impl PostgresRepository {
             let org_types = serde_json::to_value(&pt.org_types)?;
             let retired = pt.retired_at.is_some();
             tx.execute(
-                "UPDATE position_types SET name = $2, description = $3, org_types = $4, max_holders = $5, workspace_role = $7, \
+                "UPDATE position_types SET name = $2, description = $3, org_types = $4, max_holders = $5, \
                     retired_at = CASE WHEN $6::bool THEN COALESCE(retired_at, NOW()) END WHERE key = $1",
-                &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &retired, &pt.workspace_role],
+                &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &retired],
             )?;
             tx.commit()?;
             Ok(())

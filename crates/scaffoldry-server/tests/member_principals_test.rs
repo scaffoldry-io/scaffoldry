@@ -190,7 +190,6 @@ impl World {
                     retired_at: None,
                     created_by: "test".to_string(),
                     created_at: "2026-01-01T00:00:00Z".to_string(),
-                    workspace_role: None,
                 })
                 .unwrap();
         }
@@ -291,78 +290,6 @@ async fn a_position_follows_the_holder() {
     w.role_at(&bob, dept, Some("chair"));
     assert_eq!(w.level(&ann_token).await, "none");
     assert_eq!(w.level(&bob_token).await, "write");
-}
-
-impl World {
-    /// Stores a position type that grants a workspace role, or none.
-    fn position_type(&self, key: &str, grants: Option<&str>, retired: bool) {
-        self.state
-            .persist_position_type(&PositionType {
-                key: key.to_string(),
-                name: key.to_string(),
-                description: String::new(),
-                org_types: vec![],
-                max_holders: 50,
-                retired_at: retired.then(|| "2026-01-01T00:00:00Z".to_string()),
-                created_by: "test".to_string(),
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                workspace_role: grants.map(str::to_string),
-            })
-            .unwrap();
-    }
-
-    /// Puts the test workspace under a unit.
-    fn workspace_under(&self, unit: Uuid) {
-        let mut ws = self.state.workspaces.read().unwrap().get(WORKSPACE).cloned().unwrap();
-        ws.organization_id = Some(unit);
-        self.state.persist_workspace(ws).unwrap();
-    }
-}
-
-// Phase 2b. A position type may grant a workspace role to its holders, for workspaces at and below the unit.
-#[tokio::test]
-async fn a_position_type_that_grants_a_role_reaches_workspaces_at_and_below_its_unit() {
-    let _db = common::TestDb::new();
-    let w = world().await;
-    let (chair, chair_token) = w.person("chair");
-    let (physics_chair, physics_token) = w.person("physchair");
-    let college = w.unit(None, "college");
-    let chem = w.unit(Some(college), "chem");
-    let physics = w.unit(Some(college), "physics");
-    let lab = w.unit(Some(chem), "lab");
-    // `role_at` stores the type with no grant, so the grant is set after the holders are placed.
-    w.role_at(&chair, chem, Some("dept_chair"));
-    w.role_at(&physics_chair, physics, Some("dept_chair"));
-    w.position_type("dept_chair", Some("Editor"), false);
-
-    // A workspace under Chemistry's lab: the Chemistry chair writes, the Physics chair sees nothing.
-    w.workspace_under(lab);
-    assert_eq!(w.level(&chair_token).await, "write");
-    assert_eq!(w.level(&physics_token).await, "none");
-
-    // The grant says how many workspaces it reaches today: the lab's workspace, not the others.
-    let reached = |w: &World| {
-        scaffoldry_server::service::positions::list_positions(&w.state)
-            .into_iter()
-            .find(|p| p["key"] == "dept_chair")
-            .map(|p| p["workspaces_reached"].as_u64().unwrap())
-            .unwrap()
-    };
-    let at_lab = reached(&w);
-
-    // A workspace above the chair's unit is not reached.
-    w.workspace_under(college);
-    assert_eq!(w.level(&chair_token).await, "none");
-    assert_eq!(at_lab, reached(&w) + 1, "moving the workspace above the holders removes it from the count");
-
-    // A type that grants nothing, as every type does until someone sets it, reaches nothing.
-    w.workspace_under(lab);
-    w.position_type("dept_chair", None, false);
-    assert_eq!(w.level(&chair_token).await, "none");
-
-    // A retired type grants nothing.
-    w.position_type("dept_chair", Some("Editor"), true);
-    assert_eq!(w.level(&chair_token).await, "none");
 }
 
 // 5. A group cannot be an owner. The last user owner cannot be removed.

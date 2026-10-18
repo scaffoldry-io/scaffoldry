@@ -88,15 +88,7 @@ struct PatchBody {
     max_holders: Option<i64>,
     org_types: Option<Vec<String>>,
     retired: Option<bool>,
-    /// A role name grants it. `null` removes the grant. Leaving the key out changes nothing.
-    #[serde(default, deserialize_with = "present")]
-    workspace_role: Option<Option<String>>,
     reason: Option<String>,
-}
-
-/// Tells a key sent as `null` from a key left out.
-fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(d).map(Some)
 }
 
 async fn patch_position(
@@ -113,7 +105,6 @@ async fn patch_position(
         max_holders: b.max_holders,
         org_types: b.org_types,
         retired: b.retired,
-        workspace_role: b.workspace_role,
     };
     let position = positions::patch_position(&state, &c, &key, patch, &b.reason.unwrap_or_default())?;
     Ok(Json(json!({ "position": position })))

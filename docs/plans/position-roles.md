@@ -94,6 +94,8 @@ Also not done: app-limited members are not in `people_with_roles`, so they are n
 
 ## Phase 2b — a position type may grant a role (done, off by default)
 
+> **Withdrawn 2026-10-18.** A first version was built on a working branch (a `position_types.workspace_role` column and a role calculation) and reverted before it reached `main`. Its test case is the one below. Johann's answer that this should be optional for each position type is met by a `holder_unit` grant, which a unit or the platform chooses to create.
+>
 > Superseded by `access-model.md` phase 4. A `holder_unit` grant, such as "every `chair@*` gets editor on their own unit's subtree", is this phase with a reach, a domain and a validity window. Do not build `position_types.workspace_role`.
 
 Failing test first: a person holds `chair` at Chemistry. The `chair` type grants `editor`. A workspace under Chemistry has no membership naming the person or the position. The person can write records. A person at Physics cannot.
