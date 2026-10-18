@@ -197,7 +197,7 @@ Tests.
 
 ## Phase 4 — delegation
 
-Migration `0025_delegations.sql`:
+Migration `*_delegations.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS delegations (

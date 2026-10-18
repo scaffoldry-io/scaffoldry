@@ -12,7 +12,7 @@ Every line introduced into the repository must align with the 6-layer architectu
 ## The audit checklist
 
 When reviewing any branch, proposal, or PR:
-1. **License Whitelist:** Only Apache 2.0, MIT, BSD-3, and PostgreSQL License dependencies are permitted. Reject any copyleft, SSPL, BSL, or AGPL dependencies.
+1. **License Whitelist:** Only Apache 2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, and PostgreSQL License dependencies are permitted. Reject any copyleft, SSPL, BSL, or AGPL dependencies.
 2. **Architectural Boundaries:**
    - Frontend components (`apps/web`) must never query the database directly or import server database drivers.
    - All data mutation and access must evaluate against Cedar authorization policies.
