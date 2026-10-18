@@ -116,6 +116,25 @@ Tests.
 4. The guide is at most 12 KB and each code block runs as a scenario step.
 5. The prompts list and resolve.
 
+## Phase 4 — the agent kit: one step to set up an AI tool
+
+A faculty member's AI tool should know how to work with this server from the first message. It should not depend on the person pasting instructions, or on docs written for another version.
+
+1. The MCP tool `get_agent_kit`, read-only, scope `SignedIn`, returns three things for the server's current version:
+   - An `AGENTS.md` section between the markers `<!-- scaffoldry:begin -->` and `<!-- scaffoldry:end -->`. It says what the server is, which tools to use first, the rules an agent must keep (propose, never assume approval; never copy records into files; sensitive fields stay in the platform), and where the guide is. At most 2 KB.
+   - A skill folder: `SKILL.md` with a name and a one-line description, plus `references/` holding the guides from phase 2 and `external-apps.md` phase 4. The kit lists the paths for Claude Code (`.claude/skills/scaffoldry/`) and Codex (`.agents/skills/scaffoldry/`). It writes nothing itself.
+   - The server version and the date of the guides, in each file's header, so an agent can tell when its copy is stale.
+2. The prompt `set_up_this_project` tells the agent to call `get_agent_kit`, show the person which files it will create or change, and ask before writing. An existing `AGENTS.md` is changed only between the markers. Text outside them is kept exactly.
+3. `GET /api/v1/agent-kit` returns the same content as JSON for people who set up by hand.
+4. The kit holds no token, no address, and no record value.
+
+Tests.
+
+1. The kit's three parts are present and each states the server version.
+2. Applying the kit's `AGENTS.md` section to a file with text above and below the markers changes only the text between them. Applying it twice changes nothing the second time.
+3. The kit contains no `scf_` token prefix, no eppn of the caller, and no record value from the fixture.
+4. A scenario: "Set up this project to use Scaffoldry." The agent calls `get_agent_kit`, and the recorded plan lists the files before any write.
+
 ## Phase 3 — every brief adds scenarios
 
 A rolling rule, written into the README: a phase that adds or changes a tool or a rule adds scenarios for it in the same change. Target 60 by the end of the plan, by group:

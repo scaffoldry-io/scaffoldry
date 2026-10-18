@@ -44,7 +44,7 @@ External research collaborators are not guests. A guest fills one form and sees 
 
 ## Phase 1 — a guest and a link
 
-Migration `crates/scaffoldry-core/migrations/0043_guests.sql`:
+Migration `crates/scaffoldry-core/migrations/*_guests.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS guests (

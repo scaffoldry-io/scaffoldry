@@ -56,7 +56,7 @@ Written on 2026-10-19 after checking this note against the briefs in the README.
 1. **At once or scheduled.** `sensitive-content.md` says a confirmed finding raises a label that "protects the field at once". This note says a label change is never instant. Raising protection is the safe direction, but it takes access from people mid-work. Version 1 offers a steward a **suspend** switch for emergencies. You have not chosen between "at once" and "scheduled" for an ordinary raise.
 2. **Rules that grant.** `access-rules.md` says a rule narrows and never grants. Audience fields grant from the row. You accepted this if it performs. It is now recorded in that brief.
 
-**The build agent.** The README's run order drives an automated agent that starts the first open numbered row. Today that is row 62 (`stateless-server` phase 3). The `1d-n` rows are labelled, not numbered, so the agent does not see them. Moving the new work ahead of row 62 means reordering numbered rows, which is your call.
+**The build agent.** The README's run order drives an automated agent that starts the first open numbered row. After pull request 123 merged, that row is `access-model` phase 1. The `1f-n` rows are labelled, not numbered, so the agent does not see them. They wait until the access model reaches phase 4.
 
 ## Alignment with the access model, and decisions made (2026-10-18)
 

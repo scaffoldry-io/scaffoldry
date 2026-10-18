@@ -94,7 +94,9 @@ Also not done: app-limited members are not in `people_with_roles`, so they are n
 
 ## Phase 2b — a position type may grant a role (done, off by default)
 
-**Decided:** it is an option on each position type. No type has to use it. A new type grants nothing.
+> Superseded by `access-model.md` phase 4. A `holder_unit` grant, such as "every `chair@*` gets editor on their own unit's subtree", is this phase with a reach, a domain and a validity window. Do not build `position_types.workspace_role`.
+
+Failing test first: a person holds `chair` at Chemistry. The `chair` type grants `editor`. A workspace under Chemistry has no membership naming the person or the position. The person can write records. A person at Physics cannot.
 
 Built. The first test failed because a chair with no membership could not write. It passes now. It also checks that a chair at another department gets nothing, that a workspace above the chair's unit is not reached, and that a type that grants nothing or is retired gives nothing. The test was watched to fail with the new code switched off.
 
@@ -109,7 +111,9 @@ Not built: the desk screen.
 
 ## Row rules and positions
 
-Two points were open. The decision on organization (below) answers both.
+> Settled by `access-model.md` phase 1: row rules get `key@unit` positions, and units with their ancestors.
+
+Two points to settle with phase 2a, both found by reading `scope.rs`, neither tested:
 
 - `person_of` gives rules bare position keys. A rule for "chair" cannot tell Chemistry's chair from Physics's. **Decided:** the person carries `key@unit` pairs, so a rule can name a position at a unit.
 - `person_of` lists only the units where the person holds a role, not the units below. **Decided:** the rule says whether it covers the unit alone or the unit and below.
@@ -133,7 +137,9 @@ Not done in 3a: the desk has no screen for this list. It is an API only.
 
 ## Phase 4 — replaced
 
-The first idea was to turn the department attribute into a unit and let it grant departmental workspaces. That is not the goal. Your decision:
+> Superseded by `access-model.md` phase 2, which moves the five department-string policies to the unit tree as part of one notion of place.
+
+Cedar grants departmental read and write when two strings match. That is a right earned by a field on the person. The principal already carries `unit_ids` from held roles. The workspace has `organization_id`.
 
 - An organization is one hierarchy that a position sits in. Having a unit does not grant a workspace.
 - The unit combines with a role to authorize rows where that department and that role meet.

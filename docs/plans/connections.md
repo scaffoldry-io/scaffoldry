@@ -54,7 +54,7 @@ Today a "published dataset" holds a few sample rows typed into the code. This br
 
 ## Phase 1 — datasets and the file-drop connector
 
-Migration `0036_connections.sql`:
+Migration `*_connections.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS connections (

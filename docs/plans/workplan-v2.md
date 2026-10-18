@@ -85,7 +85,7 @@ Alongside, not in the path: the policy library and authority matrix (1b), the st
 ## The reconciliation, done
 
 On 2026-10-19:
-- **README.** A new Wave 1d table with labelled rows, a migrations table for the numbers that shipped differently and the numbers proposed for the data layer, and the stale count removed. Labelled rows are invisible to `next-phase.py`, so the build agent is not given work you have not approved.
+- **README.** A new Wave 1f table (named 1f after pull request 123 took 1d and 1e) with labelled rows, and the stale count removed. The migrations table was dropped when pull request 123 replaced the registry with the next-free-number rule. Rows labelled `1f-n` are invisible to `next-phase.py`, so the build agent is not given work you have not approved.
 - **Architecture.** A section 8, "Planned Direction (Not Built)": the data layer as a crate boundary in the monolith, which engine answers which question, the catalog, and MCP guidance. It is marked as not built, because the document otherwise describes code that exists.
 - **Eight briefs** gained a "Reconciliation with the data layer" block: `access-rules`, `connections`, `policy-library`, `authority`, `sensitive-content`, `agent-coverage`, `guests`, `notifications`.
 - **`data-layer.md`** gained "Built on, and reconciled with, what exists", with the README rules it must obey.

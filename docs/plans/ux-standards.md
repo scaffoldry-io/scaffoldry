@@ -47,6 +47,17 @@ Automated accessibility scanning needs `axe-core`, which is MPL-2.0. That is out
 9. **Plain words.** One idea per sentence. Name the actor and the action. No internal terms such as `eppn`, `affiliation`, or `Cedar` without a plain label beside them on first use in a panel.
 10. **Consistent places.** A list is a table with search on the left and filters beside it. A row opens a drawer on the right. Actions live in the drawer header. Creation is a button above the table that opens a drawer.
 
+## Complexity is the system's job
+
+Access, sensitivity, approvals and policy are complicated. People should not have to be. The platform carries the structure. The person's AI tool drafts it. A person decides, one plain question at a time.
+
+11. **Show what a rule means, not how it is written.** Every grant, rule, mask, guard, coordinate and request rule is shown as a sentence, built by one function per kind: "Every department chair can view everything placed in their own department, up to Internal." Structured fields, JSON and Cedar appear only behind `Show details`, for administrators.
+12. **Safe defaults, so most people configure nothing.** A field's sensitivity category brings its mask. A table takes its container's place in the org tree. A request that fits the institution's rules is approved without anyone. A new workspace is restricted. A person changes a default only when they need to.
+13. **One decision at a time.** A screen asks one question and states the consequence of each answer: `Allow for this task`, `Ask the department chair`. It does not hand a person a form of options to reason about.
+14. **AI tools draft, people decide.** A person may tell their AI tool what they want. The tool drafts the structured change through MCP. The server validates it, computes who gains and who loses, and returns sentences. A person with the right confirms it in the desk or the agent. Nothing an agent drafts applies itself.
+15. **Every no comes with a way forward.** A denial names the reason and offers the next step, usually `Request access`, with the request already filled in.
+16. **Measured, not promised.** Each of these takes at most three interactions, and a UI test counts them: request access from a denial, approve or reject a request, see why someone can see something, confirm a change an agent drafted.
+
 ## Phase 1 — the kit
 
 Create `apps/web/src/ui/`. One file per component, one `index.ts`. Use Tailwind classes already in the project. Add no dependency.
@@ -90,7 +101,7 @@ Backend. `ServiceError`'s JSON body becomes:
 { "error": "plain sentence", "code": "forbidden", "policy": { "id": "dept-boundary", "description": "..." }, "fields": { "reason": "required" }, "reason": "why", "remedy": "what to do" }
 ```
 
-`code` is always present and comes from a closed list: `unauthorized`, `forbidden`, `not_found`, `bad_request`, `version_conflict`, `no_approver`, `too_large`, `internal`, and the codes that later briefs add: `job_failed`, `index_building`, `calculating`, `quota_exceeded`, `rate_limited`, `undo_conflict`, `field_hidden`, `field_read_only`, `constraint_violated`, `file_too_large`, `file_type_blocked`, `scanner_unavailable`, `master_key_missing`, `token_scope`, `read_only_source`, `view_as_read_only`, `share_not_allowed`, `archived`, `too_many_indexes`, `storage_unavailable`, `citation_not_found`, `authority_loosens`. Each brief adds its code to this list in the same change that introduces it. `reason` and `remedy` are optional sentences from access rules. `policy` appears on a denial and holds the `@id` and `@description` of the policy that decided. `fields` appears on `bad_request` and names the bad inputs. Do the same for the handlers that build error JSON by hand in `routes/*.rs`. Search for `json!({"error"` and replace each with `ServiceError`.
+`code` is always present and comes from a closed list: `unauthorized`, `forbidden`, `not_found`, `bad_request`, `version_conflict`, `no_approver`, `too_large`, `internal`, and the codes that later briefs add: `job_failed`, `index_building`, `calculating`, `quota_exceeded`, `rate_limited`, `undo_conflict`, `field_hidden`, `field_read_only`, `constraint_violated`, `file_too_large`, `file_type_blocked`, `scanner_unavailable`, `master_key_missing`, `token_scope`, `read_only_source`, `view_as_read_only`, `share_not_allowed`, `archived`, `too_many_indexes`, `storage_unavailable`, `citation_not_found`, `authority_loosens`, `grant_outside_scope`, `grant_conflict`, `impersonation_not_synthetic`, `grant_too_broad`, `client_sensitive_field`, `client_scope`, `proposal_changed`, `preview_read_only`, `last_owner`. Each brief adds its code to this list in the same change that introduces it. `reason` and `remedy` are optional sentences from access rules. `policy` appears on a denial and holds the `@id` and `@description` of the policy that decided. `fields` appears on `bad_request` and names the bad inputs. Do the same for the handlers that build error JSON by hand in `routes/*.rs`. Search for `json!({"error"` and replace each with `ServiceError`.
 
 Frontend.
 
