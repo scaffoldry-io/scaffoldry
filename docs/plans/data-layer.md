@@ -473,6 +473,47 @@ Not built or tested. This also changes `connections.md`: its sync must match on 
 
 **What I would do before building.** The template is [data-layer-scenarios.md](data-layer-scenarios.md). Take five real examples from your organization and walk each through the model. For each one, write down who owns the data, who needs to see it, what the local unit adds, and what the central owner should be able to see back. If four of the five fit the sidecar pattern, it is right. If not, the model changes.
 
+## Scenarios walked
+
+Two real-shaped cases, talked through on 2026-10-19. Each exposed something the model lacked. These are proposals until you confirm them.
+
+### Advisor notes on students
+
+The registrar owns the student record. A department's advisors keep notes on their advisees. The registrar, advising leadership, and the advisor read them. An advising team may need access across teams. If a student changes major, the old department may or may not be willing to share. FERPA training matters, but only for some uses: coding into the student system, or looking up information in the advising system.
+
+What it needs that the model did not have:
+1. **Access by being named in the row.** The advisor reads these notes because the advisor's name is in a field on the row. The model had grants by role, position, function, and unit, and shares for single rows. A share for every advisee is not manageable. See "Audience fields" below.
+2. **A condition on a requirement.** "FERPA training is current" is neither a role nor a unit. It is a fact about the person, with an expiry, and it may apply to some actions and not others. See "Conditions" below.
+3. **A group as the grantee**, for the advising team across teams. The member principals already allow a group. The reach for such a grant is a listed set of units, not the unit tree.
+4. **A change of major is a request, not an automatic share.** The default: the notes stay with the department that wrote them. The new department's advisor can request them. The source steward approves or declines, as a row share with a reason and an expiry. A department that is willing can later pre-approve it with a standing policy. Standing policies are not in version 1.
+
+### A cross-listed course
+
+The registrar and the School own the catalog row. Both departments see it and edit it. The second department gains visibility when the cross-listing attribute is set. Each school should be able to set its own policy, with an override and manual sharing.
+
+What it needs:
+1. **A unit-valued field that grants.** The cross-listing attribute names a unit. Naming it makes the row visible to that unit. This is the same mechanism as the advisor field, with units in place of a person. See "Audience fields". It also means the extra-unit tags I deferred are needed. They come from a field, so they are one mechanism and not two.
+2. **A split between two kinds of steward.** The registrar is the steward of the **function**. It owns the definition: the fields, the categories, and the key. The School is the steward of the **unit**. It owns who may see and edit its own rows. Two owners are real here, but they own different things. This is also the answer to the provost worry: a function steward does not decide who sees a unit's rows.
+3. **A policy each school sets.** A school decides who may set the audience field, and what the named unit may do. The platform offers a small closed set of choices and a manual override. It does not offer a rules language.
+
+### Audience fields (proposed for version 1)
+
+An **audience field** is a field of a dataset whose value names people, positions, or units. The dataset's policy says what being named grants: read, or read and write, on which fields or functions.
+
+- The advisor field, the cross-listing field, an assignee, and a principal investigator are all audience fields.
+- Who may change the field is an ordinary field-level write grant. Changing an audience field is recorded as a grant in the history, with who did it.
+- It grants only up to what the policy says. A category's requirement still applies, so naming someone cannot bypass the FERPA requirement.
+- A policy is set by the unit's steward, for that dataset.
+- **This departs from an earlier rule.** `access-rules.md` says a rule narrows and never grants. An audience field is a grant that comes from the row. I think it is the only workable way to do relationship access. It needs your yes.
+
+### Conditions (proposed for version 1)
+
+A label's requirement may carry **conditions**: facts about the person that must hold, each with an expiry. FERPA training current is the first. A condition may apply to some actions and not others, such as writing into the student system.
+
+- The fact comes from a system of record, such as the learning system or HR. The platform stores the status and the expiry date.
+- A lapse withdraws access. That is a change in a person's status, not a label change, so it does not use the label change process. The person gets reminders before the date. This is the same kind of notice as for a share that is about to expire.
+- The list of conditions is a short closed list the institution switches on. It is not an expression language.
+
 ## Not decided, and not verified
 
 - **Performance.** Nothing here is measured. The indexed unit column is a design choice I have not tried. The `million_rows_test` limits do not move.
