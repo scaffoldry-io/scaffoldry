@@ -118,6 +118,8 @@ Added after the click-through in [clickthrough-findings.md](clickthrough-finding
 | 1c-5b | [position-roles.md](position-roles.md) | 2b | A position type may grant a workspace role to its holders at and below their unit. Off by default, never owner, one ledger entry with a reason, and the admin list shows how many workspaces it reaches | **COMPLETED** for the API. No desk screen |
 | 1c-6 | [position-roles.md](position-roles.md) | 3 | An admin lists every direct person grant, and which grants are app-scoped. A reason on a direct grant is optional | **COMPLETED** for the API. A desk screen and a desk reason field are not done |
 
+Proposed order for the next work: [workplan-v2.md](workplan-v2.md). It joins the notes below to the briefs in this file. Not yet approved.
+
 Proposed, not scheduled: [data-layer.md](data-layer.md), which makes data its own layer with labels on datasets and rows. It needs approval and five answers first.
 
 Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Found by the UI audit (`docs/ui-review.md`), not yet fixed:
