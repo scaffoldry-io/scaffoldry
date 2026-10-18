@@ -8,6 +8,9 @@ on:
   # The build agent pushes with the workflow token, which does not start CI by itself.
   # Its publish job starts CI on the branch with this trigger. See docs/operations/build-agent.md.
   workflow_dispatch:
+  # Nightly, so the million-row proof runs at least once a day even when no pull request touches the query path.
+  schedule:
+    - cron: '17 6 * * *'
 
 permissions:
   contents: read
@@ -74,6 +77,10 @@ jobs:
       - name: Hard Gate - Governance Script Tests
         run: |
           python3 -m unittest discover -s governance/scripts -p "test_*.py"
+
+      - name: Hard Gate - Migration Numbers And Registration
+        run: |
+          python3 governance/scripts/check-migrations.py
       - name: Hard Gate - Web Server Path Safety Test
         run: |
           node --test deploy/server.test.mjs
@@ -105,9 +112,9 @@ jobs:
           npm test
           npm run build
 
-  # The Rust tests share one database and the process environment, so each runner runs its tests one
-  # at a time. The heavy tests (governance/rust-heavy-tests.json) run on their own runner, in parallel
-  # with the rest, each with its own database. Every test file is in exactly one group.
+  # Each test has its own database (tests/common TestDb), so cargo-nextest runs them in parallel, one
+  # process per test, with the per-test time limit in .config/nextest.toml. The heavy tests
+  # (governance/rust-heavy-tests.json) run on their own runner. Every test file is in exactly one group.
   rust:
     runs-on: ubuntu-latest
     # A hung test would hold the check, and the pull request with it, for the six hours GitHub allows. The slowest group takes about fifteen minutes.
@@ -139,6 +146,12 @@ jobs:
           restore-keys: |
             cargo-${{ matrix.group }}-${{ runner.os }}-
 
+      - name: Install cargo-nextest
+        run: |
+          # Pinned. The binary is the project's own release build (Apache-2.0 or MIT).
+          curl -LsSf https://get.nexte.st/0.9.148/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+          cargo nextest --version
+
       - name: Start PostgreSQL container
         run: |
           docker compose -f deploy/docker-compose.yml up -d postgres
@@ -147,7 +160,7 @@ jobs:
       - name: Hard Gate - Rust Tests (${{ matrix.group }})
         run: |
           args="$(python3 governance/scripts/rust-test-groups.py ${{ matrix.group }})"
-          cargo test --workspace $args -- --test-threads=1
+          cargo nextest run --workspace $args --profile ci
 
       - name: Hard Gate - Rust Doc Tests
         if: matrix.group == 'light'
@@ -163,17 +176,38 @@ jobs:
   # The million-row proof (docs/plans/row-scale.md phase 6). It seeds 1,000,000 rows of thirty fields, five indexed, runs each
   # of nine operations twenty times through the routes, and fails if the slowest passes its limit or a read scans a table. If a
   # limit fails here and the plan is right, the limit does not move: paste the plan and the timings into the record and stop.
+  # On a pull request it runs only when the change touches the query path below. It always runs on main,
+  # nightly, and by hand. A skipped run still reports success, so `validate` does not wait on it.
   million-rows:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the query path changed
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          paths='^(crates/scaffoldry-core/migrations/|crates/scaffoldry-server/src/repository|crates/scaffoldry-server/src/service/(records|scope|access)\.rs|crates/scaffoldry-engine/src/access\.rs|crates/scaffoldry-server/tests/million_rows_test\.rs|Cargo\.lock$|\.github/workflows/ci\.yml$)'
+          if git diff --name-only "$BASE"...HEAD | grep -Eq "$paths"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No file on the query path changed. The million-row proof runs on main and nightly."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Rust
+        if: steps.scope.outputs.run == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo dependencies
+        if: steps.scope.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -186,12 +220,15 @@ jobs:
             cargo-million-${{ runner.os }}-
 
       - name: Start PostgreSQL container
+        if: steps.scope.outputs.run == 'true'
         run: |
           docker compose -f deploy/docker-compose.yml up -d postgres
           timeout 30s bash -c "until docker exec scaffoldry-postgres pg_isready -U scaffoldry -d scaffoldry; do sleep 1; done"
 
       - name: Hard Gate - Million Rows
+        if: steps.scope.outputs.run == 'true'
         run: cargo test --release -p scaffoldry-server --test million_rows_test -- --ignored million_rows --nocapture --test-threads=1
 
       - name: Drop this repository's own build output before the cache is saved
+        if: steps.scope.outputs.run == 'true'
         run: cargo clean --release -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server

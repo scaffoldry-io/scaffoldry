@@ -1,0 +1,24 @@
+# Test runner settings for cargo-nextest. Each test runs in its own process, with its own database
+# (tests/common TestDb), so tests run in parallel.
+
+[profile.default]
+# A test still running after `period` is reported as slow. After `terminate-after` periods it is
+# stopped and fails, so one hung test cannot hold CI until the job's time limit.
+slow-timeout = { period = "120s", terminate-after = 4 }
+
+[profile.ci]
+slow-timeout = { period = "120s", terminate-after = 4 }
+fail-fast = false
+# Wall-clock limits in some tests assume a machine that is not saturated. Four at a time matches a
+# standard GitHub runner.
+test-threads = 4
+
+# Tests that seed tables of 200,000 rows or more, or wait on background jobs over them, run one at a
+# time. Run together on a four-core runner they slow each other past their own time limits. Every
+# other test runs in parallel. Overrides in the default profile also apply to the ci profile.
+[test-groups]
+big-tables = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(=row_index_test) | binary(=row_scale_phase4_5_test) | binary(=computed_links_test) | binary(=record_links_two_way_test) | binary(=calc_recalc_test) | binary(=views_phase2_test) | binary(=views_phase3_test) | binary(=views_phase4_test) | binary(=index_jobs_test)'
+test-group = 'big-tables'
