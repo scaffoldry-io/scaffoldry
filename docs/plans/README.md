@@ -109,11 +109,13 @@ Added after the click-through in [clickthrough-findings.md](clickthrough-finding
 | Order | Brief | Phase | What is true after it | Status |
 | --- | --- | --- | --- | --- |
 | 1c-1 | [live-data.md](live-data.md) | 3 | The published-app screen reads and writes records through the API. It has no hardcoded record array. A new record is stored and has a ledger entry. Kanban moves are stored. The totals come from the stored rows, and "Approved Funding" counts only the statuses the app defines as approved | **COMPLETED** for the published-app screen and the workspace grid. Not clicked through in a browser. Kanban, calendar, gallery, delete, and link fields are untested against real rows |
-| 1c-2 | [live-data.md](live-data.md) | new, after 3 | The Datasets screen reads `/datasets`. It shows the real datasets and row counts | |
-| 1c-3 | [ux-standards.md](ux-standards.md) | new, after 3 | No screen shows sample data without a visible "Sample data" label. A test fails on a hardcoded record array in a screen component | |
+| 1c-2 | [live-data.md](live-data.md) | new, after 3 | The Datasets screen reads `/datasets`. It shows the real datasets and row counts | **COMPLETED**. The app studio's dataset picker reads the server too |
+| 1c-3 | [ux-standards.md](ux-standards.md) | new, after 3 | No screen shows sample data without a visible "Sample data" label. A test fails on a hardcoded record array in a screen component | **PARTLY DONE**. `no-built-in-sample-data.test.ts` fails on a `SEEDED_` constant or a state started from a literal array, in every screen but `AdminDesk.tsx`. The desk's `INITIAL_*` lists in `AdminDesk.tsx` remain, as the labelled fallback |
 | 1c-4 | [position-roles.md](position-roles.md) | 1 | Platform admin comes from a held role. The setup identity ends when the first admin is appointed. A title on a record is not counted as an admin | **COMPLETED** |
 | 1c-5 | [position-roles.md](position-roles.md) | 2a | A position, group, unit, or person can be granted one app, not only a whole workspace. An app-only member finds the app in My apps, and can pin it | **COMPLETED**. Pins are per browser |
 | 1c-6 | [position-roles.md](position-roles.md) | 3 | An admin lists every direct person grant, and which grants are app-scoped. A reason on a direct grant is optional | **COMPLETED** for the API. A desk screen and a desk reason field are not done |
+
+Proposed order for the next work: [workplan-v2.md](workplan-v2.md). It joins the design notes to the briefs in this file. The design notes are [data-layer.md](data-layer.md), [mcp-guidance.md](mcp-guidance.md), and [position-roles.md](position-roles.md). Rows labelled `1f-n` below come from them. They are **proposed and not approved**. The build agent reads only rows with a number in the first column, so it does not see them. Do not give them numbers until Johann approves the order.
 
 Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Found by the UI audit (`docs/ui-review.md`), not yet fixed:
 
@@ -182,6 +184,27 @@ The rest of the access model, then the rules behind a decision and who decides. 
 | 105 | [external-apps.md](external-apps.md) | 6 | An Outside apps panel: clients, ceilings, usage, and each person's connections | |
 | 106 | [proposal-preview.md](proposal-preview.md) | 3 | A trial copy of a proposed app, filled with synthetic records, to try writes. It expires | |
 | 107 | [lifecycle.md](lifecycle.md) | 5 | When an owner leaves: orphaned workspaces are listed, a transfer is previewed first, and no workspace loses its last owner | |
+
+### Wave 1f — the data layer, the catalog, and MCP guidance (proposed)
+
+Not approved. These rows come from `data-layer.md` and `mcp-guidance.md`. They have no run order yet. Their order is in [workplan-v2.md](workplan-v2.md). The first column has a label, not a number, so `next-phase.py` skips them. They sit on the access model (Waves 1d and 1e) and start after its phase 4.
+
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 1f-0 | [mcp-guidance.md](mcp-guidance.md) | 1 | An agent that connects is told who it acts for, that a person decides, that stored text is untrusted, and where to look | **COMPLETED** |
+| 1f-1 | [data-layer.md](data-layer.md) | 1 | A dataset has an id. Each app table gets one by migration. The app path and the dataset path return the same row | Proposed |
+| 1f-2 | [data-layer.md](data-layer.md) | 2 | A data crate is the single door to rows. The architecture audit fails any other reader of the record or label tables | Proposed |
+| 1f-3 | [data-layer.md](data-layer.md) | keys | A dataset declares a key, enforced by `record_keys`. A row's unit is a column from the governed list, and a bad value is rejected | Proposed |
+| 1f-4 | [data-layer.md](data-layer.md) | catalog | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy | Proposed |
+| 1f-5 | [data-layer.md](data-layer.md) | catalog | Request access can start from a catalog entry, as an `access-model.md` phase 13 request. Needs the inbox and email | Proposed |
+| 1f-6 | [mcp-guidance.md](mcp-guidance.md) | 2 to 4 | Error hints, `explain_decision`, and prompts generated from policy | Proposed |
+| 1f-7 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label. Needs the sensitive content rows | Proposed |
+| 1f-8 | [data-layer.md](data-layer.md) | 5, 6, 6b | The AI review proposes. A steward reads the evaluation and decides. A change has an effective date, a notice, and exceptions as grants | Proposed |
+| 1f-9 | [data-layer.md](data-layer.md) | shares | A row share with a reason and an expiry | Proposed |
+| 1f-10 | [data-layer.md](data-layer.md) | 3b, 9 | Relationship access and cross-listing as extra hierarchies. Conditions as clearances with dates. Automations run as service identities | Proposed |
+| 1f-11 | [mcp-guidance.md](mcp-guidance.md) | 5 to 7 | Tools are listed by access. Typed text is marked untrusted. Drafts follow `access-model.md` phase 14 | Proposed |
+
+Not scheduled: external collaborators, extra unit tags, run-level tracking of what an automation read, an expedited change path, and standing share policies. See "Version 1" in `data-layer.md`.
 
 ### Wave 2 — the data platform
 

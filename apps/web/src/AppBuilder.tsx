@@ -772,21 +772,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
     setNewTableName("");
   };
 
-  const [automationRules, setAutomationRules] = useState<WorkflowAutomationRule[]>([
-    {
-      id: "rule-1",
-      app_slug: app.slug,
-      name: "Honors Research Grant Notification",
-      description: "Trigger alert and ledger entry when grant status advances to Approved",
-      enabled: true,
-      trigger: { type: "StatusChanged", to_status: "Approved" },
-      predicates: [{ field_name: "budget", operator: "GreaterThan", expected_value: "500000" }],
-      actions: [
-        { type: "NotifyCollaborator", role: "Dean of Research", message_template: "Major grant approved over threshold" },
-        { type: "CreateLedgerAuditEntry", summary: "Faculty council grant approval block", oscal_control: "AC-03" },
-      ],
-    },
-  ]);
+  const [automationRules, setAutomationRules] = useState<WorkflowAutomationRule[]>([]);
 
   // Default pages hierarchy
   const defaultPages: AppPage[] = app.manifest.pages && app.manifest.pages.length > 0

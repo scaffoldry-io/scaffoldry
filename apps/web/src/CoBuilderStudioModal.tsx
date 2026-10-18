@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
 import { WorkflowBuilder } from "./WorkflowBuilder";
-import { SEEDED_DATASETS } from "./DatasetExplorer";
+import { apiClient } from "./api";
 import { Collaborator, Persona, PublishedDataset, RegisteredApp, WorkflowAutomationRule } from "./types";
 
 export interface CoBuilderStudioModalProps {
@@ -51,6 +51,20 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
   onViewAs,
   viewerEppn,
 }) => {
+  // The datasets a field can link to are the server's, loaded when the studio opens. A failed load leaves the list empty.
+  const [publishedDatasets, setPublishedDatasets] = useState<PublishedDataset[]>([]);
+  useEffect(() => {
+    if (!isOpen) return;
+    let live = true;
+    apiClient
+      .listDatasets()
+      .then((list) => live && setPublishedDatasets(list))
+      .catch(() => live && setPublishedDatasets([]));
+    return () => {
+      live = false;
+    };
+  }, [isOpen]);
+
   if (!isOpen || !activeStudioApp) return null;
 
   return (
@@ -157,7 +171,7 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
                 <div className="flex items-center gap-2">
                   <select
                     onChange={(e) => {
-                      const ds = SEEDED_DATASETS.find((d) => d.id === e.target.value);
+                      const ds = publishedDatasets.find((d) => d.id === e.target.value);
                       if (ds) {
                         handleAddLinkedDatasetField(ds);
                         e.target.value = "";
@@ -169,7 +183,7 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
                     <option value="" disabled>
                       🔗 + Link Published Dataset...
                     </option>
-                    {SEEDED_DATASETS.map((ds) => (
+                    {publishedDatasets.map((ds) => (
                       <option key={ds.id} value={ds.id}>
                         {ds.name} ({ds.department})
                       </option>

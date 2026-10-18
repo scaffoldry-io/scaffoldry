@@ -172,7 +172,8 @@ async fn handle_mcp_request(
                 "serverInfo": {
                     "name": "scaffoldry-sovereign-mcp",
                     "version": env!("CARGO_PKG_VERSION")
-                }
+                },
+                "instructions": crate::service::guidance::instructions(&caller)
             });
             rpc(JsonRpcResponse {
                 jsonrpc: "2.0",

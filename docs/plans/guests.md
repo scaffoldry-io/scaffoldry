@@ -22,6 +22,10 @@ This brief adds a guest: a person who proves they own an email address, can use 
 
 Nothing. Every principal is a directory person or a token for one.
 
+## Reconciliation with the data layer (2026-10-19)
+
+External research collaborators are not guests. A guest fills one form and sees only their own records. A collaborator reads a shared dataset for a project's length, under an agreement, and signs in with a key or a federated login. No brief plans collaborators yet. `data-layer.md` describes them. Do not extend guests to cover them.
+
 ## Out of scope
 
 - Guest accounts with passwords or social sign-in.

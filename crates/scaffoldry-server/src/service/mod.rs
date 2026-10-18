@@ -9,6 +9,8 @@ pub mod history;
 pub mod organizations;
 pub mod records;
 pub mod access;
+pub mod catalog;
+pub mod guidance;
 pub mod comments;
 pub mod disclosure;
 pub mod workspaces;

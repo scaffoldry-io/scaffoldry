@@ -1,147 +1,44 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { apiClient } from "./api";
 import { DatasetRelationship, PublishedDataset } from "./types";
-
-export const SEEDED_DATASETS: PublishedDataset[] = [
-  {
-    id: "faculty",
-    name: "Faculty & Principal Investigator Directory",
-    description: "Authoritative university faculty roster, academic titles, departments, and research specialties.",
-    department: "Academic Affairs",
-    organization: "University",
-    sensitivity_level: "Directory",
-    herm_capability_id: "HR-01-ROSTER",
-    record_count: 240,
-    published_at: "2026-10-04T12:00:00Z",
-    fields: [
-      { name: "eppn", label: "Identity (ePPN)", field_type: "Text", required: true, ferpa_sensitive: false, ceds_code: "000033" },
-      { name: "full_name", label: "Full Name", field_type: "Text", required: true, ferpa_sensitive: false, ceds_code: "000115" },
-      { name: "title", label: "Academic Title", field_type: "Text", required: true, ferpa_sensitive: false },
-      { name: "department", label: "Department", field_type: "Text", required: true, ferpa_sensitive: false },
-      { name: "research_specialty", label: "Research Specialty", field_type: "Text", required: false, ferpa_sensitive: false },
-    ],
-    sample_data: [
-      { eppn: "dr.smith@university.edu", full_name: "Dr. Sarah Smith", title: "Professor of Physics", department: "Physics", research_specialty: "Quantum Lattice Systems" },
-      { eppn: "dr.curie@science.state.edu", full_name: "Dr. Marie Curie", title: "Lab Director & Professor", department: "Biology", research_specialty: "Radiological Cellular Assays" },
-      { eppn: "dr.alan@university.edu", full_name: "Dr. Alan Turing", title: "Chair of Computing", department: "Computer Science", research_specialty: "Automata & Cryptography" },
-      { eppn: "einstein@physics.state.edu", full_name: "Albert Einstein", title: "Research Fellow", department: "Physics", research_specialty: "Relativistic Optics" },
-    ],
-  },
-  {
-    id: "programs",
-    name: "Academic Programs & Degrees",
-    description: "Accredited degree plans, CIP classification taxonomy, and governing faculty boards.",
-    department: "Provost & Academic Council",
-    organization: "University",
-    sensitivity_level: "Public",
-    herm_capability_id: "ACA-02-CURRICULUM",
-    record_count: 58,
-    published_at: "2026-10-04T12:00:00Z",
-    fields: [
-      { name: "code", label: "Program Code", field_type: "Text", required: true, ferpa_sensitive: false, ceds_code: "000067" },
-      { name: "degree_name", label: "Degree Name", field_type: "Text", required: true, ferpa_sensitive: false },
-      { name: "department", label: "Governing Department", field_type: "Text", required: true, ferpa_sensitive: false },
-      { name: "degree_level", label: "Level", field_type: "Text", required: true, ferpa_sensitive: false },
-    ],
-    sample_data: [
-      { code: "PHYS-PHD", degree_name: "Doctor of Philosophy in Physics", department: "Physics", degree_level: "Doctoral" },
-      { code: "BIO-MS", degree_name: "Master of Science in Molecular Biology", department: "Biology", degree_level: "Graduate" },
-      { code: "CS-BS", degree_name: "Bachelor of Science in Computer Science", department: "Computer Science", degree_level: "Undergraduate" },
-    ],
-  },
-  {
-    id: "courses",
-    name: "University Course Catalog",
-    description: "Active semester course offerings, credit weights, and assigned faculty instructors.",
-    department: "Office of the Registrar",
-    organization: "University",
-    sensitivity_level: "Directory",
-    herm_capability_id: "REG-01-CATALOG",
-    record_count: 840,
-    published_at: "2026-10-04T12:00:00Z",
-    fields: [
-      { name: "course_code", label: "Course Code", field_type: "Text", required: true, ferpa_sensitive: false, ceds_code: "000062" },
-      { name: "course_title", label: "Course Title", field_type: "Text", required: true, ferpa_sensitive: false, ceds_code: "000064" },
-      { name: "credits", label: "Credit Units", field_type: "Number", required: true, ferpa_sensitive: false },
-      { name: "instructor_eppn", label: "Lead Instructor", field_type: "Relation", required: true, ferpa_sensitive: false },
-      { name: "program_code", label: "Program Plan", field_type: "Relation", required: true, ferpa_sensitive: false },
-    ],
-    sample_data: [
-      { course_code: "PHYS-401", course_title: "Quantum Mechanics I", credits: 4, instructor_eppn: "dr.smith@university.edu", program_code: "PHYS-PHD" },
-      { course_code: "BIO-305", course_title: "Cellular Biochemistry Lab", credits: 3, instructor_eppn: "dr.curie@science.state.edu", program_code: "BIO-MS" },
-      { course_code: "CS-302", course_title: "Theory of Computation", credits: 3, instructor_eppn: "dr.alan@university.edu", program_code: "CS-BS" },
-      { course_code: "PHYS-510", course_title: "Advanced Laser Optics", credits: 3, instructor_eppn: "einstein@physics.state.edu", program_code: "PHYS-PHD" },
-    ],
-  },
-  {
-    id: "grants",
-    name: "Sponsored Research Projects & Grants",
-    description: "Federal, institutional, and foundation grant awards with restricted student research assistantships.",
-    department: "Office of Sponsored Research",
-    organization: "University",
-    sensitivity_level: "Restricted / FERPA",
-    herm_capability_id: "RES-01-GRANTS",
-    record_count: 115,
-    published_at: "2026-10-04T12:00:00Z",
-    fields: [
-      { name: "award_number", label: "Award Identifier", field_type: "Text", required: true, ferpa_sensitive: false },
-      { name: "project_title", label: "Project Title", field_type: "Text", required: true, ferpa_sensitive: false },
-      { name: "pi_eppn", label: "Principal Investigator", field_type: "Relation", required: true, ferpa_sensitive: false },
-      { name: "amount", label: "Award Amount ($)", field_type: "Number", required: true, ferpa_sensitive: false },
-      { name: "has_student_aid", label: "FERPA Student Stipends", field_type: "Boolean", required: false, ferpa_sensitive: true },
-    ],
-    sample_data: [
-      { award_number: "NSF-PHY-2026-01", project_title: "Quantum Lattice Topological Phases", pi_eppn: "dr.smith@university.edu", amount: 750000, has_student_aid: true },
-      { award_number: "NIH-BIO-2025-99", project_title: "Radiological DNA Repair Mechanisms", pi_eppn: "dr.curie@science.state.edu", amount: 1200000, has_student_aid: true },
-      { award_number: "DARPA-CS-2026-04", project_title: "Cryptographic Formal Verification", pi_eppn: "dr.alan@university.edu", amount: 450000, has_student_aid: false },
-    ],
-  },
-];
-
-export const SEEDED_RELATIONSHIPS: DatasetRelationship[] = [
-  {
-    id: "rel_course_instructor",
-    name: "Course Instructor Reference",
-    source_dataset_id: "courses",
-    target_dataset_id: "faculty",
-    source_field: "instructor_eppn",
-    target_field: "eppn",
-    relationship_type: "OneToMany",
-    display_field: "full_name",
-  },
-  {
-    id: "rel_course_program",
-    name: "Course Program Affiliation",
-    source_dataset_id: "courses",
-    target_dataset_id: "programs",
-    source_field: "program_code",
-    target_field: "code",
-    relationship_type: "OneToMany",
-    display_field: "degree_name",
-  },
-  {
-    id: "rel_grant_pi",
-    name: "Research PI Reference",
-    source_dataset_id: "grants",
-    target_dataset_id: "faculty",
-    source_field: "pi_eppn",
-    target_field: "eppn",
-    relationship_type: "OneToMany",
-    display_field: "full_name",
-  },
-];
 
 interface DatasetExplorerProps {
   onUseInApp?: (dataset: PublishedDataset) => void;
 }
 
 export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) => {
-  const [datasets] = useState<PublishedDataset[]>(SEEDED_DATASETS);
-  const [relationships] = useState<DatasetRelationship[]>(SEEDED_RELATIONSHIPS);
-  const [selectedDatasetId, setSelectedDatasetId] = useState<string>("courses");
+  const [datasets, setDatasets] = useState<PublishedDataset[]>([]);
+  const [relationships, setRelationships] = useState<DatasetRelationship[]>([]);
+  const [load, setLoad] = useState<{ state: "loading" | "ready" | "error"; message?: string }>({ state: "loading" });
+  const [reloads, setReloads] = useState(0);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterDept, setFilterDept] = useState("all");
   const [viewMode, setViewMode] = useState<"catalog" | "lattice">("catalog");
   const [activeTab, setActiveTab] = useState<"records" | "schema" | "relationships">("records");
+
+  useEffect(() => {
+    let live = true;
+    setLoad({ state: "loading" });
+    apiClient
+      .listDatasets()
+      .then(async (list) => {
+        // Relationships come per dataset. Each one is listed from both ends, so keep one copy by id.
+        const perDataset = await Promise.all(list.map((d) => apiClient.listDatasetRelationships(d.id)));
+        if (!live) return;
+        const byId = new Map<string, DatasetRelationship>();
+        perDataset.flat().forEach((r) => byId.set(r.id, r));
+        setDatasets(list);
+        setRelationships([...byId.values()]);
+        setLoad({ state: "ready" });
+      })
+      .catch((e) => {
+        if (live) setLoad({ state: "error", message: e instanceof Error ? e.message : "The datasets did not load." });
+      });
+    return () => {
+      live = false;
+    };
+  }, [reloads]);
 
   const selectedDataset = datasets.find((d) => d.id === selectedDatasetId) || datasets[0];
 
@@ -166,6 +63,26 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
     const other = datasets.find((d) => d.id === otherId);
     return other ? other.name : otherId;
   };
+
+  if (load.state === "loading") {
+    return <div className="flex-1 p-6 text-sm text-slate-500 dark:text-slate-400">Loading datasets…</div>;
+  }
+  if (load.state === "error") {
+    return (
+      <div className="flex-1 p-6 text-sm" role="alert">
+        <p className="text-rose-700 dark:text-rose-300">The datasets did not load. {load.message}</p>
+        <button
+          onClick={() => setReloads((n) => n + 1)}
+          className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (!selectedDataset) {
+    return <div className="flex-1 p-6 text-sm text-slate-500 dark:text-slate-400">No datasets are published yet.</div>;
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-slate-50 dark:bg-[#0b0f19] text-slate-800 dark:text-slate-100">
@@ -247,10 +164,11 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
               className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Departments</option>
-              <option value="Academic Affairs">Academic Affairs</option>
-              <option value="Registrar">Office of the Registrar</option>
-              <option value="Sponsored Research">Sponsored Research</option>
-              <option value="Provost">Provost & Council</option>
+              {[...new Set(datasets.map((d) => d.department))].sort().map((dept) => (
+                <option key={dept} value={dept}>
+                  {dept}
+                </option>
+              ))}
             </select>
           </div>
         </div>

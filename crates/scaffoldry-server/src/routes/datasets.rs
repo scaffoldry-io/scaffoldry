@@ -40,7 +40,7 @@ async fn list_datasets(
             .filter(|r| r.source_dataset_id == ds.id || r.target_dataset_id == ds.id)
             .count();
 
-        let show_sample = is_admin || matches!(ds.sensitivity_level.to_lowercase().as_str(), "public" | "directory");
+        let show_sample = crate::service::catalog::sample_visible(is_admin, &ds.sensitivity_level);
 
         let mut item = json!({
             "id": ds.id,
@@ -89,7 +89,7 @@ async fn get_dataset(
         .cloned()
         .collect();
 
-    let show_sample = is_admin || matches!(ds.sensitivity_level.to_lowercase().as_str(), "public" | "directory");
+    let show_sample = crate::service::catalog::sample_visible(is_admin, &ds.sensitivity_level);
 
     let mut doc = json!({
         "id": ds.id,

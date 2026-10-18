@@ -3,7 +3,7 @@
 ```
 Title:  A position can grant a workspace role to whoever holds it, and platform admin comes from a held role.
 Risk:   notable
-Ask:    Approve the design. Phase 1, 2a, and 3 are the core. Phase 2b and phase 4 are optional and need separate decisions.
+Ask:    Phases 1, 2a, 2b, and 3 are built. Phase 4 is replaced by the dataset-level authorization design at the end of this note. Approve that design before any of it is built.
 IfYes:  A position can be given a role on one app, or on a whole workspace. Platform admin is a role a person holds, not a field on the person. Direct grants to people still work, and an admin can list them.
 IfNo:   Access is workspace-wide or nothing, so a position that needs one app gets the whole workspace. Platform admin stays an attribute on the user record. Rights keep arriving by who a person is.
 Checks: None yet. This is a design. Each phase below names its failing test first.
@@ -92,19 +92,24 @@ Desk fix made on the way: `/app/{slug}` used to open the first app when the slug
 
 Also not done: app-limited members are not in `people_with_roles`, so they are not offered as approvers by workspace role. A decision comes with the list above.
 
-## Phase 2b — a position type grants a role (optional, off by default)
+## Phase 2b — a position type may grant a role (done, off by default)
 
+> **Withdrawn 2026-10-18.** A first version was built on a working branch (a `position_types.workspace_role` column and a role calculation) and reverted before it reached `main`. Its test case is the one below. Johann's answer that this should be optional for each position type is met by a `holder_unit` grant, which a unit or the platform chooses to create.
+>
 > Superseded by `access-model.md` phase 4. A `holder_unit` grant, such as "every `chair@*` gets editor on their own unit's subtree", is this phase with a reach, a domain and a validity window. Do not build `position_types.workspace_role`.
 
 Failing test first: a person holds `chair` at Chemistry. The `chair` type grants `editor`. A workspace under Chemistry has no membership naming the person or the position. The person can write records. A person at Physics cannot.
 
-Change:
-- Migration: `position_types.workspace_role TEXT NULL`. Checked against the role names.
-- `member_role` also considers the roles of the positions the person holds, for workspaces at or below that unit.
-- Setting the grant is a ledger entry with a reason. The save screen shows how many workspaces it reaches first.
-- The cache version for `position_types` already exists. Bump it on change.
+Built. The first test failed because a chair with no membership could not write. It passes now. It also checks that a chair at another department gets nothing, that a workspace above the chair's unit is not reached, and that a type that grants nothing or is retired gives nothing. The test was watched to fail with the new code switched off.
 
-This is the broad grant. Many institutions will leave it off. Do it only after phase 2a.
+- Migration `0057_position_type_role.sql`: `position_types.workspace_role`, null by default.
+- `member_role` and `member_role_of` also take the highest role from the positions a person holds. A held position reaches workspaces at and below the unit where it is held. `people_with_roles` includes these holders too, so reports and approver lists are not blind to them.
+- `PATCH /api/v1/admin/positions/{key}` takes `workspace_role`. A role name sets it. `null` removes it. Leaving the key out changes nothing. It needs a reason and writes one `PositionChanged` ledger entry.
+- The roles a type can grant are `viewer`, `commenter`, `editor`, and `admin`. Owner is refused. Owning a workspace is a person's act. I chose this. Say if you want owner allowed.
+- The admin list of position types shows `workspaces_reached`: the workspaces at or below a unit where someone holds the position today. A workspace with no unit is never reached. The desk save screen should show this number before the admin confirms. The desk has no screen for it yet.
+- The cache version for `position_types` already exists and is bumped on change.
+
+Not built: the desk screen.
 
 ## Row rules and positions
 
@@ -112,8 +117,10 @@ This is the broad grant. Many institutions will leave it off. Do it only after p
 
 Two points to settle with phase 2a, both found by reading `scope.rs`, neither tested:
 
-- `person_of` gives rules bare position keys. A rule for "chair" cannot tell Chemistry's chair from Physics's. Decide whether `Person` carries `key@unit` pairs.
-- `person_of` lists only the units where the person holds a role, not the units below. Cedar's check expands to descendants with `unit_ids_for`. Decide whether row rules should match.
+- `person_of` gives rules bare position keys. A rule for "chair" cannot tell Chemistry's chair from Physics's. **Decided:** the person carries `key@unit` pairs, so a rule can name a position at a unit.
+- `person_of` lists only the units where the person holds a role, not the units below. **Decided:** the rule says whether it covers the unit alone or the unit and below.
+
+Neither is built. They are part of phase 5a.
 
 ## Phase 3 — direct grants are visible (3a done), and carry a reason (3b not done)
 
@@ -130,13 +137,71 @@ Tests: the membership list with who made each grant, and the refusal for a non-a
 
 Not done in 3a: the desk has no screen for this list. It is an API only.
 
-## Phase 4 — department attribute becomes a unit (optional)
+## Phase 4 — replaced
 
 > Superseded by `access-model.md` phase 2, which moves the five department-string policies to the unit tree as part of one notion of place.
 
 Cedar grants departmental read and write when two strings match. That is a right earned by a field on the person. The principal already carries `unit_ids` from held roles. The workspace has `organization_id`.
 
-Do this only if you want it. It changes who can see departmental workspaces. Workspaces with no `organization_id` would stop matching. A count of those comes first. Do not start without it.
+- An organization is one hierarchy that a position sits in. Having a unit does not grant a workspace.
+- The unit combines with a role to authorize rows where that department and that role meet.
+- Access to an app or dataset is scoped to roles, perhaps to roles at particular units.
+- Security is primarily at the dataset level. Apps and pages can be shared in many ways. OSCAL rules are enforced from data labels, so that the roles, positions, and organization tags a person holds decide access to labeled data.
+
+The old department-string match in Cedar stays as it is until phase 5 replaces what it protects. Nothing in phase 5 changes who can open a workspace.
+
+## Dataset-level authorization (proposal, phase 5, not built)
+
+**Update:** the direction widened. Data becomes its own layer, grouped into datasets that keep the labels, with row tags first and a dataset floor and default. That is written in [data-layer.md](data-layer.md), which now owns phases 5b and 5c below. Phase 5a (people carry `key@unit` pairs) is now `access-model.md` phase 1, item 5. Do not build it from this note.
+
+Needs your approval. I read `scope.rs`, `access-rules.md`, and `sensitive-content.md` to write it. I did not read `oscal-catalog.md` yet. The OSCAL mapping below must be checked against it before anything is built.
+
+### What exists
+
+- A label or a category marks a field protected. Today a protected field is hidden from the `viewer` role and kept out of exports and links. The test is by role only. It does not ask which unit or position the reader holds.
+- Row rules narrow. They never grant. They can read the person's unit ids, position keys, groups, department, and affiliation.
+- Sharing an app gives access to the app. It has no say over the labeled data inside, except the viewer rule.
+
+### The idea
+
+A label carries an **authorization requirement**: who may read data with this label. A requirement is a list of grants. Each grant names a role or a position, and a reach in the organization.
+
+| Part | Meaning |
+| --- | --- |
+| Role or position | A workspace role, or a position key such as `registrar` |
+| Reach | `unit only`, `unit and below`, or `anywhere` |
+| Data tag | The unit the data belongs to. It comes from the dataset's owning unit, or from a field on the row |
+
+A person may read labeled data when they hold a grant whose role or position matches, at a unit that covers the data's tag. Sharing an app never overrides this. Sharing says who may open the app. The label says who may read the data in it. This keeps the rule you already have, that a rule narrows and never grants.
+
+Data with no label behaves as today. Labeled data with no requirement behaves as today. A requirement is opt-in per category, so nothing changes until an institution sets one.
+
+### OSCAL
+
+The requirement is governance data, so it follows `governance-data-is-oscal`. The matching NIST SP 800-53 controls are AC-3 (access enforcement), AC-16 (security and privacy attributes), AC-6 (least privilege), and the PT family for personal data. The requirement is stored on the category as OSCAL `props` and `links`. No new field is invented for something OSCAL names. A report can list, for any category, who is authorized and by which grant. That is the evidence an assessor asks for. The control ids must be confirmed against the catalog once `oscal-catalog.md` is read.
+
+### Phases
+
+| Phase | Failing test first | Change |
+| --- | --- | --- |
+| 5a | The Chemistry chair passes a rule for `chair@Chemistry`. The Physics chair does not. A rule that covers a unit and below passes a lab under it | `person_of` carries `key@unit` pairs. A row rule can name a pair and a reach |
+| 5b | A field labeled `PHI` with a requirement `registrar, unit and below` is read by the registrar of the owning unit. A viewer who was shared the app, and the registrar of another unit, get no values, no count, and no search hit | A category holds a requirement. The one effective-sensitivity function returns it. Every read path already goes through that function, and a test lists the paths |
+| 5c | A report for one category lists each authorized person and the grant that authorizes them | The report, with the OSCAL props. It is a ledger-backed read, not a new store |
+
+### Open questions
+
+1. (Decided in [data-layer.md](data-layer.md): a column on the row, and the dataset's unit when it is missing.) Where does a row's organization tag come from? The dataset's owning unit is simple. A field on the row (a `department` link to a unit) lets one dataset serve many units. I lean to the dataset's unit first, and a row field only when a rule needs it.
+2. If a requirement is set and the data has no tag, who may read? I lean to deny, and say so in the error.
+3. Does a platform admin read labeled data? Today they see everything. I lean to keep that, with every read of labeled data by an admin written as a disclosure.
+
+### Enterprise objections
+
+| Objection | Answer |
+| --- | --- |
+| "Two systems decide access, Cedar and labels." | Cedar still decides who opens a workspace or an app. The label requirement is an extra check on labeled data, in the same place the viewer rule is. It only narrows |
+| "A label requirement can lock out a legitimate owner." | The owner sees the requirement and who it reaches before saving, as for phase 2b. Platform admins can read, with a disclosure |
+| "This is slow at a million rows." | A requirement on a field removes the whole field for an unauthorized reader. A requirement on rows compiles to SQL through the same `record_index` path as row rules. It must pass `million_rows_test`. I have not measured it |
+| "Who can change a requirement?" | It is a settings change by proposal, a ledger entry with a reason, and a second person for a removal, the same as rules |
 
 ## Enterprise objection list
 
@@ -160,4 +225,4 @@ Do this only if you want it. It changes who can see departmental workspaces. Wor
 
 ## Prompt for the session
 
-Read this file and `docs/plans/foundation.md` "Decisions already made". Phases 1, 2a, and 3 are done. Phase 2b and phase 4 each need a separate decision. Still open: a desk screen for the direct-grants list, and a desk field for the optional reason.
+Read this file and `docs/plans/foundation.md` "Decisions already made". Phases 1, 2a, 2b, and 3 are done. Phase 4 is replaced by phase 5, which needs approval and the open questions answered. Still open: a desk screen for the direct-grants list, a desk field for the optional reason, and a desk screen to set a position type's role and show its reach.

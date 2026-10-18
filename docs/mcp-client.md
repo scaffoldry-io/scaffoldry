@@ -39,11 +39,11 @@ The write checks are also the fixtures. `scripts/mcp/fixtures.mjs` makes an app 
 
 ## Oddities noticed
 
-- A stale version through MCP comes back with the code `bad_request`. The message is clear ("The current version is 2"), but an agent that branches on codes cannot tell it from a malformed request. A code of its own, such as `conflict`, would help.
+- A stale version through MCP comes back with the code `version_conflict`, the same as over HTTP. The message names the current version.
 - A proposal made through MCP is held as a proposal. An administrator can approve their own when every check passes, which the fixtures rely on. A change that fails a check would need a second person.
 
 ## Not done
 
-- A tool-list budget as a test that fails when the list grows past a limit, and error hints (README row 131).
+- Error hints (README row 131). The tool-list budget is a test: `the_tool_list_stays_inside_its_budget` fails when the list passes 18,000 bytes (about 4,500 tokens). It is 15,343 bytes now.
 - Update and delete through a real client. The real client writes with `create_record`. Update and delete are covered over the wire, not by a model.
 - A session id, a server-sent stream, and `outputSchema` on tools. None is required.

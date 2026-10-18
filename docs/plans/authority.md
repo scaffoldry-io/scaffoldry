@@ -45,6 +45,13 @@ Record the search in the first commit message: FIPS 199 (adopted for tier names)
 | `ApproverSpec` and `resolve_approvers`, pure, with delegation and vacancy handling | `crates/scaffoldry-core/src/approver.rs` |
 | Guards show their impact before they are saved | `guards.md` phase 3 |
 
+## Reconciliation with the data layer (2026-10-19)
+
+- **New change types.** A label change, an exception, a row share beyond the default, an app's grant of a dataset, and a steward's delegation are changes with tiers. The matrix must be able to express them.
+- **Two kinds of steward.** The function steward decides a dataset's definition: fields, categories, and key. The unit steward decides who sees and edits that unit's rows. Check that the matrix can key a decision on both a function and a unit. Hierarchy gives no access by itself, so a higher steward is not the decider for a lower unit's rows unless the matrix says so.
+- **A removal of protection needs a second person.** This matches the built-in floor here: a raised flagged check always needs someone other than the proposer.
+- **The evaluation page** that a steward reads before deciding uses this brief's preview of who is affected.
+
 ## Out of scope
 
 - More than one approval on one proposal, quorums, and committees. `workflows.md` phase 1 adds `proposal_approvals` for flows across workspaces, and `process-v2.md` phase 4 adds votes. A `two_approvers` path belongs after both.
