@@ -356,6 +356,37 @@ async fn seeded_app() -> Router {
     scaffoldry_server::build_app_with_state(state).expect("router")
 }
 
+/// The catalog shows sample rows only for public and directory data, or to a Platform Admin. The tool must follow the
+/// same rule as the HTTP route, or an agent could read samples of restricted data that the route would withhold.
+#[tokio::test]
+async fn list_datasets_withholds_samples_of_restricted_data_from_a_non_admin() {
+    let _db = common::TestDb::new();
+    let app = seeded_app().await;
+    let samples = |token: String| {
+        let app = app.clone();
+        async move {
+            let (_, res) = mcp_call(&app, &token, "tools/call", Some(json!({ "name": "list_datasets", "arguments": {} }))).await;
+            let text = res["result"]["content"][0]["text"].as_str().unwrap().to_string();
+            let list: Value = serde_json::from_str(&text).unwrap();
+            let items = list.get("items").cloned().unwrap_or(list);
+            items
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| (d["id"].as_str().unwrap().to_string(), d.get("sample_data").is_some_and(|s| !s.as_array().unwrap().is_empty())))
+                .collect::<std::collections::BTreeMap<String, bool>>()
+        }
+    };
+
+    let person = samples(login_user(&app, "prof.curie@science.state.edu").await).await;
+    assert_eq!(person["programs"], true, "public data shows samples");
+    assert_eq!(person["faculty"], true, "directory data shows samples");
+    assert_eq!(person["grants"], false, "restricted FERPA data shows none to a non-admin");
+
+    let admin = samples(login_user(&app, "jordan.lee@state.edu").await).await;
+    assert_eq!(admin["grants"], true, "a Platform Admin sees every sample");
+}
+
 /// A client loads the whole tool list into its context on every session. About four bytes make a token,
 /// so this limit is about 4,500 tokens. A change that needs more raises the limit here, in the open.
 const TOOL_LIST_BYTE_BUDGET: usize = 18_000;
