@@ -451,7 +451,7 @@ I checked the code and the earlier briefs on 2026-10-19. The honest answer is th
 4. **How a unit adds its own fields about someone else's record.** The pattern in the briefs is a local table that links to the central record, with the central fields shown by lookup. That is a sidecar. Open parts: who may see a local sidecar row beyond its unit (the central owner?), how the sidecar is labeled when it describes a sensitive central record, and what happens to it when the central record is deleted or merged.
 5. **What people actually do today.** I do not know the real cases at your institution. I expect some of these: a department keeps its own spreadsheet about each faculty member, a unit wants extra columns on a central list, a unit needs its own code table, and someone pastes an extract into a new sheet. The last one is the path around governance.
 
-**What I would do before building.** Take five real examples from your organization and walk each through the model. For each one, write down who owns the data, who needs to see it, what the local unit adds, and what the central owner should be able to see back. If four of the five fit the sidecar pattern, it is right. If not, the model changes.
+**What I would do before building.** The template is [data-layer-scenarios.md](data-layer-scenarios.md). Take five real examples from your organization and walk each through the model. For each one, write down who owns the data, who needs to see it, what the local unit adds, and what the central owner should be able to see back. If four of the five fit the sidecar pattern, it is right. If not, the model changes.
 
 ## Not decided, and not verified
 
