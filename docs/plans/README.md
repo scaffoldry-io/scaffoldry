@@ -151,7 +151,7 @@ Not approved. These rows come from the design notes and have no run order yet. T
 | 1d-4 | [data-layer.md](data-layer.md) | catalog | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy | Proposed |
 | 1d-5 | [data-layer.md](data-layer.md) | catalog | Request access goes to the steward position and is recorded. Needs rows 107 and 108 | Proposed |
 | 1d-6 | [mcp-guidance.md](mcp-guidance.md) | 2 to 4 | Error hints, `explain_decision`, and prompts generated from policy | Proposed |
-| 1d-7 | [position-roles.md](position-roles.md) | 5a | A person carries `key@unit` pairs and a reach | Proposed |
+| 1d-7 | [position-roles.md](position-roles.md) | 5a | A person carries `key@unit` pairs and a reach. **Covered by `access-model.md` phase 1 item 5. Not built from here** | Superseded |
 | 1d-8 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label. Needs rows 151 to 153 | Proposed |
 | 1d-9 | [data-layer.md](data-layer.md) | 5, 6, 6b | The AI review proposes. A steward reads the evaluation and decides. A change has an effective date, a notice, and exceptions as grants. Needs `authority.md` phase 1, and a decision on the conflict in `sensitive-content.md` | Proposed |
 | 1d-10 | [data-layer.md](data-layer.md) | shares | A row share with a reason and an expiry | Proposed |

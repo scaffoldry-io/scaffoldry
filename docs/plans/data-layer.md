@@ -58,6 +58,50 @@ Written on 2026-10-19 after checking this note against the briefs in the README.
 
 **The build agent.** The README's run order drives an automated agent that starts the first open numbered row. Today that is row 62 (`stateless-server` phase 3). The `1d-n` rows are labelled, not numbered, so the agent does not see them. Moving the new work ahead of row 62 means reordering numbered rows, which is your call.
 
+## Alignment with the access model, and decisions made (2026-10-18)
+
+`access-model.md` is on pull requests 123 and 127 and is not on `main` yet. It is the maintainers' design for grants. It covers much of what this note sketched, with a firmer base. This note now defers to it. Where the two disagree, `access-model.md` wins, and this note keeps only what it does not cover. The references below are by name and become links once it merges.
+
+**Vocabulary.** Use the access model's words.
+
+| This note said | Access model says | Notes |
+| --- | --- | --- |
+| Unit (the row's unit) | A coordinate: a unit in a hierarchy. A row is placed by a field that names a unit | Same thing. Our "unit column" is a placement field |
+| Function | Data domain | A domain is an axis. A function steward is the approver for a domain |
+| Category and its requirement | Sensitivity, and a grant's clearance | A grant carries a clearance. A category requirement is what a clearance must meet |
+| Grant: role or position, function, reach | One row: holder, role, hierarchy, anchor, depth, domain, clearance, validity window, source, reason | Use theirs. Our reach and "unit and below" are anchor and depth |
+| Exclusions in a reach | Guards forbid | A guard only forbids. An exclusion is a guard, not a field on the grant |
+| Condition (training current) | A clearance with a validity window and a source | The Registrar's training record is a grant of clearance that ends on the expiry date, with source `sync` or `manual` |
+| Delegated layers with a ceiling | An Org Unit Admin grants inside their own subtree, never above their own role | Same ceiling rule. Do not add a second mechanism |
+| Request access | Phase 13: requests, rules that approve alone, grants with a source of `request` | Reuse. Our catalog adds a new place to start a request, from an entry, before any denial |
+| Evaluation page | `proposal-preview.md` and phase 7 impact | Reuse. Our evaluation is that preview, plus notice and exceptions |
+| Synthetic samples | Phase 12 masks: a closed list that reduces a real value for a reader not cleared | Complementary. A mask serves someone who has partial access. A synthetic sample serves someone who has none. The catalog shows each field's mask in words |
+| System users for automations | `workflows.md`: flows run as a service identity with approved grants | Already settled. Reuse |
+| AI drafts, people decide | Phase 14: `draft_access_change`. A widening draft cannot be confirmed by the person whose tool drafted it. Drafts expire in seven days | Adopt as written |
+
+**What this note keeps, because the access model does not cover it**
+1. Datasets as stored things with ids, and the crate boundary that makes the data layer the single door.
+2. A declared key per dataset, and `record_keys`.
+3. The catalog: metadata, synthetic samples, discoverability, and search on the desk and in MCP.
+4. Label changes as managed change: a steward decides, an effective date, a notice period, a communications plan, and exceptions recorded as grants.
+5. Relationship access (an advisor sees the notes of their advisees) and cross-listing.
+6. Row shares: one record to one grantee, with a reason and an expiry.
+7. External collaborators, and a key credential for them and for system users.
+8. The guidance layer for MCP (`mcp-guidance.md`).
+
+**Decisions.** I made these from what you have told me. Say which to change.
+
+1. **At once or scheduled for an ordinary raise.** Scheduled, by default. The exception is computed: when the evaluation shows that nobody is affected (no grant, no open work, no automation, and no app reads the data), the change applies when the steward confirms, because no one loses anything. If anyone is affected, it is scheduled with a notice. `sensitive-content.md`'s "protects the field at once" is amended to this. For an emergency, version 1 has the **suspend** switch, which changes no label.
+2. **The notice period.** The institution sets a minimum for each category class in settings. I propose starting values of 14 days for a restricted category and 7 days for others, for a change that removes access. A steward may lengthen it and may not shorten it below the minimum. The numbers are placeholders for the institution to change.
+3. **The expedited path.** Not in version 1. Suspend covers the emergency.
+4. **The communications plan.** An AI tool drafts it from the evaluation and a template. The steward edits and approves. This is the same rule as phase 14: AI drafts, a person decides.
+5. **The build order.** The run order follows your handoff. `access-model.md` comes first, because it is the foundation the data layer sits on. The data layer starts after the grant shape exists (access-model phase 4) and the explanation exists (phase 7). The catalog's request step is access-model phase 13 with a new starting point.
+6. **The policy library.** The data layer's policy documents live in it, as a bound-object kind, `data_policy`. Check at the start of the catalog work.
+7. **Relationship access and cross-listing.** Express them as placement fields in extra hierarchies, which the access model says are data. Cross-listing is a second `units` hierarchy whose placement field names the other unit. An advisor is a `people` hierarchy whose placement field names the advisor. This uses the access model's own mechanism and adds no per-record table. **I am fairly sure but not certain** that the access model's rule "at most one unit in each hierarchy" allows this. The access model's owner should confirm. If it does not, audience fields stay as this note describes them and must pass the performance gate.
+8. **Row shares.** A small, expiring grant with a `record` anchor, under a quota in settings. The access model puts "a per-user or per-record table of who can see what" out of scope, so this needs its owner's agreement. It is the exception path, not the main one.
+9. **External collaborators.** A principal kind, sponsored by an internal person. Both a registered public key and federated login are supported. A grant to an external collaborator requires an agreement reference and an end date by default. An institution can change the default.
+10. **No capacity switch,** and the **peer** rule is parked. A student worker is a position with a student-eligible clearance requirement. This is policy, not code.
+
 ## The principle: mechanism, not business rules
 
 You asked that every answer lean toward flexibility, not toward business rules built into the system. This is the rule for the rest of the note, and where it conflicts with an earlier line, it wins.

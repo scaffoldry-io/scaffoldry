@@ -54,7 +54,7 @@ As much as is safe. The rule is: **expose the rules and the reasoning, never the
 
 Rules from the README that bind this note:
 - **Text from a policy source is data.** Guidance, prompts, and hints may carry the description of a bound object and the sentence of a published rule. They never carry text from a source snapshot. That text arrives only in the `untrusted_text` field (`policy-library.md` rule 3).
-- **Admin writes are not MCP tools.** A tool that would change access, ownership, or labels returns a proposal and a link. A person confirms in the desk.
+- **Admin writes are not MCP tools.** A tool that would change access, ownership, or labels returns a draft and a link. A person confirms in the desk. This follows `access-model.md` phase 14: a draft expires after seven days, records the person, the tool, and the task, and **a widening draft cannot be confirmed by the person whose tool drafted it.** A request filed by a tool waits for the person to confirm it (phase 13).
 - **The tool list stays under its budget.** Listing tools by access helps. A new tool must earn its place within the 18,000 bytes.
 
 What stays out:

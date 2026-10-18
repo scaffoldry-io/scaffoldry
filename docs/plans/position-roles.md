@@ -144,7 +144,7 @@ The old department-string match in Cedar stays as it is until phase 5 replaces w
 
 ## Dataset-level authorization (proposal, phase 5, not built)
 
-**Update:** the direction widened. Data becomes its own layer, grouped into datasets that keep the labels, with row tags first and a dataset floor and default. That is written in [data-layer.md](data-layer.md), which now owns phases 5b and 5c below. Phase 5a (people carry `key@unit` pairs) stays here.
+**Update:** the direction widened. Data becomes its own layer, grouped into datasets that keep the labels, with row tags first and a dataset floor and default. That is written in [data-layer.md](data-layer.md), which now owns phases 5b and 5c below. Phase 5a (people carry `key@unit` pairs) is now `access-model.md` phase 1, item 5. Do not build it from this note.
 
 Needs your approval. I read `scope.rs`, `access-rules.md`, and `sensitive-content.md` to write it. I did not read `oscal-catalog.md` yet. The OSCAL mapping below must be checked against it before anything is built.
 
