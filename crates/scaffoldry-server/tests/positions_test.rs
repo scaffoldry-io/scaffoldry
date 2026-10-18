@@ -369,6 +369,45 @@ async fn position_types_are_validated_patched_and_audited() {
 }
 
 #[tokio::test]
+async fn a_position_type_grants_a_workspace_role_only_by_a_reasoned_change_and_never_owner() {
+    let _db = common::TestDb::new();
+    let c = ctx().await;
+    assert_eq!(create_position(&c, "reviewer", json!(["Department"]), 5).await.0, StatusCode::CREATED);
+    let patch = |body: Value| {
+        let app = c.app.clone();
+        let admin = c.admin.clone();
+        async move { send(&app, "PATCH", "/api/v1/admin/positions/reviewer", Some(&admin), Some(body)).await }
+    };
+
+    // A new type grants nothing.
+    let (_, all) = send(&c.app, "GET", "/api/v1/admin/positions", Some(&c.admin), None).await;
+    let row = all["positions"].as_array().unwrap().iter().find(|p| p["key"] == "reviewer").unwrap();
+    assert!(row["workspace_role"].is_null());
+
+    // A grant needs a reason, a known role, and is never owner.
+    let before = ledger_len(&c).await;
+    assert_eq!(patch(json!({ "workspace_role": "editor" })).await.0, StatusCode::BAD_REQUEST, "no reason");
+    assert_eq!(patch(json!({ "workspace_role": "owner", "reason": "r" })).await.0, StatusCode::BAD_REQUEST, "owner");
+    assert_eq!(patch(json!({ "workspace_role": "wizard", "reason": "r" })).await.0, StatusCode::BAD_REQUEST, "unknown");
+    assert_eq!(ledger_len(&c).await, before, "a refused grant writes nothing");
+
+    // A reasoned grant is one ledger entry that names the role.
+    let (status, granted) = patch(json!({ "workspace_role": "Editor", "reason": "Chairs edit their department" })).await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    assert_eq!(granted["position"]["workspace_role"], "editor");
+    assert_eq!(ledger_len(&c).await, before + 1);
+    let entry = last_entries(&c, 1).await.remove(0);
+    assert_eq!(entry["decision_type"], "PositionChanged");
+    assert_eq!(entry["rationale"], "Chairs edit their department");
+
+    // A change that leaves the key out keeps the grant. A null removes it.
+    let (_, renamed) = patch(json!({ "name": "Reviewer", "reason": "Rename" })).await;
+    assert_eq!(renamed["position"]["workspace_role"], "editor");
+    let (_, cleared) = patch(json!({ "workspace_role": null, "reason": "Withdraw" })).await;
+    assert!(cleared["position"]["workspace_role"].is_null());
+}
+
+#[tokio::test]
 async fn a_holder_must_be_an_active_user_and_can_be_vacated() {
     let _db = common::TestDb::new();
     let c = ctx().await;

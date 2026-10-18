@@ -133,6 +133,9 @@ pub struct PositionType {
     pub retired_at: Option<String>,
     pub created_by: String,
     pub created_at: String,
+    /// The workspace role every holder gets in workspaces at and below the holder's unit. `None` grants nothing.
+    #[serde(default)]
+    pub workspace_role: Option<String>,
 }
 
 fn default_role_source() -> String {

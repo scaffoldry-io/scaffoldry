@@ -204,6 +204,59 @@ pub fn member_role_of_in_app(eppn: &str, workspace: &str, app: &str, state: &Sha
     limited.max(member_role_of(eppn, workspace, state))
 }
 
+/// The workspace roles a position type may grant. Owner is not among them: owning a workspace is a person's act.
+pub const POSITION_GRANT_ROLES: &[&str] = &["viewer", "commenter", "editor", "admin"];
+
+/// The role a person's held positions give in a workspace. A position type that grants a role gives it to its
+/// holders in workspaces at and below the unit where the position is held. A retired type, or one that grants
+/// nothing, gives nothing.
+fn position_role_of(eppn: &str, workspace: &str, state: &SharedState) -> Option<Role> {
+    let held = state.roles_of(eppn);
+    if !held.iter().any(|r| r.position_key.is_some()) {
+        return None;
+    }
+    let ws_org = state.get_workspace(workspace)?.organization_id?;
+    let types = state.position_types.read().unwrap_or_else(|p| p.into_inner());
+    let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+    held.iter()
+        .filter(|r| within(ws_org, r.organization_id, &orgs))
+        .filter_map(|r| types.get(r.position_key.as_deref()?))
+        .filter(|t| t.retired_at.is_none())
+        .filter_map(|t| t.workspace_role.as_deref().and_then(Role::parse))
+        .max()
+}
+
+/// Everyone a position gives a role in this workspace, with the role, by address.
+fn position_roles_in(workspace: &str, state: &SharedState) -> BTreeMap<String, Role> {
+    let mut out: BTreeMap<String, Role> = BTreeMap::new();
+    let Some(ws_org) = state.get_workspace(workspace).and_then(|w| w.organization_id) else {
+        return out;
+    };
+    let granting: BTreeMap<String, Role> = state
+        .position_types
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .filter(|t| t.retired_at.is_none())
+        .filter_map(|t| Some((t.key.clone(), t.workspace_role.as_deref().and_then(Role::parse)?)))
+        .collect();
+    if granting.is_empty() {
+        return out;
+    }
+    // The units where a holder's post reaches this workspace: the workspace's unit and every unit above it.
+    let above: Vec<Uuid> = {
+        let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+        orgs.keys().copied().filter(|u| within(ws_org, *u, &orgs)).collect()
+    };
+    for r in state.repository.roles_in_units(&above).unwrap_or_default() {
+        if let Some(role) = r.position_key.as_deref().and_then(|k| granting.get(k)) {
+            let slot = out.entry(r.eppn.to_lowercase()).or_insert(*role);
+            *slot = (*slot).max(*role);
+        }
+    }
+    out
+}
+
 /// The highest role among every membership that matches the person. This is the only place that
 /// turns the workspace's memberships into a person's role.
 pub fn member_role(user: &AuthUser, workspace: &str, state: &SharedState) -> Option<Role> {
@@ -211,6 +264,7 @@ pub fn member_role(user: &AuthUser, workspace: &str, state: &SharedState) -> Opt
         .iter()
         .filter_map(|c| Role::parse(&c.role).filter(|_| includes(c, &user.eppn, state)))
         .max()
+        .max(position_role_of(&user.eppn, workspace, state))
 }
 
 /// The role of a person named by address, for a caller who has no `AuthUser`.
@@ -219,6 +273,7 @@ pub fn member_role_of(eppn: &str, workspace: &str, state: &SharedState) -> Optio
         .iter()
         .filter_map(|c| Role::parse(&c.role).filter(|_| includes(c, eppn, state)))
         .max()
+        .max(position_role_of(eppn, workspace, state))
 }
 
 /// Everyone with a role in the workspace and their highest role, by address.
@@ -230,6 +285,10 @@ pub fn people_with_roles(workspace: &str, state: &SharedState) -> BTreeMap<Strin
             let slot = out.entry(p.to_lowercase()).or_insert(role);
             *slot = (*slot).max(role);
         }
+    }
+    for (p, role) in position_roles_in(workspace, state) {
+        let slot = out.entry(p).or_insert(role);
+        *slot = (*slot).max(role);
     }
     out
 }
