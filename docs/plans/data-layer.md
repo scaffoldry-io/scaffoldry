@@ -49,6 +49,7 @@ The sections below describe the whole direction. Most of it should wait until a 
 - The rule: an app was granted the dataset, and the person holds a grant that covers the row's unit, and meets the label requirement.
 - App grants. Automations as system users, with grants that an approver who holds the access signs off. They may only write to datasets they were explicitly granted, and cannot create structure.
 - Row shares with a reason and an expiry, approved by the steward.
+- Audience fields (with optional acceptance by the receiving unit), and conditions on a requirement, as walked in the scenarios. Both carry dates.
 - A label change as a proposal: the plain evaluation page, a steward's decision, an effective date, and one notice period set in settings. The notice goes through the inbox.
 - Delegation by date for a steward, using the approvers delegation that is already planned.
 
@@ -359,6 +360,7 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 | 1 | An app table is a dataset with an id. A list of datasets returns it, and a record read through the dataset id returns the same row as through the app path | Datasets become stored things with ids. Existing app tables get one each by migration. No behavior changes. The two paths agree |
 | 2 | A script that adds a `SELECT` on `dataset_records` outside the data crate fails the audit | The data crate. Records code moves in. The audit enforces the one door |
 | 3 | A row tagged `PHI` is not returned to a reader the requirement excludes. A dataset floor raises an untagged row. A write cannot lower a floor. A Chemistry row is read by the Chemistry registrar and not the Physics one. A row with the column empty is read by the dataset's unit's registrar. A row naming no unit is refused | Row tags, the row's unit column, and dataset labels, with the effective-label function from this note. The `is_ferpa_sensitive` flag stays, derived from the effective label, so Cedar keeps working |
+| 3b | A person named in an audience field reads the row and nobody else does. An unaccepted value grants nothing. A million-row table with audience grants stays inside the million-row limits. A lapsed condition withdraws access with no job running | Audience fields, `record_audience`, and conditions on the person record. The performance test is the gate |
 | 4 | An app with no grant gets 403. An app with a read grant cannot write. A person outside the label requirement gets nothing through an app that has the grant | App grants. The two-identity check |
 | 5 | The AI review writes a finding for a row that matches a category, stores no value, and changes no tag or access | The review job, using the existing job runner and the existing finding shape |
 | 5b | A function defined at the top needs an administrator's proposal. A function defined at a unit is approved by that unit's governance steward. A lower unit cannot redefine a function above it. A new function gives nobody access | Functions as settings |
@@ -425,6 +427,10 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 | A share touching a restricted category | Approval from someone authorized for that category |
 | The tree used for reach | The org tree |
 | Exclusions in a reach | Included from the start |
+| Audience fields (access by being named in a row) | Accepted, if performant. A test gates it |
+| Cross-listing and similar | The receiving unit's steward accepts. A synced value from the student system is authoritative |
+| Training and similar conditions | Stored as dated values on the person record, owned by a function, from a sync or by hand |
+| A change of major | Notes stay with the unit that provided the service. The new unit may request them. Units vary in how freely they share, so each sets its own policy from the closed set |
 
 ## Open questions (all about parts after version 1)
 
@@ -504,7 +510,11 @@ An **audience field** is a field of a dataset whose value names people, position
 - Who may change the field is an ordinary field-level write grant. Changing an audience field is recorded as a grant in the history, with who did it.
 - It grants only up to what the policy says. A category's requirement still applies, so naming someone cannot bypass the FERPA requirement.
 - A policy is set by the unit's steward, for that dataset.
-- **This departs from an earlier rule.** `access-rules.md` says a rule narrows and never grants. An audience field is a grant that comes from the row. I think it is the only workable way to do relationship access. It needs your yes.
+- **This departs from an earlier rule.** `access-rules.md` says a rule narrows and never grants. An audience field is a grant that comes from the row. **Decided: accepted, on condition that it is performant.** The condition is a test, below.
+- **Acceptance by the receiving unit.** A policy may require that the unit named in an audience field accepts before it gains access. Coordination between departments is the usual case. Until the receiving unit's steward accepts, the value is a proposal and grants nothing. The acceptance is recorded as a grant.
+- **The authoritative system decides when it owns the rule.** Many of these rules live in the student information system. The platform does not copy the rule. The audience field arrives by sync, and access follows it. A person cannot override a synced audience value, except by a recorded share.
+
+**Making it fast.** The names in audience fields are copied into a small indexed table, `record_audience (app, table, record_id, kind, principal)`, in the same transaction as the record. This follows `record_index` and `record_links`. A list adds "or the record names one of my principals", where my principals are me, my positions as `key@unit`, my units, and my groups. That set is small and is known when the person signs in. The test: a table of a million rows with audience grants on a fifth of them must stay inside the `million_rows_test` limits for a first page, a page near the end, and a count. I have not measured it. If it does not pass, the design changes before anything ships.
 
 ### Conditions (proposed for version 1)
 
@@ -513,6 +523,10 @@ A label's requirement may carry **conditions**: facts about the person that must
 - The fact comes from a system of record, such as the learning system or HR. The platform stores the status and the expiry date.
 - A lapse withdraws access. That is a change in a person's status, not a label change, so it does not use the label change process. The person gets reminders before the date. This is the same kind of notice as for a share that is about to expire.
 - The list of conditions is a short closed list the institution switches on. It is not an expression language.
+- **Where the fact lives.** Training records are in Workday here, kept by the Registrar. Elsewhere they may be in HR or another system. So a condition has an **owner**, a function whose steward may maintain it, and a **source**, which is either a sync or manual entry. Every value has a start and an end date.
+- **How it is checked fast.** The current conditions sit on the person record, as a small map from condition to expiry date. They are loaded when the person signs in. A check is a date comparison at read time. No job has to run for a lapse to take effect, and no extra query is made. A sync or the owner updates the map when a record changes.
+
+**Dated access in general.** A grant, a share, and a condition all carry a start and an end date. The platform shows them together as a person's access, with dates, so that an auditor can ask who had access on a given day. The ledger and these dated records already hold the facts. A point-in-time report over them is a later feature.
 
 ## Not decided, and not verified
 
