@@ -40,7 +40,7 @@ Nothing. Every principal is a directory person or a token for one.
 
 ## Phase 1 — a guest and a link
 
-Migration `crates/scaffoldry-core/migrations/0043_guests.sql`:
+Migration `crates/scaffoldry-core/migrations/*_guests.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS guests (

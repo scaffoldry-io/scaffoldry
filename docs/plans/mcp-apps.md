@@ -4,7 +4,7 @@ Hand this file to Gemini Flash. Do one phase per session. Stop when that phase's
 
 Run order is `docs/plans/README.md`. `docs/plans/foundation.md` phases 2 to 9 come before phase 1 of this plan.
 
-An agent connects with a token its user minted in the settings pane (foundation phases 7 and 9). The user pastes the server's MCP URL and that token into the desktop tool. Do not add another way for an agent to sign in.
+An agent connects with a token its user minted in the settings pane (foundation phases 7 and 9). The user pastes the server's MCP URL and that token into the desktop tool. `external-apps.md` phase 8 adds the second and preferred way: the AI tool signs in through OAuth as a registered client, as itself, for the person. Do not add a third.
 
 Scaffoldry is MCP-first. A faculty member opens the AI tool they already use, such as a desktop AI app, Claude Code, or Codex, connects it to the institution's Scaffoldry server with a token they minted themselves, and asks for an app. The tool builds it through MCP tools. There is no separate agent to deploy. The web desk is a second client of the same service layer. It is not the primary one.
 
@@ -13,7 +13,7 @@ An app has two layers. They are governed in different ways.
 | Layer | Form | How it is governed |
 | --- | --- | --- |
 | Data contract: tables, fields, sensitivity, links, process rules | Declarative JSON in the manifest | Validated against a schema. Proposed, checked, approved |
-| Pages | A built-in view, or a custom page: one JavaScript module an agent wrote | A custom page runs in a sandbox with no network and no token. A reviewer approves what it may read and write, not its code |
+| Pages | A built-in view, or a custom page: one JavaScript module, or one bundle an agent built with the libraries it needs | A custom page runs in a sandbox with no network and no token. A reviewer approves what it may read and write, not its code |
 
 A custom page may render anything. It has no power of its own. Its one capability is a message to its host, and the host turns that message into one tool call under the signed-in user's rights. Do not grow the component catalog in `routes/framework.rs` to chase custom layouts. A layout the catalog cannot express is a custom page.
 
@@ -70,7 +70,7 @@ These parts are not real. Each is deleted or replaced in phase 1.
 - A tool per department, per form type, or per report.
 - New entries in the component catalog. No layout language, no slot system, no theme options.
 - A bundler, or any build step on the server. JSX is compiled inside the sandbox when the page opens.
-- npm packages inside a page. A page imports `react`, `react/jsx-runtime`, and `scaffoldry` and nothing else.
+- Loading a package at run time. A module page imports `react`, `react/jsx-runtime`, and `scaffoldry` and nothing else. A bundle carries the libraries it was built with and loads nothing.
 - A page that calls a tool other than `page_call`. A page never decides a proposal or a process step.
 
 ## Rules for every phase
@@ -495,6 +495,24 @@ Tests:
 6. `bridge.js` and `loader.js` do not contain `fetch`, `XMLHttpRequest`, `localStorage`, `cookie`, `eval`, or `new Function`.
 7. In a jsdom test, the loader compiles a page that imports `react` and `scaffoldry` and mounts it. A page importing `lodash` renders the error panel.
 
+**Bundles.** A custom page may instead be a bundle: one self-contained JavaScript file the agent built with any bundler, holding the libraries it needs, such as charts, maps, or drag and drop. Faculty want interfaces of their own, and the safety of a page comes from the frame, not from its imports.
+
+1. A `Custom` page names `format`: `module` (the default, as above) or `bundle`. A bundle's source is stored in `app_page_sources` like a module's.
+2. A bundle is at most 2 MB. A module stays at 256 KB.
+3. A bundle declares its libraries in the page: `dependencies: [{ "name", "version", "license" }]`. The proposal check `page_dependencies` fails when a license is not on the list in `governance/scripts/audit-licenses.py`, and when a bundle declares none. The reviewer sees the list. ponytail: the server cannot confirm the bundle contains only what it declares, because it has no JavaScript parser. The frame's policy is the boundary that matters.
+4. The loader runs a bundle as one inline script, after the bridge. The bundle reaches the bridge through the global `scaffoldry` and mounts itself into the element with id `root`. It is not compiled.
+5. The frame and its policy are unchanged. A bundle that calls `fetch`, opens a socket, or uses `eval` fails inside the frame.
+
+**Settings for a page.** A page has no storage. The bridge gains `scaffoldry.settings.get(key)` and `scaffoldry.settings.set(key, value)`, stored per page and per person in a table `page_settings (app_slug, page_id, eppn, key, value JSONB, updated_at)`, at most 64 KB per person per page. They go through `page_call` with `op` `settings_get` and `settings_set`. A setting is the person's own and is never shown to anyone else. The bridge contract grows by these two methods and changes no existing one.
+
+Tests for bundles and settings:
+
+8. A bundle that includes a small charting library mounts and draws in the jsdom test.
+9. A bundle declaring a library under a license not on the list fails `page_dependencies`.
+10. A bundle over 2 MB is refused.
+11. A bundle that calls `fetch` gets an error inside the frame, and no request leaves it.
+12. A setting written by one person is not returned to another, and a value over 64 KB is refused.
+
 ponytail: syntax errors in a page are found when it opens, not when it is proposed, because the server has no JavaScript parser. An agent should open its page in its own host before proposing. Add a check when a reviewer approves a page that does not compile.
 
 ## Phase 7 — the web desk hosts a page
@@ -523,7 +541,7 @@ Tests in `apps/web/src/test/page-frame.test.tsx`, with `fetch` stubbed:
 
 ## Phase 8 — pages and review screens inside the agent
 
-Do not start this phase until Johann pastes the current MCP Apps specification text into the session. Do not guess a message name or a metadata key.
+Read the published MCP Apps extension, SEP-1865 "MCP Apps: interactive user interfaces for MCP", from the specification in the `modelcontextprotocol/ext-apps` repository at its latest dated release. Record that date in the first commit message. Do not guess a message name or a metadata key. If the specification you find is still marked draft, use it and say so in the pull request.
 
 Custom pages: `resources/list` adds one `ui://scaffoldry/apps/{slug}/pages/{id}` entry per custom page the caller can read. `resources/read` returns `render_page` with `text/html;profile=mcp-app`. `get_page` links to that resource in the way the specification states. Add to `bridge.js` whatever handshake the specification requires of a page before it may send `tools/call`. Change nothing else in the bridge.
 
