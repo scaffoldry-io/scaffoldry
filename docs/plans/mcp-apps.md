@@ -4,7 +4,7 @@ Hand this file to Gemini Flash. Do one phase per session. Stop when that phase's
 
 Run order is `docs/plans/README.md`. `docs/plans/foundation.md` phases 2 to 9 come before phase 1 of this plan.
 
-An agent connects with a token its user minted in the settings pane (foundation phases 7 and 9). The user pastes the server's MCP URL and that token into the desktop tool. Do not add another way for an agent to sign in.
+An agent connects with a token its user minted in the settings pane (foundation phases 7 and 9). The user pastes the server's MCP URL and that token into the desktop tool. `external-apps.md` phase 8 adds the second and preferred way: the AI tool signs in through OAuth as a registered client, as itself, for the person. Do not add a third.
 
 Scaffoldry is MCP-first. A faculty member opens the AI tool they already use, such as a desktop AI app, Claude Code, or Codex, connects it to the institution's Scaffoldry server with a token they minted themselves, and asks for an app. The tool builds it through MCP tools. There is no separate agent to deploy. The web desk is a second client of the same service layer. It is not the primary one.
 

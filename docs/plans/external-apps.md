@@ -4,7 +4,7 @@
 
 Hand this file to the build agent. Do one phase per session. Stop when that phase's tests pass. Do not start the next phase.
 
-Run order is `docs/plans/README.md`. Phase 1 needs `mcp-apps.md` phase 4. Phase 3 needs `integrations.md` phase 2. Phase 4 needs `integrations.md` phase 3. Phase 5 needs `access-model.md` phase 4. Phase 7 needs `foundation.md` phase 10.
+Run order is `docs/plans/README.md`. Phase 1 needs `mcp-apps.md` phase 4. Phase 3 needs `integrations.md` phase 2. Phase 4 needs `integrations.md` phase 3. Phase 5 needs `access-model.md` phase 4. Phase 7 needs `foundation.md` phase 10. Phase 8 needs phase 3, and uses `access-model.md` phase 13 when that has run.
 
 Faculty want quick, custom web apps with interfaces of their own. Many will build them with a coding agent and host them wherever they like. Those apps should still get institutional data the governed way: as the person using them, within limits a person approved, with every access recorded.
 
@@ -34,7 +34,7 @@ Record the search in the first commit message: OAuth 2.1, RFC 7636, RFC 9700, RF
 | Who registers a client? | Anyone who may propose changes to the workspace whose apps it names. Registration is a proposal. An owner or admin of that workspace approves it. A ceiling that writes, or that reaches more than one workspace, needs a second person |
 | What is a ceiling? | The same shape as a custom page's grants in `mcp-apps.md` phase 6: per table, `read` fields, `write` fields, `create`, `delete`. A client never gets more than its ceiling, whoever signs in |
 | May a client read a sensitive field? | No. A ceiling that names an effective-sensitive field is refused. Sensitive data stays inside Scaffoldry's own sandboxed pages, which cannot send anything out. Johann may change this |
-| How long does an access token last? | One hour. No refresh token in this brief. The user signs in again |
+| How long does an access token last? | One hour. For an app client, no refresh token: the user signs in again. For an AI tool registered as an agent client (phase 8), a refresh token that rotates on every use, within a session of at most 12 hours |
 | Which redirect URIs are allowed? | Exact `https` URIs registered with the client. No wildcard, no query string. `http://localhost` only when the setting `oauth.allow_localhost` is true |
 | Public or confidential clients? | Both. A browser app is public and uses PKCE alone. A server app is confidential and also authenticates with a secret, shown once and stored as a hash |
 | Can a client act with no user present? | Only in phase 5, as its own service identity, through a grant a second person approved. Never as a person who is not there |
@@ -215,6 +215,26 @@ Tests.
 1. A verified token for a registered client lists rows within the ceiling.
 2. A verified token naming an unregistered client is refused.
 3. A token with the wrong audience is refused.
+
+## Phase 8 — AI tools sign in as themselves
+
+An AI tool working for a person is not the person. The record should say both, and the tool should hold only what the person chose to give it for the task.
+
+1. A client gains `kind = agent`. Only a Platform Admin registers an agent client, for an AI tool the institution allows, such as a desktop AI app or a coding agent. An agent client has no ceiling of its own: it acts within the person's rights. Reads of sensitive fields are allowed and are disclosed, as reads through agent tokens are today.
+2. MCP clients find the server's authorization through the phase 2 metadata, as the MCP authorization specification describes, and sign in with the phase 2 flow.
+3. At consent the person picks what the tool may do, from a closed list shown as sentences: `Read`, `Read and propose changes`, or `Read, propose, and write records`. The choice is the token's scope through `integrations.md` phase 2. Nothing broader is offered.
+4. An agent client gets a refresh token that rotates on every use, RFC 9700 section 4.14. A reused refresh token revokes the whole session. A session lasts at most `access.agent_session_hours`, an integer 1 to 24, default 12. Add the key to the closed settings list. Holding, disconnecting, or disabling ends it at once.
+5. The tool `begin_task` takes one sentence, at most 200 characters, saying what the agent is doing for the person. It is stored on the session. Every history origin, disclosure and, when `access-model.md` phase 8 has run, receipt made in the session carries the person, the client, and the task sentence.
+6. When the agent needs more than its scope, it calls `request_access` from `access-model.md` phase 13. A request within the person's own rights is confirmed by the person and widens only this session. One beyond them goes to an approver.
+7. Pasted agent tokens keep working. A Platform Admin can stop new ones with the existing `tokens.agent_enabled` setting once the institution's tools sign in this way.
+
+Tests.
+
+1. An MCP client discovers the metadata and completes the flow with PKCE.
+2. A session consented as `Read` cannot write, and `request_access` for a write is offered to the person, not refused silently.
+3. A record written in a session names the person, the client, and the task sentence in its history.
+4. A reused refresh token revokes the session. A session ends at the configured hours.
+5. A person put on hold loses the session on the next call.
 
 ## How to prompt the build agent
 

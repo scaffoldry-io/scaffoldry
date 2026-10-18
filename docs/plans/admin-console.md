@@ -29,7 +29,7 @@ Do not reopen these.
 | Who may open the console? | A Platform Admin: `central_admin`, or a `platform_admin` appointment on the root unit. Two panels also admit affiliation `compliance`: Data governance labels, and the audit log with OSCAL requirements |
 | What do Org Unit Admins get? | Nothing here. They keep the workspace rail from `docs/plans/organization.md`. `/admin` stays closed to them |
 | Who enforces access? | The server. The client hides a menu item for tidiness. It decides nothing |
-| Can an agent change institution configuration? | No. Admin writes are not MCP tools. One read-only tool, `admin_inventory`, lets an agent inspect (phase 7) |
+| Can an agent change institution configuration? | No. No MCP tool applies an admin write. An agent may draft an access change as a pending change that a person confirms (`access-model.md` phase 14). One read-only tool, `admin_inventory`, lets an agent inspect (phase 7) |
 | Where do process definitions get edited? | In the workflow builder inside the app. The console governs them: inventory, history, enable or disable, simulate. It does not duplicate the editor |
 | Is there delete? | No. Not for people, units, workspaces, apps, rules, or ledger rows. Hold, revoke, disable, and cancel exist |
 | What is a reason? | Every admin write carries a `reason` of 1 to 500 characters. It becomes the ledger rationale |

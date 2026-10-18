@@ -4,7 +4,7 @@
 
 Hand this file to the build agent. Do one phase per session. Stop when that phase's tests pass. Do not start the next phase.
 
-Run order is `docs/plans/README.md`. Phase 1 needs nothing that is still open. Phase 2 needs `stateless-server.md` phase 3. Each later phase needs the one before it. Phase 7 links to `policy-library.md` phase 4 when that has run. Phase 10 reads findings from `sensitive-content.md` phase 2 when that has run.
+Run order is `docs/plans/README.md`. Phase 1 needs nothing that is still open. Phase 2 needs `stateless-server.md` phase 3. Each later phase needs the one before it. Phase 7 links to `policy-library.md` phase 4 when that has run. Phase 10 reads findings from `sensitive-content.md` phase 2 when that has run. Phase 12 needs phase 6. Phase 13 needs phase 4 and `authority.md` phase 1. Phase 14 needs phases 7 and 13.
 
 A dean of the College of Science should see the grant records of every department in the college, without anyone adding the dean to forty workspaces. A department chair should see their own department, and when they hand the chair to a successor, the successor should see it the next morning. A registrar's table should show each department only its own students. Nobody should be able to answer "why can this person see this?" with "it's complicated".
 
@@ -49,6 +49,17 @@ Record the search in the first commit message of phase 2: NIST SP 800-162, SP 80
 | Is a decision logged? | Changes are ledger entries, as today. Decisions that matter leave a receipt: every denial, every privileged action, every read that returns a protected field, and everything done under view-as or impersonation |
 | Who may impersonate? | Full impersonation, with writes, only of people marked synthetic. A real person can be viewed only through view-as, which is read-only, for one app, for 30 minutes. Johann may change this |
 | Is the tree stored on records? | No. A record stores only the unit id or person it names. The tree's ancestors live in one closure table. A reorganization rewrites closure rows and never touches records |
+
+## How people meet this model
+
+The model has many parts. Almost nobody should see them. `ux-standards.md` rules 11 to 16 apply to every screen and tool in this brief.
+
+| Person | What they see | What the system and their AI tool handle |
+| --- | --- | --- |
+| A faculty member | Their apps. A denial with `Request access`, already filled in. Masked values where they are not cleared, such as a birth year | Which grants reach them, why, and how long. The request's route |
+| An approver | One request or one drafted change at a time, as a sentence, with who gains and who loses, and `Approve` or `Reject` | Whether the request fits a rule that approves it alone. Who else could decide |
+| An administrator | Suggestions such as "These 40 memberships are covered by one rule for chairs", drafts their AI tool made, and the impact of each | The structure: anchors, depths, domains, clearances, the closure |
+| An AI tool | Tools that draft, preview and explain, and that answer in sentences | Turning what a person asked for into a structured draft that the server can check |
 
 ## What exists today
 
@@ -463,6 +474,108 @@ Tests.
 4. An Org Unit Admin sees only grants anchored in their subtree.
 5. Every list in the section pages in SQL. With 10,000 grants, each page returns in under 200 ms. Record the times.
 
+## Phase 12 — masks instead of blanks
+
+Today a person who is not cleared for a field gets nothing. Often a safe part would do: the birth year without the date, the last four digits of an identifier, a salary band.
+
+1. A closed list of masks in `crates/scaffoldry-core/src/mask.rs`, one pure function `mask(value, kind) -> Value`: `hide` (today's behavior), `last4` (all but the last four characters replaced), `initials`, `year` and `month` (a date reduced to its year, or its year and month), and `band` (a number reduced to its band, with the band width stored in the mask). Add a mask schema to `governance/schema/`. A keyed hash for joining two masked tables needs the secrets store and is out of scope.
+2. Each sensitivity category gains `default_mask`, in its settings and in each file in `governance/sensitivity-presets/`. FERPA and PHI default to `hide`. The others are chosen in the preset and shown in the pull request.
+3. A field may name a `mask`. A column rule may use `mode: Masked { mask }` beside `Hidden` and `ReadOnly`. A mask that shows more than the field's category default is a widening change and raises the flagged check `mask_weakened`.
+4. When a reader is not cleared for a field, its value is replaced by its mask in every response: records, pages, `page_call`, client calls, exports and history. One function applies it, in the same place `redact_records` removes hidden fields today. Values are masked after the row scope chooses rows, so the scope and the SQL compiler do not change.
+5. Filtering, sorting, searching or totalling a masked field is refused with `field_hidden`, as for a hidden field. A mask must not leak order.
+6. A masked read is not a disclosure of the protected value. Only a read with no mask is.
+7. Every mask has a sentence: "Shown as the year only."
+
+Tests.
+
+1. Each mask kind on a table of values, including empty values, short strings for `last4`, and dates at the edges of a year.
+2. A viewer reads a FERPA date of birth whose field mask is `year` and gets the year. An editor gets the date.
+3. Sorting on a masked field is `field_hidden`.
+4. Setting a field's mask to show more than its category default raises `mask_weakened`.
+5. An export and a page call apply the same mask as a list.
+
+## Phase 13 — asking for access
+
+A person who is refused should be able to ask, and most routine asks should not need anyone.
+
+Migration `*_access_requests.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS access_requests (
+    id UUID PRIMARY KEY,
+    requester VARCHAR(255) NOT NULL,
+    filed_by_client VARCHAR(64),
+    task VARCHAR(200),
+    object_kind VARCHAR(16) NOT NULL,
+    object_id VARCHAR(255) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    clearance VARCHAR(16),
+    reason TEXT NOT NULL,
+    days SMALLINT NOT NULL,
+    route VARCHAR(10) NOT NULL,
+    rule_id UUID,
+    status VARCHAR(16) NOT NULL,
+    decided_by VARCHAR(255),
+    decided_at TIMESTAMPTZ,
+    grant_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS access_request_rules (
+    id UUID PRIMARY KEY,
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    rule JSONB NOT NULL,
+    created_by VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    retired_at TIMESTAMPTZ
+);
+```
+
+`route` is `auto`, `self`, or `approver`. `status` is `Waiting for person`, `Pending`, `Approved`, `Rejected`, `Withdrawn`, or `Expired`.
+
+1. **Rules that approve alone.** A rule is a closed set of conditions, all of which must hold: the highest role it allows, the highest sensitivity of the object, whether the object must be in the requester's own unit or below it, the longest duration, and optionally affiliations. Rules are set like the authority matrix: the institution sets them, a unit may only add conditions, and a second person confirms each change. A request that fits a rule is approved at once with `route = auto`, and the grant records the rule.
+2. **The default rule**, created at migration and shown in the console: "A viewer request for an app at Internal or below, in the requester's own unit or below, for up to 30 days, is approved automatically." An institution can retire it. Johann may change this default.
+3. **Within the person's own rights.** When an AI tool working with a narrowed session asks for something the person may already do, `route = self`. The person confirms in the desk, or in the AI tool when it supports MCP elicitation. The approval widens only that session, until it ends. No grant is stored.
+4. **Everything else goes to a person.** The request becomes a change with signals `request_write`, `request_sensitive`, and `request_outside_unit` as they apply. `authority::required` names who decides. Add the three to the sentence table beside `FLAGGED_CHECKS`. The requester is never the approver.
+5. **Approval makes a grant** with `source = request`, the requested role and clearance, and `valid_until` after `days`, at most the setting `access.request_max_days` (integer 1 to 365, default 90). It expires by itself.
+6. **Where requests start.** Every denial from `decide` and every `field_hidden` carries a `request` object filled with what was refused, and the desk shows `Request access` from it. The MCP tool `request_access` files one for the signed-in person. When an AI tool files it, the status starts at `Waiting for person` until the person confirms, so a tool can never ask in a person's name without them.
+7. When `workflows.md` phase 5 has run, a pending request is a My Work item of kind `decision` for each approver. When `notifications.md` phase 1 has run, the requester is told the outcome.
+8. Routes: `POST /access/requests`, `GET /me/access/requests`, `POST /access/requests/{id}/confirm` for the person, `POST /access/requests/{id}/decide` for an approver, `POST /access/requests/{id}/withdraw`. Admin routes for rules, with reasons and the ledger.
+
+Tests.
+
+1. A viewer request inside the requester's own unit, for an Internal app, for 14 days, is approved at once by the default rule, and the grant expires after 14 days.
+2. An editor request is not approved by the default rule and is routed to the people `authority::required` names.
+3. A request filed by an AI tool waits for the person, and an approver cannot decide it before then.
+4. A `self` request widens only the session that asked, and a new session does not have it.
+5. The requester cannot approve their own request, even as an owner.
+6. A denial carries a filled `request` object that, sent back unchanged, files the request.
+7. A unit rule that removes a condition from the institution's rule is refused.
+
+## Phase 14 — AI tools draft, people decide
+
+Most of this brief's structure should be written by an administrator's AI tool, checked by the server, and confirmed by a person.
+
+1. **Draft tools.** `draft_access_change` takes one change of a kind this brief defines: a grant, a revocation, coordinates, a seal, a mask, a request rule, or a hierarchy. The caller must have the right to propose that change in the console. It stores a pending `access_changes` row with `proposed_via = agent` and the client from `external-apps.md` phase 8 when there is one, and returns the change as sentences, its checks, and the impact from phase 7. It applies nothing. `preview_access_change` returns the same without storing.
+2. **Suggestions, computed, not guessed.** `GET /admin/access/suggestions`, and the read-only tool `access_suggestions`, list what could be simpler. Each comes from a query, not a model:
+   - Memberships already covered by a grant.
+   - Groups of person memberships that match one position at one unit, which a `holder_unit` grant could replace.
+   - Grants and memberships past their validity that were never revoked.
+   - Grants that reached nothing in the last 180 days, when receipts exist.
+   - Fields with a sensitive category and no mask chosen beyond the default.
+3. **A prompt for the administrator's AI tool**, `tidy_access`: read the suggestions, draft at most five changes that remove the most memberships while losing no one's access, preview each, and present the sentences and impact to the person. It never confirms.
+4. **Confirming.** Drafts appear in the console's Access section with "Drafted by an AI tool used by {name}" and their sentences and impact. Confirming follows phase 4: widening needs a person other than the one who drafted it.
+5. The cross-brief rule in the README states it: no MCP tool applies an admin write. A draft is a pending change that applies only when a person with the right confirms it.
+
+Tests.
+
+1. `draft_access_change` stores a pending change and changes no access. Run `role_at` for every fixture person before and after.
+2. Its sentences and impact equal what the console shows for the same change.
+3. A caller without the right to propose a change cannot draft it.
+4. Each suggestion kind finds its seeded case and not its neighbor.
+5. Replacing the suggested memberships with the suggested `holder_unit` grant leaves every fixture person's role unchanged on every object. Check with the reference evaluator from phase 5.
+6. A widening draft cannot be confirmed by the person who asked their AI tool to draft it.
+
 ## How to prompt the build agent
 
 ```
@@ -495,3 +608,7 @@ Stop when the tests listed for phase N pass, and paste the command output.
 | A tampered audit trail will go unnoticed. | Receipts are hash-chained per batch, and each batch hash is a ledger entry. Editing or removing a sealed receipt fails verification. |
 | A vacancy will strand access. | A vacancy removes the holder, and with it that holder's reach. Nothing passes access up or down the tree because a seat is empty. Decisions that need a person route through `approvers.md`, which handles vacancies separately. |
 | Stale appointments will keep access forever. | Appointments past their `end_date` leave the holder set. Requested grants expire. Every grant comes up for review on a schedule. |
+| Automatic approval will hand out access nobody looked at. | Only requests that fit a rule the institution wrote and a second person confirmed are approved alone, and the default rule covers viewing non-sensitive apps in a person's own unit for a month. Every automatic approval names its rule, and every grant it makes expires. |
+| An AI tool will grant itself access. | No MCP tool applies an access change. A tool drafts, and a person with the right confirms. A request an AI tool files waits for the person it acts for before anyone else sees it. |
+| A mask is a weaker hide that will leak. | A masked field cannot be filtered, sorted, searched or totalled, so its order and range do not leak. A mask that shows more than its category allows needs a second person. |
+| This much structure will need a specialist to run. | People see sentences, safe defaults and one decision at a time. Suggestions come from queries, drafts come from the administrator's AI tool, and the server checks every draft and shows its impact before anyone confirms it. |
