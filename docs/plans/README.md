@@ -201,7 +201,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 117 | [views.md](views.md) | 2 | Filter trees, grouping, footer totals, and color rules | **COMPLETED** |
 | 118 | [views.md](views.md) | 3 | A million rows in a window. Uses `@tanstack/react-virtual`, approved by Johann (MIT) | **COMPLETED** |
 | 119 | [views.md](views.md) | 4 | Summary views and hand-written accessible charts | **COMPLETED** |
-| 120 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs |
+| 120 | [import-export.md](import-export.md) | 1 | An import wizard with a dry run, a rejected-rows report, and resumable jobs | **COMPLETED** |
 | 121 | [attachments.md](attachments.md) | 1 | A file store with upload, download, limits, and safe headers | **COMPLETED** |
 | 122 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon | **COMPLETED** |
 | 123 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app | **COMPLETED** |
