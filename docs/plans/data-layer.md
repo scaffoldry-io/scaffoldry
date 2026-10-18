@@ -1,0 +1,149 @@
+# The data layer — design note
+
+```
+Title:  Data is a layer of its own, with its own API. Datasets keep the labels. Apps and automations are clients.
+Risk:   high
+Ask:    Approve the direction and answer the open questions. Then phase 1 can start. Nothing here is built.
+IfYes:  Every read and write of data goes through one layer that checks the labels on the data and the grants of the person and the app. Apps, pages, automations, and AI agents need no policy review of their own, except where they decide something about data.
+IfNo:   Policy stays split. Each app is reviewed on its own, and labels protect fields inside apps. A new app can still leak what an old one protects.
+Checks: None yet. This is a design. Each phase names its failing test first.
+```
+
+## The decision
+
+These are your words, in order.
+
+1. **The data platform is separate from apps.** It is an API-enabled data layer. Apps, pages, automations, and AI agents are clients of it.
+2. **Data is grouped into datasets.** The dataset keeps the labeling correct.
+3. **A tagged row is the default.** The row's own tag decides. **A dataset can override.**
+4. **AI tools evaluate the data against policy and review the tagging.**
+5. **Apps and automations need no policy review, except for decisions that affect data.**
+
+## How I read "override"
+
+I read it this way. Please confirm or correct.
+
+- Every row may carry a tag. The row's tag is what protects it.
+- A dataset may carry a label too. It has two settings:
+  - A **default**: it applies to rows that carry no tag.
+  - A **floor**: it applies to every row, and a row's tag cannot lower it.
+- The effective label of a row is the row's tag, plus the dataset's floor, plus the dataset's default if the row has no tag.
+- Labels only add protection. Nothing in this design lowers a label by itself. Lowering one is a person's act, written to the ledger with a reason. This is the rule `sensitive-content.md` already sets.
+
+If you meant that a dataset label can also *lower* what a row's tag says, tell me. I would not build that. It lets one setting on one dataset remove protection from thousands of rows, with no row-level record of it.
+
+## What exists today
+
+I read these before writing. Each is checked in the code.
+
+| Fact | Where |
+| --- | --- |
+| Live rows are in `dataset_records`, keyed by `app_slug`. There is no dataset id. In practice an app's table is the dataset | `0002_workspaces_and_ledger.sql` |
+| `published_datasets` is a catalog: a name, a department, a sensitivity level, and sample rows inside a JSON payload. It holds no live rows | `0003_persist_apps_and_datasets.sql`, `routes/datasets.rs` |
+| Labels are on fields only, keyed `(app, table, field)`. They can only raise sensitivity. The set is created empty. The code comment says it stays empty "until the label table exists". That table does not exist | `state.rs` `labels`, `engine/lib.rs` `LabelSet` |
+| A row has no tag. It has one derived yes/no flag, `dataset_records.is_ferpa_sensitive`. A job sets it true when the row holds a value in a sensitive field, and Cedar's record entity reads it. It cannot say which category applies or who may read | `repository.rs` flag recomputation, `service/records.rs`, `scaffoldry-policy/entities.rs` |
+| Sensitivity categories and detectors are settings, with presets for FERPA, PHI, PCI, and PII. Scanning stored records, findings, and review are not built (rows 151 to 153) | `sensitive-content.md`, `state.rs` |
+| The record code is 2,122 lines in `service/records.rs`, inside the server crate, mixed with workspace, app, and approval code | `service/records.rs` |
+| Row rules narrow what a member reads. They never grant. They are evaluated in Rust and compiled to SQL | `access-rules.md`, `service/scope.rs` |
+| The architecture audit checks that the web app imports no database driver and that mutations meet Cedar. It does not check that apps reach data only through one door | `governance/scripts/audit-architecture.py` |
+
+Two of these matter most. **Row tags do not exist.** There is only the derived yes/no flag. And **a dataset is not a stored thing**; an app's table plays that role.
+
+## The model
+
+### Datasets
+
+A dataset is a named, stored group of rows with a schema. It has an owning unit, a steward, and labels. Apps do not own data. An app is **granted** a dataset, with the access it needs: read, write, or both, on which fields.
+
+### Who may read a row
+
+A request carries two identities: the **person** and the **client** (an app, an automation, or an agent). Access needs both.
+
+| Check | Question |
+| --- | --- |
+| Client grant | Has this app been granted this dataset, for this action? |
+| Label requirement | Does this person hold a role or position, at a unit that covers the row, that the row's effective label requires? |
+| Row rules | Do the dataset's row rules narrow the person out? (unchanged) |
+
+All three must pass. A client grant never widens what a person may read. A person's rights never widen what a client was granted. This keeps the rule you already have: rules narrow and never grant.
+
+### Row tags
+
+A tag is a set of category ids. A row's tag is stored with the row. A write may set it. A steward may set it in bulk. The label requirement for a category (who may read it) comes from `position-roles.md` phase 5: a role or position and a reach in the organization.
+
+### The AI review
+
+AI tools do three things. All three produce a **proposal**, not a change.
+
+| Job | What it does |
+| --- | --- |
+| Evaluate | Reads a dataset against the organization's policy and the standard it maps to, and reports what the tagging should be |
+| Tag | Proposes tags for untagged rows, and raises for rows whose content matches a category |
+| Review | Compares proposed tags with existing ones and flags gaps and contradictions, for a steward |
+
+This is the finding model in `sensitive-content.md`, with an AI tool in the role of the detector. It never stores matched values. It stores the field, the category, counts, and a few record ids.
+
+**Open question 2** is whether a proposal that only *raises* protection may apply itself and wait for review afterward. See below.
+
+### Apps and automations
+
+Today an app change goes through a proposal and an approver. Under this design:
+
+- An app, a page, a view, or an automation is changed by its owners. No policy approval is needed to change how data is shown or arranged.
+- A change is governed when it **decides something about data**. These stay governed:
+  - granting an app a dataset, or widening that grant,
+  - an automation that writes to a dataset or sends data out,
+  - an export, a share link, or an integration that carries labeled data,
+  - any change to a dataset's schema, labels, steward, or retention.
+- The data layer enforces labels on every read and write, whoever the client is. That is why most app review is no longer needed to protect data.
+
+This is a real loosening of app review. It is safe only if the data layer is the single door. Phase 2 below makes that a test.
+
+### The boundary
+
+I recommend a crate boundary first, not a second service. The doctrine says reach for the smallest thing: a new crate, `scaffoldry-data`, with its own routes under `/api/v1/data/…` and its own tests. It owns the dataset, row, label, and tag code. The server crate calls it. The architecture audit then fails any file outside the crate that reads `dataset_records` or the label tables. A deployable split is a later step, taken if scale or an institution's rules ask for it. The stateless server work already lets it scale out.
+
+## Phases
+
+| Phase | Failing test first | Change |
+| --- | --- | --- |
+| 1 | An app table is a dataset with an id. A list of datasets returns it, and a record read through the dataset id returns the same row as through the app path | Datasets become stored things with ids. Existing app tables get one each by migration. No behavior changes. The two paths agree |
+| 2 | A script that adds a `SELECT` on `dataset_records` outside the data crate fails the audit | The data crate. Records code moves in. The audit enforces the one door |
+| 3 | A row tagged `PHI` is not returned to a reader the requirement excludes. A dataset floor raises an untagged row. A write cannot lower a floor | Row tags and dataset labels, with the effective-label function from this note. The `is_ferpa_sensitive` flag stays, derived from the effective label, so Cedar keeps working |
+| 4 | An app with no grant gets 403. An app with a read grant cannot write. A person outside the label requirement gets nothing through an app that has the grant | App grants. The two-identity check |
+| 5 | The AI review writes a finding for a row that matches a category, stores no value, and changes no tag | The review job, using the existing job runner and the existing finding shape |
+| 6 | A steward confirms a finding and the tag applies and is a ledger entry with a reason. A removal needs a second person | The review screen and the decisions |
+| 7 | An app change that grants a dataset needs approval. A change to a view does not | The approval rules narrowed to decisions about data |
+
+Phases 1 and 2 add no feature. They put the code where the rest stands.
+
+## Enterprise objections
+
+| Objection | Answer |
+| --- | --- |
+| "If apps need no review, anyone can build anything and leak data." | An app can only reach datasets it was granted, and a grant is governed. Labeled data is checked on every read by the data layer, whatever the app. The app cannot bypass it |
+| "An AI tool will mislabel data." | It only proposes. A proposal changes nothing until a person confirms it. The one exception under discussion, raising protection only, can only make data safer, and a person can undo it with a reason |
+| "A dataset floor will lock out the people who need the data." | The steward sees who a floor reaches before saving, as in `position-roles.md` phase 2b. A platform admin keeps a way in, and every admin read of labeled data is a disclosure |
+| "Row tags will be slow at a million rows." | Not measured. The tag set is indexed with the record index, and a label requirement compiles to SQL the way row rules do. It must pass `million_rows_test` before phase 3 is called done |
+| "This is a rewrite." | Phases 1 and 2 move code and add ids. They change no behavior and each has its own tests. The new behavior starts at phase 3 |
+| "Who decides what the policy says?" | The organization does, in settings and OSCAL. The AI tool reads the policy; it does not write it |
+
+## Open questions
+
+1. **Override.** Is my reading above right: a floor and a default on the dataset, and no lowering?
+2. **Self-applying raises.** May an AI proposal that only raises protection apply at once and be reviewed afterward? It protects faster. It also means an AI tool changes who can read data without a person. I lean yes for raising, never for lowering, with a daily review list for the steward.
+3. **Where does the row's unit come from?** Needed for the reach in a label requirement. The dataset's owning unit, or a field on the row. I lean to the dataset's unit first.
+4. **Who is a steward?** A role on the dataset, or a position at the owning unit. I lean to a position, so the duty follows the seat.
+5. **Does an automation act as a person or as itself?** I lean to itself, as a client with its own grant, and the person who started it as the person.
+
+## Not decided, and not verified
+
+- **Performance.** Nothing here is measured. The `million_rows_test` limits do not move.
+- **OSCAL mapping.** The control ids in `position-roles.md` phase 5 are not checked against `oscal-catalog.md`.
+- **Existing data.** I have not counted rows or apps. Phase 1's migration must be tested on a copy of real data before it runs on any institution's.
+- **Cedar.** The note keeps Cedar for questions about workspaces and apps. I have not worked out which dataset questions, if any, belong in Cedar. The audit says mutations must meet Cedar, and phase 2 must keep that true.
+- **The web desk.** Several screens read app routes. They keep working through phase 2 because the paths agree. Moving them to dataset routes is not planned here.
+
+## Prompt for the session
+
+Read this file, `position-roles.md` phase 5, `sensitive-content.md`, and `access-rules.md`. Do not start until the open questions are answered. Phase 1 first. Stop when its tests pass.
