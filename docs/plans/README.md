@@ -359,6 +359,7 @@ Settled. These were open and are now decided. Each is written into the brief nam
 | PostgreSQL is the only source of truth. Any number of server instances may serve one database. Caches are refreshed by a counter read on every request, not by `LISTEN` and `NOTIFY` | `stateless-server.md` |
 | A test has a database of its own. No test changes the process environment | `stateless-server.md` phase 1 |
 | CI runs its checks as parallel jobs behind one required check, `validate`. Three steps wait for planned work and switch on by themselves: parallel tests when `TestDb` exists, OSCAL validation when code reads `OSCAL_OUT` or `OSCAL_CATALOG_OUT`, and the `million_rows` test when it exists. Agents do not edit `ci.yml` | `.github/workflows/ci.yml` |
+| The `million_rows` test keeps every limit and gates on the 19th of twenty runs sorted fastest to slowest (the 95th percentile). It still prints and records the slowest. One slow run on a shared runner does not fail it. Two do | `row-scale.md` phase 6 |
 | Institutional rules are kept as an OSCAL catalog of sentences, each citing a stored passage. A person's own agent proposes them. A different person publishes them. Scaffoldry runs no model | `policy-library.md` |
 | The platform fetches web sources itself, through the outbound allowlist. It does not extract text from a PDF | `policy-library.md` phase 5 |
 | A change has a FIPS 199 tier from the checks it raises. A matrix says who decides. The institution sets it, units only tighten it, and a second person confirms every change to it | `authority.md` |
