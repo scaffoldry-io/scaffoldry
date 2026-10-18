@@ -19,6 +19,7 @@ These are your words, in order.
 4. **AI tools evaluate the data against policy and review the tagging.**
 5. **Apps and automations need no policy review, except for decisions that affect data.**
 6. **A row generally carries its organization in a column.** When the column is missing or empty, the row takes the dataset's unit.
+7. **A steward is a position defined in the system.** It is either inherited from a higher unit or specified on the dataset. Some datasets are owned by a function, such as faculty affairs.
 
 ## How I read "override"
 
@@ -79,6 +80,52 @@ How I would build it:
 - A value that names no unit is refused when written. It is not silently treated as missing, because that would move the row to the dataset's unit, which may be broader or narrower than the writer meant.
 - If a unit is retired later, rows keep their id. The AI review raises a finding for them, and a steward decides. Until then the row stays with the retired unit's place in the tree.
 - Importing a spreadsheet maps a column to this field like any other. An import that leaves it blank takes the dataset's unit and says so in the preview.
+
+### Many owners in one row
+
+A new faculty row is the hard case. Rank, track, and tenure review date belong to faculty affairs. Room and furniture belong to space management. Laptop and memory belong to IT. The row belongs to a department, and that department's roles have their own grants.
+
+**My answer: do not put ownership inside cells.** Keep three axes, each small and stored where it is cheap to read:
+
+| Axis | Lives on | Question it answers |
+| --- | --- | --- |
+| Unit | The row, in one indexed column | Whose row is it? (the row's organization above) |
+| Function | The field, in the schema. A dataset has a default function | Who owns this attribute? |
+| Category | The field, or the row's tag | How sensitive is it? |
+
+A **function** is a named kind of ownership: faculty affairs, space management, IT. A function has a steward position. The steward is the position defined in the system, taken from the nearest higher unit that has one, or specified on the dataset.
+
+A **grant** has three parts: a role or position, a function, and a reach. The reach is `this unit`, `this unit and below`, or `anywhere`.
+
+**The rule, in one sentence.** A person reads or writes field *f* of row *r* when they hold a grant for the function of *f*, whose reach covers the unit of *r*, and they meet the label requirement of any category on *f* or *r*, and the client was granted the dataset.
+
+In the faculty example:
+- The faculty affairs officer holds a grant for `faculty_affairs`, reach `anywhere`. They write rank and tenure date on every row. They see no room and no laptop.
+- The Chemistry chair holds a read grant for all three functions, reach `Chemistry and below`. They read the whole Chemistry row and no Physics row.
+- IT holds `it_equipment`, `anywhere`. Space management holds `space`, `anywhere`.
+- Nobody can read a field in a row whose unit their grants do not cover.
+
+**Why not nested blocks in cells.**
+- Governance metadata in every cell multiplies storage and reads.
+- The policy would live in the data, which the schema and the audit cannot see. `data-has-a-format` asks for a schema before anything reads it.
+- It cannot be indexed, so a million-row list cannot be narrowed in SQL.
+- Each write would have to prove it did not change the metadata, and the AI review would have to read every cell.
+- A nested value is still fine as a value, such as an address with parts. If its parts have different owners, they are different fields. A **field group** names the fields that share an owner and categories, so a steward tags the group once.
+
+**Two ways to build the same governance.** Either works with the rule above.
+
+| Way | Good for | Cost |
+| --- | --- | --- |
+| Split by function. Faculty affairs, space, and IT each own a dataset keyed by the person. A faculty profile is an app that joins them | Clear single ownership, audit, and write rights. It fits "apps are clients" | Several datasets. A new hire is three writes, which an automation does from one form |
+| Tag fields by function in one dataset | One table that arrives whole, such as an imported HR sheet | Every field needs a tag. A steward must keep them right |
+
+I would **prefer the split** and allow field tags for the shared table. One owner per dataset is the simple default. Field tags are the exception, and the AI review proposes them.
+
+**Performance, by design and not measured.** The person's grants turn into a small map: function to the set of units it covers. Reading a row is one set lookup per field. No JSON is parsed for governance. A list query filters on the row's unit column, so unauthorized rows never leave the database. A person cannot filter, sort, search, or total on a field they cannot read on every row in their scope. That is the rule `access-rules.md` already sets, and it stops reading by inference. The `million_rows_test` limits must hold with all of this on. I have not run it.
+
+**What is deliberately left out.** More axes. Purpose, time, and project all invite their own tags. Each would multiply the grants a steward must keep right. Unit, function, and category are enough to say who owns, who belongs, and what is sensitive. A fourth axis needs its own case.
+
+**Writes.** A write to a field needs the grant for that field's function. Changing a row's unit needs a grant that covers both the old and the new unit, so a row cannot be moved out of reach to hide it.
 
 ### Row tags
 
@@ -146,8 +193,8 @@ Phases 1 and 2 add no feature. They put the code where the rest stands.
 1. **Override.** Is my reading above right: a floor and a default on the dataset, and no lowering?
 2. **Self-applying raises.** May an AI proposal that only raises protection apply at once and be reviewed afterward? It protects faster. It also means an AI tool changes who can read data without a person. I lean yes for raising, never for lowering, with a daily review list for the steward.
 3. **Decided: a column on the row, and the dataset's unit when it is missing.** Open detail: whether a value that names no unit is refused at write (my lean, above) or accepted and flagged.
-4. **Who is a steward?** A role on the dataset, or a position at the owning unit. I lean to a position, so the duty follows the seat.
-5. **Does an automation act as a person or as itself?** I lean to itself, as a client with its own grant, and the person who started it as the person.
+4. **Decided: a position defined in the system, inherited from a higher unit or specified on the dataset.** Some datasets are owned by a function. Open detail: where functions are defined and who may add one. I lean to settings, by proposal, like categories.
+5. **Still open (the answer was left blank). Does an automation act as a person or as itself?** I lean to itself, as a client with its own grant, and the person who started it as the person.
 
 ## Not decided, and not verified
 
