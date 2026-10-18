@@ -3,7 +3,7 @@
 ```
 Title:  Data is a layer of its own, with its own API. Datasets keep the labels. Apps and automations are clients.
 Risk:   high
-Ask:    Approve the direction and the Version 1 cut. Then phase 1 can start. The open questions below are about later parts, so they can wait. Nothing here is built.
+Ask:    Approve the direction, the flexibility principle, and the Version 1 cut. Then phase 1 can start. The open questions below are about later parts, so they can wait. Nothing here is built.
 IfYes:  Every read and write of data goes through one layer that checks the labels on the data and the grants of the person and the app. Apps, pages, automations, and AI agents need no policy review of their own, except where they decide something about data.
 IfNo:   Policy stays split. Each app is reviewed on its own, and labels protect fields inside apps. A new app can still leak what an old one protects.
 Checks: None yet. This is a design. Each phase names its failing test first.
@@ -26,6 +26,19 @@ These are your words, in order.
 11. **An automation runs as a system user.** A person approves its grants. It follows the same ownership options as an app: a person, a team, or a position owns changes and receives error alerts.
 12. **A single row can be shared.** Where it goes beyond the default permissions, it needs a justification and an expiry, and may need an AI review before a person approves it.
 13. **A label change is never instant.** The steward is asked each time. A change runs on a schedule with a communications plan and a window for exceptions, which are recorded as grants. See "Changing a label".
+
+## The principle: mechanism, not business rules
+
+You asked that every answer lean toward flexibility, not toward business rules built into the system. This is the rule for the rest of the note, and where it conflicts with an earlier line, it wins.
+
+- **The platform provides mechanism.** Attributes, grants, labels, dates, approvals, and a decision that can be explained.
+- **The institution provides the rules, as data.** Each rule is a document that follows a published, plain schema. No institution's habits are written into the code. "Student-eligible", "needs an agreement", and "peers" are examples of policy an institution writes. They are not features.
+- **A closed, small set of operators.** A policy can say "has", "is one of", "is before", "names", and "and / or / not" over attributes. It cannot contain code. A closed set can be understood by a person, checked by a validator, and compiled to indexes. An open language cannot.
+- **AI tools help write and explain policy.** The schemas are small and have worked examples. Each policy type has a short guide an AI tool reads. An AI tool can draft a policy from a plain description, show the person what it means in words, test it against sample cases, and explain any single decision ("this person was allowed because of these two grants"). It never applies a policy by itself.
+- **Every decision can be explained.** The data layer can answer "why was this allowed or refused" with the rules and facts it used. That serves audit, support, and AI tools.
+- **Performance is a budget, not a hope.** Every policy compiles to sets or indexes. A policy has a size limit. The million-row limits hold with real policies switched on. A feature that cannot meet that is held back or narrowed.
+
+What this changes in the note: where I wrote a specific rule (student-eligible positions, peer exclusion, agreement references), read it as an **example policy** the schema must be able to express, not a feature to build.
 
 ## Version 1: the smallest thing that is safe
 
@@ -375,6 +388,37 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 
 Phases 1 and 2 add no feature. They put the code where the rest stands.
 
+## The catalog: find what exists and ask for it
+
+You called this the biggest problem we could try to solve: what data is out there, and how do I ask for it. A person should be able to find a dataset without seeing a single real value.
+
+**What is already here.** A catalog route and an MCP tool list datasets with fields, owners, and sample rows. The samples are typed by hand today. The tool returned samples to any signed-in caller, even for restricted data, while the HTTP route withheld them. I fixed that on 2026-10-19: both now use one rule, `service::catalog`, and a test covers it. This shows how easily a catalog leaks once samples come from real data.
+
+**What a catalog entry holds.** Plain metadata that follows a published schema: the name and a description in words, the owning function and unit, the steward as a position, the fields with their types and plain descriptions, the category labels, how fresh the data is, an approximate size, how it is used, and **how to ask for access**. None of it is a real value.
+
+**Samples that are safe.** Three kinds, in order of safety. The institution picks per dataset.
+1. **Synthetic from the schema.** Values are made up from each field's type and format, with no real value used. It cannot leak by construction. This is the default and the only kind in version 1.
+2. **Synthetic from the shape.** Values follow the real distribution of the data. This is more useful and carries real risk of leaking outliers or small groups. It needs a privacy review. I would not ship it without one.
+3. **Masked real values.** The riskiest. Masking real rows often leaves rows that can be identified, especially in small groups. I would not offer it.
+
+Counts and ranges are masked for small groups, so a row count cannot identify a person. The threshold is policy.
+
+**Discovery is governed too.** The existence of a dataset can itself be sensitive. Each dataset has a **discoverability** setting in policy: visible to everyone at the institution, visible to named units or positions, or hidden. A field can be shown by name, or shown as "a restricted field". The default is visible, so people can find things.
+
+**Search.** Search runs over the catalog entries, not over data. People can search by words, by function, by unit, by category, and by field names. The same search is an MCP tool, so an AI agent can answer "what data do we have on course enrollment" and offer the person a request. It returns metadata and synthetic samples only.
+
+**Requesting access.** Every catalog entry has a **request access** action.
+- The form is a policy. A dataset lists the fields a request must carry: a reason, a project, a duration, an agreement reference. The schema offers these. The institution chooses.
+- The request goes to the dataset's steward position, which is a seat and so survives people changing. A function steward and a unit steward may both be asked, if policy says so.
+- An AI tool may write a short, advisory assessment of the request against policy. A person decides.
+- The outcome is a dated grant or share, with a reason, that follows the rules already in this note. A refusal gives a reason the person can read.
+- The person can see where their request is, and who has it. A reminder goes to the steward if it waits. The reminders follow `notifications.md`.
+- Every request and outcome is a ledger entry.
+
+**What it needs that is not built.** Everything above. The Datasets screen and its API already list datasets. They do not search, show discoverability, hold synthetic samples, or take requests. The inbox that reminders use (`notifications.md`) is not built.
+
+**Where it fits in version 1.** I would put the catalog in version 1 as the first visible feature. It needs the dataset ids from phase 1, but not the full label and grant machinery. It would also give early pilots a reason to use the platform, and it would show what questions people ask. Request access can start as a form that sends a notice to the steward and records the outcome, before the rules engine exists.
+
 ## Prior art
 
 I searched on 2026-10-18. Vendor pages and university policies are marketing or local practice, not standards. Where I rely on what I already know and could not confirm in the search, I say so.
@@ -427,6 +471,8 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 | A share touching a restricted category | Approval from someone authorized for that category |
 | The tree used for reach | The org tree |
 | Exclusions in a reach | Included from the start |
+| Platform principle | Mechanism in the platform, rules as policy data with small published schemas. AI tools help write and explain policy. Every decision is explainable. Performance is a budget |
+| The catalog | A first-class feature. Metadata and synthetic samples only. Search and request access. Discoverability is a policy |
 | Audience fields (access by being named in a row) | Accepted, if performant. A test gates it |
 | Cross-listing and similar | The receiving unit's steward accepts. A synced value from the student system is authoritative |
 | Training and similar conditions | Stored as dated values on the person record, owned by a function, from a sync or by hand |
@@ -564,13 +610,17 @@ What it needs:
 4. **Federated login where it exists.** A collaborator at another university may sign in through their own institution's identity provider. That is likely better than a key for them. I would support both.
 5. **Narrow by default.** Their access is a grant on named datasets and fields, through the same function and field rules. Export is off unless the grant says so. Every access is a logged disclosure. A grant needs the sponsor and the dataset's steward to approve.
 
-## Open questions from the scenarios
+## Answers to the questions from the scenarios
 
-1. **"Additive."** Do I have it right: rules stack, and a lower layer can add restrictions freely and add grants up to a ceiling, but never remove a higher rule?
-2. **Capacity.** Should a person choose which capacity they are acting in for a session (student, or student worker)? I lean no, and to rely on position-based grants and the student-eligible designation.
-3. **Peer.** Is "peer" any other student, or students in the worker's own classes or cohort?
-4. **Collaborator credentials.** Are most external collaborators from other universities, which suggests federated login, or from companies and individuals, which suggests keys?
-5. **The agreement.** Should a grant to an external collaborator be impossible without a recorded agreement reference and end date?
+You asked me to answer these. Each answer follows the principle above: mechanism in the platform, rules in policy data.
+
+| Question | Answer |
+| --- | --- |
+| "Additive" layers | The platform enforces one invariant: a rule from a lower layer never removes or loosens a rule from a higher layer, and a delegate cannot grant beyond its ceiling. Everything else about what a layer adds is policy |
+| Choosing a capacity for a session | Not built in. A person has attributes (affiliation, positions held, conditions). A policy can use any of them. "Student worker" is a position with an attribute, not a mode. If an institution wants to separate the two roles, it writes that as policy |
+| What "peer" means | Not defined in code. The platform offers one generic comparison, a row field against a person attribute, such as the sections a person is enrolled in. An institution writes "peer" as a policy with that. It is parked until someone needs it, because it is the costly one to make fast |
+| How external collaborators sign in | A principal has an authentication method, and the methods are pluggable: federated login, a registered public key, or both. The grant does not care which. Nothing assumes where collaborators come from |
+| Requiring an agreement | A grant type lists its required fields, and the institution decides. "External collaborator grant" can require an agreement reference and an end date. "Student worker grant" need not. The platform ships the fields available and some sensible starting templates, and no fixed answer |
 
 ## Not decided, and not verified
 
