@@ -451,6 +451,26 @@ I checked the code and the earlier briefs on 2026-10-19. The honest answer is th
 4. **How a unit adds its own fields about someone else's record.** The pattern in the briefs is a local table that links to the central record, with the central fields shown by lookup. That is a sidecar. Open parts: who may see a local sidecar row beyond its unit (the central owner?), how the sidecar is labeled when it describes a sensitive central record, and what happens to it when the central record is deleted or merged.
 5. **What people actually do today.** I do not know the real cases at your institution. I expect some of these: a department keeps its own spreadsheet about each faculty member, a unit wants extra columns on a central list, a unit needs its own code table, and someone pastes an extract into a new sheet. The last one is the path around governance.
 
+### Keys and local columns (checked in the code on 2026-10-19)
+
+**What exists.**
+- A row's identity is its `id`, a string primary key on `dataset_records`, scoped by app and table. Links point at that id (`record_links.to_record`), so a link survives a rename of any field.
+- There is **no key concept**. A field has no `unique` or `key` flag. A table's `primary_field` is a display name, used for example to label a copy. The only index flag is `indexed`, which feeds `record_index` and is not unique. No unique constraint exists on any user field.
+- The import in PR #121 takes an `upsert_key` for each import and matches by lookup. It already reports "matched multiple records" as ambiguous. That means duplicates of a business key can exist today, and an upsert on a duplicated key cannot be trusted.
+- Field values are stored as JSON on the row. Adding a field to a table changes the app's definition, not the database. So adding a column is cheap in storage. The cost is governance: who may change the definition of a table that someone else owns.
+
+**So the answer to "will our keying allow local columns" is: not yet.** A local table can link to a central row by id, and that works. But nothing guarantees the central key is unique, so a sidecar, an upsert, or a sync that matches on the key could attach to the wrong row.
+
+**What I would add.**
+1. **A declared key for a dataset.** One field or several, which the dataset's steward sets. Uniqueness is enforced by a small table, `record_keys (app, table, key_text, record_id)`, with a unique constraint, written in the same transaction as the record. This follows how `record_index` and `record_links` already work, and it avoids per-dataset database changes. The key text is normalized by rule (trimmed, case-folded if declared).
+2. **The record id stays the identity that links use. The key is the business identity.** A sync matches rows by the key and keeps the record id stable. If a source changes a key value, that is a key change with a history entry. It must not be a delete and an insert, or every sidecar is orphaned.
+3. **A sidecar is a local table with a link to the central row.** For one local row per central row, add a unique link: at most one sidecar row for each central row. Without it, it is one central row to many local rows. Both are useful.
+4. **Merges need an alias.** If two central rows become one, links to the old id must follow. Nothing in the briefs covers this yet.
+5. **Local columns on the central table are allowed only by a change to its definition.** The central steward approves it. Version 1 prefers the sidecar.
+6. **Keys and secrecy.** A key such as an employee number is often wanted by everyone who links, while other fields are restricted. If the key is itself sensitive, use an opaque surrogate key for linking. A rejected duplicate must not tell the writer anything about a row they cannot see.
+
+Not built or tested. This also changes `connections.md`: its sync must match on a declared key.
+
 **What I would do before building.** The template is [data-layer-scenarios.md](data-layer-scenarios.md). Take five real examples from your organization and walk each through the model. For each one, write down who owns the data, who needs to see it, what the local unit adds, and what the central owner should be able to see back. If four of the five fit the sidecar pattern, it is right. If not, the model changes.
 
 ## Not decided, and not verified
