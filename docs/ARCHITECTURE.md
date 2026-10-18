@@ -30,7 +30,7 @@ All development in this repository must adhere to four governing principles:
 ### 2.1 Sovereign and Non-Rugpullable
 Scaffoldry must remain free from commercial license traps. 
 - Build only on technologies governed by neutral non-profit foundations (Apache Software Foundation, Linux Foundation, PostgreSQL Global Development Group).
-- Use strictly permissive licenses: **Apache 2.0, MIT, and BSD**.
+- Use strictly permissive licenses: **Apache 2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, and the PostgreSQL License**.
 - Never introduce dependencies governed by venture-backed open-core licenses (BSL, SSPL, or proprietary enterprise tiers).
 
 ### 2.2 The Modular Monolith Appliance

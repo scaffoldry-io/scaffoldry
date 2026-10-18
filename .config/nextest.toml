@@ -22,3 +22,9 @@ big-tables = { max-threads = 1 }
 [[profile.default.overrides]]
 filter = 'binary(=row_index_test) | binary(=row_scale_phase4_5_test) | binary(=computed_links_test) | binary(=record_links_two_way_test) | binary(=calc_recalc_test) | binary(=views_phase2_test) | binary(=views_phase3_test) | binary(=views_phase4_test) | binary(=index_jobs_test)'
 test-group = 'big-tables'
+
+# Tests that assert a wall-clock limit run alone: nothing else runs while one of them does, so its
+# numbers mean what they meant when the limit was set. Everything else still runs in parallel.
+[[profile.default.overrides]]
+filter = 'test(=a_scoped_list_at_200000_rows_is_fast_and_does_not_scan) | test(=changing_a_formula_on_a_big_table_returns_at_once_and_a_job_recalculates_every_value) | test(=updating_one_child_among_200000_updates_its_parent_in_under_200_ms) | test(=approving_an_indexed_field_on_a_big_table_returns_at_once_and_a_job_builds_the_index) | test(=a_page_from_the_middle_of_the_table_returns_in_under_200_ms) | test(=refresh_costs_under_two_milliseconds) | test(=one_user_among_fifty_thousand_is_one_statement_and_a_page_is_three) | test(=a_million_rows_open_in_a_window_by_anchor_and_the_last_page_and_count_hold) | test(=a_million_characters_scan_in_time_proportional_to_the_length) | test(=text_built_to_stall_a_matcher_does_not) | test(=a_scanner_that_does_not_answer_is_an_error) | test(=preview_rate_limited_to_20_per_second) | test(=test_concurrent_worker_pool_executes_parallel_jobs)'
+threads-required = 'num-test-threads'

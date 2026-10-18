@@ -56,7 +56,7 @@ This repository enforces strict sovereign software architecture, NIST OSCAL comp
 ## 3. What Must Never Happen
 
 - Pushing directly to `main` without a reviewed pull request and passing CI
-- Introducing third-party dependencies with licenses outside the approved whitelist (Apache 2.0, MIT, BSD-3, PostgreSQL License only; no AGPL/SSPL/BSL)
+- Introducing third-party dependencies with licenses outside the approved whitelist (Apache 2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, PostgreSQL License only; no AGPL/SSPL/BSL)
 - Frontend components directly querying PostgreSQL or bypassing Cedar authorization policies
 - Writing bespoke hypervisor wrappers, nested VMs, or background bash token scrapers
 - Proposing or merging code with unverified test claims
