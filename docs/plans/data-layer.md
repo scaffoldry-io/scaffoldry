@@ -3,7 +3,7 @@
 ```
 Title:  Data is a layer of its own, with its own API. Datasets keep the labels. Apps and automations are clients.
 Risk:   high
-Ask:    Approve the direction and answer the eight open questions. Then phase 1 can start. Nothing here is built.
+Ask:    Approve the direction and answer the four open questions. Then phase 1 can start. Nothing here is built.
 IfYes:  Every read and write of data goes through one layer that checks the labels on the data and the grants of the person and the app. Apps, pages, automations, and AI agents need no policy review of their own, except where they decide something about data.
 IfNo:   Policy stays split. Each app is reviewed on its own, and labels protect fields inside apps. A new app can still leak what an old one protects.
 Checks: None yet. This is a design. Each phase names its failing test first.
@@ -77,6 +77,13 @@ All three must pass. A client grant never widens what a person may read. A perso
 
 Each row generally carries the unit it belongs to, in a column. A dataset says which column that is. When a row has no value there, the row belongs to the dataset's owning unit. A dataset with no such column is wholly the owning unit's.
 
+A row has one **home unit**. It may also be tagged with **more than one unit**, so that each unit sees it. A joint appointment is the case: the row lives in one department and the other department sees it too.
+
+- The home unit owns the row. Its steward decides who writes it.
+- Each additional unit makes the row visible to grants that cover that unit, under the same function rules as the home unit. Reading is the default. Writing by an additional unit is a separate setting, off by default.
+- Tagging an additional unit widens access, so it is a governed change. The home unit's steward approves it. It is standing, not time-limited, because joint appointments last. It is **reviewed on a cycle** that the institution sets, instead of expiring. A row share is different: it is one-off and expires.
+- The unit tags are stored beside the home unit column and indexed, so lists filter in SQL. I have not measured this.
+
 This unit is what a label requirement's reach is measured against. A requirement of `registrar, unit and below` is met by a registrar whose unit is the row's unit or above it. A Physics registrar does not meet it for a row whose column names Chemistry.
 
 How I would build it:
@@ -99,7 +106,7 @@ A new faculty row is the hard case. Rank, track, and tenure review date belong t
 
 A **function** is a named kind of ownership: faculty affairs, space management, IT. A function has a steward position. The steward is the position defined in the system, taken from the nearest higher unit that has one, or specified on the dataset.
 
-A **grant** has three parts: a role or position, a function, and a reach. The reach is `this unit`, `this unit and below`, or `anywhere`.
+A **grant** has three parts: a role or position, a function, and a reach. The reach is `this unit`, `this unit and below`, or `anywhere`, and it may list **exclusions**: units it does not cover. The reach follows the org tree.
 
 **The rule, in one sentence.** A person reads or writes field *f* of row *r* when they hold a grant for the function of *f*, whose reach covers the unit of *r*, and they meet the label requirement of any category on *f* or *r*, and the client was granted the dataset.
 
@@ -210,6 +217,36 @@ Policy that applies to the whole institution, such as the categories for FERPA o
 
 These rules keep the model simple: access comes only from grants and shares, never from rank. I have not tested them on a real institution. This is the part most likely to meet resistance.
 
+### Where functions come from
+
+A **function** is a kind of ownership: registrar, faculty affairs, IT. It is defined at a unit and applies at and below that unit.
+
+- The platform administrator defines the top-level functions, by proposal.
+- A lower unit may define a function of its own. Its **local governance function** approves it, by proposal. Data governance is itself a function. Its steward at a unit approves new functions at that unit.
+- A lower unit **cannot redefine** a function that exists above it. It may name its own steward for that function, which the stewards rules already allow. This stops two units meaning different things by one name.
+- The administrator can see every function defined anywhere. That is visibility, not control.
+- A new function starts with no grants. Defining one gives nobody access.
+
+### Moving data around governance
+
+Your concern is real. An automation, or a person, can copy labeled data into a new structure that has weaker labels, and the governance does not follow it. No platform stops a person who may read data from retyping it, so this plan cannot be perfect. It works in layers, so that the easy paths are closed and the rest are seen.
+
+| Layer | What it does |
+| --- | --- |
+| 1. A system user cannot make structure | It cannot create datasets, fields, or tags. A new dataset needs an owner, a function, a unit, and labels before anything may write to it |
+| 2. A grant declares its flow | Approval shows what the automation reads, and what it writes. The approver sees "reads PHI, writes a dataset with no PHI protection" before saying yes |
+| 3. No write down | During a run, the data layer tracks the categories the run has read. A write to a target whose labels are weaker than those categories is **refused**. The owner and the target's steward are alerted. The remedy is a labeling change through the normal managed path |
+| 4. Lineage | Every write by a system user records where the data came from: source dataset and fields, target, the run, and the grant. A report shows the edges |
+| 5. The review compares the ends | The AI review flags a target that is labeled more weakly than its sources, and a field whose values match a category but carry no tag. It proposes. A person decides |
+| 6. Humans | A person with read access can still copy data out by hand. Exports and downloads are already disclosures. The audit log and the review are the control |
+
+**Refuse, do not re-label.** I chose to refuse the write in layer 3, and not to raise the target's label automatically. You ruled out automatic raising. A refused write can stop a running process, which is the harm you want to avoid. Approval-time checks in layer 2, and a dry run before an automation is switched on, are there to catch it before then. Layer 3 is the backstop.
+
+**Limits.**
+- The tracking is per run, not per field, unless a grant declares a field mapping. A run that reads PHI and writes anywhere will be held to PHI. That can be too strict. A declared mapping lets a grant say which source feeds which target, so a run that reads PHI for one field and writes an unrelated field is not blocked.
+- The idea is the "no write down" rule of mandatory access control. I know it from the literature and have not searched for how products apply it. I did not check whether Snowflake or others propagate tags this way.
+- Detection by content only finds what a detector can name, such as a Social Security number or a card number.
+
 ### Sharing a row
 
 Rows are shared across areas in ways nobody can predict. The design lets a person share a single row, or a few, without waiting for a policy change.
@@ -285,12 +322,14 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 | 3 | A row tagged `PHI` is not returned to a reader the requirement excludes. A dataset floor raises an untagged row. A write cannot lower a floor. A Chemistry row is read by the Chemistry registrar and not the Physics one. A row with the column empty is read by the dataset's unit's registrar. A row naming no unit is refused | Row tags, the row's unit column, and dataset labels, with the effective-label function from this note. The `is_ferpa_sensitive` flag stays, derived from the effective label, so Cedar keeps working |
 | 4 | An app with no grant gets 403. An app with a read grant cannot write. A person outside the label requirement gets nothing through an app that has the grant | App grants. The two-identity check |
 | 5 | The AI review writes a finding for a row that matches a category, stores no value, and changes no tag or access | The review job, using the existing job runner and the existing finding shape |
+| 5b | A function defined at the top needs an administrator's proposal. A function defined at a unit is approved by that unit's governance steward. A lower unit cannot redefine a function above it. A new function gives nobody access | Functions as settings |
 | 6 | A steward reads the evaluation and decides. A removal of protection needs a second person. Nothing applies by itself. A change that would stop someone's open work shows them first | The evaluation view and the decision |
 | 6b | A scheduled change alters no one's access before its date. On the date, those without an exception lose access and those with one keep it. Every audience member on the plan has a recorded notice. A read returns `upcoming_changes`. Withdrawing the change cancels the rest. The notice period cannot be shorter than the minimum | Scheduled changes, the communications plan, the notice period, and exceptions as grants. Needs `notifications.md` phases 1 and 2 |
 | 6c | An expedited change needs two people, takes effect at once, notifies at once, and shows in a report | The expedited path, if you want it |
 | 7 | An app change that grants a dataset needs approval. A change to a view does not | The approval rules narrowed to decisions about data |
 | 8 | A steward position resolves for a function and unit from the nearest unit that defines one. A deputy acts only within the steward's scope. A higher steward has no access to a lower unit's rows without a grant, and the local steward sees the cross-unit read | Stewards as positions, deputies, and the visibility report |
 | 9 | An automation reads only what its system user was granted. A grant needs an approver who holds the access. When its grant lapses it stops and its owner is alerted | System users for automations, with the same ownership options as apps |
+| 9b | A system user cannot create a dataset or field. A run that reads a PHI field cannot write to a dataset without PHI protection: the write is refused and the owner and the target's steward are alerted. A declared mapping lets an unrelated write through. Every cross-dataset write records a lineage edge | Layers 1 to 4 of "Moving data around governance" |
 | 10 | A row share beyond the default needs a justification and an expiry. It carries an AI assessment and a person's approval. It ends on its date and writes a ledger entry | Row shares |
 
 Phases 1 and 2 add no feature. They put the code where the rest stands.
@@ -340,20 +379,23 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 | Does an automation act as a person? | No. It is a system user with approved grants and the same ownership options as an app |
 | Can one row be shared? | Yes. Beyond the default permissions it needs a justification and an expiry, and may need an AI review before a person approves |
 | Override | Parked. No dataset floor, and no override of a lower unit by a higher one |
+| A dataset default for untagged rows | Kept. It only fills a gap |
+| A row with more than one unit | A home unit, plus additional unit tags that show the row to those units. Row shares cover the rest |
+| Where functions are defined | The administrator defines top-level ones by proposal. A unit's local governance function approves local ones. A lower unit cannot redefine one above it |
+| Approving an automation's grant | The approver must hold the access they grant |
+| A share touching a restricted category | Approval from someone authorized for that category |
+| The tree used for reach | The org tree |
+| Exclusions in a reach | Included from the start |
 
 ## Open questions
 
-1. **Decided: ask the steward each time, and plan the communication.** Details still open:
-   - **The minimum notice period** for each category class. I have not proposed numbers. The institution sets them in settings.
-   - **An expedited path** for urgent protection, needing two people (6c). Do you want it, or must every change take the full notice period?
-   - **Who drafts the plan.** The AI review drafts and the steward edits and approves. Do you want the AI to draft at all, or should the steward write it from a template?
-2. **A dataset default for untagged rows.** Keep it (it only fills a gap), or leave it out too?
-3. **A row with more than one unit.** Joint appointments need it. The single unit column does not allow it. Options: allow a list of units on a row (a grant needs to cover any one of them), or keep one home unit and use row shares for the rest. I lean to one home unit and shares, because it keeps the rule simple.
-4. **Where are functions defined, and who may add one?** I lean to settings, by proposal, like categories.
-5. **The approver rule.** Must a person who approves an automation's grant hold the access they grant? I lean yes.
-6. **A share that touches a restricted category.** Must approval come from someone authorized for that category? I lean yes.
-7. **The security tree.** Is the unit tree used for reach the org tree, or may it differ? Workday and PeopleSoft both allow differences. I lean to the org tree for now.
-8. **Exclusions in a reach.** "This unit and below, except these units." Workday needed special groups for this. I lean to include it from the start.
+1. **Details of "Changing a label".**
+   - The minimum notice period for each category class. The institution sets it in settings. I have not proposed numbers.
+   - An expedited path for urgent protection, needing two people. Do you want it?
+   - Who drafts the communications plan. I assumed the AI drafts and the steward approves.
+2. **Extra unit tags.** Did I read you right? A row has one home unit and may be tagged with more units so each sees it. I made reading the default for an additional unit, writing off by default, approval by the home unit's steward, and a review cycle instead of an expiry. Is that the shape you want?
+3. **Moving data around governance.** Do you agree with the layers, and with refusing a write instead of raising the target's label? The cost is that a refused write can stop a running automation. How strict should layer 3 be by default: hold a run to everything it has read, or only to declared mappings?
+4. **Who is the "local governance function"?** I made data governance a function, with a steward at each unit that has one. A unit with none would use the nearest above, which brings back the override worry. Should a unit be able to opt out of inheriting that, and say its functions need no outside approval?
 
 ## Not decided, and not verified
 
