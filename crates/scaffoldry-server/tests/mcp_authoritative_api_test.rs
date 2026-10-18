@@ -379,12 +379,12 @@ async fn list_datasets_withholds_samples_of_restricted_data_from_a_non_admin() {
     };
 
     let person = samples(login_user(&app, "prof.curie@science.state.edu").await).await;
-    assert_eq!(person["programs"], true, "public data shows samples");
-    assert_eq!(person["faculty"], true, "directory data shows samples");
-    assert_eq!(person["grants"], false, "restricted FERPA data shows none to a non-admin");
+    assert!(person["programs"], "public data shows samples");
+    assert!(person["faculty"], "directory data shows samples");
+    assert!(!person["grants"], "restricted FERPA data shows none to a non-admin");
 
     let admin = samples(login_user(&app, "jordan.lee@state.edu").await).await;
-    assert_eq!(admin["grants"], true, "a Platform Admin sees every sample");
+    assert!(admin["grants"], "a Platform Admin sees every sample");
 }
 
 /// The server tells an agent, at the start, who it acts for and the few rules that hold everywhere. It is built for
