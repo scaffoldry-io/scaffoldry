@@ -69,7 +69,7 @@ Each step ends with something a person can use or a test that proves it. I give 
 | Step | What | Rows and notes | You can see |
 | --- | --- | --- | --- |
 | 0 | Merge the two import and export pull requests. Open a pull request for the current branch | 86, 90 | The work so far is on `main` |
-| 1 | Reconcile the docs. Fold this plan into the README, update the architecture, mark replaced items | Docs only | One plan |
+| 1 | Reconcile the docs. Fold this plan into the README, update the architecture, mark replaced items | Docs only. **Done 2026-10-19.** See below | One plan |
 | 2 | Inbox and email | `notifications.md` phases 1 and 2 (107, 108) | A bell and a first email |
 | 3 | The data layer foundation: dataset ids, a crate boundary and an audit for the single door, a declared key, the row's unit column | `data-layer.md` phases 1 and 2, and keys | No feature. Tests prove nothing reads rows outside the door |
 | 4 | Catalog v1: entries, synthetic samples, search on the desk and in MCP, request access to the steward | `data-layer.md` catalog. MCP guidance phases 2 to 4 alongside | The first visible feature. A person finds a dataset and asks for it |
@@ -82,12 +82,26 @@ Alongside, not in the path: the policy library and authority matrix (1b), the st
 
 **Not scheduled:** Wave 3 and Wave 4, apart from the rows pulled in above. Extra unit tags, run-level tracking of what an automation read, an expedited change path, and standing share policies stay deferred, as in the version 1 cut.
 
+## The reconciliation, done
+
+On 2026-10-19:
+- **README.** A new Wave 1d table with labelled rows, a migrations table for the numbers that shipped differently and the numbers proposed for the data layer, and the stale count removed. Labelled rows are invisible to `next-phase.py`, so the build agent is not given work you have not approved.
+- **Architecture.** A section 8, "Planned Direction (Not Built)": the data layer as a crate boundary in the monolith, which engine answers which question, the catalog, and MCP guidance. It is marked as not built, because the document otherwise describes code that exists.
+- **Eight briefs** gained a "Reconciliation with the data layer" block: `access-rules`, `connections`, `policy-library`, `authority`, `sensitive-content`, `agent-coverage`, `guests`, `notifications`.
+- **`data-layer.md`** gained "Built on, and reconciled with, what exists", with the README rules it must obey.
+- **`mcp-guidance.md`** gained the README rules that bind it.
+
+**Found while doing it**
+1. The build agent. The README run order drives an automated agent (`agent-chain.yml`, `build-agent.yml`). It starts the first open numbered row, which today is row 62. It will not start the data layer, and it will not start notifications ahead of row 62, unless numbered rows are reordered.
+2. A real conflict: `sensitive-content.md` raises a label "at once" and the data layer never changes a label instantly. Open.
+3. The policy library already holds the "agent proposes, person approves" pattern and a bound-object model. The data layer's policy documents should be one more kind. This is a design change to confirm before building, not a detail.
+
 ## What I need from you to start
 
 1. **Approve the order**, or move steps. The one I would weigh most is whether the catalog (step 4) should come before labels and grants (step 5). I think it should: it needs less, and it shows pilots something.
 2. **The policy library.** Should the data layer's policy documents live in it? I think so, but I have not read the whole brief. If it does not fit, I would rather learn that before building either.
 3. **A first pilot.** The first real use should be named: one unit, one dataset, one request path. It decides what step 4 must do first. I do not know the answer.
-4. **Docs first.** Step 1 is a half-day of reconciliation with no code. I would do it before step 2. It is the cheapest way to stop the drift.
+4. **The two conflicts above.** At once or scheduled for an ordinary raise, and whether the build agent's numbered order should change.
 
 ## Not verified
 

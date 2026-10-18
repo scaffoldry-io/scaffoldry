@@ -53,6 +53,12 @@ The standards search is recorded here, as `standards-first` requires. No standar
 | Record history keeps old values so restore works. A viewer who may not see a field gets no values | `record-history.md` |
 | The Cedar schema has `Record.is_ferpa_sensitive` and no category | `crates/scaffoldry-policy/schema/scaffoldry.cedarschema` |
 
+## Reconciliation with the data layer (2026-10-19)
+
+- **The AI review is a detector in this brief's sense.** It writes findings, never changes a label, and stores no matched value. This matches the decision "Does a detector change data or labels by itself? Never."
+- **A conflict to settle.** This brief says a confirmed finding raises a label and "protects the field at once". `data-layer.md` says a label change is never instant: a steward decides, an effective date and a notice period are set, and exceptions are recorded as grants. Raising protection is the safe direction, but it takes access from people mid-work. The data layer offers a **suspend** switch for an emergency in version 1 and leaves an expedited path for later. Johann has not decided between "at once" and "scheduled". Do not build phase 2's confirm step until he does.
+- **Rows can be tagged,** not only fields. `data-layer.md` phase 3 adds row tags and an effective label. Findings for rows need this brief's finding table to name a record, not only a field.
+
 ## Out of scope
 
 - Detecting names, addresses, or free-text meaning. That needs a language model, which this project does not link.

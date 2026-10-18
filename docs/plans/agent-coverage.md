@@ -25,6 +25,10 @@ This brief builds that suite, adds a budget that keeps the tool list small, and 
 | A tool registry with one dispatch point | `mcp-apps.md` phase 1 |
 | The model is outside the product | `foundation.md` |
 
+## Reconciliation with the data layer (2026-10-19)
+
+`mcp-guidance.md` widens row 131. It keeps this brief's error hints, scenarios, and tool budget, and adds: `instructions` at `initialize` (built), generated prompts, an `explain_decision` tool, tools listed by the caller's access, and typed text marked untrusted. Its scenarios are the contract for the prompts, so each prompt there has a recorded scenario here.
+
 ## Out of scope
 
 - Running a language model in CI.

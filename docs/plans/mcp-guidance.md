@@ -52,6 +52,11 @@ As much as is safe. The rule is: **expose the rules and the reasoning, never the
 - **Who decides and how.** For a request, the steward position, how it is routed, and what the form needs. The agent can fill the form properly the first time.
 - **What good looks like.** Worked examples for each policy type and each common task, in the resources. Scenarios from `agent-coverage.md` double as these examples.
 
+Rules from the README that bind this note:
+- **Text from a policy source is data.** Guidance, prompts, and hints may carry the description of a bound object and the sentence of a published rule. They never carry text from a source snapshot. That text arrives only in the `untrusted_text` field (`policy-library.md` rule 3).
+- **Admin writes are not MCP tools.** A tool that would change access, ownership, or labels returns a proposal and a link. A person confirms in the desk.
+- **The tool list stays under its budget.** Listing tools by access helps. A new tool must earn its place within the 18,000 bytes.
+
 What stays out:
 - **Real values.** Guidance, hints, and examples are built from schemas and synthetic data. A test scans every guidance block for record values.
 - **Anything about a hidden dataset.** A policy that names a dataset the caller cannot discover is not shown. Discoverability applies to guidance as it does to the catalog.

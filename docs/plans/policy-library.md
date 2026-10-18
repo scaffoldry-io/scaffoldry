@@ -46,6 +46,13 @@ Record the search in the first commit message: OSCAL 1.1.2 catalog and back-matt
 | `governance/scripts/validate-oscal.py` validates a document against the OSCAL 1.1.2 schema in CI | `governance/` |
 | Nothing stores a policy document, a source, or a rule in words. Nothing fetches a web page | — |
 
+## Reconciliation with the data layer (2026-10-19)
+
+- **A new kind of bound object.** The data layer's policy documents are objects that code evaluates: label requirements, grant types, request forms, discoverability, and conditions. Each follows a published schema. A library rule bound to one is shown as **Enforced**. This brief's binding kinds gain `data_policy`.
+- **Rule 3 applies to guidance.** The MCP guidance (`mcp-guidance.md`) may include the description of a bound object and the sentence of a published rule. It never includes text from a source snapshot. That text arrives only in the `untrusted_text` field.
+- **The agent flow is the pattern.** The data layer's AI review, its policy-writing prompt, and its share-justification assessment follow this brief's flow: the agent drafts, a person who did not submit it approves, and the platform checks the record. None of them publishes or applies anything.
+- **Check before building either.** The data layer's policy schemas should be documents in this library. If that does not fit, the mismatch should be found before step 1d-4 starts.
+
 ## Out of scope
 
 - Running or calling a model. Extracting text from a PDF, an image, or a word processor file.

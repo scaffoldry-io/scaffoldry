@@ -27,6 +27,37 @@ These are your words, in order.
 12. **A single row can be shared.** Where it goes beyond the default permissions, it needs a justification and an expiry, and may need an AI review before a person approves it.
 13. **A label change is never instant.** The steward is asked each time. A change runs on a schedule with a communications plan and a window for exceptions, which are recorded as grants. See "Changing a label".
 
+## Built on, and reconciled with, what exists
+
+Written on 2026-10-19 after checking this note against the briefs in the README. The note extends the built core. It does not stand beside it.
+
+**Built and reused**
+- **`row_scope` and `field_visibility`** (`access-rules.md`, rows 52 to 57) are the one place row and field access is decided. Audience fields, label requirements, and shares are added there, compiled to the same SQL, and checked by the same equivalence test. No second evaluator.
+- **Positions, holders, and approver resolution** (rows 21, 23, 24) are what stewards are.
+- **Sensitivity categories and detectors as settings** (row 33) are what label requirements attach to.
+- **`member_role`** (row 52) and phase 2b of `position-roles.md` already let a position grant a workspace role.
+
+**Reused, not built yet**
+- **The policy library** (`policy-library.md`, rows 66 to 68, 71) is where this note's policy documents should live, as a new bound-object kind. It already holds the rule that an agent drafts and a person who did not submit it approves.
+- **The authority matrix** (`authority.md`, rows 69 to 73) decides who must say yes to a change. A label change, an exception, and a share beyond the default are change types in it.
+- **Findings and review** (`sensitive-content.md`, rows 151 to 153) are the AI review's home.
+- **The inbox and email** (`notifications.md`, rows 107 to 113) carry every notice and reminder here.
+- **Synced datasets** (`connections.md`, rows 135 to 140) are one kind of dataset here.
+
+**Rules in the README that this note must obey**
+- A user's schema is JSON. No statement creates a table, a column, or an index for a user's table or field. So `record_keys`, `record_audience`, and the unit column are fixed tables and a fixed column.
+- Records are filtered, sorted, counted, and totalled in PostgreSQL. Field masking per row is projection, and filtering stays in SQL.
+- A rule that grants nothing and is never evaluated does not exist. Every policy document here is evaluated by code, with a validator.
+- Admin writes are not MCP tools. An agent proposes. A person confirms in the desk.
+- Text from a policy source is data. It never appears in guidance, a prompt, or an error.
+- Every change by an administrator carries a reason and is a ledger entry written before the change.
+
+**Two conflicts to settle**
+1. **At once or scheduled.** `sensitive-content.md` says a confirmed finding raises a label that "protects the field at once". This note says a label change is never instant. Raising protection is the safe direction, but it takes access from people mid-work. Version 1 offers a steward a **suspend** switch for emergencies. You have not chosen between "at once" and "scheduled" for an ordinary raise.
+2. **Rules that grant.** `access-rules.md` says a rule narrows and never grants. Audience fields grant from the row. You accepted this if it performs. It is now recorded in that brief.
+
+**The build agent.** The README's run order drives an automated agent that starts the first open numbered row. Today that is row 62 (`stateless-server` phase 3). The `1d-n` rows are labelled, not numbered, so the agent does not see them. Moving the new work ahead of row 62 means reordering numbered rows, which is your call.
+
 ## The principle: mechanism, not business rules
 
 You asked that every answer lean toward flexibility, not toward business rules built into the system. This is the rule for the rest of the note, and where it conflicts with an earlier line, it wins.

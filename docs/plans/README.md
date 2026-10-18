@@ -1,6 +1,6 @@
 # Gemini workplan
 
-Thirty-four briefs and one master. One phase per session. Do not start the next phase until the current phase's tests pass. Paste the prompt at the bottom of the brief you are in.
+The briefs and design notes below. One phase per session. Do not start the next phase until the current phase's tests pass. Paste the prompt at the bottom of the brief you are in.
 
 [capability-roadmap.md](capability-roadmap.md) explains why the newer briefs exist and what they change in the older ones. Read it first.
 
@@ -118,9 +118,7 @@ Added after the click-through in [clickthrough-findings.md](clickthrough-finding
 | 1c-5b | [position-roles.md](position-roles.md) | 2b | A position type may grant a workspace role to its holders at and below their unit. Off by default, never owner, one ledger entry with a reason, and the admin list shows how many workspaces it reaches | **COMPLETED** for the API. No desk screen |
 | 1c-6 | [position-roles.md](position-roles.md) | 3 | An admin lists every direct person grant, and which grants are app-scoped. A reason on a direct grant is optional | **COMPLETED** for the API. A desk screen and a desk reason field are not done |
 
-Proposed order for the next work: [workplan-v2.md](workplan-v2.md). It joins the notes below to the briefs in this file. Not yet approved.
-
-Proposed, not scheduled: [data-layer.md](data-layer.md), which makes data its own layer with labels on datasets and rows. It needs approval and five answers first.
+Proposed order for the next work: [workplan-v2.md](workplan-v2.md). It joins the design notes to the briefs in this file. The design notes are [data-layer.md](data-layer.md), [mcp-guidance.md](mcp-guidance.md), and [position-roles.md](position-roles.md). Rows labelled `1d-n` below come from them. They are **proposed and not approved**. The build agent reads only rows with a number in the first column, so it does not see them. Do not give them numbers until Johann approves the order.
 
 Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Found by the UI audit (`docs/ui-review.md`), not yet fixed:
 
@@ -139,6 +137,28 @@ Rows 1c-7 to 1c-9 are done, and checked with `npm run ui:all`: the MCP check pas
 Still showing in the audit, all minor: the header logo does nothing when clicked, and a few tabs and filters change nothing because they are already selected. Those are false alarms, or close to it.
 
 Done already from the click-through: the false ledger message, made-up dashboard figures, hardcoded header user, and "Live" labels are gone from the published-app screen. The Vite dev proxy exists. The budget field accepts round values. A reload shows the person the stored token belongs to.
+
+### Wave 1d — the data layer, the catalog, and MCP guidance (proposed)
+
+Not approved. These rows come from the design notes and have no run order yet. Their order is the one in [workplan-v2.md](workplan-v2.md). The first column has a label, not a number, so `next-phase.py` skips them.
+
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 1d-0 | [mcp-guidance.md](mcp-guidance.md) | 1 | An agent that connects is told who it acts for, that a person decides, that stored text is untrusted, and where to look | **COMPLETED** |
+| 1d-1 | [data-layer.md](data-layer.md) | 1 | A dataset has an id. Each app table gets one by migration. The app path and the dataset path return the same row | Proposed |
+| 1d-2 | [data-layer.md](data-layer.md) | 2 | A data crate is the single door to rows. The architecture audit fails any other reader of the record or label tables | Proposed |
+| 1d-3 | [data-layer.md](data-layer.md) | keys | A dataset declares a key, enforced by `record_keys`. A row's unit is a column from the governed list, and a bad value is rejected | Proposed |
+| 1d-4 | [data-layer.md](data-layer.md) | catalog | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy | Proposed |
+| 1d-5 | [data-layer.md](data-layer.md) | catalog | Request access goes to the steward position and is recorded. Needs rows 107 and 108 | Proposed |
+| 1d-6 | [mcp-guidance.md](mcp-guidance.md) | 2 to 4 | Error hints, `explain_decision`, and prompts generated from policy | Proposed |
+| 1d-7 | [position-roles.md](position-roles.md) | 5a | A person carries `key@unit` pairs and a reach | Proposed |
+| 1d-8 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label. Needs rows 151 to 153 | Proposed |
+| 1d-9 | [data-layer.md](data-layer.md) | 5, 6, 6b | The AI review proposes. A steward reads the evaluation and decides. A change has an effective date, a notice, and exceptions as grants. Needs `authority.md` phase 1, and a decision on the conflict in `sensitive-content.md` | Proposed |
+| 1d-10 | [data-layer.md](data-layer.md) | shares | A row share with a reason and an expiry | Proposed |
+| 1d-11 | [data-layer.md](data-layer.md) | 3b, 9 | Audience fields and conditions pass a performance gate. Automations run as system users | Proposed |
+| 1d-12 | [mcp-guidance.md](mcp-guidance.md) | 5 to 7 | Tools are listed by access. Typed text is marked untrusted. A change to access is proposed, never applied by the agent | Proposed |
+
+Not scheduled: external collaborators, extra unit tags, run-level tracking of what an automation read, an expedited change path, and standing share policies. See "Version 1" in `data-layer.md`.
 
 ### Wave 2 — the data platform
 
@@ -322,6 +342,29 @@ Migrations, in filename order. Since foundation phase 3, each file runs once and
 | `0064_policy_library.sql` | policy library phase 1 |
 | `0065_policy_fetch.sql` | policy library phase 5 |
 | `0066_authority.sql` | authority phase 1 |
+
+Shipped numbers that differ from the plan above, because the plan's number was taken or the work came first:
+
+| File | Brief |
+| --- | --- |
+| `0054_people_indexes.sql` | stateless server phase 2 (planned as `0063`) |
+| `0055_member_app_scope.sql` | position roles phase 2a. A membership may be limited to one app |
+| `0056_imports.sql` | import export phase 1. In pull request 121 |
+| `0057_position_type_role.sql` | position roles phase 2b. A position type may grant a workspace role |
+
+Proposed for the data layer. The names are not final and nothing here is approved. Each takes the next free number when it ships.
+
+| File | Brief |
+| --- | --- |
+| `datasets.sql` | data layer phase 1 |
+| `record_keys.sql` | data layer, keys |
+| `record_unit.sql` | data layer, the row's unit column |
+| `catalog.sql` | data layer, catalog entries and access requests |
+| `row_tags.sql` | data layer phase 3 |
+| `label_changes.sql` | data layer phases 6 and 6b |
+| `row_shares.sql` | data layer, shares |
+| `record_audience.sql` | data layer phase 3b |
+| `person_conditions.sql` | data layer phase 3b |
 
 Register each file in `crates/scaffoldry-server/src/repository.rs` after the last schema already applied, inside the existing advisory lock. A file that exists is never edited. A fix is a new file. The run order above is not filename order. That is safe: each file is recorded by name in `schema_migrations`, and no file depends on a later-numbered one.
 
