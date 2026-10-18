@@ -3,7 +3,7 @@
 ```
 Title:  Data is a layer of its own, with its own API. Datasets keep the labels. Apps and automations are clients.
 Risk:   high
-Ask:    Approve the direction and answer the open questions. Then phase 1 can start. Nothing here is built.
+Ask:    Approve the direction and answer the eight open questions. Then phase 1 can start. Nothing here is built.
 IfYes:  Every read and write of data goes through one layer that checks the labels on the data and the grants of the person and the app. Apps, pages, automations, and AI agents need no policy review of their own, except where they decide something about data.
 IfNo:   Policy stays split. Each app is reviewed on its own, and labels protect fields inside apps. A new app can still leak what an old one protects.
 Checks: None yet. This is a design. Each phase names its failing test first.
@@ -20,19 +20,22 @@ These are your words, in order.
 5. **Apps and automations need no policy review, except for decisions that affect data.**
 6. **A row generally carries its organization in a column.** When the column is missing or empty, the row takes the dataset's unit.
 7. **A steward is a position defined in the system.** It is either inherited from a higher unit or specified on the dataset. Some datasets are owned by a function, such as faculty affairs.
+8. **A row's unit must come from the governed list of units.** A value that is not on the list is rejected. There is no "bad value" state.
+9. **Nothing raises or lowers a label by itself.** AI proposes. A person reviews the plain-language evaluation, with its downstream impacts, before anything applies. No AI may lock someone out in the middle of a process.
+10. **A steward is a position for a function and a unit.** Stewards start at the top and may be deputized. Lower units may define their own, in a hierarchy that follows the org. Authority is delegated, not overridden. See "Stewards" below.
+11. **An automation runs as a system user.** A person approves its grants. It follows the same ownership options as an app: a person, a team, or a position owns changes and receives error alerts.
+12. **A single row can be shared.** Where it goes beyond the default permissions, it needs a justification and an expiry, and may need an AI review before a person approves it.
 
-## How I read "override"
+## Override is parked
 
-I read it this way. Please confirm or correct.
+You said override could get very complicated and hard to manage, and you want to think about it more. So this design does not include a dataset floor, and does not let a dataset label change what a row's tag says.
 
-- Every row may carry a tag. The row's tag is what protects it.
-- A dataset may carry a label too. It has two settings:
-  - A **default**: it applies to rows that carry no tag.
-  - A **floor**: it applies to every row, and a row's tag cannot lower it.
-- The effective label of a row is the row's tag, plus the dataset's floor, plus the dataset's default if the row has no tag.
-- Labels only add protection. Nothing in this design lowers a label by itself. Lowering one is a person's act, written to the ledger with a reason. This is the rule `sensitive-content.md` already sets.
+What stays:
+- A row's own tag protects it.
+- A dataset may carry a **default** that fills in for rows with no tag, the same way a dataset's unit fills in for rows with no unit. A default only fills a gap. It never changes a tag a row already has. Say so if you want even this left out.
+- Labels only add protection. Lowering one is a person's act, written to the ledger with a reason.
 
-If you meant that a dataset label can also *lower* what a row's tag says, tell me. I would not build that. It lets one setting on one dataset remove protection from thousands of rows, with no row-level record of it.
+What is parked: a dataset **floor** that no row tag can go below, and any rule by which a higher unit overrides a lower one. If we need either, it comes back as its own decision with its own failing tests.
 
 ## What exists today
 
@@ -77,8 +80,8 @@ This unit is what a label requirement's reach is measured against. A requirement
 
 How I would build it:
 - The column holds a unit id. It is stored as a real indexed column on the row, copied from the field when the row is written, not read out of the JSON each time. Then a label requirement compiles to SQL the way row rules do, and the `million_rows_test` limits can hold. This is a choice for you to veto.
-- A value that names no unit is refused when written. It is not silently treated as missing, because that would move the row to the dataset's unit, which may be broader or narrower than the writer meant.
-- If a unit is retired later, rows keep their id. The AI review raises a finding for them, and a steward decides. Until then the row stays with the retired unit's place in the tree.
+- The column draws from the governed list of units, so a value that is not on the list is rejected, on a write, an import, or an API call. It is never treated as missing, because that would move the row to the dataset's unit, which may be broader or narrower than the writer meant. The error names the nearest valid units.
+- If a unit is retired later, rows keep their id. The review raises a finding for them, and a steward decides. Until then the row stays with the retired unit's place in the tree.
 - Importing a spreadsheet maps a column to this field like any other. An import that leaves it blank takes the dataset's unit and says so in the preview.
 
 ### Many owners in one row
@@ -133,17 +136,33 @@ A tag is a set of category ids. A row's tag is stored with the row. A write may 
 
 ### The AI review
 
-AI tools do three things. All three produce a **proposal**, not a change.
+AI tools do three things. All three produce a **proposal**. None changes a label, a tag, or anyone's access.
 
 | Job | What it does |
 | --- | --- |
 | Evaluate | Reads a dataset against the organization's policy and the standard it maps to, and reports what the tagging should be |
-| Tag | Proposes tags for untagged rows, and raises for rows whose content matches a category |
+| Tag | Proposes tags for untagged rows, and proposes raises for rows whose content matches a category |
 | Review | Compares proposed tags with existing ones and flags gaps and contradictions, for a steward |
 
 This is the finding model in `sensitive-content.md`, with an AI tool in the role of the detector. It never stores matched values. It stores the field, the category, counts, and a few record ids.
 
-**Open question 2** is whether a proposal that only *raises* protection may apply itself and wait for review afterward. See below.
+**No automatic raising or lowering.** A person applies every change after reading the evaluation. This is also how the design keeps an AI tool from locking someone out in the middle of a process.
+
+### The evaluation a person reads
+
+It must be plain and complete, because a steward decides from it. One page for each proposed change:
+
+| Part | It says |
+| --- | --- |
+| What changes | Which rows and fields, how many, and the category. A few examples with values hidden |
+| Why | The policy and standard it comes from, and what in the data triggered it, in a sentence |
+| Who gains and loses access | By position and unit, with counts. Not a list of ids |
+| What depends on it | Open processes and tasks, automations, apps, row shares, and exports that read this data, each named and linked |
+| Who would be locked out of unfinished work | People and system users with open work that the change would stop |
+| Options | Apply now. Apply on a date. Apply for new work only, and leave open work as it is until it ends |
+| How to undo it | The exact step, and who may take it |
+
+The "locked out of unfinished work" line is the one to get right. I would show it first when it is not empty. How to treat open work is an open question below.
 
 ### Apps and automations
 
@@ -159,6 +178,56 @@ Today an app change goes through a proposal and an approver. Under this design:
 
 This is a real loosening of app review. It is safe only if the data layer is the single door. Phase 2 below makes that a test.
 
+### Automations are system users
+
+An automation does not borrow a person. It runs as a **system user**: an identity of its own with its own grants.
+
+- **Grants.** Each grant names a dataset, the action, and the fields or functions it covers. A person approves the grant, and the approval is a ledger entry with a reason. I lean to a rule that the approver must hold the access they are granting. Nobody can grant more than they have.
+- **Ownership.** The same options as an app: a person, a team (group), or a position owns it. The owner makes changes to it and receives its error alerts. If the owner is a position, the alert follows the seat.
+- **Rules.** Everything in "Who may read a row" applies, with the system user as the person and the automation as the client.
+- **Review of change.** Changing what an automation reads or writes is a decision about data and is governed. Changing its schedule, name, or notes is not.
+- **Expiry.** A grant should be reviewed on a date the approver chooses. An automation whose grant lapses stops and alerts its owner. It does not fail silently.
+
+This settles the earlier question: an automation acts as itself.
+
+### Stewards
+
+A steward is a **position for a function at a unit**. For example, the registrar function at the university, or the faculty-affairs function in a college.
+
+- Stewards start at the top of the organization. A top-level steward may **deputize** a position or a person for a scope and a period. A deputy's authority is never more than the steward's, and each deputation is a ledger entry.
+- A lower unit may **define its own** steward for a function. The stewards follow a hierarchy much like the org's.
+- If a unit defines no steward for a function, the nearest one above it serves. This answers only "who is the steward here when nobody is named here". It does not make the higher steward the owner of the lower unit's rows.
+
+**Delegation, not override.** Some units fear the provost overriding a local school official. This design answers that in four rules:
+
+1. **Hierarchy gives no access by itself.** A higher steward reads and acts on a lower unit's rows only through an explicit grant, the same as anyone. "This unit and below" is something a grant says. It is not a right of rank.
+2. **A locally defined steward is the steward for that unit.** The higher steward does not act there. Where a higher steward must act, it is by a named grant or by a row share with a justification and an expiry.
+3. **Every use of cross-unit access is visible to the local steward.** They get a report of who read or changed their unit's rows from above, and why.
+4. **Disagreements are escalated, not overridden.** Where a local steward and a higher one disagree, the question goes to a named position for a decision, and the decision is a ledger entry.
+
+Policy that applies to the whole institution, such as the categories for FERPA or PHI and who may read them, is set by the institution's own stewards at the top. It is not a back door into a unit's data. It only decides what a category means everywhere.
+
+These rules keep the model simple: access comes only from grants and shares, never from rank. I have not tested them on a real institution. This is the part most likely to meet resistance.
+
+### Sharing a row
+
+Rows are shared across areas in ways nobody can predict. The design lets a person share a single row, or a few, without waiting for a policy change.
+
+A **row share** names the rows, the grantee (a person, position, or unit), what they may do (read, or read and write), and which fields or functions it covers.
+
+| Case | Needs |
+| --- | --- |
+| The share stays inside what the grantee could already see | Nothing. It is a convenience |
+| The share goes beyond the default permissions | A justification and an expiry. A person approves it |
+| The share involves a restricted category | Approval by someone authorized for that category. I lean to this: a share can widen the unit or function reach, but it cannot remove a category's requirement unless an authorized steward approves |
+
+- **Who approves.** The steward of the function and unit of the rows. If the requester is that steward, a second person.
+- **AI review before approval.** The request goes to an AI review first. It reads the justification against policy and writes a short assessment: whether the reason fits, what it exposes, how long it asks for, and what is unusual. A person still decides. The assessment is attached to the request. The AI does not approve or refuse.
+- **Expiry is by its own terms.** A share ends on the date the approver agreed to. That is not an automatic change to a label or a tag. It is the share ending as granted. It writes a ledger entry and tells the owner.
+- **Visible.** Anyone who owns the rows can list the live shares on them, and who made each one.
+
+A share adds one more way into the rule in "Who may read a row": a live share that covers the row and field. It is looked up from a small table keyed by row and grantee. List queries add "or the row is shared with me". I have not measured that.
+
 ### The boundary
 
 I recommend a crate boundary first, not a second service. The doctrine says reach for the smallest thing: a new crate, `scaffoldry-data`, with its own routes under `/api/v1/data/…` and its own tests. It owns the dataset, row, label, and tag code. The server crate calls it. The architecture audit then fails any file outside the crate that reads `dataset_records` or the label tables. A deployable split is a later step, taken if scale or an institution's rules ask for it. The stateless server work already lets it scale out.
@@ -171,9 +240,12 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 | 2 | A script that adds a `SELECT` on `dataset_records` outside the data crate fails the audit | The data crate. Records code moves in. The audit enforces the one door |
 | 3 | A row tagged `PHI` is not returned to a reader the requirement excludes. A dataset floor raises an untagged row. A write cannot lower a floor. A Chemistry row is read by the Chemistry registrar and not the Physics one. A row with the column empty is read by the dataset's unit's registrar. A row naming no unit is refused | Row tags, the row's unit column, and dataset labels, with the effective-label function from this note. The `is_ferpa_sensitive` flag stays, derived from the effective label, so Cedar keeps working |
 | 4 | An app with no grant gets 403. An app with a read grant cannot write. A person outside the label requirement gets nothing through an app that has the grant | App grants. The two-identity check |
-| 5 | The AI review writes a finding for a row that matches a category, stores no value, and changes no tag | The review job, using the existing job runner and the existing finding shape |
-| 6 | A steward confirms a finding and the tag applies and is a ledger entry with a reason. A removal needs a second person | The review screen and the decisions |
+| 5 | The AI review writes a finding for a row that matches a category, stores no value, and changes no tag or access | The review job, using the existing job runner and the existing finding shape |
+| 6 | A steward reads the evaluation, confirms a finding, and the tag applies as a ledger entry with a reason. A removal needs a second person. A change that would stop someone's open work shows them first, and nothing applies by itself | The evaluation view and the decisions |
 | 7 | An app change that grants a dataset needs approval. A change to a view does not | The approval rules narrowed to decisions about data |
+| 8 | A steward position resolves for a function and unit from the nearest unit that defines one. A deputy acts only within the steward's scope. A higher steward has no access to a lower unit's rows without a grant, and the local steward sees the cross-unit read | Stewards as positions, deputies, and the visibility report |
+| 9 | An automation reads only what its system user was granted. A grant needs an approver who holds the access. When its grant lapses it stops and its owner is alerted | System users for automations, with the same ownership options as apps |
+| 10 | A row share beyond the default needs a justification and an expiry. It carries an AI assessment and a person's approval. It ends on its date and writes a ledger entry | Row shares |
 
 Phases 1 and 2 add no feature. They put the code where the rest stands.
 
@@ -212,13 +284,27 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 | "This is a rewrite." | Phases 1 and 2 move code and add ids. They change no behavior and each has its own tests. The new behavior starts at phase 3 |
 | "Who decides what the policy says?" | The organization does, in settings and OSCAL. The AI tool reads the policy; it does not write it |
 
+## Decisions so far
+
+| Question | Answer |
+| --- | --- |
+| Where does a row's unit come from? | A column on the row, from the governed list of units. A value not on the list is rejected. When the column is empty, the dataset's unit |
+| Who is a steward? | A position for a function and a unit, defined in the system, inherited from a higher unit or specified. Deputies allowed |
+| May AI raise or lower labels? | No. It proposes. A person reviews a plain evaluation first |
+| Does an automation act as a person? | No. It is a system user with approved grants and the same ownership options as an app |
+| Can one row be shared? | Yes. Beyond the default permissions it needs a justification and an expiry, and may need an AI review before a person approves |
+| Override | Parked. No dataset floor, and no override of a lower unit by a higher one |
+
 ## Open questions
 
-1. **Override.** Is my reading above right: a floor and a default on the dataset, and no lowering?
-2. **Self-applying raises.** May an AI proposal that only raises protection apply at once and be reviewed afterward? It protects faster. It also means an AI tool changes who can read data without a person. I lean yes for raising, never for lowering, with a daily review list for the steward.
-3. **Decided: a column on the row, and the dataset's unit when it is missing.** Open detail: whether a value that names no unit is refused at write (my lean, above) or accepted and flagged.
-4. **Decided: a position defined in the system, inherited from a higher unit or specified on the dataset.** Some datasets are owned by a function. Open detail: where functions are defined and who may add one. I lean to settings, by proposal, like categories.
-5. **Still open (the answer was left blank). Does an automation act as a person or as itself?** I lean to itself, as a client with its own grant, and the person who started it as the person.
+1. **Open work and a label change.** When a change would stop a person's or a system user's unfinished work, which option is the default: apply on a date after the work is done, apply for new work only, or ask the steward each time? I lean to ask each time and show the open work first. "For new work only" leaves a gap in protection, so a steward should choose it knowingly.
+2. **A dataset default for untagged rows.** Keep it (it only fills a gap), or leave it out too?
+3. **A row with more than one unit.** Joint appointments need it. The single unit column does not allow it. Options: allow a list of units on a row (a grant needs to cover any one of them), or keep one home unit and use row shares for the rest. I lean to one home unit and shares, because it keeps the rule simple.
+4. **Where are functions defined, and who may add one?** I lean to settings, by proposal, like categories.
+5. **The approver rule.** Must a person who approves an automation's grant hold the access they grant? I lean yes.
+6. **A share that touches a restricted category.** Must approval come from someone authorized for that category? I lean yes.
+7. **The security tree.** Is the unit tree used for reach the org tree, or may it differ? Workday and PeopleSoft both allow differences. I lean to the org tree for now.
+8. **Exclusions in a reach.** "This unit and below, except these units." Workday needed special groups for this. I lean to include it from the start.
 
 ## Not decided, and not verified
 
