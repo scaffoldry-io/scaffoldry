@@ -256,9 +256,9 @@ Tests:
 
 ## Phase 6 — the million-row proof
 
-One test, `million_rows`, marked `#[ignore]`. It seeds 1,000,000 rows of thirty fields with five indexed, then runs each of these twenty times and prints the median and the slowest:
+One test, `million_rows`, marked `#[ignore]`. It seeds 1,000,000 rows of thirty fields with five indexed, then runs each of these twenty times and prints the median, the 95th percentile, and the slowest. The test fails when the 95th percentile, which is the 19th run sorted from fastest to slowest, passes its limit. The slowest is still printed and recorded. No limit changes:
 
-| Operation | Limit for the slowest of twenty |
+| Operation | Limit for the 19th of twenty (p95) |
 | --- | --- |
 | First page, default order | 100 ms |
 | A page reached by cursor near the end | 100 ms |

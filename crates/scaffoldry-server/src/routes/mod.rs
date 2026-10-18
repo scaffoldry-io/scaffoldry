@@ -30,6 +30,7 @@ pub mod organizations;
 pub mod workspaces;
 pub mod settings;
 pub mod imports;
+pub mod exports;
 
 use crate::state::SharedState;
 use axum::{
@@ -68,6 +69,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(jobs::router())
         .merge(settings::router())
         .merge(imports::router())
+        .merge(exports::router())
         .merge(mcp::router())
         .with_state(state.clone());
 

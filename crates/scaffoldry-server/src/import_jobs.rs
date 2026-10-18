@@ -1,5 +1,6 @@
 //! Background jobs for import phase 1: analyze, dry-run validate, and run.
 
+use calamine::DataType;
 use crate::jobs::{JobCtx, JobError};
 use crate::repository::{ActorKind, AppendDecisionParams, PostgresRepository, WriteCtx};
 use crate::repository_files::NewRef;
@@ -163,6 +164,127 @@ pub fn read_file_raw(repo: &PostgresRepository, file_ref_id: Uuid) -> Result<(Ve
     Ok((bytes, sha256))
 }
 
+
+pub fn check_spreadsheet_safety(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let lower_name = name.to_lowercase();
+    if lower_name.ends_with(".xlsm") {
+        return Err("Spreadsheets containing macros (.xlsm) cannot be imported.".to_string());
+    }
+
+    if bytes.starts_with(b"PK") {
+        let cursor = std::io::Cursor::new(bytes);
+        if let Ok(mut archive) = zip::ZipArchive::new(cursor) {
+            let mut total_uncompressed: u64 = 0;
+            let mut total_compressed: u64 = 0;
+
+            for i in 0..archive.len() {
+                if let Ok(file) = archive.by_index(i) {
+                    let entry_name = file.name().to_lowercase();
+                    if entry_name.contains("vbaproject.bin") || entry_name.starts_with("xl/vba") {
+                        return Err("Spreadsheets containing macros cannot be imported.".to_string());
+                    }
+                    total_uncompressed += file.size();
+                    total_compressed += file.compressed_size();
+                }
+            }
+
+            let archive_size = bytes.len() as u64;
+            let baseline = if total_compressed > 0 { total_compressed } else { archive_size };
+            if total_uncompressed > 20 * baseline && total_uncompressed > 50_000 {
+                return Err("Decompression bomb detected: uncompressed size exceeds 20 times the archive size.".to_string());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn format_excel_cell(cell: &calamine::Data) -> String {
+    if cell.is_datetime() {
+        if let Some(dt) = cell.as_datetime() {
+            if dt.time() == chrono::NaiveTime::MIN {
+                return dt.format("%Y-%m-%d").to_string();
+            } else {
+                return dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+            }
+        }
+    }
+    {
+        match cell {
+            calamine::Data::Empty => String::new(),
+            calamine::Data::String(s) => s.clone(),
+            calamine::Data::Float(f) => {
+                if f.fract() == 0.0 && *f >= i64::MIN as f64 && *f <= i64::MAX as f64 {
+                    (*f as i64).to_string()
+                } else {
+                    f.to_string()
+                }
+            }
+            calamine::Data::Int(i) => i.to_string(),
+            calamine::Data::Bool(b) => b.to_string(),
+            calamine::Data::DateTimeIso(s) => s.clone(),
+            calamine::Data::DurationIso(s) => s.clone(),
+            calamine::Data::Error(e) => format!("{:?}", e),
+            calamine::Data::DateTime(d) => {
+                if let Some(dt) = d.as_datetime() {
+                    if dt.time() == chrono::NaiveTime::MIN {
+                        dt.format("%Y-%m-%d").to_string()
+                    } else {
+                        dt.format("%Y-%m-%dT%H:%M:%S").to_string()
+                    }
+                } else {
+                    d.to_string()
+                }
+            }
+        }
+    }
+}
+
+pub type ParsedSpreadsheet = (Vec<String>, Vec<Vec<String>>, Vec<String>);
+
+pub fn parse_rows_from_bytes(
+    bytes: &[u8],
+    sheet: Option<&str>,
+    delimiter: Option<char>,
+    max_rows: Option<usize>,
+) -> Result<ParsedSpreadsheet, String> {
+    if bytes.starts_with(b"PK") {
+        use calamine::{Reader, Xlsx};
+        let mut workbook = Xlsx::new(std::io::Cursor::new(bytes))
+            .map_err(|e| format!("Failed to open Excel spreadsheet: {e}"))?;
+        let sheet_names = workbook.sheet_names().to_vec();
+        if sheet_names.is_empty() {
+            return Err("Excel workbook contains no sheets.".to_string());
+        }
+        let target_sheet = sheet.unwrap_or(&sheet_names[0]);
+        let range = workbook.worksheet_range(target_sheet)
+            .map_err(|e| format!("Failed to read sheet '{target_sheet}': {e}"))?;
+
+        let mut rows_iter = range.rows();
+        let headers: Vec<String> = match rows_iter.next() {
+            Some(row) => row.iter().map(|c| c.to_string().trim().to_string()).collect(),
+            None => return Ok((vec![], vec![], sheet_names)),
+        };
+
+        let mut data_rows = Vec::new();
+        for row in rows_iter {
+            if let Some(max) = max_rows {
+                if data_rows.len() >= max {
+                    break;
+                }
+            }
+            let row_vec: Vec<String> = row.iter().map(format_excel_cell).collect();
+            data_rows.push(row_vec);
+        }
+        Ok((headers, data_rows, sheet_names))
+    } else {
+        let slice = if bytes.starts_with(b"\xEF\xBB\xBF") { &bytes[3..] } else { bytes };
+        let delim = delimiter.unwrap_or(',');
+        let (headers, data_rows) = parse_csv_stream(slice, delim, max_rows)?;
+        Ok((headers, data_rows, vec![]))
+    }
+}
+
 /// Job: import_analyze
 pub fn import_analyze(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     let import_id = payload.get("import_id")
@@ -181,32 +303,39 @@ pub fn import_analyze(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 
     let (bytes, _sha) = read_file_raw(repo, import.file_ref_id)?;
 
-    let slice = if bytes.starts_with(b"\xef\xbb\xbf") {
-        &bytes[3..]
+    let (delimiter_str, encoding_str, headers, sample_rows, sheets) = if bytes.starts_with(b"PK") {
+        let (headers, sample_rows, sheet_names) = parse_rows_from_bytes(&bytes, None, None, Some(5000))
+            .map_err(JobError::Permanent)?;
+        ("xlsx".to_string(), "binary".to_string(), headers, sample_rows, sheet_names)
     } else {
-        &bytes[..]
-    };
+        let slice = if bytes.starts_with(b"\xEF\xBB\xBF") {
+            &bytes[3..]
+        } else {
+            &bytes[..]
+        };
 
-    let text_sample = match std::str::from_utf8(slice) {
-        Ok(t) => t,
-        Err(_) => {
-            let err_msg = "Invalid file encoding: only UTF-8 is supported.";
-            let _ = repo.update_import_analysis(
-                import_id,
-                "failed",
-                ",",
-                "unknown",
-                &json!([]),
-                &json!([]),
-                &json!({ "failure": err_msg }),
-            );
-            return Err(JobError::Permanent(err_msg.to_string()));
-        }
-    };
+        let text_sample = match std::str::from_utf8(slice) {
+            Ok(t) => t,
+            Err(_) => {
+                let err_msg = "Invalid file encoding: only UTF-8 is supported.";
+                let _ = repo.update_import_analysis(
+                    import_id,
+                    "failed",
+                    ",",
+                    "unknown",
+                    &json!([]),
+                    &json!([]),
+                    &json!({ "failure": err_msg }),
+                );
+                return Err(JobError::Permanent(err_msg.to_string()));
+            }
+        };
 
-    let delimiter = detect_delimiter(&text_sample[..text_sample.len().min(4096)]);
-    let (headers, sample_rows) = parse_csv_stream(slice, delimiter, Some(5000))
-        .map_err(JobError::Permanent)?;
+        let delimiter = detect_delimiter(&text_sample[..text_sample.len().min(4096)]);
+        let (headers, sample_rows) = parse_csv_stream(slice, delimiter, Some(5000))
+            .map_err(JobError::Permanent)?;
+        (delimiter.to_string(), "UTF-8".to_string(), headers, sample_rows, vec![])
+    };
 
     if headers.is_empty() {
         return Err(JobError::Permanent("File contains no headers or columns.".to_string()));
@@ -243,22 +372,29 @@ pub fn import_analyze(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     }
 
     let columns_val = json!(headers);
-    let sample_val = json!(sample_json);
+    let sample_val = if sheets.is_empty() {
+        json!(sample_json)
+    } else {
+        json!({
+            "rows": sample_json,
+            "sheets": sheets,
+        })
+    };
     let inferred_val = Value::Object(inferred_types);
 
     repo.update_import_analysis(
         import_id,
         "analyzed",
-        &delimiter.to_string(),
-        "UTF-8",
+        &delimiter_str,
+        &encoding_str,
         &columns_val,
         &sample_val,
         &inferred_val,
     ).map_err(|e| JobError::Retry(e.to_string()))?;
 
     ctx.result(json!({
-        "delimiter": delimiter.to_string(),
-        "encoding": "UTF-8",
+        "delimiter": delimiter_str,
+        "encoding": encoding_str,
         "columns": columns_val,
         "sample": sample_val,
         "inferred_types": inferred_val,
@@ -296,7 +432,10 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
 
     let (bytes, _sha) = read_file_raw(repo, import.file_ref_id)?;
     let delimiter = import.delimiter.chars().next().unwrap_or(',');
-    let (headers, rows) = parse_csv_stream(&bytes[..], delimiter, None)
+    let sheet = payload.get("sheet")
+        .and_then(|v| v.as_str())
+        .or_else(|| mapping.get("sheet").and_then(|v| v.as_str()));
+    let (headers, rows, _) = parse_rows_from_bytes(&bytes, sheet, Some(delimiter), None)
         .map_err(JobError::Permanent)?;
 
     let rules: Vec<RowRule> = payload.get("row_rules")
@@ -319,7 +458,7 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
     let upsert_key = mapping.get("upsert_key").and_then(|v| v.as_str());
 
     let mut field_map: HashMap<String, String> = HashMap::new();
-    if let Some(col_map) = mapping.get("column_mappings").or_else(|| mapping.get("columns")).and_then(|v| v.as_object()) {
+    if let Some(col_map) = mapping.get("fields").or_else(|| mapping.get("column_mappings")).or_else(|| mapping.get("columns")).and_then(|v| v.as_object()) {
         for (k, v) in col_map {
             if let Some(target) = v.as_str() {
                 if !target.is_empty() {
@@ -573,7 +712,10 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 
     let (bytes, sha256) = read_file_raw(repo, import.file_ref_id)?;
     let delimiter = import.delimiter.chars().next().unwrap_or(',');
-    let (headers, rows) = parse_csv_stream(&bytes[..], delimiter, None)
+    let sheet = payload.get("sheet")
+        .and_then(|v| v.as_str())
+        .or_else(|| mapping.get("sheet").and_then(|v| v.as_str()));
+    let (headers, rows, _) = parse_rows_from_bytes(&bytes, sheet, Some(delimiter), None)
         .map_err(JobError::Permanent)?;
 
     let total_rows = rows.len();
@@ -595,7 +737,7 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     let upsert_key = mapping.get("upsert_key").and_then(|v| v.as_str()).map(str::to_string);
 
     let mut field_map: HashMap<String, String> = HashMap::new();
-    if let Some(col_map) = mapping.get("column_mappings").or_else(|| mapping.get("columns")).and_then(|v| v.as_object()) {
+    if let Some(col_map) = mapping.get("fields").or_else(|| mapping.get("column_mappings")).or_else(|| mapping.get("columns")).and_then(|v| v.as_object()) {
         for (k, v) in col_map {
             if let Some(target) = v.as_str() {
                 if !target.is_empty() {
@@ -912,3 +1054,5 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 
     ctx.result(run_res)
 }
+
+

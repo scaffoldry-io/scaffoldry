@@ -187,6 +187,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         max_concurrent: 1,
         run: crate::import_jobs::import_run,
     },
+    JobKind {
+        name: "export_run",
+        title: "Exporting records",
+        description: "Streams records to an export file with scope and redaction rules applied.",
+        max_attempts: 2,
+        max_concurrent: 2,
+        run: crate::export_jobs::export_run,
+    },
 ];
 
 #[derive(Debug, Clone)]
