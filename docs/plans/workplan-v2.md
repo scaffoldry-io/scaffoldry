@@ -96,6 +96,24 @@ On 2026-10-19:
 2. A real conflict: `sensitive-content.md` raises a label "at once" and the data layer never changes a label instantly. Open.
 3. The policy library already holds the "agent proposes, person approves" pattern and a bound-object model. The data layer's policy documents should be one more kind. This is a design change to confirm before building, not a detail.
 
+## Update after the handoff (2026-10-18)
+
+The order above was written before I had read `access-model.md`. It is replaced by this one. The data layer now sits on the access model.
+
+| Step | What | Who or what runs it |
+| --- | --- | --- |
+| 0 | Land the open pull requests in the handoff's order: 128, 125, 123, 127, then 121 and 122. Apply the settled decisions as their targets arrive | Claude, as each one is green |
+| 1 | `access-model.md` phases 1 to 6: close what fails open, hierarchies and one closure, coordinates, one grant shape, a synthetic institution, and a million rows with access on | The build agent, from the README |
+| 2 | Inbox and email (`notifications.md` 1 and 2). Needed by requests and notices | The build agent |
+| 3 | `access-model.md` phases 7 and 12 to 14: sealing and the explanation, masks, asking for access, and AI-drafted changes | The build agent |
+| 4 | Data layer foundation: dataset ids, the single door, keys | New brief, after step 1 |
+| 5 | The catalog, with request access as a new place to start a phase 13 request | New brief |
+| 6 | Label changes with notice and exceptions, on the proposal preview | New brief |
+| 7 | Relationship access and cross-listing as extra hierarchies. Row shares. External collaborators | New brief, with the access model's owner |
+| 8 | Real datasets from file feeds, and the rest of the desk | Existing briefs |
+
+The build agent runs the numbered rows in order and will do steps 1 to 3 as they are written. Steps 4 to 8 need briefs written to the build agent's format. I will write them once step 1 is under way, so they use what is built.
+
 ## What I need from you to start
 
 1. **Approve the order**, or move steps. The one I would weigh most is whether the catalog (step 4) should come before labels and grants (step 5). I think it should: it needs less, and it shows pilots something.
