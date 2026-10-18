@@ -3,7 +3,7 @@
 ```
 Title:  Data is a layer of its own, with its own API. Datasets keep the labels. Apps and automations are clients.
 Risk:   high
-Ask:    Approve the direction and answer the four open questions. Then phase 1 can start. Nothing here is built.
+Ask:    Approve the direction and the Version 1 cut. Then phase 1 can start. The open questions below are about later parts, so they can wait. Nothing here is built.
 IfYes:  Every read and write of data goes through one layer that checks the labels on the data and the grants of the person and the app. Apps, pages, automations, and AI agents need no policy review of their own, except where they decide something about data.
 IfNo:   Policy stays split. Each app is reviewed on its own, and labels protect fields inside apps. A new app can still leak what an old one protects.
 Checks: None yet. This is a design. Each phase names its failing test first.
@@ -26,6 +26,45 @@ These are your words, in order.
 11. **An automation runs as a system user.** A person approves its grants. It follows the same ownership options as an app: a person, a team, or a position owns changes and receives error alerts.
 12. **A single row can be shared.** Where it goes beyond the default permissions, it needs a justification and an expiry, and may need an AI review before a person approves it.
 13. **A label change is never instant.** The steward is asked each time. A change runs on a schedule with a communications plan and a window for exceptions, which are recorded as grants. See "Changing a label".
+
+## Version 1: the smallest thing that is safe
+
+The sections below describe the whole direction. Most of it should wait until a pilot shows it is needed. Each part added early is a part an administrator must learn and a steward must keep right. Version 1 is the smallest set that keeps data safe and the platform manageable.
+
+**Six nouns.** An administrator should be able to hold all of them in their head:
+
+| Noun | Meaning |
+| --- | --- |
+| Unit | A place in the org tree |
+| Dataset | A group of rows. It has an owning unit and an owning function |
+| Label | A category on a field or a row, from the settings that already exist |
+| Grant | A role or position, for a function, over a reach (this unit and below, with exclusions) |
+| Share | One row or a few, to one grantee, with a reason and an expiry |
+| Change | A proposal to alter a label, with an evaluation, a date, and a notice |
+
+**In version 1**
+- The data layer as the single door (phases 1 and 2). It is the bet that makes everything else cheap, and it adds no feature.
+- A row's unit in a column, from the governed list. The dataset's unit when empty. A dataset default for untagged rows.
+- Labels on fields and rows, with category requirements. One owning function for each dataset, and a steward position for that function and unit, inherited from the nearest unit above.
+- The rule: an app was granted the dataset, and the person holds a grant that covers the row's unit, and meets the label requirement.
+- App grants. Automations as system users, with grants that an approver who holds the access signs off. They may only write to datasets they were explicitly granted, and cannot create structure.
+- Row shares with a reason and an expiry, approved by the steward.
+- A label change as a proposal: the plain evaluation page, a steward's decision, an effective date, and one notice period set in settings. The notice goes through the inbox.
+- Delegation by date for a steward, using the approvers delegation that is already planned.
+
+**Not in version 1.** Add each only when a pilot shows the need.
+- Several owning functions inside one dataset. Split by function into separate datasets instead.
+- More than one unit on a row. Use row shares.
+- Lower units defining their own functions. Version 1 has the top-level functions only. Lower units name stewards.
+- AI-drafted communications plans and AI review of share requests. Version 1 uses a template and a person.
+- An expedited change path. Version 1 has a **suspend** switch: a steward can stop all reads of a dataset at once, with a reason. It changes no label.
+- Run-level tracking of what an automation read (no write down), and the lineage report. The version 1 rules already stop an automation creating structure or writing outside its grants.
+- Per-category notice periods, exceptions as a workflow, acknowledgement tracking.
+- Anything about override.
+
+**The test I would use.** If a feature needs a new noun, a new screen for administrators, and a new choice for every unit, it waits.
+
+**One default, not many switches.** Where the institution could choose (does rank give access, does a lower unit's steward outrank a higher one), version 1 ships one answer: access comes only from grants, and a locally named steward is the steward there. Switches are what make a platform unwieldy.
 
 ## Override is parked
 
@@ -387,7 +426,7 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 | The tree used for reach | The org tree |
 | Exclusions in a reach | Included from the start |
 
-## Open questions
+## Open questions (all about parts after version 1)
 
 1. **Details of "Changing a label".**
    - The minimum notice period for each category class. The institution sets it in settings. I have not proposed numbers.
