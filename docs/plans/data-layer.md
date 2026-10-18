@@ -25,6 +25,7 @@ These are your words, in order.
 10. **A steward is a position for a function and a unit.** Stewards start at the top and may be deputized. Lower units may define their own, in a hierarchy that follows the org. Authority is delegated, not overridden. See "Stewards" below.
 11. **An automation runs as a system user.** A person approves its grants. It follows the same ownership options as an app: a person, a team, or a position owns changes and receives error alerts.
 12. **A single row can be shared.** Where it goes beyond the default permissions, it needs a justification and an expiry, and may need an AI review before a person approves it.
+13. **A label change is never instant.** The steward is asked each time. A change runs on a schedule with a communications plan and a window for exceptions, which are recorded as grants. See "Changing a label".
 
 ## Override is parked
 
@@ -162,7 +163,7 @@ It must be plain and complete, because a steward decides from it. One page for e
 | Options | Apply now. Apply on a date. Apply for new work only, and leave open work as it is until it ends |
 | How to undo it | The exact step, and who may take it |
 
-The "locked out of unfinished work" line is the one to get right. I would show it first when it is not empty. How to treat open work is an open question below.
+The "locked out of unfinished work" line is the one to get right. It is shown first when it is not empty. The steward is asked each time how to treat open work. There is no default that decides for them.
 
 ### Apps and automations
 
@@ -228,6 +229,49 @@ A **row share** names the rows, the grantee (a person, position, or unit), what 
 
 A share adds one more way into the rule in "Who may read a row": a live share that covers the row and field. It is looked up from a small table keyed by row and grantee. List queries add "or the row is shared with me". I have not measured that.
 
+### Changing a label
+
+A change to who may read data is a change for everyone who depends on it. It is managed as a change, not applied as a switch.
+
+**The steps.**
+
+| Step | What happens | Who |
+| --- | --- | --- |
+| 1. Proposed | A person, or the AI review, proposes a change | Anyone with a reason, or the review job |
+| 2. Evaluated | The evaluation page is built, with its downstream impacts | The system |
+| 3. Decided | The steward reads it and approves, changes, or declines. A removal of protection needs a second person | The steward |
+| 4. Scheduled | The steward sets an **effective date** and approves the **communications plan**. Nothing has changed yet | The steward |
+| 5. Notice period | The plan runs. Consumers prepare. **Exceptions** can be requested | Everyone affected |
+| 6. Effective | On the date, access changes. Anyone with a granted exception keeps access by that grant | The system |
+| 7. Closed | A report lists who was affected, who was notified, what exceptions exist, and what broke | The system, to the steward |
+
+Until step 6, nothing about anyone's access changes. The scheduled change is **visible** on the dataset, so a consumer can see it coming.
+
+**The notice period.** The institution sets a minimum for each category class, in settings. The steward may lengthen it and may not shorten it below the minimum. I have not chosen numbers. A restricted category might need a longer minimum than a sensitive one. The period is long enough for a department to adapt a process, change an automation, or ask for an exception.
+
+**Raising and lowering are different.**
+- Raising protection takes access away from people. It gets the full notice period.
+- Lowering protection gives access to more people. Nobody loses anything, so consumers need less warning. Exposure is the risk, so it needs a second person, and the dataset's stewards and the privacy office are told before it takes effect.
+
+**The communications plan.** The plan is a structured document, with a published schema. The AI review drafts it from the evaluation. The steward edits it and approves it. Nothing is sent until they do.
+
+| Part | It holds |
+| --- | --- |
+| Audiences | Built from the impact analysis, not typed by hand: the people who lose access, owners of apps, automations, and processes that read the data, owners of system users, stewards of datasets linked to this one, and the privacy and compliance offices |
+| What each is told | What changes, when, why, what they may need to do, how to ask for an exception, and who to contact. In plain language, with no record values |
+| Timeline | A first notice, reminders as the date nears, a final warning, a notice on the day, and a confirmation afterward. The dates are relative to the effective date |
+| Channels | The inbox and email from `notifications.md`. A banner on affected apps and datasets. A structured notice in the API, so an app or an AI agent that reads the data can show it. Changes to a person's own access always reach their inbox |
+| Tracking | Who has acknowledged. The steward sees who has not, by unit, and can chase |
+| Follow-up | The count of exception requests, questions raised, and complaints, so a steward can see whether the notice worked |
+
+The API notice matters for the clients that are apps and automations. A read can return an `upcoming_changes` block, with the date and what changes. A well-built client can adapt before the date. An automation's owner also gets an alert, because the automation cannot read a notice.
+
+**Exceptions.** During the notice period anyone affected may ask for an exception. It is a request for a grant that continues their access after the date, with a justification and an expiry. It uses the same path as a row share: the steward decides, an AI assessment is attached, and a person approves. An approved exception is **recorded as a grant**. On the effective date, the people without one lose access, and the people with one keep it until it expires. The expiry is on the grant, so nothing is open-ended. A request still open on the date is decided before the date or the person loses access, so the steward gets a list a week before.
+
+**Urgent changes.** Some protection cannot wait for a notice period. A discovered exposure of restricted data is the usual case. I think there must be an **expedited path**. It would need two people, the steward and the institution's security or privacy officer. It would take effect at once, notify the affected people at once, and open the exception window afterward. It would be rare, and every use would be reported. You said a change should not be instant, so this is your call. See the open questions.
+
+**What it depends on.** The inbox and email, `notifications.md` phases 1 and 2, are not built. They come before this. The job runner schedules the steps and exists today.
+
 ### The boundary
 
 I recommend a crate boundary first, not a second service. The doctrine says reach for the smallest thing: a new crate, `scaffoldry-data`, with its own routes under `/api/v1/data/…` and its own tests. It owns the dataset, row, label, and tag code. The server crate calls it. The architecture audit then fails any file outside the crate that reads `dataset_records` or the label tables. A deployable split is a later step, taken if scale or an institution's rules ask for it. The stateless server work already lets it scale out.
@@ -241,7 +285,9 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 | 3 | A row tagged `PHI` is not returned to a reader the requirement excludes. A dataset floor raises an untagged row. A write cannot lower a floor. A Chemistry row is read by the Chemistry registrar and not the Physics one. A row with the column empty is read by the dataset's unit's registrar. A row naming no unit is refused | Row tags, the row's unit column, and dataset labels, with the effective-label function from this note. The `is_ferpa_sensitive` flag stays, derived from the effective label, so Cedar keeps working |
 | 4 | An app with no grant gets 403. An app with a read grant cannot write. A person outside the label requirement gets nothing through an app that has the grant | App grants. The two-identity check |
 | 5 | The AI review writes a finding for a row that matches a category, stores no value, and changes no tag or access | The review job, using the existing job runner and the existing finding shape |
-| 6 | A steward reads the evaluation, confirms a finding, and the tag applies as a ledger entry with a reason. A removal needs a second person. A change that would stop someone's open work shows them first, and nothing applies by itself | The evaluation view and the decisions |
+| 6 | A steward reads the evaluation and decides. A removal of protection needs a second person. Nothing applies by itself. A change that would stop someone's open work shows them first | The evaluation view and the decision |
+| 6b | A scheduled change alters no one's access before its date. On the date, those without an exception lose access and those with one keep it. Every audience member on the plan has a recorded notice. A read returns `upcoming_changes`. Withdrawing the change cancels the rest. The notice period cannot be shorter than the minimum | Scheduled changes, the communications plan, the notice period, and exceptions as grants. Needs `notifications.md` phases 1 and 2 |
+| 6c | An expedited change needs two people, takes effect at once, notifies at once, and shows in a report | The expedited path, if you want it |
 | 7 | An app change that grants a dataset needs approval. A change to a view does not | The approval rules narrowed to decisions about data |
 | 8 | A steward position resolves for a function and unit from the nearest unit that defines one. A deputy acts only within the steward's scope. A higher steward has no access to a lower unit's rows without a grant, and the local steward sees the cross-unit read | Stewards as positions, deputies, and the visibility report |
 | 9 | An automation reads only what its system user was granted. A grant needs an approver who holds the access. When its grant lapses it stops and its owner is alerted | System users for automations, with the same ownership options as apps |
@@ -297,7 +343,10 @@ Not searched or not confirmed: Ellucian Banner, Anthology, Oracle Label Security
 
 ## Open questions
 
-1. **Open work and a label change.** When a change would stop a person's or a system user's unfinished work, which option is the default: apply on a date after the work is done, apply for new work only, or ask the steward each time? I lean to ask each time and show the open work first. "For new work only" leaves a gap in protection, so a steward should choose it knowingly.
+1. **Decided: ask the steward each time, and plan the communication.** Details still open:
+   - **The minimum notice period** for each category class. I have not proposed numbers. The institution sets them in settings.
+   - **An expedited path** for urgent protection, needing two people (6c). Do you want it, or must every change take the full notice period?
+   - **Who drafts the plan.** The AI review drafts and the steward edits and approves. Do you want the AI to draft at all, or should the steward write it from a template?
 2. **A dataset default for untagged rows.** Keep it (it only fills a gap), or leave it out too?
 3. **A row with more than one unit.** Joint appointments need it. The single unit column does not allow it. Options: allow a list of units on a row (a grant needs to cover any one of them), or keep one home unit and use row shares for the rest. I lean to one home unit and shares, because it keeps the rule simple.
 4. **Where are functions defined, and who may add one?** I lean to settings, by proposal, like categories.
