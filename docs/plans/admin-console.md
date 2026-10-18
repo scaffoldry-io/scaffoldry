@@ -233,7 +233,7 @@ Split. Run the first part of this phase early, in the README row named for it: `
 
 Why a label and not an edit. Changing a field's sensitivity in the manifest is a structural change and needs a proposal. A compliance officer must be able to raise a field's sensitivity at once, with no one's approval. The label table is an overlay that can only add protection.
 
-Migration `crates/scaffoldry-core/migrations/0017_data_labels.sql`:
+Migration `crates/scaffoldry-core/migrations/*_data_labels.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS data_labels (
@@ -298,7 +298,7 @@ Needs phase 1, `foundation.md` phase 8, `guards.md` phase 1, and `oscal-catalog.
 
 Today the policy is one string compiled into the binary, and the console shows a different, hard-coded list. This phase makes the running policy a stored, versioned, testable thing.
 
-Migration `crates/scaffoldry-core/migrations/0018_policy_versions.sql`:
+Migration `crates/scaffoldry-core/migrations/*_policy_versions.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS policy_versions (
@@ -444,7 +444,7 @@ Tests.
 
 Needs phases 1 and 2 and `mcp-apps.md` phase 1. The page controls need `mcp-apps.md` phase 6. If it is not built, build only the tool controls and say so.
 
-Migration `0020_ledger_filters.sql`, which indexes fixed platform columns only:
+Migration `*_ledger_filters.sql`, which indexes fixed platform columns only:
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_ledger_decision ON governance_ledger (decision_type, sequence DESC);
@@ -521,6 +521,7 @@ Each of these adds its routes to `ADMIN_ROUTES`, is built from the kit, writes a
 | Flows | `workflows.md` phase 11 |
 | Policy library | `policy-library.md` phase 6 |
 | Decision authority | `authority.md` phase 2 |
+| Access | `access-model.md` phase 11 |
 
 ## How to prompt Gemini
 

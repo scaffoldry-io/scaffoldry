@@ -50,7 +50,7 @@ BPMN 2.0 names remain the vocabulary: a timer event, an exclusive gateway, and a
 
 ## Phase 1 — measuring the process
 
-Migration `0040_process_v2.sql`:
+Migration `*_process_v2.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS process_events (
@@ -116,7 +116,7 @@ A `UserTask` gains `due: Option<DurationSpec>` and `on_due: Vec<DueAction>`, whe
 
 There is no action that approves or rejects. `due` is counted from entering the step, in whole days, in `platform.timezone`. `remind_every` repeats `Remind` at most 5 times.
 
-Timers. Migration `0053_process_timers.sql`:
+Timers. Migration `*_process_timers.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS process_timers (
@@ -148,7 +148,7 @@ Tests.
 
 ## Phase 4 — committees
 
-`UserTask.decision: Single | AllOf | AtLeast(n)` and `reject: FirstReject | MajorityReject`. The approver specification resolves to a set. A position with `max_holders` above one is a committee. Votes are stored by migration `0054_process_votes.sql`:
+`UserTask.decision: Single | AllOf | AtLeast(n)` and `reject: FirstReject | MajorityReject`. The approver specification resolves to a set. A position with `max_holders` above one is a committee. Votes are stored by migration `*_process_votes.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS process_votes (

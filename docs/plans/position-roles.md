@@ -94,6 +94,8 @@ Also not done: app-limited members are not in `people_with_roles`, so they are n
 
 ## Phase 2b — a position type grants a role (optional, off by default)
 
+> Superseded by `access-model.md` phase 4. A `holder_unit` grant, such as "every `chair@*` gets editor on their own unit's subtree", is this phase with a reach, a domain and a validity window. Do not build `position_types.workspace_role`.
+
 Failing test first: a person holds `chair` at Chemistry. The `chair` type grants `editor`. A workspace under Chemistry has no membership naming the person or the position. The person can write records. A person at Physics cannot.
 
 Change:
@@ -105,6 +107,8 @@ Change:
 This is the broad grant. Many institutions will leave it off. Do it only after phase 2a.
 
 ## Row rules and positions
+
+> Settled by `access-model.md` phase 1: row rules get `key@unit` positions, and units with their ancestors.
 
 Two points to settle with phase 2a, both found by reading `scope.rs`, neither tested:
 
@@ -127,6 +131,8 @@ Tests: the membership list with who made each grant, and the refusal for a non-a
 Not done in 3a: the desk has no screen for this list. It is an API only.
 
 ## Phase 4 — department attribute becomes a unit (optional)
+
+> Superseded by `access-model.md` phase 2, which moves the five department-string policies to the unit tree as part of one notion of place.
 
 Cedar grants departmental read and write when two strings match. That is a right earned by a field on the person. The principal already carries `unit_ids` from held roles. The workspace has `organization_id`.
 

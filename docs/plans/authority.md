@@ -66,7 +66,7 @@ Record the search in the first commit message: FIPS 199 (adopted for tier names)
 
 ## Phase 1 — tiers, the matrix, and one pure function
 
-Migration `crates/scaffoldry-core/migrations/0066_authority.sql`:
+Migration `crates/scaffoldry-core/migrations/*_authority.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS authority_signals (
