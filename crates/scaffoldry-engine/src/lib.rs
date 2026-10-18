@@ -13,6 +13,7 @@ pub mod manifest;
 pub mod recalc;
 pub mod sensitivity;
 pub mod formula;
+pub mod infer;
 pub use formula::*;
 pub use scaffoldry_core::access::AccessManifest;
 pub use manifest::detect_access_problems;

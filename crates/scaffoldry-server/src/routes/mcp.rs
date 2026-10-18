@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/mcp", post(handle_mcp_request))
+        .route("/apps/{slug}/mcp", post(handle_mcp_request))
 }
 
 #[derive(Debug, Deserialize)]
