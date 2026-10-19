@@ -1107,7 +1107,7 @@ fn is_viewer(caller: &AuthUser, app_slug: &str, state: &SharedState) -> bool {
         .and_then(|e| e.resolve_by_slug(app_slug).and_then(|m| m.workspace_id.clone()));
     let Some(workspace) = workspace else { return false };
     matches!(
-        crate::service::members::member_role(caller, &workspace, state),
+        crate::service::members::member_role_in_app(caller, &workspace, app_slug, state),
         Some(crate::service::members::Role::Viewer | crate::service::members::Role::Commenter)
     )
 }

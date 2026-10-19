@@ -106,7 +106,7 @@
         }
       },
       "error": {
-        "code": "bad_request",
+        "code": "version_conflict",
         "contains": "current version is 2"
       }
     },

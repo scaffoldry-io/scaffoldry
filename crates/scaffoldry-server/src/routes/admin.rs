@@ -3,7 +3,6 @@
 
 use crate::guard::session_user;
 use crate::service::admin::require_platform_admin_or_compliance;
-use crate::service::organizations::{is_platform_admin, OrgCaller};
 use crate::service::ServiceError;
 use crate::state::SharedState;
 use axum::{
@@ -13,7 +12,6 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use chrono::Utc;
 use scaffoldry_core::ProcessStatus;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -54,70 +52,19 @@ async fn get_overview(
     };
 
     // 2. People
-    let (active_users, hold_users, inactive_users) = {
-        let users = state.users.read().unwrap();
-        let mut active = 0usize;
-        let mut hold = 0usize;
-        let mut inactive = 0usize;
-        for u in users.values() {
-            if u.admin_hold {
-                hold += 1;
-            } else if u.active {
-                active += 1;
-            } else {
-                inactive += 1;
-            }
-        }
-        (active, hold, inactive)
-    };
+    let (active_users, hold_users, inactive_users) = state.repository.people_counts().unwrap_or((0, 0, 0));
 
     let platform_admins_count = {
-        let orgs: Vec<_> = state.organizations.read().unwrap().values().cloned().collect();
-        let roles: Vec<_> = state.roles.read().unwrap().clone();
-        let mut admin_eppns = HashSet::new();
-
-        // Check roles
-        for r in &roles {
-            let caller = OrgCaller {
-                eppn: r.eppn.clone(),
-                affiliation: "faculty".to_string(),
-            };
-            if is_platform_admin(&caller, &orgs, &roles) {
-                admin_eppns.insert(r.eppn.clone());
-            }
-        }
-
-        // Check users
-        let users = state.users.read().unwrap();
-        for u in users.values() {
-            let caller = OrgCaller {
-                eppn: u.user_name.clone(),
-                affiliation: u.title.clone().unwrap_or_default(),
-            };
-            if is_platform_admin(&caller, &orgs, &roles) {
-                admin_eppns.insert(u.user_name.clone());
-            }
-        }
-
+        let mut admin_eppns: HashSet<String> = state.repository.platform_admin_names().unwrap_or_default().into_iter().collect();
         // Central admin callers
         if caller.affiliation == "central_admin" {
             admin_eppns.insert(caller.eppn.clone());
         }
-
         admin_eppns.len()
     };
 
-    let active_tokens_by_kind = {
-        let tokens = state.api_tokens.read().unwrap();
-        let now = Utc::now();
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        for t in tokens.values() {
-            if t.revoked_at.is_none() && t.expires_at > now {
-                *counts.entry(t.kind.clone()).or_insert(0) += 1;
-            }
-        }
-        counts
-    };
+    let active_tokens_by_kind: HashMap<String, usize> =
+        state.repository.active_token_counts().unwrap_or_default().into_iter().map(|(k, n)| (k, n as usize)).collect();
 
     // 3. Organization
     let unit_count = state.organizations.read().unwrap().len();

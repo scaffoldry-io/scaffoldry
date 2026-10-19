@@ -40,7 +40,7 @@ Nothing. There is no file type, no upload route, and no storage.
 
 ## Phase 1 — the store, upload, and download
 
-Migration `crates/scaffoldry-core/migrations/0061_attachments.sql`:
+Migration `crates/scaffoldry-core/migrations/*_attachments.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS files (

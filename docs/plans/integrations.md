@@ -47,7 +47,7 @@ Needs `aes-gcm` and, for the egress tests, no network.
 
 Master key. `SCAFFOLDRY_MASTER_KEY_FILE` names a file holding 32 random bytes in base64. It is a process fact like the database address. If any secret exists and the file is missing or wrong, boot fails. If none exists and the file is missing, the server starts and the secrets routes answer `503` with error code `master_key_missing`. The operator document says how to generate it and to keep it apart from backups of the database. Add the code to the closed list in `ux-standards.md`.
 
-Migration `0037_secrets.sql`:
+Migration `*_secrets.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS secrets (
@@ -90,7 +90,7 @@ Tests. Inject a resolver so no real network is needed.
 
 ## Phase 2 — tokens that can be narrower
 
-Migration `0039_token_scope.sql`:
+Migration `*_token_scope.sql`:
 
 ```sql
 ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS scope JSONB;
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS webhook_state (
 );
 ```
 
-(Put both in `0038_webhooks.sql`.) A scheduled job `deliver_webhooks`, every 10 seconds, claims up to 50 due rows with `FOR UPDATE SKIP LOCKED`, signs and posts each through `egress::http`, and records the result. The signature is `X-Scaffoldry-Signature: t={unix},v1={hex}` where the value is HMAC-SHA256 over `{t}.{body}` with the secret. A `2xx` is delivered. Anything else retries with delays of 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours, 12 hours, and 24 hours, then the row is `dead`. After 20 consecutive failed deliveries a webhook is disabled in `webhook_state` and its owner is told (`notifications.md`). An owner re-enables it after fixing it. The last 200 deliveries per webhook are kept for the call log and an older one is removed by the scheduled purge. A request body is capped at 256 KB.
+(Put both in `*_webhooks.sql`.) A scheduled job `deliver_webhooks`, every 10 seconds, claims up to 50 due rows with `FOR UPDATE SKIP LOCKED`, signs and posts each through `egress::http`, and records the result. The signature is `X-Scaffoldry-Signature: t={unix},v1={hex}` where the value is HMAC-SHA256 over `{t}.{body}` with the secret. A `2xx` is delivered. Anything else retries with delays of 1 minute, 5 minutes, 30 minutes, 2 hours, 6 hours, 12 hours, and 24 hours, then the row is `dead`. After 20 consecutive failed deliveries a webhook is disabled in `webhook_state` and its owner is told (`notifications.md`). An owner re-enables it after fixing it. The last 200 deliveries per webhook are kept for the call log and an older one is removed by the scheduled purge. A request body is capped at 256 KB.
 
 Process rules. The effect `WebhookDispatch` now carries `{ webhook_id }`, not a URL. The validator requires an approved webhook in the same app. It enqueues a delivery with event `process.step`. Remove `target_url` from the type, and migrate old rules by dropping the step with a counted ledger note.
 

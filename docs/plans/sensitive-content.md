@@ -53,6 +53,12 @@ The standards search is recorded here, as `standards-first` requires. No standar
 | Record history keeps old values so restore works. A viewer who may not see a field gets no values | `record-history.md` |
 | The Cedar schema has `Record.is_ferpa_sensitive` and no category | `crates/scaffoldry-policy/schema/scaffoldry.cedarschema` |
 
+## Reconciliation with the data layer (2026-10-19)
+
+- **The AI review is a detector in this brief's sense.** It writes findings, never changes a label, and stores no matched value. This matches the decision "Does a detector change data or labels by itself? Never."
+- **A conflict to settle.** This brief says a confirmed finding raises a label and "protects the field at once". `data-layer.md` says a label change is never instant: a steward decides, an effective date and a notice period are set, and exceptions are recorded as grants. Raising protection is the safe direction, but it takes access from people mid-work. The data layer offers a **suspend** switch for an emergency in version 1 and leaves an expedited path for later. **Settled (2026-10-18, a decision recorded in `data-layer.md`):** a confirmed change applies at once only when the evaluation shows nobody is affected. Otherwise it is scheduled with a notice. Phase 2's confirm step should call the evaluation before it applies.
+- **Rows can be tagged,** not only fields. `data-layer.md` phase 3 adds row tags and an effective label. Findings for rows need this brief's finding table to name a record, not only a field.
+
 ## Out of scope
 
 - Detecting names, addresses, or free-text meaning. That needs a language model, which this project does not link.
@@ -131,7 +137,7 @@ Tests.
 
 ## Phase 2 — scan stored records and review findings
 
-Migration `crates/scaffoldry-core/migrations/0059_content_findings.sql`:
+Migration `crates/scaffoldry-core/migrations/*_content_findings.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS content_findings (
@@ -221,7 +227,7 @@ Tests, with `fetch` stubbed for the screen.
 
 **Import.** The dry run in `import-export.md` phase 1 reports, for each column, the detectors that matched and how many rows. The wizard shows it before commit. A `block` detector makes the matching rows rejected rows in the report.
 
-**Files.** Migration `crates/scaffoldry-core/migrations/0060_attachment_content_scan.sql` adds `content_scan_state` to the attachment table: `clean`, `found`, `unsupported`, or `skipped`. After the antivirus result, a job `scan_file_content` reads the text of a plain-text attachment and upserts findings with source `file`. Other types are `unsupported`, and the file screen says `Content not scanned` as text.
+**Files.** Migration `crates/scaffoldry-core/migrations/*_attachment_content_scan.sql` adds `content_scan_state` to the attachment table: `clean`, `found`, `unsupported`, or `skipped`. After the antivirus result, a job `scan_file_content` reads the text of a plain-text attachment and upserts findings with source `file`. Other types are `unsupported`, and the file screen says `Content not scanned` as text.
 
 Tests.
 

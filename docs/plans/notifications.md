@@ -27,6 +27,10 @@ This brief adds an inbox, email, preferences, and digests, with one rule above t
 | A user settings pane exists | `foundation.md` phase 9 |
 | The desk has no bell and no inbox | |
 
+## Reconciliation with the data layer (2026-10-19)
+
+The data layer adds producers. None can run until phases 1 and 2 are built: the outcome of a request for access, a scheduled label change with its reminders, an expiring share or condition or collaborator grant, and an alert to the owner of an automation that failed or lost its grant. Each follows the rule that a notice carries names and links, never a record value. A person's own access changes always reach their inbox.
+
 ## Out of scope
 
 - Push to phones and chat tools.
@@ -44,7 +48,7 @@ This brief adds an inbox, email, preferences, and digests, with one rule above t
 
 ## Phase 1 — the inbox
 
-Migration `crates/scaffoldry-core/migrations/0041_notifications.sql`:
+Migration `crates/scaffoldry-core/migrations/*_notifications.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS notifications (
@@ -97,7 +101,7 @@ Add `lettre` (MIT) with `rustls` and the system certificate store.
 
 Settings, in the closed list: `mail.enabled` (boolean, default false), `mail.smtp` (`{ host, port, security: "starttls" | "tls", from, username, secret }` where `secret` names a secret), `platform.base_url` (the address used in links). Nothing sends mail while `mail.enabled` is false.
 
-Migration `0048_email_outbox.sql`:
+Migration `*_email_outbox.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS email_outbox (
@@ -137,7 +141,7 @@ Tests, with a fake SMTP server in the process reached through an injected resolv
 
 ## Phase 3 — preferences and digests
 
-Migration `0049_notification_prefs.sql`:
+Migration `*_notification_prefs.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS notification_prefs (

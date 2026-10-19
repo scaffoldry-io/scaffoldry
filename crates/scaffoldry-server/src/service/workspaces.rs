@@ -7,7 +7,6 @@ use crate::state::{
 };
 use chrono::Utc;
 use scaffoldry_core::DecisionType;
-use scaffoldry_policy::{PolicyDecision, WorkspaceActionInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -62,6 +61,12 @@ pub struct CollaboratorPayload {
     pub name: Option<String>,
     pub scoped_affiliation: Option<String>,
     pub department: Option<String>,
+    /// Limits the membership to one app of the workspace. Empty or absent means the whole workspace.
+    #[serde(default)]
+    pub app_slug: Option<String>,
+    /// Why the grant is made. Optional. When given, the ledger records it as the rationale.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 pub fn list_workspaces(
@@ -83,7 +88,7 @@ pub fn list_workspaces(
     };
     let orgs_map = state.organizations.read().unwrap();
     let all_orgs: Vec<crate::state::OrganizationNode> = orgs_map.values().cloned().collect();
-    let roles: Vec<crate::state::RoleRow> = state.roles.read().unwrap().clone();
+    let roles = state.roles_of(&caller.eppn);
 
     let mut response_list = Vec::new();
 
@@ -111,31 +116,13 @@ pub fn list_workspaces(
             continue;
         }
 
-        let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
-
-        let decision = state
-            .policy_engine
-            .authorize_workspace_action(&WorkspaceActionInput {
-                principal_eppn: &caller.eppn,
-                principal_affiliation: &caller.affiliation,
-                principal_department: &caller.department,
-                action_name: "access_workspace",
-                workspace_id: &ws.id,
-                workspace_department: &ws.department,
-                workspace_visibility: &ws.visibility,
-                is_member,
-                member_role: norm_role.as_deref(),
+        if crate::service::access::workspace_allowed(caller, ws, "access_workspace", state)? {
+            response_list.push(WorkspaceResponse {
+                workspace: ws.clone(),
+                collaborators: collabs,
+                user_role: member_role,
+                guards: Vec::new(),
             });
-
-        if let Ok(res) = decision {
-            if res.decision == PolicyDecision::Allow {
-                response_list.push(WorkspaceResponse {
-                    workspace: ws.clone(),
-                    collaborators: collabs,
-                    user_role: member_role,
-                    guards: Vec::new(),
-                });
-            }
         }
     }
 
@@ -167,33 +154,9 @@ pub fn get_workspace(
     };
 
     let role = crate::service::members::member_role(caller, id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
+    let member_role = role.map(|r| r.as_str().to_string());
 
-    let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "access_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts access to this workspace".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "access_workspace", "403 Forbidden: Cedar Policy restricts access to this workspace", state)?;
 
 
     let guard_sentences: Vec<String> = {
@@ -242,7 +205,7 @@ pub fn create_workspace(
             return Err(ServiceError::BadRequest(format!("Unknown organization_id: {target_org_id}")));
         }
         let all_orgs: Vec<_> = orgs_map.values().cloned().collect();
-        let roles = state.roles.read().unwrap().clone();
+        let roles = state.roles_of(&caller.eppn);
         let org_caller = crate::service::organizations::OrgCaller {
             eppn: caller.eppn.clone(),
             affiliation: caller.affiliation.clone(),
@@ -322,6 +285,7 @@ pub fn create_workspace(
         scoped_affiliation: caller.affiliation.clone(),
         department: caller.department.clone(),
         added_at: now,
+        app_slug: String::new(),
     };
 
     {
@@ -358,45 +322,7 @@ pub fn update_workspace(
             .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
     };
 
-    let role = crate::service::members::member_role(caller, id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-
-    let norm_role = member_role.map(str::to_lowercase);
-
-    let is_admin = {
-        let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().map(|g| g.values().cloned().collect()).unwrap_or_default();
-        let roles: Vec<crate::state::RoleRow> = state.roles.read().map(|g| g.clone()).unwrap_or_default();
-        let org_caller = crate::service::organizations::OrgCaller {
-            eppn: caller.eppn.clone(),
-            affiliation: caller.affiliation.clone(),
-        };
-        crate::service::organizations::is_platform_admin(&org_caller, &orgs, &roles)
-    };
-    let effective_aff = if is_admin { "central_admin" } else { &caller.affiliation };
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: effective_aff,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing this workspace to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing this workspace to Owners and Admins", state)?;
 
     if let Some(ref class) = payload.data_classification {
         match class.as_str() {
@@ -557,6 +483,18 @@ pub fn list_collaborators(
     Ok(collabs_guard.get(workspace_id).cloned().unwrap_or_default())
 }
 
+/// The app a membership names, when it names one. The app must belong to the workspace.
+fn app_of_membership(app: Option<&str>, workspace_id: &str, state: &SharedState) -> Result<String, ServiceError> {
+    use scaffoldry_engine::HostRouter;
+    let Some(app) = app.map(str::trim).filter(|a| !a.is_empty()) else { return Ok(String::new()) };
+    let engine = state.engine.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let belongs = engine.resolve_by_slug(app).is_some_and(|m| m.workspace_id.as_deref() == Some(workspace_id));
+    if !belongs {
+        return Err(ServiceError::BadRequest(format!("App '{app}' is not in workspace {workspace_id}")));
+    }
+    Ok(app.to_string())
+}
+
 pub fn add_collaborator(
     caller: &AuthUser,
     workspace_id: &str,
@@ -582,33 +520,7 @@ pub fn add_collaborator(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let role = crate::service::members::member_role(caller, workspace_id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-    let norm_role = member_role.map(str::to_lowercase);
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing members to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing members to Owners and Admins", state)?;
 
     let (kind, principal_id) = match (payload.principal_type.as_deref(), payload.principal_id.as_deref().filter(|s| !s.is_empty())) {
         (None, None) if !payload.eppn.is_empty() => {
@@ -623,17 +535,20 @@ pub fn add_collaborator(
     };
     check_principal(kind, &principal_id)?;
     let key = members::stored_key(kind, &principal_id);
+    let app = app_of_membership(payload.app_slug.as_deref(), workspace_id, state)?;
 
-    if collabs.iter().any(|c| c.eppn.eq_ignore_ascii_case(&key)) {
-        return Err(ServiceError::BadRequest(format!(
-            "{key} is already a member of workspace {workspace_id}",
-        )));
+    if collabs.iter().any(|c| c.eppn.eq_ignore_ascii_case(&key) && c.app_slug == app) {
+        let scope = if app.is_empty() { format!("workspace {workspace_id}") } else { format!("app {app}") };
+        return Err(ServiceError::BadRequest(format!("{key} is already a member of {scope}")));
     }
 
     let role_str = payload.role.unwrap_or_else(|| "Viewer".to_string());
     let role = Role::parse(&role_str).ok_or_else(|| ServiceError::BadRequest("role must be viewer, commenter, editor, admin, or owner".to_string()))?;
     if kind != Kind::User && role == Role::Owner {
         return Err(ServiceError::BadRequest("Only a person can be an owner".to_string()));
+    }
+    if !app.is_empty() && role == Role::Owner {
+        return Err(ServiceError::BadRequest("A membership limited to one app cannot be an owner".to_string()));
     }
     let name_str = payload.name.unwrap_or_else(|| key.clone());
     let affiliation_str = payload
@@ -652,24 +567,30 @@ pub fn add_collaborator(
         scoped_affiliation: affiliation_str,
         department: dept_str,
         added_at: Utc::now().to_rfc3339(),
+        app_slug: app.clone(),
     };
 
     state.append_ledger_entry(RecordDecisionInput {
         principal: caller.eppn.clone(),
         organization_code: ws.code,
-        app_slug: None,
+        app_slug: Some(app.clone()).filter(|a| !a.is_empty()),
         decision_type: if kind == Kind::User { DecisionType::WorkspaceMemberAdded } else { DecisionType::AccessRoleGranted },
         oscal_control_id: "AC-02".to_string(),
-        rationale: format!(
-            "Principal {} added {} as {} to workspace {}",
-            caller.eppn, key, role_str, ws.name
-        ),
+        rationale: match payload.reason.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+            Some(reason) => reason.to_string(),
+            None => format!(
+                "Principal {} added {} as {} to {}",
+                caller.eppn, key, role_str,
+                if app.is_empty() { format!("workspace {}", ws.name) } else { format!("app {app} in workspace {}", ws.name) }
+            ),
+        },
         payload: &json!({
             "workspace_id": workspace_id,
             "target_eppn": key,
             "principal_type": kind.as_str(),
             "principal_id": principal_id,
-            "role": role_str
+            "role": role_str,
+            "app_slug": app
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
@@ -718,33 +639,7 @@ pub fn update_collaborator_role(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let role = crate::service::members::member_role(caller, workspace_id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-    let norm_role = member_role.map(str::to_lowercase);
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins", state)?;
 
     let wanted = Role::parse(new_role).ok_or_else(|| ServiceError::BadRequest("role must be viewer, commenter, editor, admin, or owner".to_string()))?;
     if members::split_principal(target_eppn).0 != Kind::User && wanted == Role::Owner {
@@ -755,7 +650,7 @@ pub fn update_collaborator_role(
     }
     let member = collabs
         .iter_mut()
-        .find(|m| m.eppn == target_eppn)
+        .find(|m| m.eppn == target_eppn && m.app_slug.is_empty())
         .ok_or_else(|| ServiceError::NotFound(format!("Member '{target_eppn}' not found")))?;
 
     member.role = new_role.to_string();
@@ -794,10 +689,12 @@ pub fn update_collaborator_role(
     Ok(updated)
 }
 
+/// Removes one membership. `app` is empty for the workspace-wide one, or names the app a limited one reaches.
 pub fn remove_collaborator(
     caller: &AuthUser,
     workspace_id: &str,
     target_eppn: &str,
+    app: &str,
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     let ws = {
@@ -819,40 +716,14 @@ pub fn remove_collaborator(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let role = crate::service::members::member_role(caller, workspace_id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-    let norm_role = member_role.map(str::to_lowercase);
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins", state)?;
 
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
-
-    if is_last_user_owner(&collabs, target_eppn) {
+    if app.is_empty() && is_last_user_owner(&collabs, target_eppn) {
         return Err(ServiceError::Conflict("A workspace keeps at least one person as owner".to_string()));
     }
     let mut remaining = collabs;
     let initial_len = remaining.len();
-    remaining.retain(|m| m.eppn != target_eppn);
+    remaining.retain(|m| !(m.eppn == target_eppn && m.app_slug == app));
 
     if remaining.len() == initial_len {
         return Err(ServiceError::NotFound(format!("Member '{target_eppn}' not found")));
@@ -870,13 +741,14 @@ pub fn remove_collaborator(
         ),
         payload: &json!({
             "workspace_id": workspace_id,
-            "removed_eppn": target_eppn
+            "removed_eppn": target_eppn,
+            "app_slug": app
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
     {
         let repo = &state.repository;
-        repo.remove_collaborator(workspace_id, target_eppn).map_err(|e| ServiceError::Internal(e.to_string()))?;
+        repo.remove_collaborator(workspace_id, target_eppn, app).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
     {
@@ -912,6 +784,8 @@ pub fn manage_workspace_member(
                     name: name.map(str::to_string),
                     scoped_affiliation: None,
                     department: None,
+                    app_slug: None,
+                    reason: None,
                 },
                 state,
             )?;
@@ -923,7 +797,7 @@ pub fn manage_workspace_member(
             Ok(serde_json::to_value(res).unwrap_or(json!({ "status": "updated" })))
         }
         "remove" | "delete" => {
-            remove_collaborator(caller, workspace_id, eppn, state)?;
+            remove_collaborator(caller, workspace_id, eppn, "", state)?;
             Ok(json!({ "status": "removed", "eppn": eppn, "workspace_id": workspace_id }))
         }
         other => Err(ServiceError::BadRequest(format!(

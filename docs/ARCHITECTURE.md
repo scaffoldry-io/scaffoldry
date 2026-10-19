@@ -30,7 +30,7 @@ All development in this repository must adhere to four governing principles:
 ### 2.1 Sovereign and Non-Rugpullable
 Scaffoldry must remain free from commercial license traps. 
 - Build only on technologies governed by neutral non-profit foundations (Apache Software Foundation, Linux Foundation, PostgreSQL Global Development Group).
-- Use strictly permissive licenses: **Apache 2.0, MIT, and BSD**.
+- Use strictly permissive licenses: **Apache 2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, and the PostgreSQL License**.
 - Never introduce dependencies governed by venture-backed open-core licenses (BSL, SSPL, or proprietary enterprise tiers).
 
 ### 2.2 The Modular Monolith Appliance
@@ -276,7 +276,7 @@ A view with a sort on an indexed field opens at any row, with the same row scope
 
 #### 6.1.4 The Measured Size (Row Scale Phase 6)
 
-One table of **1,000,000 rows of thirty fields, five of them indexed,** was measured through the routes, twenty runs of each operation, release build, one PostgreSQL 16 server. CI runs the same test (`million_rows`, `cargo test --release -- --ignored million_rows`) and fails if the slowest of twenty passes its limit or a read scans the records.
+One table of **1,000,000 rows of thirty fields, five of them indexed,** was measured through the routes, twenty runs of each operation, release build, one PostgreSQL 16 server. CI runs the same test (`million_rows`, `cargo test --release -- --ignored million_rows`) and fails if the 19th of twenty, sorted from fastest to slowest (the 95th percentile), passes its limit or a read scans the records.
 
 | Operation | Median | Slowest | Limit |
 | --- | --- | --- | --- |
@@ -369,3 +369,28 @@ Future AI assistants working on Scaffoldry must strictly follow these instructio
 8. **Preserve Retrigger and Loop Guards.** Automation rules must respect retrigger suppression and the depth-3 backstop to prevent infinite execution cycles.
 9. **Sovereign Engine & Cryptographic Ledger Integrity.** The calculation engine is native Rust (`scaffoldry-engine`), never Arrow/DataFusion. The audit ledger is an immutable SHA-256 blockchain stored in PostgreSQL, never embedded Git.
 
+---
+
+## 8. Planned Direction (Not Built)
+
+This section describes a direction that is designed and not approved or built. The rest of this document describes code that exists. The notes linked here are the source. The section is in place so the document does not drift from the plan.
+
+### 8.1 The Data Layer
+
+Data becomes a layer of its own, behind one door. Apps, pages, automations, and AI agents are clients. A dataset is a governed table with an owning function and unit. Every read and write of a row goes through the data layer, which checks the labels on the data, the grants of the person, and the grants of the client.
+
+The data layer is a crate boundary inside the modular monolith. It is not a second service and it adds no machine to the appliance. It sits across the access, store, and ledger layers. An audit fails any code outside it that reads the record or label tables. See `docs/plans/data-layer.md`.
+
+### 8.2 Which Engine Answers Which Question
+
+- **Cedar** answers questions about workspaces, apps, and actions: may this person open this app, approve this change, or export from this workspace.
+- **The row scope** (`service/scope.rs`, in Rust, compiled to SQL) answers questions about rows and fields: which rows may this person read, and which columns. Audience fields and label requirements extend it. It is checked against Cedar's answers by an equivalence test.
+- **The ledger** records every decision. Neither engine writes to it directly.
+
+### 8.3 The Catalog
+
+People find what data exists without seeing a real value. A catalog entry holds metadata and synthetic samples. Discoverability is a policy. A person can ask the steward for access from the entry, and the outcome is a dated grant.
+
+### 8.4 MCP Guidance
+
+The MCP server teaches the agent. At `initialize` it gives instructions built for the caller. Tool descriptions, result guidance, and error hints say what to do next. Resources and prompts, generated from policy data, carry the rules and the tasks. Text stored in the system is marked untrusted, and a change to access is proposed to a person, never applied by the agent. See `docs/plans/mcp-guidance.md`.

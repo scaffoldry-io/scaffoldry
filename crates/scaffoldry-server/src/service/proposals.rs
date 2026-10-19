@@ -609,7 +609,7 @@ fn check_rules_part(
         for step in &rule.steps {
             if let StepKind::UserTask { role, approver, .. } = &step.kind {
                 let spec = scaffoldry_core::approver::effective_approver(role, approver);
-                let ctx = crate::service::approvers::context(state, slug, "", Some(&caller.eppn));
+                let ctx = crate::service::approvers::context(state, slug, "", Some(&caller.eppn), &[]);
                 let resolution = scaffoldry_core::approver::resolve_approvers(&spec, &ctx);
                 if resolution.approvers.is_empty() {
                     approvers.push(format!("rule '{}', step '{}': nobody can decide this today", rule.name, step.id));
@@ -842,9 +842,8 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
                     if let Some(m) = &row.manifest {
                         let manifest: AppManifest = serde_json::from_value(m.clone()).map_err(internal)?;
-                        state.register_runtime_manifest(manifest.clone()).map_err(internal)?;
-                        crate::service::scope::set_rules(&row.app_slug, manifest.access.rows, state);
-                        crate::service::scope::set_column_rules(&row.app_slug, manifest.access.columns, state);
+                        // The manifest carries the app's row and column rules. Registering it applies them.
+                        state.register_runtime_manifest(manifest).map_err(internal)?;
                     }
                     if !done.rules.is_empty() {
                         crate::service::processes::reload_rules(state, &row.app_slug);

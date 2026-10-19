@@ -45,7 +45,7 @@ This brief moves views out of governance, because a view cannot widen access, an
 
 ## Phase 1 — views live on their own
 
-Migration `crates/scaffoldry-core/migrations/0033_app_views.sql`:
+Migration `crates/scaffoldry-core/migrations/0049_app_views.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS app_views (
@@ -116,7 +116,7 @@ Tests.
 
 Johann has said yes to `@tanstack/react-virtual` (MIT, on the licence whitelist). It is the only new dependency this phase may add.
 
-1. Offset window. `GET .../rows` accepts `offset` and `limit` in addition to the cursor, for an ordering over an indexed key. Measure first. Run `SELECT ... ORDER BY ... OFFSET 500000 LIMIT 200` over 1,000,000 rows and paste the plan and the time. If it is under 300 ms and the plan uses the index, offsets are allowed up to 1,000,000. If not, build anchors instead: a job `build_anchors` samples the sort key of every 1,000th row into `view_anchors (view_id, position, cursor)` (migration `0047_view_anchors.sql`) and a jump fetches from the nearest anchor with a cursor.
+1. Offset window. `GET .../rows` accepts `offset` and `limit` in addition to the cursor, for an ordering over an indexed key. Measure first. Run `SELECT ... ORDER BY ... OFFSET 500000 LIMIT 200` over 1,000,000 rows and paste the plan and the time. If it is under 300 ms and the plan uses the index, offsets are allowed up to 1,000,000. If not, build anchors instead: a job `build_anchors` samples the sort key of every 1,000th row into `view_anchors (view_id, position, cursor)` (migration `0050_view_anchors.sql`) and a jump fetches from the nearest anchor with a cursor.
 2. Counts. A request asks `count=exact` and runs under a two-second statement timeout. If it times out, the response is `{ "at_least": n }`, and the screen says `Over 250,000 records`. A view with no filter uses the stored estimate for the table plus the delta of writes since, shown as `about`.
 3. The last page. Jump to end runs the same query with the order reversed and flips the result.
 4. The grid renders only visible rows with a buffer, fetches windows of 200, shows skeleton rows while a window loads, and keeps `aria-rowcount` and `aria-rowindex` correct. Page Down, Page Up, Ctrl+Home, and Ctrl+End work. Dragging the scrollbar to the middle loads that window.
@@ -207,7 +207,7 @@ Tests.
 
 ## Phase 6 — shared links
 
-Migration `0034_view_shares.sql`:
+Migration `*_view_shares.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS view_shares (

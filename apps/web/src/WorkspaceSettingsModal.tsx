@@ -459,6 +459,7 @@ when {
                   <input
                     type="text"
                     data-testid="ws-settings-name-input"
+                    aria-label="Workspace name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     required
@@ -472,6 +473,7 @@ when {
                   <input
                     type="text"
                     data-testid="ws-settings-dept-input"
+                    aria-label="Department"
                     value={department}
                     onChange={(e) => setDepartment(e.target.value)}
                     required
@@ -485,6 +487,7 @@ when {
                   <input
                     type="text"
                     data-testid="ws-settings-code-input"
+                    aria-label="Workspace code"
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                     required
@@ -500,6 +503,7 @@ when {
                 <textarea
                   rows={2}
                   data-testid="ws-settings-desc-input"
+                    aria-label="Description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

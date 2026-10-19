@@ -124,7 +124,7 @@ Tests.
 
 ## Phase 4 — templates
 
-Migration `0035_import_export.sql`:
+Migration `*_import_export.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS app_templates (
@@ -159,7 +159,7 @@ Tests.
 
 ## Phase 5 — snapshots
 
-Migration `0052_snapshots.sql`:
+Migration `*_snapshots.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS app_snapshots (

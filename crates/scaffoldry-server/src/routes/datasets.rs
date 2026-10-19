@@ -9,7 +9,6 @@ use axum::{
 };
 use chrono::Utc;
 use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
-use scaffoldry_policy::PolicyDecision;
 use serde_json::{json, Value};
 use crate::service::ServiceError;
 
@@ -40,7 +39,7 @@ async fn list_datasets(
             .filter(|r| r.source_dataset_id == ds.id || r.target_dataset_id == ds.id)
             .count();
 
-        let show_sample = is_admin || matches!(ds.sensitivity_level.to_lowercase().as_str(), "public" | "directory");
+        let show_sample = crate::service::catalog::sample_visible(is_admin, &ds.sensitivity_level);
 
         let mut item = json!({
             "id": ds.id,
@@ -89,7 +88,7 @@ async fn get_dataset(
         .cloned()
         .collect();
 
-    let show_sample = is_admin || matches!(ds.sensitivity_level.to_lowercase().as_str(), "public" | "directory");
+    let show_sample = crate::service::catalog::sample_visible(is_admin, &ds.sensitivity_level);
 
     let mut doc = json!({
         "id": ds.id,
@@ -145,27 +144,18 @@ async fn publish_dataset(
         .unwrap_or("Academic Department")
         .to_string();
 
-    let auth = state
-        .policy_engine
-        .authorize_departmental_action(
-            &user.eppn,
-            &user.affiliation,
-            &user.department,
-            "publish_dataset",
-            &id,
-            &department,
-        )
-        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-
-    if auth.decision == PolicyDecision::Deny {
-        return Err(ServiceError::Forbidden {
-            message: "Forbidden: Cedar policy denied dataset publishing".to_string(),
-            reasons: auth.reasons,
-            diagnostics: auth.diagnostics,
-            policy: auth.deciding_policy,
-        }
-        .into_pair());
-    }
+    crate::service::access::require(
+        &state,
+        &user,
+        "publish_dataset",
+        &scaffoldry_policy::entities::Resource::System(scaffoldry_policy::entities::SystemCtx {
+            id: id.clone(),
+            department: department.clone(),
+            is_ferpa_sensitive: false,
+        }),
+        "Forbidden: Cedar policy denied dataset publishing",
+    )
+    .map_err(|e| e.into_pair())?;
 
     let organization = payload
         .get("organization")

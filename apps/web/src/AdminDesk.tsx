@@ -4,7 +4,8 @@ import { DatasetExplorer } from "./DatasetExplorer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
-import { apiClient, getAuthToken, setAuthToken } from "./api";
+import { apiClient, getAuthToken, setAuthToken, type MyApp } from "./api";
+import { MyApps } from "./MyApps";
 import { BackgroundWork, ViewAsBanner } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
@@ -80,6 +81,44 @@ const PERSONAS: Persona[] = [
     isAdmin: false,
   },
 ];
+
+// An app from the server, as the desk holds it. The definition comes from GET /apps/{slug}. Without it the app has no tables.
+function registeredAppOf(mine: MyApp, manifest: any | null): RegisteredApp {
+  const m = manifest ?? {};
+  return {
+    slug: mine.slug,
+    title: mine.title,
+    orgCode: m.organization_code ?? "",
+    department: mine.department,
+    customDomain: m.custom_domain ?? "",
+    verified: !!m.custom_domain_verified,
+    hermCapability: m.herm_capability_id ?? "",
+    cedsDomain: "",
+    status: m.status ?? "Published",
+    updatedAt: "",
+    recordsCount: 0,
+    workspaceId: mine.workspace_id,
+    collaborators: [],
+    manifest: {
+      tables: [], views: [], ceds_mappings: {}, custom_domain_verified: false, organization_code: "", ...m,
+      slug: mine.slug, title: mine.title, description: m.description ?? mine.description, department: mine.department,
+    },
+  } as RegisteredApp;
+}
+
+// The person a server user is, for the desk. A known demo persona keeps its richer attributes.
+function personaOfServerUser(user: { eppn: string; name?: string; affiliation?: string; department?: string }): Persona {
+  const found = PERSONAS.find((p) => p.eppn === user.eppn);
+  if (found) return found;
+  return {
+    eppn: user.eppn,
+    name: user.name || user.eppn,
+    affiliation: (user.affiliation || "faculty") as Persona["affiliation"],
+    department: user.department || "General",
+    roleTitle: user.affiliation || "Member",
+    isAdmin: user.affiliation === "central_admin",
+  };
+}
 
 export const getUserWorkspaceRole = (
   ws: Workspace,
@@ -760,6 +799,82 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   const [pasteToken, setPasteToken] = useState("");
   const [signInError, setSignInError] = useState<string | null>(null);
 
+  // A reload restores the stored token but not who it belongs to. Ask the server, and drop a token it refuses.
+  useEffect(() => {
+    if (!authToken || initialEppn) return;
+    let cancelled = false;
+    apiClient
+      .getCurrentUser()
+      .then((me) => {
+        if (!cancelled && me?.user) setActivePersona(personaOfServerUser(me.user));
+      })
+      .catch((err: { status?: number }) => {
+        // Only a refusal means the token is bad. An unreachable server must not end the session.
+        if (cancelled || err?.status !== 401) return;
+        setAuthToken(null);
+        setAuthTokenState(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // My apps: the apps this person can reach, and the ones they pinned. Pins live in this browser, as workspace pins do.
+  const [myApps, setMyApps] = useState<MyApp[]>([]);
+  const [pinnedAppSlugs, setPinnedAppSlugs] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem("scaffoldry_pinned_apps") || "[]");
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  // Whether the desk's apps came from the server. When they did not, the desk shows built-in sample apps, and says so.
+  const [appsStatus, setAppsStatus] = useState<"loading" | "server" | "built-in">("loading");
+  const appsFromServer = appsStatus === "server";
+  useEffect(() => {
+    if (!authToken) {
+      setMyApps([]);
+      setAppsStatus("built-in");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await apiClient.listMyApps();
+        if (cancelled) return;
+        setMyApps(list);
+        const full = await Promise.all(
+          list.map(async (a) => registeredAppOf(a, await apiClient.getApp(a.slug).catch(() => null)))
+        );
+        if (cancelled) return;
+        setApps(full);
+        setAppsStatus("server");
+      } catch {
+        if (!cancelled) {
+          setMyApps([]);
+          setAppsStatus("built-in");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, activePersona.eppn]);
+  const handleTogglePinApp = (slug: string) => {
+    setPinnedAppSlugs((prev) => {
+      const next = prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug];
+      try {
+        localStorage.setItem("scaffoldry_pinned_apps", JSON.stringify(next));
+      } catch {
+        // Storage can be unavailable. The pin then lasts for this visit only.
+      }
+      return next;
+    });
+  };
+  const pinnedMyApps = pinnedAppSlugs.map((slug) => myApps.find((a) => a.slug === slug)).filter((a): a is MyApp => !!a);
+
   const handleTokenSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pasteToken.trim()) return;
@@ -768,21 +883,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       setAuthToken(pasteToken.trim());
       const me = await apiClient.getCurrentUser();
       setAuthTokenState(pasteToken.trim());
-      if (me?.user) {
-        const found = PERSONAS.find((p) => p.eppn === me.user.eppn);
-        if (found) {
-          setActivePersona(found);
-        } else {
-          setActivePersona({
-            eppn: me.user.eppn,
-            name: me.user.name || me.user.eppn,
-            affiliation: me.user.affiliation || "faculty",
-            department: me.user.department || "General",
-            roleTitle: me.user.affiliation || "Member",
-            isAdmin: me.user.affiliation === "central_admin",
-          });
-        }
-      }
+      if (me?.user) setActivePersona(personaOfServerUser(me.user));
     } catch (err: any) {
       setAuthToken(null);
       setSignInError(err?.message || "Invalid token");
@@ -976,9 +1077,12 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   const [activeWorkspaceApp, setActiveWorkspaceApp] = useState<RegisteredApp | null>(null);
 
   // Navigation View State ("workspaces" | "datasets")
-  const [mainView, setMainView] = useState<"workspaces" | "datasets">(() => {
+  const [mainView, setMainView] = useState<"workspaces" | "datasets" | "myapps">(() => {
     if (typeof window !== "undefined" && window.location.pathname.startsWith("/datasets")) {
       return "datasets";
+    }
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/my-apps")) {
+      return "myapps";
     }
     return "workspaces";
   });
@@ -995,6 +1099,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       setActiveWorkspaceApp(null);
       if (path.startsWith("/datasets")) {
         setMainView("datasets");
+      } else if (path.startsWith("/my-apps")) {
+        setMainView("myapps");
       } else if (path === "/" || path.startsWith("/workspace")) {
         setMainView("workspaces");
       }
@@ -1014,6 +1120,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       setActiveWorkspaceApp(null);
       if (p.startsWith("/datasets")) {
         setMainView("datasets");
+      } else if (p.startsWith("/my-apps")) {
+        setMainView("myapps");
       } else if (p === "/" || p.startsWith("/workspace")) {
         setMainView("workspaces");
       }
@@ -1152,6 +1260,10 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Workspace and App-Level Security Filtered Applications
+  // When the apps came from the server, the server already decided which this person may reach, so the desk does not
+  // decide again. Only the built-in sample apps are checked here.
+  const mayOpenApp = (app: RegisteredApp) => appsFromServer || canUserAccessApp(app, activePersona, workspaces);
+
   const workspaceApps = apps.filter((app) => {
     // Workspace boundary filter
     if (activeWorkspaceId !== "all" && app.workspaceId !== activeWorkspaceId) {
@@ -1160,7 +1272,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
     // App-level Cedar security rules enforcement:
     // Only display applications that the current persona is authorized to access under institutional Cedar ABAC.
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       return false;
     }
 
@@ -1174,7 +1286,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
   // Open App in Co-Builder Studio (Full-Page Builder)
   const handleOpenStudio = (app: RegisteredApp) => {
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
       return;
     }
@@ -1185,7 +1297,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
   // Open App in Standalone Published Runtime
   const handleOpenPublishedApp = (app: RegisteredApp) => {
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
       return;
     }
@@ -1194,58 +1306,55 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   const handleOpenApp = (app: RegisteredApp) => {
-    if (!canUserAccessApp(app, activePersona, workspaces)) {
+    if (!mayOpenApp(app)) {
       showToast(`403 Forbidden: Cedar ABAC restricts access to ${app.title}`);
       return;
     }
     setActiveWorkspaceApp(app);
   };
 
-  // Create New App in Active Workspace
-  const handleCreateNewApp = () => {
-    const newSlug = `app-${Date.now().toString().slice(-4)}`;
-    const newApp: RegisteredApp = {
+  // Create New App in Active Workspace. The server creates it, or holds it as a proposal. The desk says which.
+  const handleCreateNewApp = async () => {
+    if (activeWorkspaceId === "all") {
+      showToast("Open a workspace first, then create the app in it.");
+      return;
+    }
+    const newSlug = `app-${Math.random().toString(36).slice(2, 8)}`;
+    const department = currentWorkspace.department;
+    const field = { name: "record_title", label: "Title / Summary", field_type: "Text", required: true, ferpa_sensitive: false };
+    const manifest = {
       slug: newSlug,
-      title: "Untitled Department Application",
-      orgCode: `DEPT-${currentWorkspace.department.toUpperCase()}`,
-      department: currentWorkspace.department,
-      customDomain: `${newSlug}.${currentWorkspace.department}.science.state.edu`,
-      verified: false,
-      hermCapability: "2.1.0 (Academic Operations)",
-      cedsDomain: "PostsecondaryStudent",
-      status: "Draft",
-      updatedAt: new Date().toISOString().split("T")[0],
-      recordsCount: 0,
-      workspaceId: currentWorkspace.id,
-      collaborators: [
-        { eppn: activePersona.eppn, name: activePersona.name, role: "owner", department: activePersona.department },
-      ],
-      manifest: {
-        slug: newSlug,
-        title: "Untitled Department Application",
-        description: "New collaborative application manifest ready for field design.",
-        organization_code: `DEPT-${currentWorkspace.department.toUpperCase()}`,
-        department: currentWorkspace.department,
-        custom_domain: `${newSlug}.${currentWorkspace.department}.science.state.edu`,
-        custom_domain_verified: false,
-        views: [
-          {
-            id: "main-view",
-            title: "Data Submission Form",
-            view_type: "Form",
-            fields: [
-              { name: "record_title", label: "Title / Summary", field_type: "Text", required: true, ferpa_sensitive: false },
-            ],
-          },
-        ],
-        ceds_mappings: {},
-      },
+      title: "Untitled Application",
+      description: "A new application. Add fields to design it.",
+      organization_code: `DEPT-${department.toUpperCase()}`,
+      department,
+      workspace_id: currentWorkspace.id,
+      custom_domain_verified: false,
+      tables: [{ id: "main", name: "Records", slug: "records", fields: [field], primary_field: "record_title", sample_records: [] }],
+      relationships: [],
+      views: [{ id: "main-view", table_id: "main", title: "All records", view_type: "Grid", fields: [field] }],
+      ceds_mappings: {},
+      pages: [],
+      access: {},
     };
-    setApps([newApp, ...apps]);
-    setActiveStudioApp(newApp);
-    setStudioTab("schema");
-    setStudioOpen(true);
-    showToast(`Created new app "${newApp.title}". Ready to co-build.`);
+    try {
+      const { status, data } = await apiClient.createApp(currentWorkspace.id, manifest);
+      if (status === 202) {
+        showToast("Submitted for approval. The app is not live until someone approves it.");
+        return;
+      }
+      const created = registeredAppOf(
+        { slug: data?.slug ?? newSlug, title: data?.title ?? manifest.title, description: manifest.description, department, workspace_id: currentWorkspace.id, scope: "workspace" },
+        data ?? manifest
+      );
+      setApps((prev) => [created, ...prev]);
+      setActiveStudioApp(created);
+      setStudioTab("schema");
+      setStudioOpen(true);
+      showToast(`Created new app "${created.title}". Ready to co-build.`);
+    } catch (e) {
+      showToast(`Could not create the app. ${e instanceof Error ? e.message : ""}`.trim());
+    }
   };
 
   // Add Field in Co-Builder Studio
@@ -1446,7 +1555,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       INITIAL_WORKSPACES.find((w) => w.id === targetApp?.workspaceId) ||
       currentWorkspace;
 
-    if (targetApp && !canUserAccessApp(targetApp, activePersona, workspaces)) {
+    if (targetApp && !mayOpenApp(targetApp)) {
       return (
         <div data-testid="workspace-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
           <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
@@ -1496,14 +1605,29 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
   // Dedicated Standalone Published App Runtime Route (/app/:slug)
   if (isAppPath) {
-    const slug = currentPath.replace("/app/", "").replace("/app", "").split("/")[0] || apps[0]?.slug;
+    const requestedSlug = currentPath.replace("/app/", "").replace("/app", "").split("/")[0];
+    // A slug the desk does not have is not a reason to open some other app.
+    if (requestedSlug && !apps.some((a) => a.slug === requestedSlug) && activeStudioApp?.slug !== requestedSlug) {
+      return (
+        <div data-testid="app-not-in-desk" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-lg text-center space-y-4">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">This app cannot open in the desk yet</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            You can reach <strong>{requestedSlug}</strong>, but the desk does not have it loaded, so it cannot show it here.
+          </p>
+          <button type="button" onClick={() => navigateTo("/my-apps")} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold cursor-pointer">
+            Back to My apps
+          </button>
+        </div>
+      );
+    }
+    const slug = requestedSlug || apps[0]?.slug;
     const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
     const targetWs =
       workspaces.find((w) => w.id === targetApp?.workspaceId) ||
       INITIAL_WORKSPACES.find((w) => w.id === targetApp?.workspaceId) ||
       currentWorkspace;
 
-    if (targetApp && !canUserAccessApp(targetApp, activePersona, workspaces)) {
+    if (targetApp && !mayOpenApp(targetApp)) {
       return (
         <div data-testid="workspace-access-denied" className="p-8 max-w-xl mx-auto my-12 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/60 shadow-lg text-center space-y-4 animate-fade-in">
           <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xl font-bold">
@@ -1789,7 +1913,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
               </svg>
-              <span>+ New App</span>
+              <span>New App</span>
             </button>
           )}
 
@@ -2404,6 +2528,30 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                   </nav>
                 </div>
 
+                {pinnedMyApps.length > 0 && (
+                  <div data-testid="pinned-apps-group">
+                    {navRailExpanded && (
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-2 mb-2">
+                        Pinned apps
+                      </div>
+                    )}
+                    <nav className="space-y-1">
+                      {pinnedMyApps.map((a) => (
+                        <button
+                          key={`pinned-app-${a.slug}`}
+                          type="button"
+                          onClick={() => navigateTo(`/app/${a.slug}`)}
+                          className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                          title={a.title}
+                        >
+                          <span className="text-sm shrink-0">📌</span>
+                          {navRailExpanded && <span className="flex-1 text-left truncate">{a.title}</span>}
+                        </button>
+                      ))}
+                    </nav>
+                  </div>
+                )}
+
                 <div>
                   {navRailExpanded && (
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-2 mb-2">
@@ -2411,6 +2559,32 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                     </div>
                   )}
                   <nav className="space-y-1">
+                    <button
+                      type="button"
+                      aria-label="My apps"
+                      onClick={() => {
+                        setMainView("myapps");
+                        navigateTo("/my-apps");
+                      }}
+                      className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        mainView === "myapps"
+                          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
+                          : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                      }`}
+                      title="Apps you can reach"
+                    >
+                      <span className="text-sm shrink-0">📱</span>
+                      {navRailExpanded && (
+                        <span className="flex-1 text-left flex items-center justify-between truncate">
+                          <span className="truncate">My apps</span>
+                          {myApps.length > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-mono font-bold">
+                              {myApps.length}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -2438,6 +2612,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                     <button
                       type="button"
                       onClick={handleCreateNewApp}
+                      title="New App Studio"
+                      aria-label="New App Studio"
                       className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
                     >
                       <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2472,6 +2648,11 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
         {/* MAIN CANVAS */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100/50 dark:bg-slate-950">
+          {appsStatus === "built-in" && (
+            <div data-testid="offline-sample-banner" role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              The server's app list did not load. These are built-in sample apps, and nothing done with them is saved.
+            </div>
+          )}
           {/* DISCREET ADMIN CONSOLE VIEW (/admin) */}
           {isAdminPath ? (
             <AdminConsole
@@ -2495,6 +2676,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 personas={PERSONAS}
                 handleStartImpersonation={handleStartImpersonation}
               />
+          ) : mainView === "myapps" ? (
+            <MyApps apps={myApps} pinned={pinnedAppSlugs} onTogglePin={handleTogglePinApp} onOpen={(slug) => navigateTo(`/app/${slug}`)} />
           ) : mainView === "datasets" ? (
             /* DATASET EXPLORER & RELATIONAL LATTICE VIEW */
             <DatasetExplorer onUseInApp={handleUseDatasetInApp} />
@@ -2634,7 +2817,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
               {/* Process Desk Decisions Queue Panel */}
               <ProcessDesk
-                apps={workspaceApps}
+                apps={appsStatus === "loading" ? [] : workspaceApps}
                 callerPersona={activePersona}
                 callerWorkspaceRole={userRoleInCurrentWs}
               />

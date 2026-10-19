@@ -5,11 +5,7 @@ use std::path::Path;
 /// The fields of `ServerState` that may hold a lock. The list starts as today's fields. Each phase removes the ones
 /// it turns into queries or into cached collections, and none is added.
 const ALLOWED_FIELDS: &[&str] = &[
-    "users",
-    "groups",
-    "access_rules",
     "app_views",
-    "column_rules",
     "workspaces",
     "collaborators",
     "guards",
@@ -20,18 +16,15 @@ const ALLOWED_FIELDS: &[&str] = &[
     "process_instances",
     "ledger",
     "engine",
-    "sessions",
-    "api_tokens",
     "organizations",
-    "roles",
     "position_types",
     "labels",
     "settings",
     "formula_rate_limits",
 ];
 
-/// The `static` locks that may remain. `WRITE_LOCK` goes in phase 2.
-const ALLOWED_STATICS: &[&str] = &["WRITE_LOCK"];
+/// The `static` locks that may remain. None does after phase 2.
+const ALLOWED_STATICS: &[&str] = &[];
 
 fn source(rel: &str) -> String {
     std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))

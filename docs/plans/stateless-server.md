@@ -65,7 +65,7 @@ No standard defines this. Record the search in the first commit message: the Twe
 
 ## Phase 1 — the mechanism, an honest boot, and a database per test
 
-Migration `crates/scaffoldry-core/migrations/0062_cache_versions.sql`:
+Migration `crates/scaffoldry-core/migrations/0053_cache_versions.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS cache_versions (
@@ -137,7 +137,7 @@ These are never cached. A university has tens of thousands of people and a regis
 4. The People list in the console pages in SQL with `search_users`. Remove the `ponytail` note in `admin-console.md` phase 3 that says the list is built in memory, and say why in the pull request.
 5. `update_token_last_used` stays a single `UPDATE`. It bumps nothing.
 6. Replace `WRITE_LOCK` in `service/positions.rs`. An appointment that must not exceed a position type's holder limit runs `SELECT ... FOR UPDATE` on the `position_types` row, counts the holders, and inserts, in one transaction.
-7. Add an index only where `EXPLAIN` on a table of 50,000 people shows a sequential scan. Put it in `crates/scaffoldry-core/migrations/0063_people_indexes.sql`. If no index is needed, do not create the file, and say so in the pull request.
+7. Add an index only where `EXPLAIN` on a table of 50,000 people shows a sequential scan. Put it in `crates/scaffoldry-core/migrations/0054_people_indexes.sql`. If no index is needed, do not create the file, and say so in the pull request.
 
 Tests.
 
@@ -148,6 +148,17 @@ Tests.
 5. With 50,000 seeded users, `user_by_eppn` and a People page of 50 each run one statement and return in under 20 ms. Record the times.
 6. With 50,000 seeded users and 400 units, building a `ResolveCtx` for one record loads fewer than 500 role rows.
 7. The scan test's allowed list no longer holds the five fields or `WRITE_LOCK`.
+
+How it works. The tests are `tests/stateless_phase2_test.rs` and `tests/stateless_scan_test.rs`. The migration is `0054_people_indexes.sql`, the next free number, not `0063`. `EXPLAIN` on 50,000 people showed a sequential scan for the name lookup and for the People page order, so the migration exists.
+
+- **The queries are in `repository_people.rs`.** `user_by_id`, `user_by_name`, `user_by_name_or_email`, `users_by_names`, `users_by_ids`, `search_users`, `group_by_id`, `group_ids_with_member`, `group_summaries`, `roles_of_person`, `roles_of_people`, `roles_in_units`, `roles_at`, and the counts the console shows. The existing `get_api_token` and `list_api_tokens_for_eppn` were reused. There is no `session_by_token_hash`: the `sessions` field was loaded at boot and read by nothing, so it is gone with no replacement.
+- **The five fields are gone** (`users`, `groups`, `roles`, `sessions`, `api_tokens`). A write goes straight to PostgreSQL, so another instance reads it on its next request. `ServerState` has `roles_of`, `user_by_id`, `user_by_name`, and `group_ids_of` for the common questions.
+- **The People page is three statements:** the users (the database filters, sorts by `lower(user_name) COLLATE "C"`, and cuts the page), their appointments, and their tokens. 50 of 50,000 people: one user in 0.9 ms, a page in 9 ms. A prefix search scans the table and takes about 36 ms. The cursor is still an offset.
+- **The resolver's context is bounded.** `approvers::path_holdings` loads the holdings at the units on the path to the root and the submitter's own. With 400 units that is a handful of rows, not 400. The people it needs are read with `users_by_names`. Rule validation reads only the people the rule names.
+- **`WRITE_LOCK` is gone.** `assign_holding` locks the `position_types` row, counts the holders, vacates when asked, and inserts, in one transaction. Position types are created with `ON CONFLICT DO NOTHING`, and changed under the same row lock. The service still looks first, so the usual refusals cost no ledger entry. `ponytail:` the ledger entry is written before the change, as everywhere else. A server that loses the race has written an entry for a grant that the database then refused, and answers `409`. Writing the entry inside the same transaction is a change to how every administrative write works, and is not made here.
+- **SCIM `GET /Users` pages.** It follows RFC 7644 `startIndex` and `count`, with 200 as the most one call returns. It used to return every user in one response.
+- **Units and position types are still in memory.** They move to the mechanism in phase 3, so a unit or a position created through one instance is not yet seen by another that was already running. The two-instance position test starts its second instance after they exist, and says why.
+- **Left as it was.** Last-Platform-Admin protection still reads, then writes. Two instances revoking the last two admins at once could leave none. This is the one remaining read-then-write in people code, and it has no test.
 
 ## Phase 3 — workspaces, guards, labels, datasets, and the org tree
 
@@ -239,4 +250,4 @@ Stop when the tests listed for phase N pass, and paste the command output and th
 | The server will start half-loaded after a database fault. | It does not start. Every boot read is checked. Phase 1 tests it by breaking a table. |
 | This is a rewrite hidden in a brief. | It removes fields and branches. It adds one table, one middleware, and one small module. No route changes its contract. Every existing test passes at every phase. |
 | The tests will get slower with a database each. | Creating an empty database takes tens of milliseconds, and the tests then run at once on every core. Today they run one at a time. |
-| A hosted service needs more than this. | Yes. This brief removes the one thing that makes a second instance impossible. Provisioning, backup, monitoring, and a full export are separate work and are listed in `capability-roadmap.md`. |
+| A hosted service needs more than this. | Yes. This brief removes the one thing that makes a second insta

@@ -101,7 +101,7 @@ export interface AdminJobDetail extends AdminJobRow {
   finished_at?: string | null;
 }
 
-import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, Workspace } from "./types";
+import { Collaborator, DatasetRelationship, LedgerEntryItem, OrganizationNode, OrgRole, PublishedDataset, Workspace } from "./types";
 export type { OrganizationNode };
 
 export interface PolicyRef {
@@ -316,6 +316,26 @@ export const setAuthToken = (token: string | null, persist = true) => {
     }
   }
 };
+
+/** A stored record. `version` changes by one on every save. */
+export interface AppRecord {
+  id: string;
+  app_slug?: string;
+  data: Record<string, any>;
+  version: number;
+  created_at?: string;
+  created_by?: string | null;
+}
+
+/** An app the signed-in person can reach. `scope` says how: through a workspace role, on this app only, or as an administrator. */
+export interface MyApp {
+  slug: string;
+  title: string;
+  description: string;
+  department: string;
+  workspace_id: string;
+  scope: "admin" | "workspace" | "app";
+}
 
 export const getAuthToken = (): string | null => {
   if (activeToken) return activeToken;
@@ -1037,6 +1057,63 @@ export const apiClient = {
   // Workspaces
   listWorkspaces: async (): Promise<Workspace[]> => {
     return request<Workspace[]>("/workspaces");
+  },
+
+  // Records of an app. A save names the version it read, and the server answers 409 when it is stale.
+  listRecords: async (slug: string): Promise<AppRecord[]> => {
+    const res = await request<{ records: AppRecord[] }>(`/apps/${encodeURIComponent(slug)}/records`);
+    return Array.isArray(res?.records) ? res.records : [];
+  },
+
+  getRecord: async (slug: string, id: string): Promise<AppRecord> => {
+    return request<AppRecord>(`/apps/${encodeURIComponent(slug)}/records/${encodeURIComponent(id)}`);
+  },
+
+  createRecord: async (slug: string, data: Record<string, unknown>): Promise<AppRecord> => {
+    return request<AppRecord>(`/apps/${encodeURIComponent(slug)}/records`, { method: "POST", body: JSON.stringify({ data }) });
+  },
+
+  updateRecord: async (slug: string, id: string, version: number, data: Record<string, unknown>): Promise<AppRecord> => {
+    return request<AppRecord>(`/apps/${encodeURIComponent(slug)}/records/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, data }),
+    });
+  },
+
+  deleteRecord: async (slug: string, id: string): Promise<void> => {
+    await request<null>(`/apps/${encodeURIComponent(slug)}/records/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  /** The apps the signed-in person can reach, and how. */
+  listMyApps: async (): Promise<MyApp[]> => {
+    const res = await request<{ apps: MyApp[] }>("/me/apps");
+    // An answer that is not a list of apps is not an answer. The desk must not read it as "no apps".
+    if (!res || !Array.isArray(res.apps)) throw new ApiError(0, "The server's app list was not in the expected form.");
+    return res.apps;
+  },
+
+  /** The published datasets, with their fields and record counts. */
+  listDatasets: async (): Promise<PublishedDataset[]> => {
+    const res = await request<{ datasets: PublishedDataset[] }>("/datasets");
+    if (!res || !Array.isArray(res.datasets)) throw new ApiError(0, "The server's dataset list was not in the expected form.");
+    return res.datasets;
+  },
+
+  /** The relationships that start or end at one dataset. */
+  listDatasetRelationships: async (id: string): Promise<DatasetRelationship[]> => {
+    const res = await request<{ relationships: DatasetRelationship[] }>(`/datasets/${encodeURIComponent(id)}/relationships`);
+    if (!res || !Array.isArray(res.relationships)) throw new ApiError(0, "The server's relationship list was not in the expected form.");
+    return res.relationships;
+  },
+
+  /** Creates an app in a workspace. 201 means it is live. 202 means it is a proposal waiting for approval. */
+  createApp: async (workspaceId: string, manifest: Record<string, unknown>): Promise<{ status: number; data: any }> => {
+    return requestFull<any>(`/workspaces/${encodeURIComponent(workspaceId)}/apps`, { method: "POST", body: JSON.stringify(manifest) });
+  },
+
+  /** One app's definition: its tables, fields, and views. */
+  getApp: async (slug: string): Promise<any> => {
+    return request<any>(`/apps/${encodeURIComponent(slug)}`);
   },
 
   getWorkspace: async (id: string): Promise<{ workspace: Workspace; collaborators: Collaborator[] }> => {

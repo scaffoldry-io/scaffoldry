@@ -37,11 +37,16 @@ Third-party libraries are different. They are dependencies, they follow the lice
 | Tests share one database and run one at a time | A database for each test | The shared database hid a race and made the suite order-dependent |
 | A flagged check needs any second owner or admin | That is the floor. A matrix can require a named position, and a unit can tighten it | One rule for every department does not fit a large institution |
 | A policy's source is a note in its text | A source is a stored document with snapshots, and rules cite passages in it | A reviewer must be able to check a rule against the words it came from |
+| There is one org tree with one root | Several hierarchies, each a tree with one root, added as data | A university's academic, supervisory and financial structures do not line up |
+| A rule cannot grant, and only membership gives access | Grants permit, guards forbid, rules narrow | A dean must reach forty departments without forty memberships |
 | Applicants and other people with no account | Every user is in the directory | `guests.md` |
 | Proof that the MCP surface can do what faculty ask | Tests of individual tools | `agent-coverage.md` |
 | Two copies of the server at once, for a restart or a failure nobody notices | One process answers from its own memory | `stateless-server.md` |
 | The institution's own policies, as rules people can read, each tied to its source and kept current | Policy is Cedar text and a free-text `@source` note | `policy-library.md` |
 | Who must approve a change, set by the institution and tightened by a unit, with the load shown first | Fixed in code: any second owner | `authority.md` |
+| Access by position and hierarchy, on every object, with an explanation of every decision | Workspace membership only, and several paths that fail open | `access-model.md` |
+| Apps built and hosted anywhere using institutional data the governed way | Only a person's long-lived agent token, which names no app | `external-apps.md` |
+| Seeing a proposed app before approving it, and approving exactly what was seen | A list of changes and checks as text | `proposal-preview.md` |
 
 ## Choices
 

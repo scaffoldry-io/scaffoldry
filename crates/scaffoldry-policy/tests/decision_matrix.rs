@@ -2,13 +2,13 @@
 //!
 //! The fixture `tests/fixtures/decision_matrix.json` was generated from the four original
 //! `authorize_*` functions before the schema and entity-builder refactor. Every later
-//! implementation must return the same decision for every row.
+//! implementation must return the same decision for every row. Those functions are gone from the
+//! engine, so the grid runs through `authorize`, the one entry point the server uses.
 //!
 //! Regenerate only on purpose: `GOLDEN_WRITE=1 cargo test -p scaffoldry-policy --test decision_matrix`.
 
-use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_policy::entities::{authorize, PrincipalCtx, RecordCtx, Resource, SystemCtx, WorkspaceCtx};
-use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine, WorkspaceActionInput};
+use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -158,6 +158,7 @@ fn principal(eppn: &str, affiliation: &str, department: &str) -> PrincipalCtx {
         scoped_affiliation: affiliation.to_string(),
         department: department.to_string(),
         unit_ids: vec![],
+        admin_unit_ids: vec![],
         is_platform_admin: false,
     }
 }
@@ -208,7 +209,10 @@ fn evaluate_direct(engine: &ScaffoldryPolicyEngine, case: &Case) -> String {
                 data_classification: String::new(),
                 member_role: member_role.unwrap_or("").to_string(),
                 unit_id: String::new(),
+                unit_path_ids: vec![],
                 is_member: member_role.is_some(),
+                is_ferpa_sensitive: false,
+                categories: Default::default(),
             }),
         ),
     };
@@ -220,53 +224,6 @@ fn decision_name(d: PolicyDecision) -> String {
         PolicyDecision::Allow => "allow".to_string(),
         PolicyDecision::Deny => "deny".to_string(),
     }
-}
-
-fn evaluate(engine: &ScaffoldryPolicyEngine, case: &Case) -> String {
-    let result = match case {
-        Case::Record { realm, affiliation, action, resource_department, sensitive } => {
-            let eppn = format!("someone@{realm}.state.edu");
-            let scoped = format!("{affiliation}@{realm}.state.edu");
-            let identity = EduPersonIdentity::parse(&eppn, vec![scoped.as_str()]).expect("identity parses");
-            engine.authorize_record_action(
-                &identity,
-                stored_department(realm),
-                action,
-                "golden-app",
-                resource_department,
-                *sensitive,
-            )
-        }
-        Case::Institutional { affiliation, department, action } => engine.authorize_institutional_action(
-            "someone@state.edu",
-            affiliation,
-            department,
-            action,
-            "institutional-console",
-        ),
-        Case::Departmental { affiliation, department, action } => engine.authorize_departmental_action(
-            "someone@state.edu",
-            affiliation,
-            department,
-            action,
-            "dept-resource",
-            "biology",
-        ),
-        Case::Workspace { affiliation, department, visibility, member_role, action } => {
-            engine.authorize_workspace_action(&WorkspaceActionInput {
-                principal_eppn: "someone@state.edu",
-                principal_affiliation: affiliation,
-                principal_department: department,
-                action_name: action,
-                workspace_id: "ws-golden",
-                workspace_department: "biology",
-                workspace_visibility: visibility,
-                is_member: member_role.is_some(),
-                member_role: *member_role,
-            })
-        }
-    };
-    decision_name(result.expect("evaluation must succeed").decision)
 }
 
 fn expected_rows() -> BTreeMap<String, String> {
@@ -290,11 +247,11 @@ fn assert_matches_fixture(rows: &[Row]) {
 }
 
 #[test]
-fn legacy_functions_match_the_golden_matrix() {
+fn authorize_matches_the_golden_matrix() {
     let engine = ScaffoldryPolicyEngine::default_institutional_engine().expect("engine builds");
     let rows: Vec<Row> = cases()
         .iter()
-        .map(|c| Row { key: c.key(), decision: evaluate(&engine, c) })
+        .map(|c| Row { key: c.key(), decision: evaluate_direct(&engine, c) })
         .collect();
 
     if std::env::var("GOLDEN_WRITE").is_ok() {
@@ -304,15 +261,5 @@ fn legacy_functions_match_the_golden_matrix() {
         return;
     }
 
-    assert_matches_fixture(&rows);
-}
-
-#[test]
-fn the_new_authorize_function_matches_the_golden_matrix() {
-    let engine = ScaffoldryPolicyEngine::default_institutional_engine().expect("engine builds");
-    let rows: Vec<Row> = cases()
-        .iter()
-        .map(|c| Row { key: c.key(), decision: evaluate_direct(&engine, c) })
-        .collect();
     assert_matches_fixture(&rows);
 }

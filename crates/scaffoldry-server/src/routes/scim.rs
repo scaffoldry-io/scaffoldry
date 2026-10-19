@@ -4,7 +4,7 @@ use crate::state::{OrganizationNode, RoleRow, ScimGroup, ScimUser, SharedState};
 use scaffoldry_core::standards::eduperson::EduPersonAffiliation;
 use std::str::FromStr;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
@@ -97,10 +97,27 @@ async fn schemas() -> impl IntoResponse {
     Json(schemas)
 }
 
-async fn list_users(State(state): State<SharedState>) -> impl IntoResponse {
-    let users = state.users.read().unwrap_or_else(|p| p.into_inner());
+/// RFC 7644 section 3.4.2.4: `startIndex` counts from 1 and `count` is how many to return.
+#[derive(Debug, serde::Deserialize)]
+struct PageParams {
+    #[serde(rename = "startIndex")]
+    start_index: Option<i64>,
+    count: Option<i64>,
+}
+
+/// The most users one SCIM list call returns.
+const SCIM_PAGE: i64 = 200;
+
+async fn list_users(State(state): State<SharedState>, Query(page): Query<PageParams>) -> Result<Json<Value>, StatusCode> {
+    let start = page.start_index.unwrap_or(1).max(1);
+    let count = page.count.unwrap_or(SCIM_PAGE).clamp(0, SCIM_PAGE);
+    let users = state
+        .repository
+        .search_users(&Default::default(), start - 1, count)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let total = state.repository.count_users().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let resources: Vec<Value> = users
-        .values()
+        .iter()
         .map(|u| {
             json!({
                 "schemas": [
@@ -118,14 +135,13 @@ async fn list_users(State(state): State<SharedState>) -> impl IntoResponse {
         })
         .collect();
 
-    let total = resources.len();
-    Json(json!({
+    Ok(Json(json!({
         "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
         "totalResults": total,
-        "startIndex": 1,
-        "itemsPerPage": total,
+        "startIndex": start,
+        "itemsPerPage": resources.len(),
         "Resources": resources
-    }))
+    })))
 }
 
 pub fn sync_org_roles(
@@ -256,42 +272,8 @@ pub fn sync_org_roles(
         }
     }
 
-    // 3. Scaffoldry roles
-    for r in &user.roles {
-        let typ = r.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let val = r.get("value").and_then(|v| v.as_str()).unwrap_or("");
-        if typ.eq_ignore_ascii_case("scaffoldry") {
-            if val.eq_ignore_ascii_case("unit_admin") {
-                if let Some(deepest) = deepest_id {
-                    new_roles.push(RoleRow {
-                        id: Uuid::new_v4(),
-                        person_id,
-                        eppn: user.user_name.clone(),
-                        organization_id: deepest,
-                        role_title: role_title.clone(),
-                        scoped_affiliation: "unit_admin".to_string(),
-                        is_primary: false,
-                        source: "scim".to_string(),
-                        position_key: None,
-                    });
-                }
-            } else if val.eq_ignore_ascii_case("platform_admin") {
-                if let Some(root_node) = orgs.iter().find(|o| o.parent_id.is_none()) {
-                    new_roles.push(RoleRow {
-                        id: Uuid::new_v4(),
-                        person_id,
-                        eppn: user.user_name.clone(),
-                        organization_id: root_node.id,
-                        role_title: role_title.clone(),
-                        scoped_affiliation: "platform_admin".to_string(),
-                        is_primary: false,
-                        source: "scim".to_string(),
-                        position_key: None,
-                    });
-                }
-            }
-        }
-    }
+    // 3. SCIM appoints no administrator. `roles[type=scaffoldry]` with `unit_admin` or `platform_admin` is read and
+    //    ignored, as `compliance` is. A Platform Admin appoints in the console, with a reason, in the ledger.
 
     new_roles
 }
@@ -340,8 +322,7 @@ async fn get_user(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let users = state.users.read().unwrap_or_else(|p| p.into_inner());
-    let u = users.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let u = state.user_by_id(&id).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(json!({
         "schemas": [
             "urn:ietf:params:scim:schemas:core:2.0:User",
@@ -362,8 +343,7 @@ async fn update_user(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
-    let u = users.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let mut u = state.user_by_id(&id).ok_or(StatusCode::NOT_FOUND)?;
 
     if let Some(un) = payload.get("userName").and_then(|v| v.as_str()) {
         u.user_name = un.to_string();
@@ -389,17 +369,16 @@ async fn update_user(
 
     {
         let repo = &state.repository;
-        repo.upsert_scim_user(u)
+        repo.upsert_scim_user(&u)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
-    let updated_user = u.clone();
-    drop(users);
+    let updated_user = u;
 
     let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
     let positions: Vec<crate::state::PositionType> = state.position_types.read().unwrap().values().cloned().collect();
     let new_roles = sync_org_roles(&updated_user, &all_orgs, &positions);
-    let _ = state.delete_scim_roles(&updated_user.user_name);
+    let _ = state.delete_scim_roles(&updated_user.user_name, updated_user.active);
     for r in new_roles {
         let _ = state.persist_role(&r);
     }
@@ -423,25 +402,16 @@ async fn delete_user(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let mut users = state.users.write().unwrap_or_else(|p| p.into_inner());
-    if let Some(u) = users.remove(&id) {
-        {
-        let repo = &state.repository;
-            repo.delete_scim_user(&id)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        }
-        drop(users);
-        let _ = state.delete_scim_roles(&u.user_name);
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
+    let u = state.user_by_id(&id).ok_or(StatusCode::NOT_FOUND)?;
+    state.repository.delete_scim_user(&id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let _ = state.delete_scim_roles(&u.user_name, false);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn list_groups(State(state): State<SharedState>) -> impl IntoResponse {
-    let groups = state.groups.read().unwrap_or_else(|p| p.into_inner());
+    let groups = state.repository.list_scim_groups().unwrap_or_default();
     let resources: Vec<Value> = groups
-        .values()
+        .iter()
         .map(|g| {
             json!({
                 "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
@@ -480,7 +450,6 @@ async fn create_group(
         members: members.clone(),
     };
 
-    state.groups.write().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), group.clone());
     {
         let repo = &state.repository;
         repo.upsert_scim_group(&group)
@@ -501,8 +470,7 @@ async fn get_group(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let groups = state.groups.read().unwrap_or_else(|p| p.into_inner());
-    let g = groups.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let g = state.repository.group_by_id(&id).ok().flatten().ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(json!({
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
         "id": g.id,
@@ -516,8 +484,7 @@ async fn update_group(
     Path(id): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
-    let mut groups = state.groups.write().unwrap_or_else(|p| p.into_inner());
-    let g = groups.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let mut g = state.repository.group_by_id(&id).ok().flatten().ok_or(StatusCode::NOT_FOUND)?;
 
     if let Some(dn) = payload.get("displayName").and_then(|v| v.as_str()) {
         g.display_name = dn.to_string();
@@ -528,7 +495,7 @@ async fn update_group(
 
     {
         let repo = &state.repository;
-        repo.upsert_scim_group(g)
+        repo.upsert_scim_group(&g)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
@@ -544,15 +511,7 @@ async fn delete_group(
     State(state): State<SharedState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let mut groups = state.groups.write().unwrap_or_else(|p| p.into_inner());
-    if groups.remove(&id).is_some() {
-        {
-        let repo = &state.repository;
-            repo.delete_scim_group(&id)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        }
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
+    state.repository.group_by_id(&id).ok().flatten().ok_or(StatusCode::NOT_FOUND)?;
+    state.repository.delete_scim_group(&id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
 }

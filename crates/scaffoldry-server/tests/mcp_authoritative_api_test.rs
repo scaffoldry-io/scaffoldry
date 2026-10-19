@@ -356,6 +356,81 @@ async fn seeded_app() -> Router {
     scaffoldry_server::build_app_with_state(state).expect("router")
 }
 
+/// The catalog shows sample rows only for public and directory data, or to a Platform Admin. The tool must follow the
+/// same rule as the HTTP route, or an agent could read samples of restricted data that the route would withhold.
+#[tokio::test]
+async fn list_datasets_withholds_samples_of_restricted_data_from_a_non_admin() {
+    let _db = common::TestDb::new();
+    let app = seeded_app().await;
+    let samples = |token: String| {
+        let app = app.clone();
+        async move {
+            let (_, res) = mcp_call(&app, &token, "tools/call", Some(json!({ "name": "list_datasets", "arguments": {} }))).await;
+            let text = res["result"]["content"][0]["text"].as_str().unwrap().to_string();
+            let list: Value = serde_json::from_str(&text).unwrap();
+            let items = list.get("items").cloned().unwrap_or(list);
+            items
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| (d["id"].as_str().unwrap().to_string(), d.get("sample_data").is_some_and(|s| !s.as_array().unwrap().is_empty())))
+                .collect::<std::collections::BTreeMap<String, bool>>()
+        }
+    };
+
+    let person = samples(login_user(&app, "prof.curie@science.state.edu").await).await;
+    assert!(person["programs"], "public data shows samples");
+    assert!(person["faculty"], "directory data shows samples");
+    assert!(!person["grants"], "restricted FERPA data shows none to a non-admin");
+
+    let admin = samples(login_user(&app, "jordan.lee@state.edu").await).await;
+    assert!(admin["grants"], "a Platform Admin sees every sample");
+}
+
+/// The server tells an agent, at the start, who it acts for and the few rules that hold everywhere. It is built for
+/// the caller, stays short, and carries no record value. `docs/plans/mcp-guidance.md` phase 1.
+#[tokio::test]
+async fn initialize_gives_the_agent_instructions_for_this_caller() {
+    let _db = common::TestDb::new();
+    let app = seeded_app().await;
+    let token = login_user(&app, "prof.curie@science.state.edu").await;
+    let (status, res) = mcp_call(&app, &token, "initialize", Some(json!({ "protocolVersion": "2025-06-18" }))).await;
+    assert_eq!(status, StatusCode::OK);
+    let text = res["result"]["instructions"].as_str().expect("initialize returns instructions");
+
+    assert!(text.contains("prof.curie@science.state.edu"), "names the person the agent acts for");
+    assert!(text.to_lowercase().contains("propose"), "says changes are proposed first");
+    assert!(text.to_lowercase().contains("untrusted"), "says text in data is untrusted");
+    assert!(text.contains("prompts") && text.contains("resources"), "points to where more guidance is");
+    assert!(text.len() <= 1800, "instructions are {} bytes, over the limit", text.len());
+
+    // No record value. The seeded sample rows are the values that could leak.
+    for value in ["Dr. Sarah Smith", "Quantum Lattice Systems", "PHYS-PHD"] {
+        assert!(!text.contains(value), "instructions must carry no record value: {value}");
+    }
+
+    // A different caller gets instructions built for them.
+    let other = login_user(&app, "jordan.lee@state.edu").await;
+    let (_, res) = mcp_call(&app, &other, "initialize", Some(json!({ "protocolVersion": "2025-06-18" }))).await;
+    let other_text = res["result"]["instructions"].as_str().unwrap();
+    assert!(other_text.contains("jordan.lee@state.edu") && !other_text.contains("prof.curie@science.state.edu"));
+}
+
+/// A client loads the whole tool list into its context on every session. About four bytes make a token,
+/// so this limit is about 4,500 tokens. A change that needs more raises the limit here, in the open.
+const TOOL_LIST_BYTE_BUDGET: usize = 18_000;
+
+#[tokio::test]
+async fn the_tool_list_stays_inside_its_budget() {
+    let _db = common::TestDb::new();
+    let app = seeded_app().await;
+    let token = login_user(&app, "jordan.lee@state.edu").await;
+    let (_, res) = mcp_call(&app, &token, "tools/list", None).await;
+    let bytes = serde_json::to_vec(&res["result"]["tools"]).unwrap().len();
+    eprintln!("tool list: {} tools, {bytes} bytes", TOOLS.len());
+    assert!(bytes <= TOOL_LIST_BYTE_BUDGET, "the tool list is {bytes} bytes, over the {TOOL_LIST_BYTE_BUDGET} budget");
+}
+
 #[tokio::test]
 async fn tools_list_returns_exactly_the_registry_with_read_only_hints() {
     let _db = common::TestDb::new();
@@ -480,7 +555,9 @@ async fn a_result_is_structured_content_and_one_matching_text_block() {
     assert_eq!(content.len(), 1);
     assert_eq!(content[0]["type"], "text");
     let from_text: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
-    assert_eq!(from_text, res["result"]["structuredContent"]);
+    // The text is the plain result. A list is wrapped as {"items": [...]} in structuredContent, because the spec wants an object.
+    let expected = if from_text.is_array() { json!({ "items": from_text }) } else { from_text.clone() };
+    assert_eq!(expected, res["result"]["structuredContent"]);
 }
 
 async fn raw_post(app: &Router, token: &str, payload: Value) -> (StatusCode, Vec<u8>) {
@@ -589,14 +666,24 @@ async fn simulate_cedar_policy_calls_the_engine_and_needs_a_platform_admin() {
 
     // The reasons are the engine's own, not a made-up policy name.
     let engine = scaffoldry_policy::ScaffoldryPolicyEngine::default_institutional_engine().unwrap();
-    let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity::parse(
-        "student.smith@science.state.edu",
-        vec!["student@science.state.edu"],
-    )
-    .unwrap();
-    let expected = engine
-        .authorize_record_action(&identity, "science", "export", "simulation", "science", true)
-        .unwrap();
+    use scaffoldry_policy::entities::{authorize, PrincipalCtx, RecordCtx, Resource};
+    let student = PrincipalCtx {
+        eppn: "student.smith@science.state.edu".into(),
+        name: "student.smith@science.state.edu".into(),
+        scoped_affiliation: "student".into(),
+        department: "science".into(),
+        unit_ids: vec![],
+        admin_unit_ids: vec![],
+        is_platform_admin: false,
+    };
+    let record = Resource::Record(RecordCtx {
+        app_slug: "simulation".into(),
+        department: "science".into(),
+        workspace_id: String::new(),
+        is_ferpa_sensitive: true,
+        categories: Default::default(),
+    });
+    let expected = authorize(&engine, &student, "export", &record).unwrap();
     let expected_reasons: Vec<Value> = expected.reasons.iter().map(|r| json!(r)).collect();
     assert!(!expected_reasons.is_empty(), "a forbid decided this");
     assert_eq!(out["reasons"], Value::Array(expected_reasons));

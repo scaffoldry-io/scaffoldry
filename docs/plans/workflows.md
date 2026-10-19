@@ -63,7 +63,7 @@ BPMN 2.0 names stay the vocabulary: a user task, a service task, an exclusive ga
 
 ## Phase 1 — flows, grants, and addresses
 
-Migration `crates/scaffoldry-core/migrations/0055_flows.sql`:
+Migration `crates/scaffoldry-core/migrations/*_flows.sql`:
 
 ```sql
 ALTER TABLE workflow_automations ALTER COLUMN app_slug DROP NOT NULL;
@@ -199,7 +199,7 @@ Steps added: `StartFlow { flow_id, inputs: Vec<(String, Expr)> }`. It starts a n
 
 Validation across flows. A static graph of every active flow's `StartFlow` and `FlowCompleted` and `ProcessDecided` edges is checked when a version is saved. A cycle fails with the path in words: `Open aid file starts Notify housing, which starts Open aid file.` A chain at run time carries `chain_depth`. A flow started at depth 5 fails with the chain. Scheduled triggers use a job, `fire_schedules`, with a dedupe key of flow and the scheduled time, so a missed or doubled tick starts one run.
 
-Safety. A circuit breaker: a flow that fails 20 consecutive runs is disabled in the table `flow_state` (migration `0058_flow_state.sql`, with `flow_id`, `consecutive_failures`, and `disabled_at`) and its owners are notified. An owner re-enables after fixing it. A rate cap of `flows.max_runs_per_minute` (default 600, closed list) per flow starts no new runs past it and records `rate_limited` in the run.
+Safety. A circuit breaker: a flow that fails 20 consecutive runs is disabled in the table `flow_state` (migration `*_flow_state.sql`, with `flow_id`, `consecutive_failures`, and `disabled_at`) and its owners are notified. An owner re-enables after fixing it. A rate cap of `flows.max_runs_per_minute` (default 600, closed list) per flow starts no new runs past it and records `rate_limited` in the run.
 
 Tests.
 
@@ -223,7 +223,7 @@ Tests.
 
 A step lists `show` (fields the assignee may read) and, for `Complete`, `fill` (fields the assignee may write) and `require` (fields that must be non-blank to finish). `Complete` may also list a `decline_reason` requirement.
 
-Task grants. While a step is open, each assignee holds a task grant on that one record: read of `show` and `fill`, write of `fill`. Migration `0057_task_grants.sql`:
+Task grants. While a step is open, each assignee holds a task grant on that one record: read of `show` and `fill`, write of `fill`. Migration `*_task_grants.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS task_grants (
@@ -257,7 +257,7 @@ Tests.
 
 ## Phase 5 — My Work: data and API
 
-Migration `0056_work_items.sql`:
+Migration `*_work_items.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS work_items (

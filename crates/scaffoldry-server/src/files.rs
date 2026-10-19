@@ -270,3 +270,23 @@ pub fn purge_unattached(repo: &PostgresRepository, hours: i64) -> Result<usize, 
     }
     Ok(removed)
 }
+
+/// Stores raw bytes directly into the file blob store, returning its SHA-256.
+pub fn store_bytes(dir: &Path, bytes: &[u8]) -> Result<String, std::io::Error> {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let sha256: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    let dest = blob_path(dir, &sha256);
+    if !dest.exists() {
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp_dir = dir.join(TMP);
+        std::fs::create_dir_all(&tmp_dir)?;
+        let tmp = tmp_dir.join(format!("exp-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp, bytes)?;
+        std::fs::rename(&tmp, &dest)?;
+    }
+    Ok(sha256)
+}

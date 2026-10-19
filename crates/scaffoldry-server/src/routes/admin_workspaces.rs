@@ -36,6 +36,7 @@ pub fn router() -> Router<SharedState> {
             post(transfer_workspace_ownership),
         )
         .route("/admin/apps", get(list_apps))
+        .route("/admin/direct-grants", get(list_direct_grants))
 }
 
 fn admin(state: &SharedState, headers: &HeaderMap) -> Result<AuthUser, ServiceError> {
@@ -475,6 +476,7 @@ async fn transfer_workspace_ownership(
                     scoped_affiliation: target_user.affiliation.clone(),
                     department: target_user.department.clone(),
                     added_at: Utc::now().to_rfc3339(),
+                    app_slug: String::new(),
                 };
                 {
         let repo = &state.repository;
@@ -620,4 +622,13 @@ async fn list_apps(
             "next_cursor": next_cursor,
         })),
     ))
+}
+
+/// Every grant that names a person, for an administrator to review.
+async fn list_direct_grants(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ServiceError> {
+    admin(&state, &headers)?;
+    Ok(Json(json!({ "grants": crate::service::grants::direct_grants(&state) })))
 }

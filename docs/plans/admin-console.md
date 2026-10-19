@@ -29,7 +29,7 @@ Do not reopen these.
 | Who may open the console? | A Platform Admin: `central_admin`, or a `platform_admin` appointment on the root unit. Two panels also admit affiliation `compliance`: Data governance labels, and the audit log with OSCAL requirements |
 | What do Org Unit Admins get? | Nothing here. They keep the workspace rail from `docs/plans/organization.md`. `/admin` stays closed to them |
 | Who enforces access? | The server. The client hides a menu item for tidiness. It decides nothing |
-| Can an agent change institution configuration? | No. Admin writes are not MCP tools. One read-only tool, `admin_inventory`, lets an agent inspect (phase 7) |
+| Can an agent change institution configuration? | No. No MCP tool applies an admin write. An agent may draft an access change as a pending change that a person confirms (`access-model.md` phase 14). One read-only tool, `admin_inventory`, lets an agent inspect (phase 7) |
 | Where do process definitions get edited? | In the workflow builder inside the app. The console governs them: inventory, history, enable or disable, simulate. It does not duplicate the editor |
 | Is there delete? | No. Not for people, units, workspaces, apps, rules, or ledger rows. Hold, revoke, disable, and cancel exist |
 | What is a reason? | Every admin write carries a `reason` of 1 to 500 characters. It becomes the ledger rationale |
@@ -209,7 +209,7 @@ Needs phase 1 and `foundation.md` phase 5 (apps belong to workspaces).
 | POST | `/admin/workspaces/{id}/transfer-ownership` | Body `eppn`, `reason`. The new owner must resolve through `resolve_user`. They become `owner`, added as a collaborator if missing. Existing owners become `admin`. The workspace always keeps one owner. Ledger `WorkspaceMemberRoleUpdated` |
 | GET | `/admin/apps` | Query `search`, `workspace`, `cursor`, `limit`. Row: slug, title, workspace, version, table count, page count, custom page count, record count per table, updated |
 
-`ponytail`: the user and manifest lists are built in memory from `ServerState` and sorted per request. That is comfortable to a few thousand users and apps. Move the sort into SQL when a list is measured above 100 ms.
+`ponytail`: the manifest list is built in memory from `ServerState` and sorted per request. That is comfortable to a few thousand apps. Move the sort into SQL when it is measured above 100 ms. The People list is no longer built in memory: `stateless-server.md` phase 2 pages it in SQL.
 
 Frontend: `admin/Workspaces.tsx`.
 
@@ -233,7 +233,7 @@ Split. Run the first part of this phase early, in the README row named for it: `
 
 Why a label and not an edit. Changing a field's sensitivity in the manifest is a structural change and needs a proposal. A compliance officer must be able to raise a field's sensitivity at once, with no one's approval. The label table is an overlay that can only add protection.
 
-Migration `crates/scaffoldry-core/migrations/0017_data_labels.sql`:
+Migration `crates/scaffoldry-core/migrations/*_data_labels.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS data_labels (
@@ -298,7 +298,7 @@ Needs phase 1, `foundation.md` phase 8, `guards.md` phase 1, and `oscal-catalog.
 
 Today the policy is one string compiled into the binary, and the console shows a different, hard-coded list. This phase makes the running policy a stored, versioned, testable thing.
 
-Migration `crates/scaffoldry-core/migrations/0018_policy_versions.sql`:
+Migration `crates/scaffoldry-core/migrations/*_policy_versions.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS policy_versions (
@@ -444,7 +444,7 @@ Tests.
 
 Needs phases 1 and 2 and `mcp-apps.md` phase 1. The page controls need `mcp-apps.md` phase 6. If it is not built, build only the tool controls and say so.
 
-Migration `0020_ledger_filters.sql`, which indexes fixed platform columns only:
+Migration `*_ledger_filters.sql`, which indexes fixed platform columns only:
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_ledger_decision ON governance_ledger (decision_type, sequence DESC);
@@ -521,6 +521,7 @@ Each of these adds its routes to `ADMIN_ROUTES`, is built from the kit, writes a
 | Flows | `workflows.md` phase 11 |
 | Policy library | `policy-library.md` phase 6 |
 | Decision authority | `authority.md` phase 2 |
+| Access | `access-model.md` phase 11 |
 
 ## How to prompt Gemini
 

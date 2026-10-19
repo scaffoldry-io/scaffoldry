@@ -119,6 +119,7 @@ fn member(state: &ServerState, eppn: &str, role: &str) {
         scoped_affiliation: "faculty".to_string(),
         department: "biology".to_string(),
         added_at: String::new(),
+        app_slug: String::new(),
     });
 }
 

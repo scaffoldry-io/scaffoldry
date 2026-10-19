@@ -1,6 +1,5 @@
 use crate::guard::session_user;
 use crate::service::access::{authorize_app, AppAction};
-use crate::service::organizations::{unit_in_scope, OrgCaller};
 use crate::state::{lock_err, SharedState};
 use axum::{
     extract::{Path, Query, State},
@@ -13,7 +12,6 @@ use scaffoldry_core::{
     AutomationRule, ProcessInstance, ProcessStatus, TriggerEvent, WorkflowExecutionResult,
 };
 use scaffoldry_engine::{AppManifest, AutomationEngine};
-use scaffoldry_policy::{PolicyDecision, WorkspaceActionInput};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::str::FromStr;
@@ -22,6 +20,7 @@ use crate::service::ServiceError;
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/workspaces/{id}/apps", post(create_app_in_workspace))
+        .route("/me/apps", get(list_my_apps))
         .route("/apps/{slug}", get(get_app).put(update_app))
         .route("/apps/{slug}/publish", post(publish_app))
         .route("/apps/{slug}/automations", get(list_app_automations).post(create_app_automation))
@@ -48,47 +47,8 @@ async fn create_app_in_workspace(
         })?
     };
 
-    let role = crate::service::members::member_role(&user, &ws_id, &state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
-    let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &user.eppn,
-            principal_affiliation: &user.affiliation,
-            principal_department: &user.department,
-            action_name: "manage_app",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-
-    let mut allowed = decision.decision == PolicyDecision::Allow;
-    if !allowed {
-        if let Some(org_id) = ws.organization_id {
-            let org_caller = OrgCaller {
-                eppn: user.eppn.clone(),
-                affiliation: user.affiliation.clone(),
-            };
-            let (orgs, roles) = {
-                let o_guard = state.organizations.read().map_err(|_| lock_err())?;
-                let r_guard = state.roles.read().map_err(|_| lock_err())?;
-                let org_list: Vec<_> = o_guard.values().cloned().collect();
-                (org_list, r_guard.clone())
-            };
-            if unit_in_scope(&org_caller, org_id, &orgs, &roles) {
-                allowed = true;
-            }
-        }
-    }
-
-    if !allowed {
-        return Err(ServiceError::forbidden("Forbidden: Cedar policy denied app creation in workspace").into_pair());
-    }
+    crate::service::access::authorize_workspace_denying(&user, &ws, "manage_app", "Forbidden: Cedar policy denied app creation in workspace", &state)
+        .map_err(|e| e.into_pair())?;
 
     let slug = payload.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if crate::service::proposals::live_app_exists(&slug, &state) {
@@ -502,4 +462,13 @@ async fn list_app_collaborators(
         .map_err(ServiceError::into_pair)?;
 
     Ok(Json(json!({ "collaborators": collabs })))
+}
+
+/// The apps the caller can reach, for the My apps list.
+async fn list_my_apps(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    Ok(Json(serde_json::json!({ "apps": crate::service::my_apps::my_apps(&user, &state) })))
 }

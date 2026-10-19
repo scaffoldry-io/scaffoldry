@@ -171,6 +171,38 @@ pub static JOB_KINDS: &[JobKind] = &[
         max_concurrent: 1,
         run: purge_unattached_files,
     },
+    JobKind {
+        name: "import_analyze",
+        title: "Analyzing imported file",
+        description: "Detects file columns, encoding, and types for import.",
+        max_attempts: 2,
+        max_concurrent: 2,
+        run: crate::import_jobs::import_analyze,
+    },
+    JobKind {
+        name: "import_validate",
+        title: "Checking import rows",
+        description: "Validates imported rows against schema, links, and access rules.",
+        max_attempts: 2,
+        max_concurrent: 2,
+        run: crate::import_jobs::import_validate,
+    },
+    JobKind {
+        name: "import_run",
+        title: "Importing records",
+        description: "Imports records into table in batches with checkpoints.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::import_jobs::import_run,
+    },
+    JobKind {
+        name: "export_run",
+        title: "Exporting records",
+        description: "Streams records to an export file with scope and redaction rules applied.",
+        max_attempts: 2,
+        max_concurrent: 2,
+        run: crate::export_jobs::export_run,
+    },
 ];
 
 #[derive(Debug, Clone)]

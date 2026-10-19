@@ -28,6 +28,14 @@ Today a "published dataset" holds a few sample rows typed into the code. This br
 | The dataset catalog route returns sample rows to any signed-in user | `routes/datasets.rs` |
 | No sync, no connector, no external connection | |
 
+## Reconciliation with the data layer (2026-10-19)
+
+- **One meaning of "dataset".** A dataset is a governed table with an owning function and unit. Its source is a sync (read-only, as in this brief) or local entry. Everything here describes the synced kind.
+- **Who owns the labels.** A Platform Admin sets the first labels at the connection, as decided here. After that the dataset's function steward owns them, and a change follows the label change process in `data-layer.md`.
+- **Sync matches on a declared key** (`record_keys`), and keeps each record's id stable. A key value that changes at the source is a key change with a history entry. It is never a delete and an insert, or links to the record would be orphaned.
+- **The catalog.** A connected dataset appears in the catalog with its fields and synthetic samples. The catalog never shows its real rows.
+- **File feeds first, connectors later,** as phases 1 to 4 already order them.
+
 ## Out of scope
 
 - Writing back to a source system.
@@ -46,7 +54,7 @@ Today a "published dataset" holds a few sample rows typed into the code. This br
 
 ## Phase 1 — datasets and the file-drop connector
 
-Migration `0036_connections.sql`:
+Migration `*_connections.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS connections (

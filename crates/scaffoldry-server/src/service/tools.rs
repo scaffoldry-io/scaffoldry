@@ -9,9 +9,7 @@ use crate::service::access::{authorize_app, authorize_workspace, AppAction};
 use crate::service::history::Origin;
 use crate::service::{records, workspaces, ServiceError};
 use crate::state::{AuthUser, SharedState};
-use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::DecisionType;
-use scaffoldry_policy::PolicyDecision;
 use scaffoldry_engine::HostRouter;
 use serde_json::{json, Map, Value};
 
@@ -290,6 +288,14 @@ Tool {
         read_only: false,
         run: run_cancel_job,
     },
+    Tool {
+        name: "export_records",
+        description: "Enqueues an export job for records in an app table or view. Returns a job ID and download URL. Does not return record bytes directly.",
+        input_schema: schema_export_records,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_export_records,
+    },
 ];
 
 /// The one gate. Finds the tool, checks its scope, checks the arguments, and runs it.
@@ -537,13 +543,22 @@ fn run_create_record(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
     to_value(&records::create_record(caller, origin, app_slug, &data, state)?)
 }
 
-fn run_list_datasets(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_datasets(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
     let dept_filter = args.get("department").and_then(|v| v.as_str());
-    let list: Vec<_> = datasets
+    // Sample rows follow the catalog's rule, the same as the HTTP route. Where it withholds them, the key is absent.
+    let list: Vec<Value> = datasets
         .values()
         .filter(|d| dept_filter.is_none_or(|f| d.department.eq_ignore_ascii_case(f)))
-        .cloned()
+        .map(|d| {
+            let mut v = serde_json::to_value(d).unwrap_or(Value::Null);
+            if !crate::service::catalog::sample_visible_to(caller, &d.sensitivity_level) {
+                if let Some(map) = v.as_object_mut() {
+                    map.remove("sample_data");
+                }
+            }
+            v
+        })
         .collect();
     to_value(&list)
 }
@@ -561,57 +576,32 @@ fn run_simulate_cedar_policy(_caller: &AuthUser, _origin: &Origin, args: Value, 
         .unwrap_or_else(|| domain.split('.').next().unwrap_or("university").to_string());
 
     let affiliation = match affiliation_word.as_str() {
-        "faculty" => EduPersonAffiliation::Faculty,
-        "student" => EduPersonAffiliation::Student,
-        "staff" => EduPersonAffiliation::Staff,
-        "employee" => EduPersonAffiliation::Employee,
-        "affiliate" => EduPersonAffiliation::Affiliate,
-        "alum" => EduPersonAffiliation::Alum,
-        _ => EduPersonAffiliation::Member,
+        word @ ("faculty" | "student" | "staff" | "employee" | "affiliate" | "alum") => word,
+        _ => "member",
     };
-    let identity = EduPersonIdentity {
-        eppn: eppn.to_string(),
-        realm: domain,
-        affiliations: vec![affiliation],
-    };
-
-    let result = state
-        .policy_engine
-        .authorize_record_action(&identity, &department, action, "simulation", &department, ferpa_sensitive)
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let result = crate::service::access::simulate_record_action(state, eppn, affiliation, &department, action, "simulation", &department, ferpa_sensitive)?;
 
     Ok(json!({
-        "decision": if result.decision == PolicyDecision::Allow { "Allow" } else { "Deny" },
+        "decision": if result.allowed { "Allow" } else { "Deny" },
         "principal": eppn,
         "affiliation": affiliation_word,
         "action": action,
         "resource_ferpa_sensitive": ferpa_sensitive,
         "reasons": result.reasons,
         "diagnostics": result.diagnostics,
-        "deciding_policy": result.deciding_policy,
+        "deciding_policy": result.policy,
     }))
 }
 
 fn run_record_governance_decision(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     // The same Cedar rule the REST route applies. A student may not record a decision.
-    let auth = state
-        .policy_engine
-        .authorize_institutional_action(
-            &caller.eppn,
-            &caller.affiliation,
-            &caller.department,
-            "record_decision",
-            "governance-ledger",
-        )
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    if auth.decision == PolicyDecision::Deny {
-        return Err(ServiceError::Forbidden {
-            message: "Forbidden: Cedar policy denied ledger append".to_string(),
-            reasons: auth.reasons,
-            diagnostics: auth.diagnostics,
-            policy: auth.deciding_policy,
-        });
-    }
+    crate::service::access::require(
+        state,
+        caller,
+        "record_decision",
+        &scaffoldry_policy::entities::Resource::System(crate::service::access::ledger_resource()),
+        "Forbidden: Cedar policy denied ledger append",
+    )?;
 
     let org_code = required_str(&args, "organization_code")?;
     let decision_type = match required_str(&args, "decision_type")? {
@@ -794,7 +784,7 @@ fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ServiceError>
 fn stale_as_text(err: ServiceError) -> ServiceError {
     match err {
         ServiceError::StaleVersion { message, version } => {
-            ServiceError::BadRequest(format!("{message} The current version is {version}."))
+            ServiceError::Conflict(format!("{message} The current version is {version}."))
         }
         other => other,
     }
@@ -1285,4 +1275,87 @@ fn run_aggregate_records(caller: &AuthUser, _origin: &Origin, args: Value, state
         state,
     )?;
     serde_json::to_value(res).map_err(|e| ServiceError::Internal(e.to_string()))
+}
+
+
+fn schema_export_records() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "table_id": { "type": "string", "description": "Table id or slug to export" },
+            "format": { "type": "string", "description": "Export format: csv, xlsx, json, or jsonl (default csv)" },
+            "fields": { "type": "array", "items": { "type": "string" }, "description": "Field names to include" }
+        },
+        "required": ["app_slug", "table_id"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct ExportRecordsArgs {
+    app_slug: String,
+    table_id: String,
+    format: Option<String>,
+    fields: Option<Vec<String>>,
+}
+
+fn run_export_records(
+    caller: &AuthUser,
+    _origin: &Origin,
+    args: Value,
+    state: &SharedState,
+) -> Result<Value, ServiceError> {
+    let args: ExportRecordsArgs = parse(args)?;
+    let app_slug = args.app_slug;
+    let table_id = args.table_id;
+    let format_str = args.format.unwrap_or_else(|| "csv".to_string()).to_lowercase();
+
+    let manifest = state
+        .engine
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .resolve_by_slug(&app_slug)
+        .cloned()
+        .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
+
+    let table = manifest
+        .tables
+        .iter()
+        .find(|t| t.id == table_id || t.slug == table_id)
+        .ok_or_else(|| ServiceError::NotFound(format!("Table '{table_id}' not found")))?;
+
+    let field_vis = crate::service::scope::field_visibility_of(caller, &app_slug, &table.id, state);
+    let disallowed_fields = field_vis.hidden_names();
+    let sensitive_fields = crate::service::records::sensitive_fields_of(&app_slug, &table.id, state);
+
+    let rules = crate::service::scope::rules_of(&app_slug, state);
+    let person = crate::service::scope::person_of(caller, state);
+
+    let export_id = uuid::Uuid::new_v4();
+
+    let job_id = crate::jobs::enqueue(
+        &state.repository,
+        "export_run",
+        json!({
+            "export_id": export_id,
+            "app_slug": app_slug,
+            "table_id": table.id,
+            "fields": args.fields,
+            "format": format_str,
+            "caller_eppn": caller.eppn,
+            "caller_affiliation": caller.affiliation,
+            "caller_person": person,
+            "row_rules": rules,
+            "disallowed_fields": disallowed_fields,
+            "sensitive_fields": sensitive_fields,
+        }),
+        &caller.eppn,
+        None,
+    ).map_err(|e| ServiceError::Internal(e.to_string()))?;
+
+    Ok(json!({
+        "job_id": job_id.to_string(),
+        "export_id": export_id.to_string(),
+        "download_url": format!("/api/v1/apps/{}/exports/{}/download", app_slug, export_id),
+    }))
 }

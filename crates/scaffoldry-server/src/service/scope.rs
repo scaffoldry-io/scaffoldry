@@ -57,44 +57,68 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "get_records_per_table",
 ];
 
-/// The rules an app has set.
+/// The row rules in the manifest the app runs, or `None` when the engine holds no such app. The manifest is the
+/// only place rules live, so a restart, or a second instance, applies what was approved.
+fn rules_loaded(app_slug: &str, state: &SharedState) -> Option<Vec<RowRule>> {
+    use scaffoldry_engine::HostRouter;
+    state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(app_slug).map(|m| m.access.rows.clone())
+}
+
+/// The rules an app has set. An app the engine does not hold has none to give. Its callers reach it only
+/// through a route that found the app first, and the scope functions below treat it as closed.
 pub fn rules_of(app_slug: &str, state: &SharedState) -> Vec<RowRule> {
-    state.access_rules.read().unwrap_or_else(|p| p.into_inner()).get(app_slug).cloned().unwrap_or_default()
+    rules_loaded(app_slug, state).unwrap_or_default()
 }
 
-/// Replaces an app's rules.
+/// Replaces an app's row rules in its manifest, stored and running, the way an approved manifest would. This is for a
+/// test or a tool that builds a state by hand. The approved manifest is the source everywhere else. It panics when
+/// the app is not held or the manifest no longer validates, so a rule that was not applied is never mistaken for no rule.
 pub fn set_rules(app_slug: &str, rules: Vec<RowRule>, state: &SharedState) {
-    state.access_rules.write().unwrap_or_else(|p| p.into_inner()).insert(app_slug.to_string(), rules);
+    edit_manifest(app_slug, state, |m| m.access.rows = rules);
 }
 
-/// What the rules know about a person.
-pub fn person_of(caller: &AuthUser, state: &SharedState) -> Person {
-    let roles: Vec<crate::state::RoleRow> = state
-        .roles
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .iter()
-        .filter(|r| r.eppn.eq_ignore_ascii_case(&caller.eppn))
-        .cloned()
-        .collect();
-    let group_ids: Vec<String> = {
-        let groups = state.groups.read().unwrap_or_else(|p| p.into_inner());
-        let users = state.users.read().unwrap_or_else(|p| p.into_inner());
-        let my_id = users.values().find(|u| u.user_name.eq_ignore_ascii_case(&caller.eppn)).map(|u| u.id.clone());
-        groups
-            .values()
-            .filter(|g| {
-                g.members.iter().filter_map(|m| m.get("value").and_then(Value::as_str)).any(|v| v.eq_ignore_ascii_case(&caller.eppn) || my_id.as_deref() == Some(v))
-            })
-            .map(|g| g.id.clone())
-            .collect()
+fn edit_manifest(app_slug: &str, state: &SharedState, edit: impl FnOnce(&mut scaffoldry_engine::AppManifest)) {
+    use scaffoldry_engine::HostRouter;
+    // The stored manifest is the one to change, so a reload from the database keeps the rules. An app only the engine
+    // holds is stored as it runs, without the views that live in their own table.
+    let mut manifest = match state.repository.get_app_manifest(app_slug).unwrap_or_else(|e| panic!("the stored manifest of '{app_slug}' cannot be read: {e}")) {
+        Some(stored) => stored,
+        None => {
+            let mut running = state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(app_slug).cloned().unwrap_or_else(|| panic!("the engine holds no app '{app_slug}'"));
+            let kept: std::collections::HashSet<String> =
+                state.app_views.read().unwrap_or_else(|p| p.into_inner()).get(app_slug).map(|vs| vs.iter().map(|v| v.id.to_string()).collect()).unwrap_or_default();
+            running.views.retain(|v| !kept.contains(&v.id));
+            running
+        }
     };
+    edit(&mut manifest);
+    state.persist_app_manifest(manifest).unwrap_or_else(|e| panic!("the manifest of '{app_slug}' did not save: {e}"));
+}
+
+/// What the rules know about a person. Their units are the same set Cedar sees, with every ancestor. Each position
+/// they hold comes twice, as the bare key and as `key@unit-id`, so a rule can tell Chemistry's chair from Physics's.
+pub fn person_of(caller: &AuthUser, state: &SharedState) -> Person {
+    let roles = state.roles_of(&caller.eppn);
+    let group_ids = state.group_ids_of(&caller.eppn);
+    let mut position_keys: Vec<String> = Vec::new();
+    for r in &roles {
+        if let Some(key) = &r.position_key {
+            if !position_keys.contains(key) {
+                position_keys.push(key.clone());
+            }
+        }
+    }
+    for r in &roles {
+        if let Some(key) = &r.position_key {
+            position_keys.push(format!("{key}@{}", r.organization_id));
+        }
+    }
     Person {
         address: caller.eppn.clone(),
         department: caller.department.clone(),
         affiliation: caller.affiliation.clone(),
-        unit_ids: roles.iter().map(|r| r.organization_id.to_string()).collect(),
-        position_keys: roles.iter().filter_map(|r| r.position_key.clone()).collect(),
+        unit_ids: crate::service::access::unit_ids_of(state, &roles),
+        position_keys,
         group_ids,
     }
 }
@@ -116,11 +140,12 @@ pub fn scope_of(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state
 }
 
 fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &SharedState) -> RowScope {
-    let rules = rules_of(app_slug, state);
+    // An app the engine does not hold, such as one whose stored manifest no longer validates, shows no rows.
+    let Some(rules) = rules_loaded(app_slug, state) else { return RowScope::DenyAll };
     if rules.is_empty() {
         return RowScope::AllowAll;
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
+    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
     row_scope(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table, op)
 }
 
@@ -149,8 +174,10 @@ pub fn allows_data(caller: &AuthUser, app_slug: &str, table: &str, data: &Value,
 
 /// The records of `rows` inside the caller's read scope.
 pub fn retain_readable(caller: &AuthUser, app_slug: &str, rows: Vec<DatasetRecord>, state: &SharedState) -> Vec<DatasetRecord> {
-    if rules_of(app_slug, state).is_empty() {
-        return rows;
+    match rules_loaded(app_slug, state) {
+        None => return Vec::new(),
+        Some(rules) if rules.is_empty() => return rows,
+        Some(_) => {}
     }
     rows.into_iter().filter(|r| allows(caller, app_slug, r, RowOp::Read, state)).collect()
 }
@@ -189,8 +216,10 @@ pub fn rule_fields(app_slug: &str, table: &str, state: &SharedState) -> Vec<Stri
 /// Of these record ids, those whose record, live or in trash, the caller may read. A record that is
 /// gone cannot be checked, so only a Platform Admin sees what is left of it.
 pub fn readable_ids(caller: &AuthUser, app_slug: &str, ids: &[String], state: &SharedState) -> std::collections::HashSet<String> {
-    if rules_of(app_slug, state).is_empty() || caller.affiliation == "central_admin" {
-        return ids.iter().cloned().collect();
+    match rules_loaded(app_slug, state) {
+        None => return std::collections::HashSet::new(),
+        Some(rules) if rules.is_empty() || caller.affiliation == "central_admin" => return ids.iter().cloned().collect(),
+        Some(_) => {}
     }
     let repo = &state.repository;
     let found = repo.records_with_trashed(app_slug, ids).unwrap_or_default();
@@ -209,14 +238,15 @@ pub fn require_readable(caller: &AuthUser, app_slug: &str, record_id: &str, stat
 // Columns
 // ---------------------------------------------------------------------------------------------
 
-/// The column rules an app has set.
+/// The column rules in the manifest the app runs. An app the engine does not hold has none.
 pub fn column_rules_of(app_slug: &str, state: &SharedState) -> Vec<scaffoldry_core::access::ColumnRule> {
-    state.column_rules.read().unwrap_or_else(|p| p.into_inner()).get(app_slug).cloned().unwrap_or_default()
+    use scaffoldry_engine::HostRouter;
+    state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(app_slug).map(|m| m.access.columns.clone()).unwrap_or_default()
 }
 
-/// Replaces an app's column rules.
+/// Replaces an app's column rules the way `set_rules` replaces its row rules.
 pub fn set_column_rules(app_slug: &str, rules: Vec<scaffoldry_core::access::ColumnRule>, state: &SharedState) {
-    state.column_rules.write().unwrap_or_else(|p| p.into_inner()).insert(app_slug.to_string(), rules);
+    edit_manifest(app_slug, state, |m| m.access.columns = rules);
 }
 
 /// The fields of `table` held back from the caller by the app's column rules.
@@ -234,7 +264,7 @@ fn field_visibility_for(caller: &AuthUser, app_slug: &str, table: &str, state: &
     if rules.is_empty() {
         return Default::default();
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role(caller, &w, state)).map(|r| r.as_str());
+    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
     scaffoldry_core::access::field_visibility(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table)
 }
 
@@ -306,7 +336,7 @@ pub fn preview_access(
         person_of(caller, state)
     };
 
-    let role = ws_id.and_then(|w| members::member_role_of(&person.address, w, state));
+    let role = ws_id.and_then(|w| members::member_role_of_in_app(&person.address, w, app_slug, state));
     let role_str = role.as_ref().map(|r| r.as_str());
     let is_platform_admin = person.affiliation == "central_admin";
 

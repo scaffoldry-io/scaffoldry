@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/mcp", post(handle_mcp_request))
+        .route("/apps/{slug}/mcp", post(handle_mcp_request))
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,8 +87,27 @@ async fn handle_mcp_request(
     State(state): State<SharedState>,
     user: Option<Extension<AuthUser>>,
     headers: HeaderMap,
-    Json(req): Json<JsonRpcRequest>,
+    body: axum::body::Bytes,
 ) -> Response {
+    // The body is read here, not by an extractor, so a bad one gets a JSON-RPC error and not a plain-text 400.
+    // Not JSON at all is -32700. JSON that is not a request is -32600. Neither names an id.
+    let req: JsonRpcRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            let is_json = serde_json::from_slice::<Value>(&body).is_ok();
+            let (code, message) = if is_json {
+                (-32600, "Invalid Request: the body is not a JSON-RPC request")
+            } else {
+                (-32700, "Parse error: the body is not valid JSON")
+            };
+            return rpc(JsonRpcResponse {
+                jsonrpc: "2.0",
+                id: None,
+                result: None,
+                error: Some(JsonRpcError { code, message: message.to_string(), data: None }),
+            });
+        }
+    };
     let req_id = req.id.clone();
 
     if req.jsonrpc != "2.0" {
@@ -152,7 +172,8 @@ async fn handle_mcp_request(
                 "serverInfo": {
                     "name": "scaffoldry-sovereign-mcp",
                     "version": env!("CARGO_PKG_VERSION")
-                }
+                },
+                "instructions": crate::service::guidance::instructions(&caller)
             });
             rpc(JsonRpcResponse {
                 jsonrpc: "2.0",
@@ -161,6 +182,9 @@ async fn handle_mcp_request(
                 error: None,
             })
         }
+
+        // A ping is answered with an empty result.
+        "ping" => rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(json!({})), error: None }),
 
         "notifications/initialized" => rpc(JsonRpcResponse {
             jsonrpc: "2.0",
@@ -212,10 +236,19 @@ async fn handle_mcp_request(
                 tokio::task::spawn_blocking(move || tools::call(&caller, &origin, &tool_name, args, &worker_state)).await;
 
             let result = match outcome {
-                Ok(Ok(value)) => json!({
-                    "structuredContent": value,
-                    "content": [{ "type": "text", "text": serde_json::to_string(&value).unwrap_or_default() }]
-                }),
+                Ok(Ok(value)) => {
+                    // The spec says structuredContent is an object. A client validates it and discards a bare list.
+                    // A list goes under `items`, a lone value under `value`. The text keeps the plain result.
+                    let structured = match &value {
+                        Value::Object(_) => value.clone(),
+                        Value::Array(_) => json!({ "items": value }),
+                        other => json!({ "value": other }),
+                    };
+                    json!({
+                        "structuredContent": structured,
+                        "content": [{ "type": "text", "text": serde_json::to_string(&value).unwrap_or_default() }]
+                    })
+                }
                 Ok(Err(err)) => service_tool_error(&err),
                 Err(_) => tool_error("The tool stopped before it answered"),
             };

@@ -17,8 +17,6 @@ APPROVED_LICENSES = {
     "isc",
     "postgresql",
     "cc0-1.0",
-    "python-2.0",
-    "unlicense"
 }
 
 FORBIDDEN_KEYWORDS = [

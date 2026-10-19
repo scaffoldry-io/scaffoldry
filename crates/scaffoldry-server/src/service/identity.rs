@@ -73,6 +73,11 @@ fn root_roles(eppn: &str, state: &SharedState) -> (bool, bool) {
 
 pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     if eppn == "setup@scaffoldry.local" {
+        // The way in before any admin exists. It ends when the first Platform Admin is appointed. When the
+        // database cannot say, it is refused.
+        if platform_admin_exists(state).unwrap_or(true) {
+            return None;
+        }
         return Some(AuthUser {
             eppn: "setup@scaffoldry.local".to_string(),
             name: "Setup Identity".to_string(),
@@ -142,6 +147,19 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     })
 }
 
+/// Whether anyone holds `platform_admin` on the root unit.
+fn platform_admin_exists(state: &ServerState) -> Result<bool, crate::repository::RepositoryError> {
+    state.repository.with_client(|client| {
+        let row = client.query_one(
+            "SELECT COUNT(*) FROM roles r JOIN organizations o ON r.organization_id = o.id \
+             WHERE r.scoped_affiliation = 'platform_admin' AND o.parent_id IS NULL",
+            &[],
+        )?;
+        let count: i64 = row.get(0);
+        Ok(count > 0)
+    })
+}
+
 pub fn boot_setup_token_needed(state: &ServerState) -> bool {
     let token_count = { let repo = &state.repository;
         repo.count_api_tokens().unwrap_or(0)
@@ -150,16 +168,7 @@ pub fn boot_setup_token_needed(state: &ServerState) -> bool {
         return false;
     }
 
-    let has_platform_admin = { let repo = &state.repository;
-        repo.with_client(|client| {
-            let row = client.query_one(
-                "SELECT COUNT(*) FROM roles r                  JOIN organizations o ON r.organization_id = o.id                  WHERE r.scoped_affiliation = 'platform_admin'                    AND o.parent_id IS NULL",
-                &[],
-            )?;
-            let cnt: i64 = row.get(0);
-            Ok(cnt > 0)
-        }).unwrap_or(false)
-    };
+    let has_platform_admin = platform_admin_exists(state).unwrap_or(false);
 
     !has_platform_admin
 }
@@ -335,7 +344,7 @@ pub fn issue_test_token_and_user(eppn: &str) -> String {
         });
 
         let _ = client.execute(
-            "INSERT INTO scim_users (id, user_name, active, payload, updated_at)              VALUES ($1, $2, true, $3, NOW())              ON CONFLICT (id) DO UPDATE SET active = true, payload = $3, updated_at = NOW()",
+            "INSERT INTO scim_users (id, user_name, active, payload, updated_at)              SELECT $1::text, $2::text, true, $3::jsonb, NOW()              WHERE NOT EXISTS (SELECT 1 FROM scim_users WHERE lower(user_name) = lower($2::text) AND id <> $1::text)              ON CONFLICT (id) DO UPDATE SET active = true, payload = $3, updated_at = NOW()",
             &[&scim_id, &eppn, &payload],
         );
 

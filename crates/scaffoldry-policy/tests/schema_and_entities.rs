@@ -1,10 +1,13 @@
 //! Guards phase 1: one Cedar schema, one typed entity builder, plain descriptions,
 //! and denials that name the policy.
 
+mod support;
+
 use scaffoldry_policy::entities::{
     authorize, unit_ids_for, PrincipalCtx, RecordCtx, Resource, WorkspaceCtx,
 };
-use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine, WorkspaceActionInput};
+use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine};
+use support::{Asks, WorkspaceActionInput};
 use std::collections::HashMap;
 
 fn principal(affiliation: &str, department: &str) -> PrincipalCtx {
@@ -14,6 +17,7 @@ fn principal(affiliation: &str, department: &str) -> PrincipalCtx {
         scoped_affiliation: affiliation.into(),
         department: department.into(),
         unit_ids: vec![],
+        admin_unit_ids: vec![],
         is_platform_admin: false,
     }
 }
@@ -44,7 +48,10 @@ fn a_non_member_has_an_empty_member_role_and_policy_13_evaluates_without_error()
         data_classification: String::new(),
         member_role: String::new(),
         unit_id: String::new(),
+        unit_path_ids: vec![],
         is_member: false,
+        is_ferpa_sensitive: false,
+        categories: Default::default(),
     };
     assert_eq!(ws.entity_member_role(), "");
     let result = authorize(&engine, &principal("faculty", "biology"), "manage_workspace", &Resource::Workspace(ws))
@@ -81,7 +88,7 @@ fn unit_ids_stop_after_32_steps_even_with_a_cycle() {
 fn every_default_policy_has_a_non_empty_description() {
     let engine = ScaffoldryPolicyEngine::default_institutional_engine().unwrap();
     let summaries = engine.policy_summaries();
-    assert_eq!(summaries.len(), 25, "the default set holds 25 policies");
+    assert_eq!(summaries.len(), 26, "the default set holds 26 policies");
     for p in summaries {
         assert!(!p.description.trim().is_empty(), "policy {} has no @description", p.id);
     }

@@ -12,8 +12,6 @@ use cedar_policy::{
     Authorizer, Context, Decision, EntityId, EntityTypeName, EntityUid, Entities,
     Request, Schema, ValidationMode, Validator,
 };
-use entities::{authorize, PrincipalCtx, RecordCtx, Resource, SystemCtx, WorkspaceCtx};
-use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -108,19 +106,6 @@ pub struct AuthorizationRequest {
     pub principal: String,
     pub action: String,
     pub resource: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct WorkspaceActionInput<'a> {
-    pub principal_eppn: &'a str,
-    pub principal_affiliation: &'a str,
-    pub principal_department: &'a str,
-    pub action_name: &'a str,
-    pub workspace_id: &'a str,
-    pub workspace_department: &'a str,
-    pub workspace_visibility: &'a str,
-    pub is_member: bool,
-    pub member_role: Option<&'a str>,
 }
 
 pub struct ScaffoldryPolicyEngine {
@@ -566,6 +551,17 @@ impl ScaffoldryPolicyEngine {
                     resource.member_role == "admin"
                 ))
             };
+
+            // 26. Permit a unit administrator to read and manage the apps of a workspace in their unit or below it
+            @description("Unit administrators can read and manage the apps of workspaces in their unit and the units below it.")
+            permit (
+                principal,
+                action in [Action::"read_app", Action::"manage_app"],
+                resource is Workspace
+            )
+            when {
+                principal.admin_unit_ids.containsAny(resource.unit_path_ids)
+            };
         "#;
         Self::new(default_policies)
     }
@@ -579,104 +575,5 @@ impl ScaffoldryPolicyEngine {
         resource: (&str, &str),
     ) -> Result<AuthorizationResult, PolicyError> {
         self.evaluate_with_policy_set(&self.policies, entity_values, principal, action_name, resource)
-    }
-
-    pub fn authorize_record_action(
-        &self,
-        identity: &EduPersonIdentity,
-        principal_department: &str,
-        action_name: &str,
-        app_slug: &str,
-        resource_department: &str,
-        is_ferpa_sensitive: bool,
-    ) -> Result<AuthorizationResult, PolicyError> {
-        let primary_affiliation = match identity.affiliations.first() {
-            Some(EduPersonAffiliation::Faculty) => "faculty",
-            Some(EduPersonAffiliation::Student) => "student",
-            Some(EduPersonAffiliation::Staff) => "staff",
-            Some(EduPersonAffiliation::Employee) => "employee",
-            Some(EduPersonAffiliation::Member) => "member",
-            Some(EduPersonAffiliation::Affiliate) => "affiliate",
-            Some(EduPersonAffiliation::Alum) => "alum",
-            None => "member",
-        };
-
-        let principal = plain_principal(&identity.eppn, primary_affiliation, principal_department);
-        let resource = Resource::Record(RecordCtx {
-            app_slug: app_slug.to_string(),
-            department: resource_department.to_string(),
-            workspace_id: String::new(),
-            is_ferpa_sensitive,
-            categories: Default::default(),
-        });
-        authorize(self, &principal, action_name, &resource)
-    }
-
-    pub fn authorize_institutional_action(
-        &self,
-        principal_eppn: &str,
-        principal_affiliation: &str,
-        principal_department: &str,
-        action_name: &str,
-        resource_id: &str,
-    ) -> Result<AuthorizationResult, PolicyError> {
-        let principal = plain_principal(principal_eppn, principal_affiliation, principal_department);
-        let resource = Resource::System(SystemCtx {
-            id: resource_id.to_string(),
-            department: "central_admin".to_string(),
-            is_ferpa_sensitive: false,
-        });
-        authorize(self, &principal, action_name, &resource)
-    }
-
-    pub fn authorize_workspace_action(
-        &self,
-        input: &WorkspaceActionInput<'_>,
-    ) -> Result<AuthorizationResult, PolicyError> {
-        let principal = plain_principal(
-            input.principal_eppn,
-            input.principal_affiliation,
-            input.principal_department,
-        );
-        let resource = Resource::Workspace(WorkspaceCtx {
-            workspace_id: input.workspace_id.to_string(),
-            department: input.workspace_department.to_string(),
-            visibility: input.workspace_visibility.to_string(),
-            data_classification: String::new(),
-            member_role: input.member_role.unwrap_or("").to_string(),
-            unit_id: String::new(),
-            is_member: input.is_member,
-        });
-        authorize(self, &principal, input.action_name, &resource)
-    }
-
-    pub fn authorize_departmental_action(
-        &self,
-        principal_eppn: &str,
-        principal_affiliation: &str,
-        principal_department: &str,
-        action_name: &str,
-        resource_id: &str,
-        resource_department: &str,
-    ) -> Result<AuthorizationResult, PolicyError> {
-        let principal = plain_principal(principal_eppn, principal_affiliation, principal_department);
-        let resource = Resource::System(SystemCtx {
-            id: resource_id.to_string(),
-            department: resource_department.to_string(),
-            is_ferpa_sensitive: false,
-        });
-        authorize(self, &principal, action_name, &resource)
-    }
-}
-
-/// A principal built from the fields the legacy callers hold. Unit membership is empty here.
-fn plain_principal(eppn: &str, affiliation: &str, department: &str) -> PrincipalCtx {
-    PrincipalCtx {
-        eppn: eppn.to_string(),
-        name: eppn.to_string(),
-        scoped_affiliation: affiliation.to_string(),
-        department: department.to_string(),
-        unit_ids: Vec::new(),
-        is_platform_admin: false,
     }
 }
