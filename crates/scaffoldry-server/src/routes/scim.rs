@@ -272,42 +272,8 @@ pub fn sync_org_roles(
         }
     }
 
-    // 3. Scaffoldry roles
-    for r in &user.roles {
-        let typ = r.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let val = r.get("value").and_then(|v| v.as_str()).unwrap_or("");
-        if typ.eq_ignore_ascii_case("scaffoldry") {
-            if val.eq_ignore_ascii_case("unit_admin") {
-                if let Some(deepest) = deepest_id {
-                    new_roles.push(RoleRow {
-                        id: Uuid::new_v4(),
-                        person_id,
-                        eppn: user.user_name.clone(),
-                        organization_id: deepest,
-                        role_title: role_title.clone(),
-                        scoped_affiliation: "unit_admin".to_string(),
-                        is_primary: false,
-                        source: "scim".to_string(),
-                        position_key: None,
-                    });
-                }
-            } else if val.eq_ignore_ascii_case("platform_admin") {
-                if let Some(root_node) = orgs.iter().find(|o| o.parent_id.is_none()) {
-                    new_roles.push(RoleRow {
-                        id: Uuid::new_v4(),
-                        person_id,
-                        eppn: user.user_name.clone(),
-                        organization_id: root_node.id,
-                        role_title: role_title.clone(),
-                        scoped_affiliation: "platform_admin".to_string(),
-                        is_primary: false,
-                        source: "scim".to_string(),
-                        position_key: None,
-                    });
-                }
-            }
-        }
-    }
+    // 3. SCIM appoints no administrator. `roles[type=scaffoldry]` with `unit_admin` or `platform_admin` is read and
+    //    ignored, as `compliance` is. A Platform Admin appoints in the console, with a reason, in the ledger.
 
     new_roles
 }
@@ -412,7 +378,7 @@ async fn update_user(
     let all_orgs: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
     let positions: Vec<crate::state::PositionType> = state.position_types.read().unwrap().values().cloned().collect();
     let new_roles = sync_org_roles(&updated_user, &all_orgs, &positions);
-    let _ = state.delete_scim_roles(&updated_user.user_name);
+    let _ = state.delete_scim_roles(&updated_user.user_name, updated_user.active);
     for r in new_roles {
         let _ = state.persist_role(&r);
     }
@@ -438,7 +404,7 @@ async fn delete_user(
 ) -> Result<StatusCode, StatusCode> {
     let u = state.user_by_id(&id).ok_or(StatusCode::NOT_FOUND)?;
     state.repository.delete_scim_user(&id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let _ = state.delete_scim_roles(&u.user_name);
+    let _ = state.delete_scim_roles(&u.user_name, false);
     Ok(StatusCode::NO_CONTENT)
 }
 

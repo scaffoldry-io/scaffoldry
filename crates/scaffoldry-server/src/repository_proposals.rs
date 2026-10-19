@@ -350,6 +350,8 @@ fn write_manifest_in_tx(
             )?
             .get(0),
     };
+    // Another instance holds the manifest it read. It reads this one on its next request.
+    crate::cache::bump(tx, "manifests")?;
     Ok(version)
 }
 

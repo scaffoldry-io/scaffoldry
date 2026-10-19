@@ -16,6 +16,8 @@ pub struct PrincipalCtx {
     pub scoped_affiliation: String,
     pub department: String,
     pub unit_ids: Vec<String>,
+    /// The units where the person is a unit administrator. Not their descendants: the workspace carries its ancestors.
+    pub admin_unit_ids: Vec<String>,
     pub is_platform_admin: bool,
 }
 
@@ -27,7 +29,13 @@ pub struct WorkspaceCtx {
     pub data_classification: String,
     pub member_role: String,
     pub unit_id: String,
+    /// The workspace's unit and every ancestor of it, so a unit administrator of any of them matches.
+    pub unit_path_ids: Vec<String>,
     pub is_member: bool,
+    /// Set when the question is about one app in the workspace: whether its fields hold protected data, and the
+    /// categories of those fields. A plain workspace question leaves them false and empty.
+    pub is_ferpa_sensitive: bool,
+    pub categories: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +86,7 @@ impl PrincipalCtx {
                 "scoped_affiliation": self.scoped_affiliation,
                 "department": self.department,
                 "unit_ids": self.unit_ids,
+                "admin_unit_ids": self.admin_unit_ids,
                 "is_platform_admin": self.is_platform_admin,
             }),
         )
@@ -105,7 +114,10 @@ impl WorkspaceCtx {
                 "data_classification": self.data_classification,
                 "member_role": self.entity_member_role(),
                 "unit_id": self.unit_id,
+                "unit_path_ids": self.unit_path_ids,
                 "is_member": self.is_member,
+                "is_ferpa_sensitive": self.is_ferpa_sensitive,
+                "categories": self.categories,
             }),
         )
     }

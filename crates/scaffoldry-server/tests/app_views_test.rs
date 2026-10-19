@@ -146,6 +146,16 @@ struct World {
 /// shows each person the students they advise, except to an admin or owner, and a column rule hides
 /// `stage` from everyone but an admin or owner.
 async fn world(rows: i64, many_indexed: bool) -> World {
+    world_with(rows, many_indexed, true).await
+}
+
+/// The same world with no row or column rule. A row rule's fields join the manifest's indexed set, which counts
+/// toward the limit of twenty, so a test of index accounting starts without rules.
+async fn world_without_rules(rows: i64, many_indexed: bool) -> World {
+    world_with(rows, many_indexed, false).await
+}
+
+async fn world_with(rows: i64, many_indexed: bool, with_rules: bool) -> World {
     let tag = Uuid::new_v4().to_string()[..8].to_string();
     let slug = format!("av-{tag}");
     let (admin_e, editor_e, viewer_e, viewer2_e) =
@@ -160,23 +170,25 @@ async fn world(rows: i64, many_indexed: bool) -> World {
     collaborator(&state, &viewer2_e, "viewer");
 
     let staff = || Who { roles: vec!["admin".into(), "owner".into()], ..Default::default() };
-    set_rules(
-        &slug,
-        vec![RowRule {
-            id: "advisees".into(),
-            table_id: "students".into(),
-            ops: vec![RowOp::Read],
-            visible_when: Pred::Cmp { field: "advisor".into(), op: Op::Eq, value: Operand::Person(PersonAttr::Address) },
-            except_roles: vec!["admin".into(), "owner".into()],
-            message: None,
-        }],
-        &state,
-    );
-    set_column_rules(
-        &slug,
-        vec![ColumnRule { id: "stage".into(), table_id: "students".into(), fields: vec!["stage".into()], mode: ColumnMode::Hidden, unless: staff(), message: None }],
-        &state,
-    );
+    if with_rules {
+        set_rules(
+            &slug,
+            vec![RowRule {
+                id: "advisees".into(),
+                table_id: "students".into(),
+                ops: vec![RowOp::Read],
+                visible_when: Pred::Cmp { field: "advisor".into(), op: Op::Eq, value: Operand::Person(PersonAttr::Address) },
+                except_roles: vec!["admin".into(), "owner".into()],
+                message: None,
+            }],
+            &state,
+        );
+        set_column_rules(
+            &slug,
+            vec![ColumnRule { id: "stage".into(), table_id: "students".into(), fields: vec!["stage".into()], mode: ColumnMode::Hidden, unless: staff(), message: None }],
+            &state,
+        );
+    }
 
     let (s, ed, vw) = (slug.clone(), editor_e.clone(), viewer_e.clone());
     db(move |c| {
@@ -451,7 +463,7 @@ async fn a_stale_version_is_409() {
 #[tokio::test]
 async fn a_view_that_sorts_on_an_unindexed_field_builds_its_index() {
     let _db = common::TestDb::new();
-    let w = world(200_000, false).await;
+    let w = world_without_rules(200_000, false).await;
 
     let (s, plain) = create(&w, &w.admin, grid("By name", "collaborative", json!({}))).await;
     assert_eq!(s, StatusCode::CREATED, "{plain}");
@@ -480,7 +492,7 @@ async fn a_view_that_sorts_on_an_unindexed_field_builds_its_index() {
 #[tokio::test]
 async fn a_twenty_first_indexed_field_is_refused_with_the_unused_ones_listed() {
     let _db = common::TestDb::new();
-    let w = world(100, true).await;
+    let w = world_without_rules(100, true).await;
     let (s, body) = create(&w, &w.admin, grid("Sorted on late", "collaborative", sort_on("late"))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["code"], "too_many_indexes");

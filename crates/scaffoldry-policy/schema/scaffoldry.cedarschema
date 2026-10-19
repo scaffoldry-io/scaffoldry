@@ -1,6 +1,8 @@
 // Scaffoldry Cedar schema.
 // Every attribute is required. A non-member has member_role set to the empty string.
 // Workspace.workspace_id equals the workspace's id.
+// Workspace.unit_path_ids is the workspace's unit and every ancestor of it. User.admin_unit_ids is the units where the
+// person is a unit administrator. A workspace asked about an app carries that app's sensitivity.
 
 entity User = {
   eppn: String,
@@ -8,6 +10,7 @@ entity User = {
   scoped_affiliation: String,
   department: String,
   unit_ids: Set<String>,
+  admin_unit_ids: Set<String>,
   is_platform_admin: Bool,
 };
 
@@ -18,7 +21,10 @@ entity Workspace = {
   data_classification: String,
   member_role: String,
   unit_id: String,
+  unit_path_ids: Set<String>,
   is_member: Bool,
+  is_ferpa_sensitive: Bool,
+  categories: Set<String>,
 };
 
 entity App = {

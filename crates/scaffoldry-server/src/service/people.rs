@@ -120,7 +120,8 @@ pub fn sync_roles(state: &SharedState, user: &ScimUser) {
     let orgs: Vec<OrganizationNode> = state.organizations.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
     let positions: Vec<crate::state::PositionType> = state.position_types.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
     let roles = crate::routes::scim::sync_org_roles(user, &orgs, &positions);
-    let _ = state.delete_scim_roles(&user.user_name);
+    // An admin row SCIM wrote earlier stays while the person is active. Nothing new is written for it.
+    let _ = state.delete_scim_roles(&user.user_name, user.active);
     for r in roles {
         let _ = state.persist_role(&r);
     }

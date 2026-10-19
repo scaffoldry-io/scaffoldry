@@ -9,7 +9,6 @@ use axum::{
 };
 use chrono::Utc;
 use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
-use scaffoldry_policy::PolicyDecision;
 use serde_json::{json, Value};
 use crate::service::ServiceError;
 
@@ -145,27 +144,18 @@ async fn publish_dataset(
         .unwrap_or("Academic Department")
         .to_string();
 
-    let auth = state
-        .policy_engine
-        .authorize_departmental_action(
-            &user.eppn,
-            &user.affiliation,
-            &user.department,
-            "publish_dataset",
-            &id,
-            &department,
-        )
-        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-
-    if auth.decision == PolicyDecision::Deny {
-        return Err(ServiceError::Forbidden {
-            message: "Forbidden: Cedar policy denied dataset publishing".to_string(),
-            reasons: auth.reasons,
-            diagnostics: auth.diagnostics,
-            policy: auth.deciding_policy,
-        }
-        .into_pair());
-    }
+    crate::service::access::require(
+        &state,
+        &user,
+        "publish_dataset",
+        &scaffoldry_policy::entities::Resource::System(scaffoldry_policy::entities::SystemCtx {
+            id: id.clone(),
+            department: department.clone(),
+            is_ferpa_sensitive: false,
+        }),
+        "Forbidden: Cedar policy denied dataset publishing",
+    )
+    .map_err(|e| e.into_pair())?;
 
     let organization = payload
         .get("organization")

@@ -273,6 +273,7 @@ impl PostgresRepository {
             }
             manifest.views.clear();
             tx.execute("UPDATE app_manifests SET manifest = $2 WHERE slug = $1", &[&slug, &serde_json::to_value(&manifest)?])?;
+            crate::cache::bump(&mut tx, "manifests")?;
             let views = tx
                 .query(&format!("SELECT {COLUMNS} FROM app_views WHERE app_slug = $1 AND id = ANY($2) AND deleted_at IS NULL ORDER BY created_at, id"), &[&slug, &ids])?
                 .iter()

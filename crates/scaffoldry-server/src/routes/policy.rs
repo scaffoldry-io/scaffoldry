@@ -10,7 +10,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use serde_json::{json, Value};
 use crate::service::ServiceError;
 
@@ -89,43 +88,23 @@ async fn simulate_policy(
         .unwrap_or(false);
 
     let affiliation = match affiliation_str {
-        "faculty" => EduPersonAffiliation::Faculty,
-        "student" => EduPersonAffiliation::Student,
-        "staff" => EduPersonAffiliation::Staff,
-        "employee" => EduPersonAffiliation::Employee,
-        _ => EduPersonAffiliation::Member,
+        "faculty" => "faculty",
+        "student" => "student",
+        "staff" => "staff",
+        "employee" => "employee",
+        _ => "member",
     };
 
-    let realm = eppn.split('@').nth(1).unwrap_or("university.edu").to_string();
+    let result = crate::service::access::simulate_record_action(&state, eppn, affiliation, principal_department, action, app_slug, department, is_ferpa_sensitive)
+        .map_err(|e| e.into_pair())?;
 
-    let caller = EduPersonIdentity {
-        eppn: eppn.to_string(),
-        realm,
-        affiliations: vec![affiliation],
-    };
-
-    let result = state
-        .policy_engine
-        .authorize_record_action(
-            &caller,
-            principal_department,
-            action,
-            app_slug,
-            department,
-            is_ferpa_sensitive,
-        )
-        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-
-    let decision_str = match result.decision {
-        scaffoldry_policy::PolicyDecision::Allow => "Allow",
-        scaffoldry_policy::PolicyDecision::Deny => "Deny",
-    };
+    let decision_str = if result.allowed { "Allow" } else { "Deny" };
 
     Ok(Json(json!({
         "decision": decision_str,
         "reasons": result.reasons,
         "diagnostics": result.diagnostics,
-        "deciding_policy": result.deciding_policy,
+        "deciding_policy": result.policy,
         "principal": {
             "eppn": eppn,
             "affiliation": affiliation_str,

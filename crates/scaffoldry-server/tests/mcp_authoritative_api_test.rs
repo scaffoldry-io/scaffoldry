@@ -666,14 +666,24 @@ async fn simulate_cedar_policy_calls_the_engine_and_needs_a_platform_admin() {
 
     // The reasons are the engine's own, not a made-up policy name.
     let engine = scaffoldry_policy::ScaffoldryPolicyEngine::default_institutional_engine().unwrap();
-    let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity::parse(
-        "student.smith@science.state.edu",
-        vec!["student@science.state.edu"],
-    )
-    .unwrap();
-    let expected = engine
-        .authorize_record_action(&identity, "science", "export", "simulation", "science", true)
-        .unwrap();
+    use scaffoldry_policy::entities::{authorize, PrincipalCtx, RecordCtx, Resource};
+    let student = PrincipalCtx {
+        eppn: "student.smith@science.state.edu".into(),
+        name: "student.smith@science.state.edu".into(),
+        scoped_affiliation: "student".into(),
+        department: "science".into(),
+        unit_ids: vec![],
+        admin_unit_ids: vec![],
+        is_platform_admin: false,
+    };
+    let record = Resource::Record(RecordCtx {
+        app_slug: "simulation".into(),
+        department: "science".into(),
+        workspace_id: String::new(),
+        is_ferpa_sensitive: true,
+        categories: Default::default(),
+    });
+    let expected = authorize(&engine, &student, "export", &record).unwrap();
     let expected_reasons: Vec<Value> = expected.reasons.iter().map(|r| json!(r)).collect();
     assert!(!expected_reasons.is_empty(), "a forbid decided this");
     assert_eq!(out["reasons"], Value::Array(expected_reasons));

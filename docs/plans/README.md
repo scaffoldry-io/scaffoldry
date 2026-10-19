@@ -91,7 +91,7 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | 59 | [row-scale.md](row-scale.md) | 6 | A million-row table meets the stated limits, with measured times on record | **COMPLETED** |
 | 60 | [stateless-server.md](stateless-server.md) | 1 | One cache mechanism, a boot that fails when a read fails, and a database for each test | **COMPLETED** |
 | 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | **COMPLETED** |
-| 62 | [access-model.md](access-model.md) | 1 | Rules survive a restart, every check goes through one decision, a forbid always wins, and SCIM grants no admin role | |
+| 62 | [access-model.md](access-model.md) | 1 | Rules survive a restart, every check goes through one decision, a forbid always wins, and SCIM grants no admin role | **COMPLETED** |
 | 63 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | |
 | 64 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
 | 65 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | |

@@ -8,7 +8,6 @@ use axum::{
     Json, Router,
 };
 use scaffoldry_core::{DecisionType, GENESIS_PREVIOUS_HASH};
-use scaffoldry_policy::PolicyDecision;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use crate::service::ServiceError;
@@ -71,26 +70,14 @@ async fn append_ledger_decision(
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
-    let auth = state
-        .policy_engine
-        .authorize_institutional_action(
-            &user.eppn,
-            &user.affiliation,
-            &user.department,
-            "record_decision",
-            "governance-ledger",
-        )
-        .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-
-    if auth.decision == PolicyDecision::Deny {
-        return Err(ServiceError::Forbidden {
-            message: "Forbidden: Cedar policy denied ledger append".to_string(),
-            reasons: auth.reasons,
-            diagnostics: auth.diagnostics,
-            policy: auth.deciding_policy,
-        }
-        .into_pair());
-    }
+    crate::service::access::require(
+        &state,
+        &user,
+        "record_decision",
+        &scaffoldry_policy::entities::Resource::System(crate::service::access::ledger_resource()),
+        "Forbidden: Cedar policy denied ledger append",
+    )
+    .map_err(|e| e.into_pair())?;
 
     match state.append_ledger_entry(RecordDecisionInput {
         principal: user.eppn,

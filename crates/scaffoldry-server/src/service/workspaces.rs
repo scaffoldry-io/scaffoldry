@@ -7,7 +7,6 @@ use crate::state::{
 };
 use chrono::Utc;
 use scaffoldry_core::DecisionType;
-use scaffoldry_policy::{PolicyDecision, WorkspaceActionInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -117,31 +116,13 @@ pub fn list_workspaces(
             continue;
         }
 
-        let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
-
-        let decision = state
-            .policy_engine
-            .authorize_workspace_action(&WorkspaceActionInput {
-                principal_eppn: &caller.eppn,
-                principal_affiliation: &caller.affiliation,
-                principal_department: &caller.department,
-                action_name: "access_workspace",
-                workspace_id: &ws.id,
-                workspace_department: &ws.department,
-                workspace_visibility: &ws.visibility,
-                is_member,
-                member_role: norm_role.as_deref(),
+        if crate::service::access::workspace_allowed(caller, ws, "access_workspace", state)? {
+            response_list.push(WorkspaceResponse {
+                workspace: ws.clone(),
+                collaborators: collabs,
+                user_role: member_role,
+                guards: Vec::new(),
             });
-
-        if let Ok(res) = decision {
-            if res.decision == PolicyDecision::Allow {
-                response_list.push(WorkspaceResponse {
-                    workspace: ws.clone(),
-                    collaborators: collabs,
-                    user_role: member_role,
-                    guards: Vec::new(),
-                });
-            }
         }
     }
 
@@ -173,33 +154,9 @@ pub fn get_workspace(
     };
 
     let role = crate::service::members::member_role(caller, id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
+    let member_role = role.map(|r| r.as_str().to_string());
 
-    let norm_role = member_role.as_ref().map(|r| r.to_lowercase());
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "access_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts access to this workspace".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "access_workspace", "403 Forbidden: Cedar Policy restricts access to this workspace", state)?;
 
 
     let guard_sentences: Vec<String> = {
@@ -365,45 +322,7 @@ pub fn update_workspace(
             .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
     };
 
-    let role = crate::service::members::member_role(caller, id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-
-    let norm_role = member_role.map(str::to_lowercase);
-
-    let is_admin = {
-        let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().map(|g| g.values().cloned().collect()).unwrap_or_default();
-        let roles = state.roles_of(&caller.eppn);
-        let org_caller = crate::service::organizations::OrgCaller {
-            eppn: caller.eppn.clone(),
-            affiliation: caller.affiliation.clone(),
-        };
-        crate::service::organizations::is_platform_admin(&org_caller, &orgs, &roles)
-    };
-    let effective_aff = if is_admin { "central_admin" } else { &caller.affiliation };
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: effective_aff,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing this workspace to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing this workspace to Owners and Admins", state)?;
 
     if let Some(ref class) = payload.data_classification {
         match class.as_str() {
@@ -601,33 +520,7 @@ pub fn add_collaborator(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let role = crate::service::members::member_role(caller, workspace_id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-    let norm_role = member_role.map(str::to_lowercase);
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing members to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing members to Owners and Admins", state)?;
 
     let (kind, principal_id) = match (payload.principal_type.as_deref(), payload.principal_id.as_deref().filter(|s| !s.is_empty())) {
         (None, None) if !payload.eppn.is_empty() => {
@@ -746,33 +639,7 @@ pub fn update_collaborator_role(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let role = crate::service::members::member_role(caller, workspace_id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-    let norm_role = member_role.map(str::to_lowercase);
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins", state)?;
 
     let wanted = Role::parse(new_role).ok_or_else(|| ServiceError::BadRequest("role must be viewer, commenter, editor, admin, or owner".to_string()))?;
     if members::split_principal(target_eppn).0 != Kind::User && wanted == Role::Owner {
@@ -849,33 +716,7 @@ pub fn remove_collaborator(
         collabs_guard.get(workspace_id).cloned().unwrap_or_default()
     };
 
-    let role = crate::service::members::member_role(caller, workspace_id, state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str()));
-    let norm_role = member_role.map(str::to_lowercase);
-
-    let decision = state
-        .policy_engine
-        .authorize_workspace_action(&WorkspaceActionInput {
-            principal_eppn: &caller.eppn,
-            principal_affiliation: &caller.affiliation,
-            principal_department: &caller.department,
-            action_name: "manage_workspace",
-            workspace_id: &ws.id,
-            workspace_department: &ws.department,
-            workspace_visibility: &ws.visibility,
-            is_member,
-            member_role: norm_role.as_deref(),
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
-    if decision.decision != PolicyDecision::Allow {
-        return Err(ServiceError::Forbidden {
-            message: "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins".to_string(),
-            reasons: decision.reasons,
-            diagnostics: decision.diagnostics,
-            policy: decision.deciding_policy,
-        });
-    }
+    crate::service::access::authorize_workspace_denying(caller, &ws, "manage_workspace", "403 Forbidden: Cedar Policy restricts managing member roles to Owners and Admins", state)?;
 
     if app.is_empty() && is_last_user_owner(&collabs, target_eppn) {
         return Err(ServiceError::Conflict("A workspace keeps at least one person as owner".to_string()));
