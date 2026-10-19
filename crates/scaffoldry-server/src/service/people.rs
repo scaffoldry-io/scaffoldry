@@ -1,11 +1,11 @@
 //! People: the users the platform knows, the appointments they hold, and the administrative
 //! actions on them. Both SCIM and the admin console write the one user store through here.
 
+use crate::repository_people::UserFilter;
 use crate::service::admin::{admin_write, decode_cursor, encode_cursor};
 use crate::service::identity::scim_affiliation;
-use crate::service::organizations::{is_platform_admin, OrgCaller};
+use crate::service::organizations::OrgCaller;
 use crate::service::ServiceError;
-use crate::repository_people::UserFilter;
 use crate::state::{ApiToken, AuthUser, OrganizationNode, RoleRow, ScimUser, SharedState};
 use chrono::Utc;
 use scaffoldry_core::ledger::DecisionType;
@@ -14,7 +14,15 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// The eduPerson affiliations an administrator may give a new user.
-pub const AFFILIATIONS: [&str; 7] = ["faculty", "student", "staff", "employee", "member", "affiliate", "alum"];
+pub const AFFILIATIONS: [&str; 7] = [
+    "faculty",
+    "student",
+    "staff",
+    "employee",
+    "member",
+    "affiliate",
+    "alum",
+];
 
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
@@ -38,7 +46,11 @@ pub struct UserFields {
 }
 
 pub fn find_by_user_name(state: &SharedState, user_name: &str) -> Option<ScimUser> {
-    state.repository.user_by_name_or_email(user_name).ok().flatten()
+    state
+        .repository
+        .user_by_name_or_email(user_name)
+        .ok()
+        .flatten()
 }
 
 pub fn render_collaborator(addr: &str, state: &SharedState) -> String {
@@ -69,7 +81,10 @@ fn persist(state: &SharedState, user: &ScimUser) -> Result<(), ServiceError> {
 
 /// Creates the user, or updates the one that already has this `userName`. An update keeps the
 /// id and the administrative hold. Returns the user and whether it was created.
-pub fn upsert_user(state: &SharedState, fields: UserFields) -> Result<(ScimUser, bool), ServiceError> {
+pub fn upsert_user(
+    state: &SharedState,
+    fields: UserFields,
+) -> Result<(ScimUser, bool), ServiceError> {
     let existing = state
         .repository
         .user_by_name(&fields.user_name)
@@ -117,8 +132,20 @@ pub fn upsert_user(state: &SharedState, fields: UserFields) -> Result<(ScimUser,
 
 /// Replaces the organization roles that come from this user's SCIM record.
 pub fn sync_roles(state: &SharedState, user: &ScimUser) {
-    let orgs: Vec<OrganizationNode> = state.organizations.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
-    let positions: Vec<crate::state::PositionType> = state.position_types.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
+    let orgs: Vec<OrganizationNode> = state
+        .organizations
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .cloned()
+        .collect();
+    let positions: Vec<crate::state::PositionType> = state
+        .position_types
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .cloned()
+        .collect();
     let roles = crate::routes::scim::sync_org_roles(user, &orgs, &positions);
     // An admin row SCIM wrote earlier stays while the person is active. Nothing new is written for it.
     let _ = state.delete_scim_roles(&user.user_name, user.active);
@@ -128,7 +155,8 @@ pub fn sync_roles(state: &SharedState, user: &ScimUser) {
 }
 
 fn set_hold(state: &SharedState, id: &str, hold: bool) -> Result<ScimUser, ServiceError> {
-    let mut user = find_by_id(state, id).ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
+    let mut user = find_by_id(state, id)
+        .ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
     user.admin_hold = hold;
     persist(state, &user)?;
     Ok(user)
@@ -139,13 +167,30 @@ fn set_hold(state: &SharedState, id: &str, hold: bool) -> Result<ScimUser, Servi
 // ---------------------------------------------------------------------------------------------
 
 pub fn display_name(u: &ScimUser) -> String {
-    if let Some(f) = u.name.get("formatted").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    if let Some(f) = u
+        .name
+        .get("formatted")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         return f.to_string();
     }
-    let given = u.name.get("givenName").and_then(|v| v.as_str()).unwrap_or("");
-    let family = u.name.get("familyName").and_then(|v| v.as_str()).unwrap_or("");
+    let given = u
+        .name
+        .get("givenName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let family = u
+        .name
+        .get("familyName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let full = format!("{given} {family}").trim().to_string();
-    if full.is_empty() { u.user_name.clone() } else { full }
+    if full.is_empty() {
+        u.user_name.clone()
+    } else {
+        full
+    }
 }
 
 fn email(u: &ScimUser) -> String {
@@ -178,11 +223,17 @@ impl Directory {
     }
 
     fn roles_of<'a>(&'a self, user_name: &'a str) -> impl Iterator<Item = &'a RoleRow> {
-        self.roles.iter().filter(move |r| r.eppn.eq_ignore_ascii_case(user_name))
+        self.roles
+            .iter()
+            .filter(move |r| r.eppn.eq_ignore_ascii_case(user_name))
     }
 
     fn unit(&self, id: Uuid) -> Value {
-        let name = self.orgs.get(&id).map(|o| o.name.clone()).unwrap_or_default();
+        let name = self
+            .orgs
+            .get(&id)
+            .map(|o| o.name.clone())
+            .unwrap_or_default();
         json!({ "id": id, "name": name })
     }
 
@@ -212,7 +263,11 @@ fn basics(dir: &Directory, u: &ScimUser) -> Basics {
             platform_admin = true;
         }
     }
-    Basics { units, unit_admin_of, platform_admin }
+    Basics {
+        units,
+        unit_admin_of,
+        platform_admin,
+    }
 }
 
 fn token_summary(tokens: &[ApiToken]) -> (usize, Option<String>) {
@@ -221,7 +276,11 @@ fn token_summary(tokens: &[ApiToken]) -> (usize, Option<String>) {
         .iter()
         .filter(|t| t.kind == "agent" && t.revoked_at.is_none() && t.expires_at > now)
         .count();
-    let latest = tokens.iter().filter_map(|t| t.last_used_at).max().map(|t| t.to_rfc3339());
+    let latest = tokens
+        .iter()
+        .filter_map(|t| t.last_used_at)
+        .max()
+        .map(|t| t.to_rfc3339());
     (active_agents, latest)
 }
 
@@ -263,14 +322,22 @@ pub struct UserQuery {
 
 /// One page of users sorted by `user_name`. Returns the rows and the cursor for the next page. The database filters,
 /// sorts and cuts the page. Three statements: the users, their appointments, their tokens.
-pub fn list_users(state: &SharedState, q: &UserQuery) -> Result<(Vec<Value>, Option<String>), ServiceError> {
+pub fn list_users(
+    state: &SharedState,
+    q: &UserQuery,
+) -> Result<(Vec<Value>, Option<String>), ServiceError> {
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = match &q.cursor {
         Some(c) => decode_cursor(c)?,
         None => 0,
     };
     let filter = UserFilter {
-        prefix: q.search.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase),
+        prefix: q
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase),
         active: q.active,
         hold: q.hold,
         affiliation: q.affiliation.clone(),
@@ -288,11 +355,18 @@ pub fn list_users(state: &SharedState, q: &UserQuery) -> Result<(Vec<Value>, Opt
 
     let names: Vec<String> = page.iter().map(|u| u.user_name.clone()).collect();
     let dir = Directory::read(state, &names);
-    let tokens = state.repository.tokens_of_people(&names).unwrap_or_default();
+    let tokens = state
+        .repository
+        .tokens_of_people(&names)
+        .unwrap_or_default();
     let rows = page
         .iter()
         .map(|u| {
-            let mine: Vec<ApiToken> = tokens.iter().filter(|t| t.eppn == u.user_name).cloned().collect();
+            let mine: Vec<ApiToken> = tokens
+                .iter()
+                .filter(|t| t.eppn == u.user_name)
+                .cloned()
+                .collect();
             row(&dir, u, &mine)
         })
         .collect();
@@ -300,9 +374,16 @@ pub fn list_users(state: &SharedState, q: &UserQuery) -> Result<(Vec<Value>, Opt
 }
 
 fn ledger_rows(state: &SharedState, principal: &str) -> Vec<Value> {
-    let ledger = { let repo = &state.repository; repo
-            .get_ledger()
-            .unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone()) };
+    let ledger = {
+        let repo = &state.repository;
+        repo.get_ledger().unwrap_or_else(|_| {
+            state
+                .ledger
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+        })
+    };
     let mut mine: Vec<Value> = ledger
         .iter()
         .filter(|e| e.principal.eq_ignore_ascii_case(principal))
@@ -317,7 +398,8 @@ fn ledger_rows(state: &SharedState, principal: &str) -> Vec<Value> {
 /// The user row, plus appointments, workspace memberships, tokens (never hashes), and the last
 /// 20 ledger entries where the user is the principal.
 pub fn user_detail(state: &SharedState, id: &str) -> Result<Value, ServiceError> {
-    let u = find_by_id(state, id).ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
+    let u = find_by_id(state, id)
+        .ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
     let dir = Directory::read(state, std::slice::from_ref(&u.user_name));
     let tokens = state.list_all_api_tokens(&u.user_name);
 
@@ -337,7 +419,10 @@ pub fn user_detail(state: &SharedState, id: &str) -> Result<Value, ServiceError>
     let workspace_ids: Vec<String> = crate::service::members::workspace_ids(state);
     let memberships: Vec<Value> = workspace_ids
         .iter()
-        .filter_map(|ws| crate::service::members::member_role_of(&u.user_name, ws, state).map(|r| json!({ "workspace_id": ws, "role": r.as_str() })))
+        .filter_map(|ws| {
+            crate::service::members::member_role_of(&u.user_name, ws, state)
+                .map(|r| json!({ "workspace_id": ws, "role": r.as_str() }))
+        })
         .collect();
 
     let token_rows: Vec<Value> = tokens
@@ -404,7 +489,12 @@ fn fields_for(new: &NewUser) -> UserFields {
     }
 }
 
-pub fn create_user(state: &SharedState, admin: &AuthUser, new: NewUser, reason: &str) -> Result<Value, ServiceError> {
+pub fn create_user(
+    state: &SharedState,
+    admin: &AuthUser,
+    new: NewUser,
+    reason: &str,
+) -> Result<Value, ServiceError> {
     if new.user_name.trim().is_empty() {
         return Err(ServiceError::bad_request("userName is required"));
     }
@@ -420,11 +510,19 @@ pub fn create_user(state: &SharedState, admin: &AuthUser, new: NewUser, reason: 
         ));
     }
     let payload = json!({ "action": "create_user", "user_name": new.user_name, "affiliation": new.affiliation });
-    let user = admin_write(state, admin, DecisionType::UserAccessChanged, "AC-02", reason, &payload, || {
-        let (user, _) = upsert_user(state, fields_for(&new))?;
-        sync_roles(state, &user);
-        Ok(user)
-    })?;
+    let user = admin_write(
+        state,
+        admin,
+        DecisionType::UserAccessChanged,
+        "AC-02",
+        reason,
+        &payload,
+        || {
+            let (user, _) = upsert_user(state, fields_for(&new))?;
+            sync_roles(state, &user);
+            Ok(user)
+        },
+    )?;
     let dir = Directory::read(state, std::slice::from_ref(&user.user_name));
     Ok(row(&dir, &user, &[]))
 }
@@ -436,34 +534,66 @@ pub fn set_user_hold(
     hold: bool,
     reason: &str,
 ) -> Result<Value, ServiceError> {
-    let target = find_by_id(state, id).ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
+    let target = find_by_id(state, id)
+        .ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
     let payload = json!({ "action": if hold { "hold" } else { "release" }, "user_id": target.id, "user_name": target.user_name });
-    let user = admin_write(state, admin, DecisionType::UserAccessChanged, "AC-02", reason, &payload, || {
-        set_hold(state, id, hold)
-    })?;
+    let user = admin_write(
+        state,
+        admin,
+        DecisionType::UserAccessChanged,
+        "AC-02",
+        reason,
+        &payload,
+        || set_hold(state, id, hold),
+    )?;
     let dir = Directory::read(state, std::slice::from_ref(&user.user_name));
-    Ok(row(&dir, &user, &state.list_all_api_tokens(&user.user_name)))
+    Ok(row(
+        &dir,
+        &user,
+        &state.list_all_api_tokens(&user.user_name),
+    ))
 }
 
 /// Revokes every agent and impersonation token the user holds. SCIM tokens are not theirs.
-pub fn revoke_user_tokens(state: &SharedState, admin: &AuthUser, id: &str, reason: &str) -> Result<usize, ServiceError> {
-    let target = find_by_id(state, id).ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
+pub fn revoke_user_tokens(
+    state: &SharedState,
+    admin: &AuthUser,
+    id: &str,
+    reason: &str,
+) -> Result<usize, ServiceError> {
+    let target = find_by_id(state, id)
+        .ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
     let now = Utc::now();
     let live: Vec<ApiToken> = state
         .list_all_api_tokens(&target.user_name)
         .into_iter()
-        .filter(|t| (t.kind == "agent" || t.kind == "impersonation") && t.revoked_at.is_none() && t.expires_at > now)
+        .filter(|t| {
+            (t.kind == "agent" || t.kind == "impersonation")
+                && t.revoked_at.is_none()
+                && t.expires_at > now
+        })
         .collect();
     let payload = json!({ "action": "revoke_tokens", "user_id": target.id, "user_name": target.user_name, "count": live.len() });
-    admin_write(state, admin, DecisionType::TokenRevoked, "IA-05", reason, &payload, || {
-        let mut revoked = 0;
-        for t in &live {
-            if state.revoke_api_token(t.id, &admin.eppn, true).unwrap_or(false) {
-                revoked += 1;
+    admin_write(
+        state,
+        admin,
+        DecisionType::TokenRevoked,
+        "IA-05",
+        reason,
+        &payload,
+        || {
+            let mut revoked = 0;
+            for t in &live {
+                if state
+                    .revoke_api_token(t.id, &admin.eppn, true)
+                    .unwrap_or(false)
+                {
+                    revoked += 1;
+                }
             }
-        }
-        Ok(revoked)
-    })
+            Ok(revoked)
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -481,21 +611,33 @@ pub enum RevokeRefusal {
 impl RevokeRefusal {
     pub fn message(&self) -> &'static str {
         match self {
-            Self::OwnedByRegistry => "The registry owns this appointment. Change it in the registry",
-            Self::LastPlatformAdmin => "This is the last Platform Admin appointment. Appoint another Platform Admin first",
+            Self::OwnedByRegistry => {
+                "The registry owns this appointment. Change it in the registry"
+            }
+            Self::LastPlatformAdmin => {
+                "This is the last Platform Admin appointment. Appoint another Platform Admin first"
+            }
         }
     }
 }
 
 /// Whether an appointment may be revoked, whoever asks. Authorization is a separate question.
-pub fn revoke_check(role: &RoleRow, all_roles: &[RoleRow], root_unit: Uuid) -> Result<(), RevokeRefusal> {
+pub fn revoke_check(
+    role: &RoleRow,
+    all_roles: &[RoleRow],
+    root_unit: Uuid,
+) -> Result<(), RevokeRefusal> {
     if role.source == "scim" {
         return Err(RevokeRefusal::OwnedByRegistry);
     }
     if role.scoped_affiliation == "platform_admin" {
         let others: HashSet<&str> = all_roles
             .iter()
-            .filter(|r| r.id != role.id && r.scoped_affiliation == "platform_admin" && r.organization_id == root_unit)
+            .filter(|r| {
+                r.id != role.id
+                    && r.scoped_affiliation == "platform_admin"
+                    && r.organization_id == root_unit
+            })
             .map(|r| r.eppn.as_str())
             .collect();
         if others.is_empty() {
@@ -511,14 +653,24 @@ pub fn may_manage_appointment(
     caller: &AuthUser,
     unit: Uuid,
     scoped_affiliation: &str,
-    orgs: &[OrganizationNode],
+    tree: &scaffoldry_core::tree::OrgTree,
     roles: &[RoleRow],
 ) -> bool {
-    let org_caller = OrgCaller { eppn: caller.eppn.clone(), affiliation: caller.affiliation.clone() };
-    if is_platform_admin(&org_caller, orgs, roles) {
+    let org_caller = OrgCaller {
+        eppn: caller.eppn.clone(),
+        affiliation: caller.affiliation.clone(),
+    };
+    if caller.affiliation == "central_admin"
+        || roles.iter().any(|r| {
+            r.eppn == caller.eppn
+                && r.scoped_affiliation == "platform_admin"
+                && tree.parent_of(r.organization_id).is_none()
+        })
+    {
         return true;
     }
-    scoped_affiliation == "unit_admin" && crate::service::organizations::unit_in_scope(&org_caller, unit, orgs, roles)
+    scoped_affiliation == "unit_admin"
+        && crate::service::organizations::unit_in_reach(&org_caller, unit, tree, roles)
 }
 
 /// The most people one search for a collaborator considers. A narrower search finds the rest.
@@ -530,8 +682,16 @@ pub fn list_app_collaborators(
     state: &SharedState,
 ) -> Result<Vec<Value>, ServiceError> {
     let q = query.trim().to_lowercase();
-    let filter = UserFilter { contains: Some(q).filter(|q| !q.is_empty()), active: Some(true), hold: Some(false), ..Default::default() };
-    let candidates = state.repository.search_users(&filter, 0, COLLABORATOR_CANDIDATES).unwrap_or_default();
+    let filter = UserFilter {
+        contains: Some(q).filter(|q| !q.is_empty()),
+        active: Some(true),
+        hold: Some(false),
+        ..Default::default()
+    };
+    let candidates = state
+        .repository
+        .search_users(&filter, 0, COLLABORATOR_CANDIDATES)
+        .unwrap_or_default();
 
     let mut out = Vec::new();
     for u in candidates {
@@ -540,7 +700,14 @@ pub fn list_app_collaborators(
         let user_name = u.user_name.clone();
 
         if let Some(candidate) = crate::service::identity::resolve_user(&user_name, state) {
-            if crate::service::access::authorize_app(&candidate, app_slug, crate::service::access::AppAction::Read, state).is_ok() {
+            if crate::service::access::authorize_app(
+                &candidate,
+                app_slug,
+                crate::service::access::AppAction::Read,
+                state,
+            )
+            .is_ok()
+            {
                 out.push(serde_json::json!({
                     "id": user_name,
                     "label": d_name,

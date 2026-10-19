@@ -5,15 +5,18 @@ use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use chrono::Utc;
 use scaffoldry_core::approver::{
-    can_decide, effective_approver, resolve_approvers, validate_approver, ApproverSpec, Collaborator,
-    Holding, KnownSets, NoApprover, Person, ResolveCtx, Resolution, Unit,
+    can_decide, effective_approver, resolve_approvers, validate_approver, ApproverSpec,
+    Collaborator, Holding, KnownSets, NoApprover, Person, Resolution, ResolveCtx, Unit,
 };
 use scaffoldry_core::{AutomationRule, ProcessInstance, ProcessStatus, StepKind};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
 pub fn problem_code(p: NoApprover) -> String {
-    serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+    serde_json::to_value(p)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// The holdings the resolver may need when it starts at `units` and walks to the root: those at each unit on the way,
@@ -22,16 +25,16 @@ pub fn path_holdings(state: &SharedState, units: &[uuid::Uuid], people: &[String
     let own = state.repository.roles_of_people(people).unwrap_or_default();
     let mut path: Vec<uuid::Uuid> = Vec::new();
     {
-        let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
-        for start in units.iter().copied().chain(own.iter().filter(|r| r.is_primary).map(|r| r.organization_id)) {
-            let mut current = Some(start);
-            for _ in 0..32 {
-                let Some(id) = current else { break };
-                if path.contains(&id) {
-                    break;
+        let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+        for start in units.iter().copied().chain(
+            own.iter()
+                .filter(|r| r.is_primary)
+                .map(|r| r.organization_id),
+        ) {
+            for anc in tree.ancestors(start) {
+                if !path.contains(&anc) {
+                    path.push(anc);
                 }
-                path.push(id);
-                current = orgs.get(&id).and_then(|o| o.parent_id);
             }
         }
     }
@@ -53,7 +56,13 @@ pub fn path_holdings(state: &SharedState, units: &[uuid::Uuid], people: &[String
 }
 
 /// The resolver's inputs for one record of one app, read once.
-pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by: Option<&str>, named: &[String]) -> ResolveCtx {
+pub fn context(
+    state: &SharedState,
+    app_slug: &str,
+    record_id: &str,
+    started_by: Option<&str>,
+    named: &[String],
+) -> ResolveCtx {
     use scaffoldry_engine::HostRouter;
 
     let units: Vec<Unit> = state
@@ -69,34 +78,55 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
         })
         .collect();
 
-    let ws_id = state
-        .engine
-        .read()
-        .ok()
-        .and_then(|e| e.resolve_by_slug(app_slug).and_then(|m| m.workspace_id.clone()));
+    let ws_id = state.engine.read().ok().and_then(|e| {
+        e.resolve_by_slug(app_slug)
+            .and_then(|m| m.workspace_id.clone())
+    });
     let workspace_unit = ws_id
         .as_ref()
-        .and_then(|id| state.workspaces.read().ok().and_then(|w| w.get(id).and_then(|ws| ws.organization_id)))
+        .and_then(|id| {
+            state
+                .workspaces
+                .read()
+                .ok()
+                .and_then(|w| w.get(id).and_then(|ws| ws.organization_id))
+        })
         .map(|u| u.to_string());
     let collaborators: Vec<Collaborator> = ws_id
         .as_ref()
         .map(|id| crate::service::members::people_records(id, state))
         .unwrap_or_default()
         .into_iter()
-        .map(|c| Collaborator { eppn: c.eppn, role: c.role, affiliation: c.scoped_affiliation })
+        .map(|c| Collaborator {
+            eppn: c.eppn,
+            role: c.role,
+            affiliation: c.scoped_affiliation,
+        })
         .collect();
 
-    let submitter = state.find_record(app_slug, record_id).ok().flatten().and_then(|r| r.created_by);
+    let submitter = state
+        .find_record(app_slug, record_id)
+        .ok()
+        .flatten()
+        .and_then(|r| r.created_by);
 
     // The resolver walks from the workspace's unit, or the submitter's own, up to the root. It needs the holdings
     // on that path and the submitter's own, not everyone's.
-    let start_units: Vec<uuid::Uuid> = workspace_unit.as_deref().and_then(|u| u.parse().ok()).into_iter().collect();
+    let start_units: Vec<uuid::Uuid> = workspace_unit
+        .as_deref()
+        .and_then(|u| u.parse().ok())
+        .into_iter()
+        .collect();
     let holdings: Vec<Holding> = path_holdings(state, &start_units, submitter.as_slice());
 
     // People the platform holds a user record for carry their state. Anyone else, such as a
     // seeded persona, counts as active, since nothing says otherwise.
     let mut extra: HashSet<String> = HashSet::new();
-    for e in holdings.iter().map(|h| &h.eppn).chain(collaborators.iter().map(|c| &c.eppn)) {
+    for e in holdings
+        .iter()
+        .map(|h| &h.eppn)
+        .chain(collaborators.iter().map(|c| &c.eppn))
+    {
         extra.insert(e.clone());
     }
     extra.extend(submitter.iter().cloned());
@@ -118,7 +148,12 @@ pub fn context(state: &SharedState, app_slug: &str, record_id: &str, started_by:
     let known: HashSet<String> = people.iter().map(|p| p.eppn.to_lowercase()).collect();
     for e in extra {
         if !known.contains(&e.to_lowercase()) {
-            people.push(Person { eppn: e.clone(), display_name: e, active: true, on_hold: false });
+            people.push(Person {
+                eppn: e.clone(),
+                display_name: e,
+                active: true,
+                on_hold: false,
+            });
         }
     }
 
@@ -156,9 +191,18 @@ pub fn spec_of(state: &SharedState, inst: &ProcessInstance) -> Option<ApproverSp
     }
 }
 
-pub fn resolution_for(state: &SharedState, inst: &ProcessInstance) -> Option<(ApproverSpec, ResolveCtx, Resolution)> {
+pub fn resolution_for(
+    state: &SharedState,
+    inst: &ProcessInstance,
+) -> Option<(ApproverSpec, ResolveCtx, Resolution)> {
     let spec = spec_of(state, inst)?;
-    let ctx = context(state, &inst.app_slug, &inst.record_id, inst.started_by.as_deref(), &named_in(&spec, inst));
+    let ctx = context(
+        state,
+        &inst.app_slug,
+        &inst.record_id,
+        inst.started_by.as_deref(),
+        &named_in(&spec, inst),
+    );
     let resolution = resolve_approvers(&spec, &ctx);
     Some((spec, ctx, resolution))
 }
@@ -168,9 +212,23 @@ pub fn caller_can_decide(state: &SharedState, caller: &AuthUser, inst: &ProcessI
     if inst.status != ProcessStatus::Waiting {
         return false;
     }
-    let Some(spec) = spec_of(state, inst) else { return false };
-    let ctx = context(state, &inst.app_slug, &inst.record_id, inst.started_by.as_deref(), &named_in(&spec, inst));
-    can_decide(&caller.eppn, &caller.affiliation, inst.assigned_to.as_deref(), &spec, &ctx)
+    let Some(spec) = spec_of(state, inst) else {
+        return false;
+    };
+    let ctx = context(
+        state,
+        &inst.app_slug,
+        &inst.record_id,
+        inst.started_by.as_deref(),
+        &named_in(&spec, inst),
+    );
+    can_decide(
+        &caller.eppn,
+        &caller.affiliation,
+        inst.assigned_to.as_deref(),
+        &spec,
+        &ctx,
+    )
 }
 
 /// Sets `no_approver` from the resolver. Returns true when the stored value changed. The first
@@ -179,15 +237,24 @@ pub fn refresh_no_approver(state: &SharedState, inst: &mut ProcessInstance) -> b
     if inst.status != ProcessStatus::Waiting {
         return false;
     }
-    let Some((_, _, resolution)) = resolution_for(state, inst) else { return false };
+    let Some((_, _, resolution)) = resolution_for(state, inst) else {
+        return false;
+    };
     // An assignment overrides the position, so a reassigned step has an approver.
-    let problem = if inst.assigned_to.is_some() { None } else { resolution.problem.map(problem_code) };
+    let problem = if inst.assigned_to.is_some() {
+        None
+    } else {
+        resolution.problem.map(problem_code)
+    };
     if inst.no_approver == problem {
         return false;
     }
     if let Some(code) = &problem {
         if inst.no_approver.is_none() {
-            inst.log.push(format!("No approver for step '{}': {code}", inst.waiting_step_id.clone().unwrap_or_default()));
+            inst.log.push(format!(
+                "No approver for step '{}': {code}",
+                inst.waiting_step_id.clone().unwrap_or_default()
+            ));
         }
     }
     inst.no_approver = problem;
@@ -200,10 +267,19 @@ pub fn instance_view(state: &SharedState, inst: &ProcessInstance) -> Value {
     let approvers: Vec<Value> = if inst.status == ProcessStatus::Waiting {
         match (&inst.assigned_to, resolution_for(state, inst)) {
             (Some(who), Some((_, ctx, _))) => {
-                let name = ctx.people.iter().find(|p| p.eppn.eq_ignore_ascii_case(who)).map(|p| p.display_name.clone()).unwrap_or_else(|| who.clone());
+                let name = ctx
+                    .people
+                    .iter()
+                    .find(|p| p.eppn.eq_ignore_ascii_case(who))
+                    .map(|p| p.display_name.clone())
+                    .unwrap_or_else(|| who.clone());
                 vec![json!({ "eppn": who, "display_name": name, "via": "Named" })]
             }
-            (None, Some((_, _, r))) => r.approvers.iter().map(|a| serde_json::to_value(a).unwrap_or(Value::Null)).collect(),
+            (None, Some((_, _, r))) => r
+                .approvers
+                .iter()
+                .map(|a| serde_json::to_value(a).unwrap_or(Value::Null))
+                .collect(),
             _ => vec![],
         }
     } else {
@@ -217,7 +293,10 @@ pub fn instance_view(state: &SharedState, inst: &ProcessInstance) -> Value {
 
 /// What the platform knows, for checking this rule: the position types, and the people the rule names.
 pub fn known_sets(state: &SharedState, rule: &AutomationRule) -> KnownSets {
-    let types = state.position_types.read().unwrap_or_else(|p| p.into_inner());
+    let types = state
+        .position_types
+        .read()
+        .unwrap_or_else(|p| p.into_inner());
     let named: Vec<String> = rule
         .steps
         .iter()
@@ -230,9 +309,23 @@ pub fn known_sets(state: &SharedState, rule: &AutomationRule) -> KnownSets {
         })
         .collect();
     KnownSets {
-        position_keys: types.values().filter(|p| p.retired_at.is_none()).map(|p| p.key.clone()).collect(),
-        retired_keys: types.values().filter(|p| p.retired_at.is_some()).map(|p| p.key.clone()).collect(),
-        eppns: state.repository.users_by_names(&named).unwrap_or_default().into_iter().map(|u| u.user_name).collect(),
+        position_keys: types
+            .values()
+            .filter(|p| p.retired_at.is_none())
+            .map(|p| p.key.clone())
+            .collect(),
+        retired_keys: types
+            .values()
+            .filter(|p| p.retired_at.is_some())
+            .map(|p| p.key.clone())
+            .collect(),
+        eppns: state
+            .repository
+            .users_by_names(&named)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|u| u.user_name)
+            .collect(),
     }
 }
 

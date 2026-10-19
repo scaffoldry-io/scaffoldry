@@ -7,8 +7,6 @@
 use serde::{Deserialize, Serialize};
 
 /// The walk up the org tree stops after this many steps. A cycle ends the walk sooner.
-const MAX_WALK: usize = 32;
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Origin {
     Submitter,
@@ -17,14 +15,24 @@ pub enum Origin {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApproverSpec {
-    Position { key: String, from: Origin, walk_up: bool },
-    Person { eppn: String },
-    Role { name: String },
+    Position {
+        key: String,
+        from: Origin,
+        walk_up: bool,
+    },
+    Person {
+        eppn: String,
+    },
+    Role {
+        name: String,
+    },
 }
 
 /// A rule written before approvers existed carries only `role`. It still means the same thing.
 pub fn effective_approver(role: &str, approver: &Option<ApproverSpec>) -> ApproverSpec {
-    approver.clone().unwrap_or_else(|| ApproverSpec::Role { name: role.to_string() })
+    approver.clone().unwrap_or_else(|| ApproverSpec::Role {
+        name: role.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,7 +126,9 @@ pub struct ResolveCtx {
 
 impl ResolveCtx {
     fn person(&self, eppn: &str) -> Option<&Person> {
-        self.people.iter().find(|p| p.eppn.eq_ignore_ascii_case(eppn))
+        self.people
+            .iter()
+            .find(|p| p.eppn.eq_ignore_ascii_case(eppn))
     }
 
     fn available(&self, eppn: &str) -> bool {
@@ -132,21 +142,30 @@ impl ResolveCtx {
     }
 
     fn approver(&self, eppn: &str, via: Via) -> Approver {
-        let display_name = self.person(eppn).map(|p| p.display_name.clone()).unwrap_or_else(|| eppn.to_string());
-        Approver { eppn: eppn.to_string(), display_name, via }
+        let display_name = self
+            .person(eppn)
+            .map(|p| p.display_name.clone())
+            .unwrap_or_else(|| eppn.to_string());
+        Approver {
+            eppn: eppn.to_string(),
+            display_name,
+            via,
+        }
     }
 
     fn parent_of(&self, unit: &str) -> Option<&str> {
-        self.units.iter().find(|u| u.id == unit).and_then(|u| u.parent_id.as_deref())
+        self.units
+            .iter()
+            .find(|u| u.id == unit)
+            .and_then(|u| u.parent_id.as_deref())
     }
 
     fn start_unit(&self, from: &Origin) -> Option<String> {
         if *from == Origin::Submitter {
             if let Some(s) = &self.submitter {
-                let own = self
-                    .holdings
-                    .iter()
-                    .find(|h| h.eppn.eq_ignore_ascii_case(s) && h.is_primary && h.position_key.is_none());
+                let own = self.holdings.iter().find(|h| {
+                    h.eppn.eq_ignore_ascii_case(s) && h.is_primary && h.position_key.is_none()
+                });
                 if let Some(h) = own {
                     return Some(h.unit_id.clone());
                 }
@@ -184,8 +203,7 @@ fn resolve_position(key: &str, from: &Origin, walk_up: bool, ctx: &ResolveCtx) -
     let mut seen: Vec<String> = Vec::new();
     let mut only_submitter = false;
 
-    for _ in 0..MAX_WALK {
-        let Some(current) = unit else { break };
+    while let Some(current) = unit {
         if seen.contains(&current) {
             break; // a cycle ends the walk
         }
@@ -194,7 +212,11 @@ fn resolve_position(key: &str, from: &Origin, walk_up: bool, ctx: &ResolveCtx) -
         let holders: Vec<&Holding> = ctx
             .holdings
             .iter()
-            .filter(|h| h.unit_id == current && h.position_key.as_deref() == Some(key) && ctx.available(&h.eppn))
+            .filter(|h| {
+                h.unit_id == current
+                    && h.position_key.as_deref() == Some(key)
+                    && ctx.available(&h.eppn)
+            })
             .collect();
 
         let mut approvers: Vec<Approver> = Vec::new();
@@ -213,7 +235,11 @@ fn resolve_position(key: &str, from: &Origin, walk_up: bool, ctx: &ResolveCtx) -
         }
 
         if !approvers.is_empty() {
-            return Resolution { approvers, unit_id: Some(current), problem: None };
+            return Resolution {
+                approvers,
+                unit_id: Some(current),
+                problem: None,
+            };
         }
         if !walk_up {
             break;
@@ -221,13 +247,25 @@ fn resolve_position(key: &str, from: &Origin, walk_up: bool, ctx: &ResolveCtx) -
         unit = ctx.parent_of(&current).map(str::to_string);
     }
 
-    let problem = if only_submitter { NoApprover::OnlySubmitter } else { NoApprover::PositionVacant };
-    Resolution { approvers: vec![], unit_id: None, problem: Some(problem) }
+    let problem = if only_submitter {
+        NoApprover::OnlySubmitter
+    } else {
+        NoApprover::PositionVacant
+    };
+    Resolution {
+        approvers: vec![],
+        unit_id: None,
+        problem: Some(problem),
+    }
 }
 
 fn resolve_person(eppn: &str, ctx: &ResolveCtx) -> Resolution {
     if !ctx.available(eppn) {
-        return Resolution { approvers: vec![], unit_id: None, problem: Some(NoApprover::PersonUnavailable) };
+        return Resolution {
+            approvers: vec![],
+            unit_id: None,
+            problem: Some(NoApprover::PersonUnavailable),
+        };
     }
     let mut approvers = Vec::new();
     if !ctx.excluded(eppn) {
@@ -237,7 +275,11 @@ fn resolve_person(eppn: &str, ctx: &ResolveCtx) -> Resolution {
         push_unique(&mut approvers, d);
     }
     let problem = approvers.is_empty().then_some(NoApprover::OnlySubmitter);
-    Resolution { approvers, unit_id: None, problem }
+    Resolution {
+        approvers,
+        unit_id: None,
+        problem,
+    }
 }
 
 fn resolve_role(name: &str, ctx: &ResolveCtx) -> Resolution {
@@ -249,7 +291,11 @@ fn resolve_role(name: &str, ctx: &ResolveCtx) -> Resolution {
         }
     }
     let problem = approvers.is_empty().then_some(NoApprover::RoleEmpty);
-    Resolution { approvers, unit_id: None, problem }
+    Resolution {
+        approvers,
+        unit_id: None,
+        problem,
+    }
 }
 
 pub fn resolve_approvers(spec: &ApproverSpec, ctx: &ResolveCtx) -> Resolution {
@@ -277,7 +323,11 @@ pub fn can_decide(
     if let Some(assignee) = assigned_to {
         return assignee.eq_ignore_ascii_case(user);
     }
-    if resolve_approvers(spec, ctx).approvers.iter().any(|a| a.eppn.eq_ignore_ascii_case(user)) {
+    if resolve_approvers(spec, ctx)
+        .approvers
+        .iter()
+        .any(|a| a.eppn.eq_ignore_ascii_case(user))
+    {
         return true;
     }
     matches!(spec, ApproverSpec::Role { name } if user_affiliation.eq_ignore_ascii_case(name))

@@ -9,7 +9,7 @@ use scaffoldry_server::{
     build_app_with_state,
     service::{
         admin::ADMIN_ROUTES,
-        organizations::{is_platform_admin, unit_in_scope, OrgCaller},
+        organizations::{is_platform_admin, unit_in_reach, OrgCaller},
     },
     state::{OrganizationNode, RoleRow, ServerState},
 };
@@ -50,8 +50,16 @@ fn test_decision_types_properties_and_pinned_hashes() {
 
     for &dt in DecisionType::ALL {
         let s = dt.as_str();
-        assert_eq!(s, format!("{dt:?}"), "as_str must equal Debug representation");
-        assert_eq!(DecisionType::parse(s), Some(dt), "parse(as_str) must roundtrip");
+        assert_eq!(
+            s,
+            format!("{dt:?}"),
+            "as_str must equal Debug representation"
+        );
+        assert_eq!(
+            DecisionType::parse(s),
+            Some(dt),
+            "parse(as_str) must roundtrip"
+        );
     }
 
     // Pinned hashes for each of the original 14 variants
@@ -69,20 +77,62 @@ fn test_decision_types_properties_and_pinned_hashes() {
     };
 
     let pinned = [
-        (&DecisionType::AppPublished, "fe0806f4832ffb7b77fd42dbc3704f44c470175dbed03b69eb5033b4ec761012"),
-        (&DecisionType::VanityDnsBound, "1bf5149264a34fbe05a08dbd027d64e1eb06ff31c2ce7649043ef798d6b58894"),
-        (&DecisionType::PolicyRevision, "f1c920d08262fe3b3659d003bcaf21e2bb5a1991c5541a1db514a8dc52015f42"),
-        (&DecisionType::WorkflowRuleApproved, "5fef9ebfa0f07ca63bcb1e4e9efab5acc6b4d5ac5802c27ad44a29e0a33e1dd4"),
-        (&DecisionType::AccessRoleGranted, "c07759de118085af71510a06abb1e24b0511d9c8fcd7d2cb0894333ce9d85b57"),
-        (&DecisionType::DatasetAccessShared, "a2e7951ea20bb117ad170ab145a9bb6eaa94f717335113bfc841354b3f9c61d2"),
-        (&DecisionType::StatutoryAttestation, "0d8674b7bc7c22e184542b50773565313d7890b79776ddef3ddd948be15eab9a"),
-        (&DecisionType::ImpersonationSessionStarted, "76c0d6e7d17160eec0dd3bbce74b64c945f91f5c23260f704625acf9bb67008e"),
-        (&DecisionType::ImpersonationSessionEnded, "2189acf7d60225711e9915bf6f48fe3e18cd8a7a7f39e5c25e6645442511cfd8"),
-        (&DecisionType::WorkspaceCreated, "3854eba3c3e794092e680afe9d3783b871637902d71d5f14f7eef55a31e1e48e"),
-        (&DecisionType::WorkspaceUpdated, "fb290694f5e68fdcce625eddf8a40f55e567a68aa786c533c539f668a3029d79"),
-        (&DecisionType::WorkspaceMemberAdded, "fafe7dc9ca5614b8a594a85d953d92d0308e5a8b8f3bc1cf3b1c04ca6faf0f4a"),
-        (&DecisionType::WorkspaceMemberRemoved, "4bb35d5cfbc40e64c890d0667ed4a56a99ce623c521ef5e6f14869708aa41cc5"),
-        (&DecisionType::WorkspaceMemberRoleUpdated, "71cd9c5b921a6afd8f5bfc86aa6da8e61d8f904c75dc3d5a27646851376f0853"),
+        (
+            &DecisionType::AppPublished,
+            "fe0806f4832ffb7b77fd42dbc3704f44c470175dbed03b69eb5033b4ec761012",
+        ),
+        (
+            &DecisionType::VanityDnsBound,
+            "1bf5149264a34fbe05a08dbd027d64e1eb06ff31c2ce7649043ef798d6b58894",
+        ),
+        (
+            &DecisionType::PolicyRevision,
+            "f1c920d08262fe3b3659d003bcaf21e2bb5a1991c5541a1db514a8dc52015f42",
+        ),
+        (
+            &DecisionType::WorkflowRuleApproved,
+            "5fef9ebfa0f07ca63bcb1e4e9efab5acc6b4d5ac5802c27ad44a29e0a33e1dd4",
+        ),
+        (
+            &DecisionType::AccessRoleGranted,
+            "c07759de118085af71510a06abb1e24b0511d9c8fcd7d2cb0894333ce9d85b57",
+        ),
+        (
+            &DecisionType::DatasetAccessShared,
+            "a2e7951ea20bb117ad170ab145a9bb6eaa94f717335113bfc841354b3f9c61d2",
+        ),
+        (
+            &DecisionType::StatutoryAttestation,
+            "0d8674b7bc7c22e184542b50773565313d7890b79776ddef3ddd948be15eab9a",
+        ),
+        (
+            &DecisionType::ImpersonationSessionStarted,
+            "76c0d6e7d17160eec0dd3bbce74b64c945f91f5c23260f704625acf9bb67008e",
+        ),
+        (
+            &DecisionType::ImpersonationSessionEnded,
+            "2189acf7d60225711e9915bf6f48fe3e18cd8a7a7f39e5c25e6645442511cfd8",
+        ),
+        (
+            &DecisionType::WorkspaceCreated,
+            "3854eba3c3e794092e680afe9d3783b871637902d71d5f14f7eef55a31e1e48e",
+        ),
+        (
+            &DecisionType::WorkspaceUpdated,
+            "fb290694f5e68fdcce625eddf8a40f55e567a68aa786c533c539f668a3029d79",
+        ),
+        (
+            &DecisionType::WorkspaceMemberAdded,
+            "fafe7dc9ca5614b8a594a85d953d92d0308e5a8b8f3bc1cf3b1c04ca6faf0f4a",
+        ),
+        (
+            &DecisionType::WorkspaceMemberRemoved,
+            "4bb35d5cfbc40e64c890d0667ed4a56a99ce623c521ef5e6f14869708aa41cc5",
+        ),
+        (
+            &DecisionType::WorkspaceMemberRoleUpdated,
+            "71cd9c5b921a6afd8f5bfc86aa6da8e61d8f904c75dc3d5a27646851376f0853",
+        ),
     ];
 
     for (variant, expected_hash) in pinned {
@@ -92,7 +142,7 @@ fn test_decision_types_properties_and_pinned_hashes() {
 }
 
 #[test]
-fn test_is_platform_admin_and_unit_in_scope_agreement() {
+fn test_is_platform_admin_and_unit_in_reach_agreement() {
     let _db = common::TestDb::new();
     let root_id = Uuid::new_v4();
     let dept_id = Uuid::new_v4();
@@ -104,6 +154,7 @@ fn test_is_platform_admin_and_unit_in_scope_agreement() {
             code: "INST-ROOT".to_string(),
             name: "State University".to_string(),
             org_type: "institution".to_string(),
+            hierarchy_key: "academic".to_string(),
         },
         OrganizationNode {
             id: dept_id,
@@ -111,26 +162,29 @@ fn test_is_platform_admin_and_unit_in_scope_agreement() {
             code: "DEPT-CS".to_string(),
             name: "Computer Science".to_string(),
             org_type: "department".to_string(),
+            hierarchy_key: "academic".to_string(),
         },
     ];
+
+    let parent_map: std::collections::HashMap<Uuid, Option<Uuid>> =
+        orgs.iter().map(|o| (o.id, o.parent_id)).collect();
+    let tree = scaffoldry_core::tree::OrgTree::from_parent_map("academic", &parent_map);
 
     let platform_admin_eppn = "admin.root@state.edu";
     let central_admin_eppn = "central.admin@state.edu";
     let regular_eppn = "faculty@state.edu";
 
-    let roles = vec![
-        RoleRow {
-            id: Uuid::new_v4(),
-            person_id: Uuid::new_v4(),
-            organization_id: root_id,
-            eppn: platform_admin_eppn.to_string(),
-            scoped_affiliation: "platform_admin".to_string(),
-            role_title: "Platform Administrator".to_string(),
-            is_primary: true,
-            source: "api".to_string(),
-            position_key: None,
-        },
-    ];
+    let roles = vec![RoleRow {
+        id: Uuid::new_v4(),
+        person_id: Uuid::new_v4(),
+        organization_id: root_id,
+        eppn: platform_admin_eppn.to_string(),
+        scoped_affiliation: "platform_admin".to_string(),
+        role_title: "Platform Administrator".to_string(),
+        is_primary: true,
+        source: "api".to_string(),
+        position_key: None,
+    }];
 
     let pa_caller = OrgCaller {
         eppn: platform_admin_eppn.to_string(),
@@ -149,12 +203,12 @@ fn test_is_platform_admin_and_unit_in_scope_agreement() {
     assert!(is_platform_admin(&ca_caller, &orgs, &roles));
     assert!(!is_platform_admin(&reg_caller, &orgs, &roles));
 
-    assert!(unit_in_scope(&pa_caller, root_id, &orgs, &roles));
-    assert!(unit_in_scope(&pa_caller, dept_id, &orgs, &roles));
-    assert!(unit_in_scope(&ca_caller, root_id, &orgs, &roles));
-    assert!(unit_in_scope(&ca_caller, dept_id, &orgs, &roles));
-    assert!(!unit_in_scope(&reg_caller, root_id, &orgs, &roles));
-    assert!(!unit_in_scope(&reg_caller, dept_id, &orgs, &roles));
+    assert!(unit_in_reach(&pa_caller, root_id, &tree, &roles));
+    assert!(unit_in_reach(&pa_caller, dept_id, &tree, &roles));
+    assert!(unit_in_reach(&ca_caller, root_id, &tree, &roles));
+    assert!(unit_in_reach(&ca_caller, dept_id, &tree, &roles));
+    assert!(!unit_in_reach(&reg_caller, root_id, &tree, &roles));
+    assert!(!unit_in_reach(&reg_caller, dept_id, &tree, &roles));
 }
 
 #[tokio::test]
@@ -165,14 +219,19 @@ async fn test_admin_routes_enforce_platform_admin_and_auth() {
 
     // 1. ADMIN_ROUTES covers GET /admin/overview
     assert!(
-        ADMIN_ROUTES.iter().any(|(m, p)| *m == "GET" && (*p == "/admin/overview" || *p == "/api/v1/admin/overview")),
+        ADMIN_ROUTES.iter().any(
+            |(m, p)| *m == "GET" && (*p == "/admin/overview" || *p == "/api/v1/admin/overview")
+        ),
         "ADMIN_ROUTES must cover GET /admin/overview"
     );
 
-    let faculty_token = scaffoldry_server::service::identity::issue_test_token_and_user("faculty.curie@state.edu");
+    let faculty_token =
+        scaffoldry_server::service::identity::issue_test_token_and_user("faculty.curie@state.edu");
 
     for &(method, path) in ADMIN_ROUTES {
-        let path = path.replace("{id}", "00000000-0000-0000-0000-0000000000aa").replace("{key}", "chair");
+        let path = path
+            .replace("{id}", "00000000-0000-0000-0000-0000000000aa")
+            .replace("{key}", "chair");
         let uri = if path.starts_with("/api/v1") {
             path.to_string()
         } else {
@@ -214,6 +273,7 @@ async fn test_overview_counts_match_fixture() {
             code: "DEPT-MATH".to_string(),
             name: "Mathematics".to_string(),
             org_type: "department".to_string(),
+            hierarchy_key: "academic".to_string(),
         })
         .unwrap();
 
@@ -223,65 +283,66 @@ async fn test_overview_counts_match_fixture() {
     let active_eppn = "faculty.user@state.edu";
 
     {
-        state.repository.with_client(|c| { c.batch_execute("DELETE FROM scim_users")?; Ok(()) }).unwrap();
+        state
+            .repository
+            .with_client(|c| {
+                c.batch_execute("DELETE FROM scim_users")?;
+                Ok(())
+            })
+            .unwrap();
         let mut users = Vec::new();
-        users.push(
-            scaffoldry_server::state::ScimUser {
-                id: "u-admin".to_string(),
-                user_name: admin_eppn.to_string(),
-                name: serde_json::json!({"formatted": "Admin Lead"}),
-                active: true,
-                admin_hold: false,
-                emails: vec![serde_json::json!({"value": admin_eppn, "primary": true})],
-                roles: vec![],
-                enterprise_extension: None,
-                title: Some("central_admin".to_string()),
-            },
-        );
-        users.push(
-            scaffoldry_server::state::ScimUser {
-                id: "u-hold".to_string(),
-                user_name: on_hold_eppn.to_string(),
-                name: serde_json::json!({"formatted": "Student Hold"}),
-                active: true,
-                admin_hold: true,
-                emails: vec![serde_json::json!({"value": on_hold_eppn, "primary": true})],
-                roles: vec![],
-                enterprise_extension: None,
-                title: Some("student".to_string()),
-            },
-        );
-        users.push(
-            scaffoldry_server::state::ScimUser {
-                id: "u-active".to_string(),
-                user_name: active_eppn.to_string(),
-                name: serde_json::json!({"formatted": "Faculty User"}),
-                active: true,
-                admin_hold: false,
-                emails: vec![serde_json::json!({"value": active_eppn, "primary": true})],
-                roles: vec![],
-                enterprise_extension: None,
-                title: Some("faculty".to_string()),
-            },
-        );
+        users.push(scaffoldry_server::state::ScimUser {
+            id: "u-admin".to_string(),
+            user_name: admin_eppn.to_string(),
+            name: serde_json::json!({"formatted": "Admin Lead"}),
+            active: true,
+            admin_hold: false,
+            emails: vec![serde_json::json!({"value": admin_eppn, "primary": true})],
+            roles: vec![],
+            enterprise_extension: None,
+            title: Some("central_admin".to_string()),
+        });
+        users.push(scaffoldry_server::state::ScimUser {
+            id: "u-hold".to_string(),
+            user_name: on_hold_eppn.to_string(),
+            name: serde_json::json!({"formatted": "Student Hold"}),
+            active: true,
+            admin_hold: true,
+            emails: vec![serde_json::json!({"value": on_hold_eppn, "primary": true})],
+            roles: vec![],
+            enterprise_extension: None,
+            title: Some("student".to_string()),
+        });
+        users.push(scaffoldry_server::state::ScimUser {
+            id: "u-active".to_string(),
+            user_name: active_eppn.to_string(),
+            name: serde_json::json!({"formatted": "Faculty User"}),
+            active: true,
+            admin_hold: false,
+            emails: vec![serde_json::json!({"value": active_eppn, "primary": true})],
+            roles: vec![],
+            enterprise_extension: None,
+            title: Some("faculty".to_string()),
+        });
         for u in users {
             state.persist_scim_user(u).unwrap();
         }
     }
 
     // Assign platform_admin role on root org to admin_eppn
-    state.persist_role(&RoleRow {
-        id: Uuid::new_v4(),
-        person_id: Uuid::new_v4(),
-        organization_id: root_id,
-        eppn: admin_eppn.to_string(),
-        scoped_affiliation: "platform_admin".to_string(),
-        role_title: "Platform Administrator".to_string(),
-        is_primary: true,
-        source: "api".to_string(),
-        position_key: None,
-    })
-    .unwrap();
+    state
+        .persist_role(&RoleRow {
+            id: Uuid::new_v4(),
+            person_id: Uuid::new_v4(),
+            organization_id: root_id,
+            eppn: admin_eppn.to_string(),
+            scoped_affiliation: "platform_admin".to_string(),
+            role_title: "Platform Administrator".to_string(),
+            is_primary: true,
+            source: "api".to_string(),
+            position_key: None,
+        })
+        .unwrap();
 
     // 3. Setup 1 workspace, stored
     state
@@ -305,8 +366,8 @@ async fn test_overview_counts_match_fixture() {
     // Issue token for admin_eppn
     let admin_token = "sct_fixture_admin_token";
     let token_hash = scaffoldry_server::service::identity::hash_token(admin_token);
-    state.persist_api_token(
-        &scaffoldry_server::state::ApiToken {
+    state
+        .persist_api_token(&scaffoldry_server::state::ApiToken {
             id: Uuid::new_v4(),
             token_hash,
             kind: "agent".to_string(),
@@ -317,15 +378,25 @@ async fn test_overview_counts_match_fixture() {
             expires_at: chrono::Utc::now() + chrono::Duration::days(1),
             last_used_at: None,
             revoked_at: None,
-        app_slug: None,
-        },
-    )
-    .unwrap();
+            app_slug: None,
+        })
+        .unwrap();
 
     let app = build_app_with_state(state).expect("app router");
-    let (status, body) = send_req(&app, "GET", "/api/v1/admin/overview", Some(admin_token), None).await;
+    let (status, body) = send_req(
+        &app,
+        "GET",
+        "/api/v1/admin/overview",
+        Some(admin_token),
+        None,
+    )
+    .await;
 
-    assert_eq!(status, StatusCode::OK, "Overview must return 200 OK for admin");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Overview must return 200 OK for admin"
+    );
 
     // Assert counts match fixture: three users, one on hold, two units, one workspace
     assert_eq!(body["organization"]["unit_count"], 2, "Two units");

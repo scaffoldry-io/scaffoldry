@@ -8,10 +8,10 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::identity::{create_setup_token, resolve_user};
-use tower::ServiceExt;
-use scaffoldry_server::state::{OrganizationNode, RoleRow, ScimUser, ServerState};
+use scaffoldry_server::state::{RoleRow, ScimUser, ServerState};
 use serde_json::json;
 use std::sync::Arc;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 const SETUP: &str = "setup@scaffoldry.local";
@@ -21,11 +21,14 @@ fn state() -> Arc<ServerState> {
 }
 
 fn root(state: &ServerState) -> Uuid {
-    let id = Uuid::new_v4();
     state
-        .persist_organization(&OrganizationNode { id, parent_id: None, name: "Institution".into(), code: format!("INST-{}", id.simple()), org_type: "Institution".into() })
-        .unwrap();
-    id
+        .organizations
+        .read()
+        .unwrap()
+        .values()
+        .find(|o| o.parent_id.is_none())
+        .map(|o| o.id)
+        .unwrap_or_else(|| Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap())
 }
 
 fn appoint_platform_admin(state: &ServerState, root: Uuid, eppn: &str) {
@@ -52,7 +55,9 @@ fn scim_user(name: &str, title: &str, affiliation: &str) -> ScimUser {
         active: true,
         admin_hold: false,
         emails: vec![],
-        roles: vec![json!({ "type": "eduPersonScopedAffiliation", "value": format!("{affiliation}@state.edu") })],
+        roles: vec![
+            json!({ "type": "eduPersonScopedAffiliation", "value": format!("{affiliation}@state.edu") }),
+        ],
         enterprise_extension: None,
         title: Some(title.to_string()),
     }
@@ -64,7 +69,13 @@ fn a_record_that_says_central_admin_grants_nothing() {
     let _db = common::TestDb::new();
     let state = state();
     root(&state);
-    state.persist_scim_user(scim_user("claimant@state.edu", "central_admin", "central_admin")).unwrap();
+    state
+        .persist_scim_user(scim_user(
+            "claimant@state.edu",
+            "central_admin",
+            "central_admin",
+        ))
+        .unwrap();
     let who = resolve_user("claimant@state.edu", &state).expect("resolved");
     assert_ne!(who.affiliation, "central_admin");
 }
@@ -81,7 +92,10 @@ fn the_setup_identity_ends_when_the_first_admin_is_appointed() {
 
     appoint_platform_admin(&state, root, "first.admin@state.edu");
 
-    assert!(resolve_user(SETUP, &state).is_none(), "the setup identity must not outlive the first admin");
+    assert!(
+        resolve_user(SETUP, &state).is_none(),
+        "the setup identity must not outlive the first admin"
+    );
     let first = resolve_user("first.admin@state.edu", &state).expect("the first admin resolves");
     assert_eq!(first.affiliation, "central_admin");
 }
@@ -92,12 +106,17 @@ fn platform_admin_names_counts_held_roles_only() {
     let _db = common::TestDb::new();
     let state = state();
     let root = root(&state);
-    state.persist_scim_user(scim_user("titled@state.edu", "central_admin", "faculty")).unwrap();
+    state
+        .persist_scim_user(scim_user("titled@state.edu", "central_admin", "faculty"))
+        .unwrap();
     appoint_platform_admin(&state, root, "holder@state.edu");
 
     let names = state.repository.platform_admin_names().unwrap();
     assert!(names.iter().any(|n| n == "holder@state.edu"), "{names:?}");
-    assert!(!names.iter().any(|n| n == "titled@state.edu"), "a title is not a role: {names:?}");
+    assert!(
+        !names.iter().any(|n| n == "titled@state.edu"),
+        "a title is not a role: {names:?}"
+    );
 }
 
 // First boot, through the API: the setup token appoints the first admin, and then the token no longer works.
@@ -106,7 +125,9 @@ async fn first_boot_the_setup_token_appoints_the_first_admin_and_then_stops_work
     let _db = common::TestDb::new();
     let state = state();
     let root = root(&state);
-    state.persist_scim_user(scim_user("first.admin@state.edu", "Registrar", "staff")).unwrap();
+    state
+        .persist_scim_user(scim_user("first.admin@state.edu", "Registrar", "staff"))
+        .unwrap();
     let token = create_setup_token(&state).expect("a setup token");
     let app = build_app_with_state(state.clone()).expect("router");
 
@@ -114,9 +135,15 @@ async fn first_boot_the_setup_token_appoints_the_first_admin_and_then_stops_work
         let app = app.clone();
         let token = token.clone();
         async move {
-            let mut b = Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {token}"));
+            let mut b = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"));
             let req = match body {
-                Some(v) => b.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap(),
+                Some(v) => b
+                    .header("content-type", "application/json")
+                    .body(Body::from(v.to_string()))
+                    .unwrap(),
                 None => {
                     b = b.header("accept", "application/json");
                     b.body(Body::empty()).unwrap()
@@ -130,12 +157,29 @@ async fn first_boot_the_setup_token_appoints_the_first_admin_and_then_stops_work
     };
 
     let (status, _) = send("GET", "/api/v1/auth/me".into(), None).await;
-    assert_eq!(status, StatusCode::OK, "the setup token works on first boot");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the setup token works on first boot"
+    );
 
     let body = json!({ "eppn": "first.admin@state.edu", "scoped_affiliation": "platform_admin", "reason": "First administrator" });
-    let (status, text) = send("POST", format!("/api/v1/orgs/{root}/appointments"), Some(body)).await;
-    assert_eq!(status, StatusCode::CREATED, "the setup identity appoints the first admin: {text}");
+    let (status, text) = send(
+        "POST",
+        format!("/api/v1/orgs/{root}/appointments"),
+        Some(body),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the setup identity appoints the first admin: {text}"
+    );
 
     let (status, _) = send("GET", "/api/v1/auth/me".into(), None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "the setup token stops working once an admin exists");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the setup token stops working once an admin exists"
+    );
 }

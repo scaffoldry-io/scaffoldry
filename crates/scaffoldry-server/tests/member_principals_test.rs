@@ -33,8 +33,14 @@ impl Drop for Cleanup {
         let _ = std::thread::spawn(move || {
             if let Ok(mut c) = postgres::Client::connect(&url, postgres::NoTls) {
                 let like = format!("%{tag}%");
-                let _ = c.execute("DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn LIKE $2", &[&WORKSPACE, &like]);
-                let _ = c.execute("DELETE FROM dataset_records WHERE app_slug LIKE $1", &[&format!("%{tag}%")]);
+                let _ = c.execute(
+                    "DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn LIKE $2",
+                    &[&WORKSPACE, &like],
+                );
+                let _ = c.execute(
+                    "DELETE FROM dataset_records WHERE app_slug LIKE $1",
+                    &[&format!("%{tag}%")],
+                );
             }
         })
         .join();
@@ -58,7 +64,13 @@ fn manifest(slug: &str) -> AppManifest {
             slug: "t".to_string(),
             description: None,
             icon: None,
-            fields: vec![FieldSpec::simple("name", "name", FieldType::Text, false, false)],
+            fields: vec![FieldSpec::simple(
+                "name",
+                "name",
+                FieldType::Text,
+                false,
+                false,
+            )],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
         }],
@@ -84,7 +96,12 @@ async fn world() -> World {
     state.seed_demo().expect("seed");
     let tag = Uuid::new_v4().to_string()[..8].to_string();
     let slug = format!("mp-{tag}");
-    state.engine.write().unwrap().register_manifest(manifest(&slug)).unwrap();
+    state
+        .engine
+        .write()
+        .unwrap()
+        .register_manifest(manifest(&slug))
+        .unwrap();
     World {
         app: build_app_with_state(state.clone()).expect("router"),
         state,
@@ -95,16 +112,31 @@ async fn world() -> World {
     }
 }
 
-async fn send(app: &Router, method: &str, uri: &str, token: &str, body: Option<Value>) -> (StatusCode, Value) {
-    let b = Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {token}"));
+async fn send(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let b = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"));
     let req = match body {
-        Some(v) => b.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap(),
+        Some(v) => b
+            .header("content-type", "application/json")
+            .body(Body::from(v.to_string()))
+            .unwrap(),
         None => b.body(Body::empty()).unwrap(),
     };
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 impl World {
@@ -114,7 +146,12 @@ impl World {
         (eppn, token)
     }
 
-    async fn share(&self, principal_type: &str, principal_id: &str, role: &str) -> (StatusCode, Value) {
+    async fn share(
+        &self,
+        principal_type: &str,
+        principal_id: &str,
+        role: &str,
+    ) -> (StatusCode, Value) {
         send(
             &self.app,
             "POST",
@@ -126,7 +163,13 @@ impl World {
     }
 
     /// A membership limited to one app.
-    async fn share_app(&self, principal_type: &str, principal_id: &str, role: &str, app: &str) -> (StatusCode, Value) {
+    async fn share_app(
+        &self,
+        principal_type: &str,
+        principal_id: &str,
+        role: &str,
+        app: &str,
+    ) -> (StatusCode, Value) {
         send(
             &self.app,
             "POST",
@@ -144,7 +187,14 @@ impl World {
 
     /// The same for any app in the workspace.
     async fn level_in(&self, token: &str, slug: &str) -> &'static str {
-        let (read, _) = send(&self.app, "GET", &format!("/api/v1/apps/{slug}/records"), token, None).await;
+        let (read, _) = send(
+            &self.app,
+            "GET",
+            &format!("/api/v1/apps/{slug}/records"),
+            token,
+            None,
+        )
+        .await;
         if !read.is_success() {
             return "none";
         }
@@ -156,7 +206,11 @@ impl World {
             Some(json!({ "data": { "_table_id": "t", "name": "x" } })),
         )
         .await;
-        if write.is_success() { "write" } else { "read" }
+        if write.is_success() {
+            "write"
+        } else {
+            "read"
+        }
     }
 
     fn group(&self, id: &str, members: &[&str]) {
@@ -171,8 +225,24 @@ impl World {
     }
 
     fn unit(&self, parent: Option<Uuid>, name: &str) -> Uuid {
+        let root_id = self
+            .state
+            .organizations
+            .read()
+            .unwrap()
+            .values()
+            .find(|o| o.parent_id.is_none())
+            .map(|o| o.id);
+        let parent = parent.or(root_id);
         let id = Uuid::new_v4();
-        let node = OrganizationNode { id, parent_id: parent, name: format!("{name}-{}", self.tag), code: format!("{}-{}", name.to_uppercase(), self.tag), org_type: "Department".to_string() };
+        let node = OrganizationNode {
+            id,
+            parent_id: parent,
+            name: format!("{name}-{}", self.tag),
+            code: format!("{}-{}", name.to_uppercase(), self.tag),
+            org_type: "Department".to_string(),
+            hierarchy_key: "academic".to_string(),
+        };
         self.state.persist_organization(&node).unwrap();
         id
     }
@@ -193,22 +263,29 @@ impl World {
                 })
                 .unwrap();
         }
-        self.state.persist_role(&RoleRow {
-            id: Uuid::new_v4(),
-            person_id: Uuid::new_v4(),
-            eppn: eppn.to_string(),
-            organization_id: unit,
-            role_title: position.unwrap_or("Faculty").to_string(),
-            scoped_affiliation: "faculty".to_string(),
-            is_primary: true,
-            source: "manual".to_string(),
-            position_key: position.map(str::to_string),
-        })
-        .unwrap();
+        self.state
+            .persist_role(&RoleRow {
+                id: Uuid::new_v4(),
+                person_id: Uuid::new_v4(),
+                eppn: eppn.to_string(),
+                organization_id: unit,
+                role_title: position.unwrap_or("Faculty").to_string(),
+                scoped_affiliation: "faculty".to_string(),
+                is_primary: true,
+                source: "manual".to_string(),
+                position_key: position.map(str::to_string),
+            })
+            .unwrap();
     }
 
     fn ledger_count(&self, decision: DecisionType) -> usize {
-        self.state.ledger.read().unwrap().iter().filter(|e| e.decision_type == decision).count()
+        self.state
+            .ledger
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|e| e.decision_type == decision)
+            .count()
     }
 }
 
@@ -227,9 +304,17 @@ async fn a_group_gives_each_current_member_its_role_and_follows_the_group() {
     assert_eq!(w.level(&bob_token).await, "none");
 
     w.group(&gid, &[&ann, &bob]);
-    assert_eq!(w.level(&bob_token).await, "write", "added to the group, access on the next request");
+    assert_eq!(
+        w.level(&bob_token).await,
+        "write",
+        "added to the group, access on the next request"
+    );
     w.group(&gid, &[&bob]);
-    assert_eq!(w.level(&ann_token).await, "none", "removed from the group, access gone");
+    assert_eq!(
+        w.level(&ann_token).await,
+        "none",
+        "removed from the group, access gone"
+    );
 }
 
 // 2. The highest role among all memberships wins.
@@ -240,7 +325,10 @@ async fn a_person_in_two_memberships_has_the_higher_role() {
     let (ann, ann_token) = w.person("ann");
     let dept = w.unit(None, "dept");
     w.role_at(&ann, dept, None);
-    assert_eq!(w.share("unit", &dept.to_string(), "Viewer").await.0, StatusCode::CREATED);
+    assert_eq!(
+        w.share("unit", &dept.to_string(), "Viewer").await.0,
+        StatusCode::CREATED
+    );
     assert_eq!(w.level(&ann_token).await, "read");
     let (s, body) = send(
         &w.app,
@@ -267,7 +355,10 @@ async fn a_unit_covers_units_below_it_and_not_a_sibling() {
     let lab = w.unit(Some(dept), "lab");
     w.role_at(&below, lab, None);
     w.role_at(&sibling, other, None);
-    assert_eq!(w.share("unit", &dept.to_string(), "Viewer").await.0, StatusCode::CREATED);
+    assert_eq!(
+        w.share("unit", &dept.to_string(), "Viewer").await.0,
+        StatusCode::CREATED
+    );
     assert_eq!(w.level(&below_token).await, "read");
     assert_eq!(w.level(&sibling_token).await, "none");
 }
@@ -281,7 +372,12 @@ async fn a_position_follows_the_holder() {
     let (bob, bob_token) = w.person("bob");
     let dept = w.unit(None, "dept");
     w.role_at(&ann, dept, Some("chair"));
-    assert_eq!(w.share("position", &format!("chair@{dept}"), "Editor").await.0, StatusCode::CREATED);
+    assert_eq!(
+        w.share("position", &format!("chair@{dept}"), "Editor")
+            .await
+            .0,
+        StatusCode::CREATED
+    );
     assert_eq!(w.level(&ann_token).await, "write");
     assert_eq!(w.level(&bob_token).await, "none");
     for r in w.state.roles_of(&ann) {
@@ -301,11 +397,38 @@ async fn a_group_cannot_own_and_the_last_user_owner_stays() {
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
 
     let owners: Vec<String> = {
-        let (_, list) = send(&w.app, "GET", &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"), &w.owner, None).await;
-        list.as_array().unwrap().iter().filter(|c| c["role"].as_str().is_some_and(|r| r.eq_ignore_ascii_case("owner"))).map(|c| c["eppn"].as_str().unwrap().to_string()).collect()
+        let (_, list) = send(
+            &w.app,
+            "GET",
+            &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"),
+            &w.owner,
+            None,
+        )
+        .await;
+        list.as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| {
+                c["role"]
+                    .as_str()
+                    .is_some_and(|r| r.eq_ignore_ascii_case("owner"))
+            })
+            .map(|c| c["eppn"].as_str().unwrap().to_string())
+            .collect()
     };
-    assert_eq!(owners.len(), 1, "the demo workspace has one owner: {owners:?}");
-    let (s, body) = send(&w.app, "DELETE", &format!("/api/v1/workspaces/{WORKSPACE}/collaborators/{}", owners[0]), &w.owner, None).await;
+    assert_eq!(
+        owners.len(),
+        1,
+        "the demo workspace has one owner: {owners:?}"
+    );
+    let (s, body) = send(
+        &w.app,
+        "DELETE",
+        &format!("/api/v1/workspaces/{WORKSPACE}/collaborators/{}", owners[0]),
+        &w.owner,
+        None,
+    )
+    .await;
     assert_eq!(s, StatusCode::CONFLICT, "{body}");
     let (s, body) = send(
         &w.app,
@@ -340,17 +463,29 @@ fn only_the_member_module_and_the_member_routes_read_collaborators() {
                 stack.push(path);
                 continue;
             }
-            let rel = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
             if !rel.ends_with(".rs") || allowed.contains(&rel.as_str()) {
                 continue;
             }
-            let squeezed: String = std::fs::read_to_string(&path).unwrap().split_whitespace().collect();
-            if squeezed.contains(".collaborators.read(") || squeezed.contains(".collaborators.write(") {
+            let squeezed: String = std::fs::read_to_string(&path)
+                .unwrap()
+                .split_whitespace()
+                .collect();
+            if squeezed.contains(".collaborators.read(")
+                || squeezed.contains(".collaborators.write(")
+            {
                 offenders.push(rel);
             }
         }
     }
-    assert!(offenders.is_empty(), "these read collaborators directly: {offenders:?}");
+    assert!(
+        offenders.is_empty(),
+        "these read collaborators directly: {offenders:?}"
+    );
 }
 
 // 7. Every grant to a group, unit, or position writes one ledger entry.
@@ -360,8 +495,16 @@ async fn every_grant_writes_one_ledger_entry() {
     let w = world().await;
     let before = w.ledger_count(DecisionType::AccessRoleGranted);
     let dept = w.unit(None, "dept");
-    for (t, id) in [("group", format!("grp-{}", w.tag)), ("unit", dept.to_string()), ("position", format!("chair@{dept}"))] {
-        assert_eq!(w.share(t, &id, "Viewer").await.0, StatusCode::CREATED, "{t}");
+    for (t, id) in [
+        ("group", format!("grp-{}", w.tag)),
+        ("unit", dept.to_string()),
+        ("position", format!("chair@{dept}")),
+    ] {
+        assert_eq!(
+            w.share(t, &id, "Viewer").await.0,
+            StatusCode::CREATED,
+            "{t}"
+        );
     }
     assert_eq!(w.ledger_count(DecisionType::AccessRoleGranted), before + 3);
 }
@@ -372,7 +515,12 @@ async fn a_membership_limited_to_one_app_reaches_only_that_app() {
     let _db = common::TestDb::new();
     let w = world().await;
     let other_app = format!("mq-{}", w.tag);
-    w.state.engine.write().unwrap().register_manifest(manifest(&other_app)).unwrap();
+    w.state
+        .engine
+        .write()
+        .unwrap()
+        .register_manifest(manifest(&other_app))
+        .unwrap();
 
     let chem = w.unit(None, "chem");
     let phys = w.unit(None, "phys");
@@ -385,9 +533,21 @@ async fn a_membership_limited_to_one_app_reaches_only_that_app() {
     let (status, body) = w.share_app("position", &chair, "Admin", &w.slug).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
 
-    assert_eq!(w.level_in(&ann_token, &w.slug).await, "write", "the chair reaches the app named");
-    assert_eq!(w.level_in(&ann_token, &other_app).await, "none", "and not another app in the same workspace");
-    assert_eq!(w.level_in(&bob_token, &w.slug).await, "none", "and a chair elsewhere reaches nothing");
+    assert_eq!(
+        w.level_in(&ann_token, &w.slug).await,
+        "write",
+        "the chair reaches the app named"
+    );
+    assert_eq!(
+        w.level_in(&ann_token, &other_app).await,
+        "none",
+        "and not another app in the same workspace"
+    );
+    assert_eq!(
+        w.level_in(&bob_token, &w.slug).await,
+        "none",
+        "and a chair elsewhere reaches nothing"
+    );
 
     // An Admin on one app does not manage the workspace.
     let (status, _) = send(
@@ -398,8 +558,11 @@ async fn a_membership_limited_to_one_app_reaches_only_that_app() {
         Some(json!({ "principal_type": "user", "principal_id": bob, "role": "Viewer" })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "an app grant is not a workspace grant");
-
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "an app grant is not a workspace grant"
+    );
 }
 
 // 2a. The rules around an app membership: the app must be in the workspace, an app membership cannot be an owner,
@@ -411,18 +574,48 @@ async fn app_memberships_follow_their_rules_and_remove_one_scope_at_a_time() {
     let (cy, cy_token) = w.person("cy");
 
     let (status, _) = w.share_app("user", &cy, "Viewer", "no-such-app").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "the app must belong to the workspace");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "the app must belong to the workspace"
+    );
     let (status, _) = w.share_app("user", &cy, "Owner", &w.slug).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "a membership limited to one app cannot be an owner");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a membership limited to one app cannot be an owner"
+    );
 
     assert_eq!(w.share("user", &cy, "Viewer").await.0, StatusCode::CREATED);
-    assert_eq!(w.share_app("user", &cy, "Editor", &w.slug).await.0, StatusCode::CREATED, "both kinds at once");
-    assert_eq!(w.share_app("user", &cy, "Editor", &w.slug).await.0, StatusCode::BAD_REQUEST, "but not the same kind twice");
-    assert_eq!(w.level(&cy_token).await, "write", "the higher of the two applies in the app");
+    assert_eq!(
+        w.share_app("user", &cy, "Editor", &w.slug).await.0,
+        StatusCode::CREATED,
+        "both kinds at once"
+    );
+    assert_eq!(
+        w.share_app("user", &cy, "Editor", &w.slug).await.0,
+        StatusCode::BAD_REQUEST,
+        "but not the same kind twice"
+    );
+    assert_eq!(
+        w.level(&cy_token).await,
+        "write",
+        "the higher of the two applies in the app"
+    );
 
-    let uri = format!("/api/v1/workspaces/{WORKSPACE}/collaborators/{cy}?app={}", w.slug);
-    assert_eq!(send(&w.app, "DELETE", &uri, &w.owner, None).await.0, StatusCode::NO_CONTENT);
-    assert_eq!(w.level(&cy_token).await, "read", "removing the app membership leaves the workspace-wide one");
+    let uri = format!(
+        "/api/v1/workspaces/{WORKSPACE}/collaborators/{cy}?app={}",
+        w.slug
+    );
+    assert_eq!(
+        send(&w.app, "DELETE", &uri, &w.owner, None).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        w.level(&cy_token).await,
+        "read",
+        "removing the app membership leaves the workspace-wide one"
+    );
 }
 
 // 3. An admin can list every grant that names a person, and who made it.
@@ -437,24 +630,57 @@ async fn an_admin_lists_direct_person_grants_with_who_made_them() {
     w.role_at(&holder, dept, Some("chair"));
 
     assert_eq!(w.share("user", &dee, "Viewer").await.0, StatusCode::CREATED);
-    assert_eq!(w.share_app("user", &dee, "Editor", &w.slug).await.0, StatusCode::CREATED);
-    assert_eq!(w.share("position", &format!("chair@{dept}"), "Viewer").await.0, StatusCode::CREATED);
+    assert_eq!(
+        w.share_app("user", &dee, "Editor", &w.slug).await.0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        w.share("position", &format!("chair@{dept}"), "Viewer")
+            .await
+            .0,
+        StatusCode::CREATED
+    );
 
     let (status, body) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &admin, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let rows: Vec<&Value> = body["grants"].as_array().expect("grants").iter().filter(|g| g["who"] == dee.as_str()).collect();
-    assert_eq!(rows.len(), 2, "one workspace-wide and one app grant for the person: {body}");
-    let whole = rows.iter().find(|g| g["scope"] == "workspace").expect("a workspace-wide grant");
-    let app = rows.iter().find(|g| g["scope"] == "app").expect("an app grant");
+    let rows: Vec<&Value> = body["grants"]
+        .as_array()
+        .expect("grants")
+        .iter()
+        .filter(|g| g["who"] == dee.as_str())
+        .collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "one workspace-wide and one app grant for the person: {body}"
+    );
+    let whole = rows
+        .iter()
+        .find(|g| g["scope"] == "workspace")
+        .expect("a workspace-wide grant");
+    let app = rows
+        .iter()
+        .find(|g| g["scope"] == "app")
+        .expect("an app grant");
     assert_eq!(whole["role"], "Viewer");
     assert_eq!(app["role"], "Editor");
     assert_eq!(app["app_slug"], w.slug.as_str());
     for g in [whole, app] {
         assert_eq!(g["granted_by"], OWNER, "the ledger names who made it: {g}");
-        assert!(g["granted_at"].as_str().is_some_and(|t| !t.is_empty()), "and when: {g}");
+        assert!(
+            g["granted_at"].as_str().is_some_and(|t| !t.is_empty()),
+            "and when: {g}"
+        );
         assert_eq!(g["kind"], "membership");
     }
-    assert!(!body["grants"].as_array().unwrap().iter().any(|g| g["who"].as_str().is_some_and(|x| x.contains("chair@"))), "a position is not a person: {body}");
+    assert!(
+        !body["grants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["who"].as_str().is_some_and(|x| x.contains("chair@"))),
+        "a position is not a person: {body}"
+    );
 
     // Only a Platform Admin may read it.
     let (status, _) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &w.owner, None).await;
@@ -471,15 +697,36 @@ async fn a_direct_grant_may_carry_a_reason_and_does_not_need_one() {
     let (fay, _) = w.person("fay");
 
     let with = json!({ "principal_type": "user", "principal_id": eli, "role": "Viewer", "reason": "Covering for a sabbatical" });
-    let (status, body) = send(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"), &w.owner, Some(with)).await;
+    let (status, body) = send(
+        &w.app,
+        "POST",
+        &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"),
+        &w.owner,
+        Some(with),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    assert_eq!(w.share("user", &fay, "Viewer").await.0, StatusCode::CREATED, "a grant without a reason still works");
+    assert_eq!(
+        w.share("user", &fay, "Viewer").await.0,
+        StatusCode::CREATED,
+        "a grant without a reason still works"
+    );
 
     let (_, body) = send(&w.app, "GET", "/api/v1/admin/direct-grants", &admin, None).await;
     let rows = body["grants"].as_array().expect("grants");
-    let row = |who: &str| rows.iter().find(|g| g["who"] == who).unwrap_or_else(|| panic!("no row for {who}: {body}"));
+    let row = |who: &str| {
+        rows.iter()
+            .find(|g| g["who"] == who)
+            .unwrap_or_else(|| panic!("no row for {who}: {body}"))
+    };
     assert_eq!(row(&eli)["rationale"], "Covering for a sabbatical");
-    assert!(row(&fay)["rationale"].as_str().is_some_and(|r| r.contains("added")), "without one, the ledger keeps its own wording: {}", row(&fay));
+    assert!(
+        row(&fay)["rationale"]
+            .as_str()
+            .is_some_and(|r| r.contains("added")),
+        "without one, the ledger keeps its own wording: {}",
+        row(&fay)
+    );
 }
 
 // 4. My apps: the apps a person can reach, including one reached by an app-only membership.
@@ -488,27 +735,60 @@ async fn my_apps_lists_the_apps_a_person_can_reach_and_how() {
     let _db = common::TestDb::new();
     let w = world().await;
     let other_app = format!("mq-{}", w.tag);
-    w.state.engine.write().unwrap().register_manifest(manifest(&other_app)).unwrap();
+    w.state
+        .engine
+        .write()
+        .unwrap()
+        .register_manifest(manifest(&other_app))
+        .unwrap();
     let (gus, gus_token) = w.person("gus");
     let (_hal, hal_token) = w.person("hal");
-    assert_eq!(w.share_app("user", &gus, "Viewer", &w.slug).await.0, StatusCode::CREATED);
+    assert_eq!(
+        w.share_app("user", &gus, "Viewer", &w.slug).await.0,
+        StatusCode::CREATED
+    );
 
     let slugs = |body: &Value| -> Vec<(String, String)> {
-        body["apps"].as_array().expect("apps").iter().map(|a| (a["slug"].as_str().unwrap().to_string(), a["scope"].as_str().unwrap().to_string())).collect()
+        body["apps"]
+            .as_array()
+            .expect("apps")
+            .iter()
+            .map(|a| {
+                (
+                    a["slug"].as_str().unwrap().to_string(),
+                    a["scope"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
     };
 
     let (status, body) = send(&w.app, "GET", "/api/v1/me/apps", &gus_token, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let mine = slugs(&body);
-    assert!(mine.contains(&(w.slug.clone(), "app".to_string())), "the app named, reached by an app membership: {mine:?}");
-    assert!(!mine.iter().any(|(s, _)| *s == other_app), "not the other app in the same workspace: {mine:?}");
+    assert!(
+        mine.contains(&(w.slug.clone(), "app".to_string())),
+        "the app named, reached by an app membership: {mine:?}"
+    );
+    assert!(
+        !mine.iter().any(|(s, _)| *s == other_app),
+        "not the other app in the same workspace: {mine:?}"
+    );
 
     let (_, body) = send(&w.app, "GET", "/api/v1/me/apps", &w.owner, None).await;
     let owner = slugs(&body);
-    assert!(owner.contains(&(w.slug.clone(), "workspace".to_string())) && owner.contains(&(other_app.clone(), "workspace".to_string())), "{owner:?}");
+    assert!(
+        owner.contains(&(w.slug.clone(), "workspace".to_string()))
+            && owner.contains(&(other_app.clone(), "workspace".to_string())),
+        "{owner:?}"
+    );
 
     let (_, body) = send(&w.app, "GET", "/api/v1/me/apps", &hal_token, None).await;
-    assert!(!slugs(&body).iter().any(|(s, _)| *s == w.slug || *s == other_app), "a person with no grant sees neither");
+    assert!(
+        !slugs(&body)
+            .iter()
+            .any(|(s, _)| *s == w.slug || *s == other_app),
+        "a person with no grant sees neither"
+    );
 
     let (status, _) = send(&w.app, "GET", "/api/v1/me/apps", "not-a-token", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

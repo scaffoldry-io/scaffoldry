@@ -10,12 +10,13 @@ use scaffoldry_engine::AppManifest;
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::admin::ADMIN_ROUTES;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
-use scaffoldry_server::state::{CollaboratorRecord, DatasetRecord, OrganizationNode, ServerState, WorkspaceRecord};
+use scaffoldry_server::state::{
+    CollaboratorRecord, DatasetRecord, OrganizationNode, ServerState, WorkspaceRecord,
+};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
-
 
 struct Ctx {
     app: Router,
@@ -40,26 +41,50 @@ async fn ctx() -> Ctx {
     let faculty = issue_test_token_and_user("faculty.curie@state.edu");
     let state = Arc::new(ServerState::new().expect("state"));
     let app = build_app_with_state(state.clone()).expect("router");
-    Ctx { app, state, admin, faculty }
+    Ctx {
+        app,
+        state,
+        admin,
+        faculty,
+    }
 }
 
-async fn send(app: &Router, method: &str, uri: &str, token: Option<&str>, body: Option<Value>) -> (StatusCode, Value) {
+async fn send(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let mut b = Request::builder().method(method).uri(uri);
     if let Some(t) = token {
         b = b.header("authorization", format!("Bearer {t}"));
     }
     let req = match body {
-        Some(v) => b.header("content-type", "application/json").body(Body::from(serde_json::to_vec(&v).unwrap())).unwrap(),
+        Some(v) => b
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&v).unwrap()))
+            .unwrap(),
         None => b.body(Body::empty()).unwrap(),
     };
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 async fn last_ledger_entry(c: &Ctx) -> Value {
-    let (_, body) = send(&c.app, "GET", "/api/v1/governance/ledger", Some(&c.admin), None).await;
+    let (_, body) = send(
+        &c.app,
+        "GET",
+        "/api/v1/governance/ledger",
+        Some(&c.admin),
+        None,
+    )
+    .await;
     body["entries"].as_array().unwrap().last().unwrap().clone()
 }
 
@@ -83,12 +108,23 @@ async fn every_workspace_route_is_in_admin_routes_and_refuses_a_faculty_caller()
     }
 
     for &(method, path) in ADMIN_ROUTES {
-        let uri = format!("/api/v1{}", path.replace("{id}", "00000000-0000-0000-0000-0000000000aa"));
+        let uri = format!(
+            "/api/v1{}",
+            path.replace("{id}", "00000000-0000-0000-0000-0000000000aa")
+        );
         let (no_token_status, _) = send(&c.app, method, &uri, None, None).await;
-        assert_eq!(no_token_status, StatusCode::UNAUTHORIZED, "Route {method} {uri} without token must be 401");
+        assert_eq!(
+            no_token_status,
+            StatusCode::UNAUTHORIZED,
+            "Route {method} {uri} without token must be 401"
+        );
 
         let (faculty_status, _) = send(&c.app, method, &uri, Some(&c.faculty), None).await;
-        assert_eq!(faculty_status, StatusCode::FORBIDDEN, "Route {method} {uri} with faculty caller must be 403");
+        assert_eq!(
+            faculty_status,
+            StatusCode::FORBIDDEN,
+            "Route {method} {uri} with faculty caller must be 403"
+        );
     }
 }
 
@@ -117,7 +153,11 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
         let repo = &c.state.repository;
         repo.upsert_workspace(&ws).unwrap();
     }
-    c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws.clone());
+    c.state
+        .workspaces
+        .write()
+        .unwrap()
+        .insert(ws_id.clone(), ws.clone());
 
     let app1_slug = format!("app-seq-{}", &Uuid::new_v4().to_string()[..6]);
     let app2_slug = format!("app-align-{}", &Uuid::new_v4().to_string()[..6]);
@@ -137,14 +177,24 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
         views: vec![],
         pages: vec![],
         access: Default::default(),
-            ceds_mappings: std::collections::HashMap::new(),
+        ceds_mappings: std::collections::HashMap::new(),
     };
     let mut m2 = m1.clone();
     m2.slug = app2_slug.clone();
     m2.title = "Alignment Tool".to_string();
 
-    c.state.engine.write().unwrap().register_manifest(m1.clone()).unwrap();
-    c.state.engine.write().unwrap().register_manifest(m2.clone()).unwrap();
+    c.state
+        .engine
+        .write()
+        .unwrap()
+        .register_manifest(m1.clone())
+        .unwrap();
+    c.state
+        .engine
+        .write()
+        .unwrap()
+        .register_manifest(m2.clone())
+        .unwrap();
     {
         let repo = &c.state.repository;
         repo.upsert_app_manifest(&m1).unwrap();
@@ -163,7 +213,12 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             created_by: None,
             version: 1,
         };
-        c.state.put_record(&rec, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
+        c.state
+            .put_record(
+                &rec,
+                &scaffoldry_server::repository::WriteCtx::system("test fixture"),
+            )
+            .unwrap();
     }
     for i in 0..2 {
         let rec = DatasetRecord {
@@ -176,10 +231,22 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
             created_by: None,
             version: 1,
         };
-        c.state.put_record(&rec, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
+        c.state
+            .put_record(
+                &rec,
+                &scaffoldry_server::repository::WriteCtx::system("test fixture"),
+            )
+            .unwrap();
     }
 
-    let (status, body) = send(&c.app, "GET", &format!("/api/v1/admin/workspaces?search={ws_id}"), Some(&c.admin), None).await;
+    let (status, body) = send(
+        &c.app,
+        "GET",
+        &format!("/api/v1/admin/workspaces?search={ws_id}"),
+        Some(&c.admin),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let rows = body["rows"].as_array().expect("rows array");
     assert_eq!(rows.len(), 1);
@@ -189,7 +256,14 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
     assert_eq!(row["record_count"], 5);
 
     // Also verify GET /admin/workspaces/{id}
-    let (detail_status, detail_body) = send(&c.app, "GET", &format!("/api/v1/admin/workspaces/{ws_id}"), Some(&c.admin), None).await;
+    let (detail_status, detail_body) = send(
+        &c.app,
+        "GET",
+        &format!("/api/v1/admin/workspaces/{ws_id}"),
+        Some(&c.admin),
+        None,
+    )
+    .await;
     assert_eq!(detail_status, StatusCode::OK);
     assert_eq!(detail_body["id"], ws_id);
     assert_eq!(detail_body["app_count"], 2);
@@ -202,30 +276,41 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
 async fn test_patch_moving_workspace_to_another_unit() {
     let _db = common::TestDb::new();
     let c = ctx().await;
+    let root_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
     let old_unit_id = Uuid::new_v4();
     let new_unit_id = Uuid::new_v4();
 
     let old_unit = OrganizationNode {
         id: old_unit_id,
-        parent_id: None,
+        parent_id: Some(root_id),
         name: "Old Science Div".to_string(),
         code: "OSD".to_string(),
         org_type: "Division".to_string(),
+        hierarchy_key: "academic".to_string(),
     };
     let new_unit = OrganizationNode {
         id: new_unit_id,
-        parent_id: None,
+        parent_id: Some(root_id),
         name: "New Engineering Div".to_string(),
         code: "NED".to_string(),
         org_type: "Division".to_string(),
+        hierarchy_key: "academic".to_string(),
     };
     {
         let repo = &c.state.repository;
         repo.upsert_organization(&old_unit).unwrap();
         repo.upsert_organization(&new_unit).unwrap();
     }
-    c.state.organizations.write().unwrap().insert(old_unit_id, old_unit);
-    c.state.organizations.write().unwrap().insert(new_unit_id, new_unit);
+    c.state
+        .organizations
+        .write()
+        .unwrap()
+        .insert(old_unit_id, old_unit);
+    c.state
+        .organizations
+        .write()
+        .unwrap()
+        .insert(new_unit_id, new_unit);
 
     let ws_id = format!("ws-{}", Uuid::new_v4());
     let ws = WorkspaceRecord {
@@ -247,7 +332,11 @@ async fn test_patch_moving_workspace_to_another_unit() {
         let repo = &c.state.repository;
         repo.upsert_workspace(&ws).unwrap();
     }
-    c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws);
+    c.state
+        .workspaces
+        .write()
+        .unwrap()
+        .insert(ws_id.clone(), ws);
 
     // Faculty caller is 403
     let (faculty_status, _) = send(
@@ -288,7 +377,7 @@ async fn test_patch_moving_workspace_to_another_unit() {
     let entry = last_ledger_entry(&c).await;
     assert_eq!(entry["decision_type"], "WorkspaceUpdated");
     assert_eq!(entry["principal"], "jordan.lee@state.edu");
-    
+
     // Check payload stored in database
     let payload = c.state.repository.with_client(|client| {
         let row = client.query_one(
@@ -299,8 +388,14 @@ async fn test_patch_moving_workspace_to_another_unit() {
         Ok(p)
     }).unwrap();
     let payload_str = payload.to_string();
-    assert!(payload_str.contains(&old_unit_id.to_string()), "Ledger must hold old organization_id: {payload_str}");
-    assert!(payload_str.contains(&new_unit_id.to_string()), "Ledger must hold new organization_id: {payload_str}");
+    assert!(
+        payload_str.contains(&old_unit_id.to_string()),
+        "Ledger must hold old organization_id: {payload_str}"
+    );
+    assert!(
+        payload_str.contains(&new_unit_id.to_string()),
+        "Ledger must hold new organization_id: {payload_str}"
+    );
 }
 
 #[tokio::test]
@@ -323,7 +418,11 @@ async fn test_bad_classification_and_visibility_is_400() {
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
     };
-    c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws);
+    c.state
+        .workspaces
+        .write()
+        .unwrap()
+        .insert(ws_id.clone(), ws);
 
     // Bad classification
     let (status, _) = send(
@@ -421,8 +520,16 @@ async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
         repo.upsert_workspace(&ws).unwrap();
         repo.upsert_collaborator(&initial_owner).unwrap();
     }
-    c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws);
-    c.state.collaborators.write().unwrap().insert(ws_id.clone(), vec![initial_owner]);
+    c.state
+        .workspaces
+        .write()
+        .unwrap()
+        .insert(ws_id.clone(), ws);
+    c.state
+        .collaborators
+        .write()
+        .unwrap()
+        .insert(ws_id.clone(), vec![initial_owner]);
 
     // 1. Transferring to a held user is 400
     let (held_transfer_status, _) = send(
@@ -447,10 +554,23 @@ async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
     assert_eq!(transfer_status, StatusCode::OK);
 
     // Verify collaborator roles: new owner is owner, old owner is admin, exactly 1 owner
-    let collabs = c.state.collaborators.read().unwrap().get(&ws_id).cloned().unwrap();
-    let new_owner_collab = collabs.iter().find(|c| c.eppn == new_owner_eppn).expect("new owner in collabs");
+    let collabs = c
+        .state
+        .collaborators
+        .read()
+        .unwrap()
+        .get(&ws_id)
+        .cloned()
+        .unwrap();
+    let new_owner_collab = collabs
+        .iter()
+        .find(|c| c.eppn == new_owner_eppn)
+        .expect("new owner in collabs");
     assert_eq!(new_owner_collab.role, "owner");
-    let old_owner_collab = collabs.iter().find(|c| c.eppn == old_owner_eppn).expect("old owner in collabs");
+    let old_owner_collab = collabs
+        .iter()
+        .find(|c| c.eppn == old_owner_eppn)
+        .expect("old owner in collabs");
     assert_eq!(old_owner_collab.role, "admin");
     let owner_count = collabs.iter().filter(|c| c.role == "owner").count();
     assert_eq!(owner_count, 1, "The workspace always keeps one owner");
@@ -487,7 +607,11 @@ async fn test_apps_inventory_list_and_filters() {
         let repo = &c.state.repository;
         repo.upsert_workspace(&ws).unwrap();
     }
-    c.state.workspaces.write().unwrap().insert(ws_id.clone(), ws);
+    c.state
+        .workspaces
+        .write()
+        .unwrap()
+        .insert(ws_id.clone(), ws);
 
     let slug = format!("app-{}", &Uuid::new_v4().to_string()[..6]);
 
@@ -506,15 +630,27 @@ async fn test_apps_inventory_list_and_filters() {
         views: vec![],
         pages: vec![],
         access: Default::default(),
-            ceds_mappings: std::collections::HashMap::new(),
+        ceds_mappings: std::collections::HashMap::new(),
     };
-    c.state.engine.write().unwrap().register_manifest(manifest.clone()).unwrap();
+    c.state
+        .engine
+        .write()
+        .unwrap()
+        .register_manifest(manifest.clone())
+        .unwrap();
     {
         let repo = &c.state.repository;
         repo.upsert_app_manifest(&manifest).unwrap();
     }
 
-    let (status, body) = send(&c.app, "GET", &format!("/api/v1/admin/apps?search={slug}"), Some(&c.admin), None).await;
+    let (status, body) = send(
+        &c.app,
+        "GET",
+        &format!("/api/v1/admin/apps?search={slug}"),
+        Some(&c.admin),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let rows = body["rows"].as_array().expect("rows array");
     assert_eq!(rows.len(), 1);

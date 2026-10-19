@@ -9,8 +9,8 @@ pub mod entities;
 pub use cedar_policy::{Effect, Policy, PolicyId, PolicySet};
 
 use cedar_policy::{
-    Authorizer, Context, Decision, EntityId, EntityTypeName, EntityUid, Entities,
-    Request, Schema, ValidationMode, Validator,
+    Authorizer, Context, Decision, Entities, EntityId, EntityTypeName, EntityUid, Request, Schema,
+    ValidationMode, Validator,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -51,10 +51,7 @@ pub fn validate_raw_source(source: &str) -> Result<PolicySet, PolicyError> {
     Ok(policies)
 }
 
-pub fn parse_guard_policy(
-    id: &str,
-    text: &str,
-) -> Result<Policy, PolicyError> {
+pub fn parse_guard_policy(id: &str, text: &str) -> Result<Policy, PolicyError> {
     let policy_id = PolicyId::new(id);
     let policy = Policy::parse(Some(policy_id), text)
         .map_err(|e: cedar_policy::ParseErrors| PolicyError::PolicyParseError(e.to_string()))?;
@@ -129,7 +126,10 @@ impl Clone for ScaffoldryPolicyEngine {
 fn entity_uid(type_name: &str, id: &str) -> Result<EntityUid, PolicyError> {
     let type_name = EntityTypeName::from_str(type_name)
         .map_err(|e| PolicyError::RequestError(e.to_string()))?;
-    Ok(EntityUid::from_type_name_and_id(type_name, EntityId::new(id)))
+    Ok(EntityUid::from_type_name_and_id(
+        type_name,
+        EntityId::new(id),
+    ))
 }
 
 impl ScaffoldryPolicyEngine {
@@ -178,8 +178,9 @@ impl ScaffoldryPolicyEngine {
         action_name: &str,
         resource: (&str, &str),
     ) -> Result<AuthorizationResult, PolicyError> {
-        let entities = Entities::from_json_value(serde_json::Value::Array(entity_values), Some(&self.schema))
-            .map_err(|e| PolicyError::EntityError(e.to_string()))?;
+        let entities =
+            Entities::from_json_value(serde_json::Value::Array(entity_values), Some(&self.schema))
+                .map_err(|e| PolicyError::EntityError(e.to_string()))?;
 
         let request = Request::new(
             entity_uid(principal.0, principal.1)?,
@@ -198,8 +199,16 @@ impl ScaffoldryPolicyEngine {
         };
 
         let reason_ids: HashSet<&PolicyId> = response.diagnostics().reason().collect();
-        let reasons = response.diagnostics().reason().map(|r| r.to_string()).collect();
-        let diagnostics = response.diagnostics().errors().map(|e| e.to_string()).collect();
+        let reasons = response
+            .diagnostics()
+            .reason()
+            .map(|r| r.to_string())
+            .collect();
+        let diagnostics = response
+            .diagnostics()
+            .errors()
+            .map(|e| e.to_string())
+            .collect();
 
         let deciding_policy = if decision == PolicyDecision::Deny {
             policies
@@ -220,6 +229,10 @@ impl ScaffoldryPolicyEngine {
             deciding_policy,
         })
     }
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
     pub fn policy_summaries(&self) -> Vec<PolicyRef> {
         self.policies
             .policies()
@@ -240,7 +253,7 @@ impl ScaffoldryPolicyEngine {
                 resource
             )
             when {
-                principal.department == resource.department ||
+                resource.unit in principal.units ||
                 principal.scoped_affiliation == "central_admin"
             };
 
@@ -267,7 +280,7 @@ impl ScaffoldryPolicyEngine {
                 resource
             )
             when {
-                principal.department == resource.department
+                resource.unit in principal.units
             };
 
             // 4. Permit central_admin to access institutional administration console
@@ -334,7 +347,7 @@ impl ScaffoldryPolicyEngine {
             )
             when {
                 resource.visibility == "departmental" &&
-                principal.department == resource.department
+                resource.unit in principal.units
             };
 
             // 10. Permit workspace access if visibility is institutional
@@ -395,7 +408,7 @@ impl ScaffoldryPolicyEngine {
             )
             when {
                 principal.scoped_affiliation == "central_admin" ||
-                ((principal.scoped_affiliation == "faculty" || principal.scoped_affiliation == "staff") && principal.department == resource.department)
+                ((principal.scoped_affiliation == "faculty" || principal.scoped_affiliation == "staff") && resource.unit in principal.units)
             };
 
             // 15. Forbid non-faculty/staff/admin (e.g. students, affiliates) from updating or publishing apps
@@ -420,7 +433,7 @@ impl ScaffoldryPolicyEngine {
             )
             when {
                 principal.scoped_affiliation == "central_admin" ||
-                ((principal.scoped_affiliation == "faculty" || principal.scoped_affiliation == "staff") && principal.department == resource.department)
+                ((principal.scoped_affiliation == "faculty" || principal.scoped_affiliation == "staff") && resource.unit in principal.units)
             };
 
             // 17. Forbid students and affiliates from publishing datasets
@@ -574,6 +587,12 @@ impl ScaffoldryPolicyEngine {
         action_name: &str,
         resource: (&str, &str),
     ) -> Result<AuthorizationResult, PolicyError> {
-        self.evaluate_with_policy_set(&self.policies, entity_values, principal, action_name, resource)
+        self.evaluate_with_policy_set(
+            &self.policies,
+            entity_values,
+            principal,
+            action_name,
+            resource,
+        )
     }
 }
