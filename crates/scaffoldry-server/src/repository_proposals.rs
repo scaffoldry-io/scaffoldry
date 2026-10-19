@@ -405,6 +405,8 @@ pub(crate) fn save_rule_in_tx(
             rule_json = EXCLUDED.rule_json, enabled = EXCLUDED.enabled, updated_at = NOW()",
         &[&rule.id, &rule.app_slug, &rule.name, &rule_json, &rule.enabled],
     )?;
+    // Another instance holds the process definitions it read. It reads this one on its next request.
+    crate::cache::bump(tx, "rules")?;
     Ok((rule, entry))
 }
 

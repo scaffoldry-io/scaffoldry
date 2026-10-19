@@ -840,14 +840,9 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
             })? {
                 Approval::Approved(done) => {
                     state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
-                    if let Some(m) = &row.manifest {
-                        let manifest: AppManifest = serde_json::from_value(m.clone()).map_err(internal)?;
-                        // The manifest carries the app's row and column rules. Registering it applies them.
-                        state.register_runtime_manifest(manifest).map_err(internal)?;
-                    }
-                    if !done.rules.is_empty() {
-                        crate::service::processes::reload_rules(state, &row.app_slug);
-                    }
+                    // The approval committed the manifest, its rules and the process definitions, and bumped their
+                    // counters. This instance reads them back as every other instance will, by their stored versions.
+                    crate::service::reload_after_write(state)?;
                 }
                 Approval::NotPending(status) => return Err(ServiceError::Conflict(format!("This proposal is already {status}"))),
                 Approval::Superseded { live } => {

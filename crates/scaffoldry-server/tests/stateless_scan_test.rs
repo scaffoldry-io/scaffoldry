@@ -82,7 +82,7 @@ fn no_static_holds_a_lock_outside_the_list() {
 
 /// The collections phase 3 moved onto the mechanism. Only `ServerState::reload` may replace them. Every other
 /// write reaches PostgreSQL first, bumps the counter, and lets `refresh` read it back.
-const RELOADED: &[&str] = &["organizations", "position_types", "workspaces", "collaborators", "guards", "datasets", "relationships"];
+const RELOADED: &[&str] = &["organizations", "position_types", "workspaces", "collaborators", "guards", "datasets", "relationships", "automations"];
 
 fn without_space(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -113,4 +113,24 @@ fn only_reload_writes_the_collections_the_mechanism_owns() {
         }
     }
     assert!(offenders.is_empty(), "these write a cached collection outside reload: {offenders:?}");
+}
+
+/// Only these files put an app definition into the engine. The load from storage is in `state.rs`. A saved view
+/// re-merges itself into the copy this instance holds, in `service/views.rs`. An approval, a route, or a tool does not
+/// register a definition: it commits to PostgreSQL, bumps `manifests`, and lets `refresh` load the app whose version moved.
+const MAY_REGISTER: &[&str] = &["state.rs", "views.rs"];
+
+#[test]
+fn only_the_load_and_a_saved_view_put_an_app_definition_in_the_engine() {
+    let mut files = Vec::new();
+    rust_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    let mut offenders = Vec::new();
+    for f in files {
+        let name = f.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+        let flat = without_space(&std::fs::read_to_string(&f).unwrap());
+        if !MAY_REGISTER.contains(&name.as_str()) && (flat.contains(".register_manifest(") || flat.contains(".register_runtime_manifest(")) {
+            offenders.push(f.display().to_string());
+        }
+    }
+    assert!(offenders.is_empty(), "these register an app definition themselves: {offenders:?}");
 }

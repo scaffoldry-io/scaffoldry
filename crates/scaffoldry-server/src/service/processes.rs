@@ -162,18 +162,8 @@ pub fn save_rule(
         .save_rule(&rule, summary, proposal_id, changed_by, &manifest.organization_code)
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
     state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(entry);
-    reload_rules(state, app_slug);
+    super::reload_after_write(state)?;
     Ok(saved)
-}
-
-/// Replaces the in-memory rules of an app with the live rows.
-pub fn reload_rules(state: &SharedState, app_slug: &str) {
-    {
-        let repo = &state.repository;
-        if let Ok(rows) = repo.list_workflow_automations(Some(app_slug)) {
-            state.automations.write().unwrap_or_else(|p| p.into_inner()).insert(app_slug.to_string(), rows);
-        }
-    }
 }
 
 /// Decides a waiting process step. The REST route and the `decide_process` tool both call this.

@@ -244,6 +244,26 @@ impl ServerState {
         Ok(())
     }
 
+    /// Reads one stored app definition and puts it in the engine, with the stored views of its app merged in. One that
+    /// no longer parses or validates is taken out of service by name and logged. The other apps are not touched, and
+    /// the version is noted either way, so a damaged definition is not parsed again until it changes.
+    fn load_app(&self, slug: &str) -> Result<(), crate::repository::RepositoryError> {
+        let Some((version, value)) = self.repository.get_app_manifest_row(slug)? else { return Ok(()) };
+        let own = self.app_views.read().unwrap_or_else(|p| p.into_inner()).get(slug).cloned().unwrap_or_default();
+        let outcome = self
+            .repository
+            .parse_manifest(value)
+            .map_err(|e| e.to_string())
+            .and_then(|m| self.engine.write().unwrap_or_else(|p| p.into_inner()).register_manifest(crate::repository_views::merged(m, &own)).map_err(|e| e.to_string()));
+        let mut engine = self.engine.write().unwrap_or_else(|p| p.into_inner());
+        if let Err(reason) = outcome {
+            eprintln!("Warning: the stored app '{slug}' no longer parses and is not served: {reason}");
+            engine.mark_broken(slug, &reason);
+        }
+        engine.set_version(slug, version);
+        Ok(())
+    }
+
     /// Loads one cached collection again. A collection moves here from a boot-time copy to the mechanism in the phase
     /// that makes it cached. The ones not listed are still read at boot only.
     fn reload(&self, name: &str) -> Result<(), crate::repository::RepositoryError> {
@@ -300,19 +320,21 @@ impl ServerState {
             _ => {}
         }
         if name == "manifests" {
-            // The engine holds the manifest an app runs, with its row and column rules. A manifest another instance
-            // approved, or one this instance never held, is registered again from what is stored. One that no longer
-            // validates is left out, as at start, and an app the engine does not hold shows no rows.
-            let stored = self.repository.list_app_manifests()?;
-            let views = self.app_views.read().unwrap_or_else(|p| p.into_inner());
-            let mut engine = self.engine.write().unwrap_or_else(|p| p.into_inner());
-            for m in stored {
-                let slug = m.slug.clone();
-                let own = views.get(&slug).cloned().unwrap_or_default();
-                if let Err(e) = engine.register_manifest(crate::repository_views::merged(m, &own)) {
-                    eprintln!("Warning: the stored app '{slug}' no longer validates and is not loaded: {e}");
+            // One statement lists the stored versions. Only a definition whose version differs from the one this engine
+            // holds is read and parsed, so approving one app among hundreds reloads one.
+            let held = self.engine.read().unwrap_or_else(|p| p.into_inner()).versions().clone();
+            for (slug, version) in self.repository.app_manifest_versions()? {
+                if held.get(&slug) != Some(&version) {
+                    self.load_app(&slug)?;
                 }
             }
+        }
+        if name == "rules" {
+            let mut by_app: HashMap<String, Vec<AutomationRule>> = HashMap::new();
+            for rule in self.repository.list_workflow_automations(None)? {
+                by_app.entry(rule.app_slug.clone()).or_default().push(rule);
+            }
+            *self.automations.write().unwrap_or_else(|p| p.into_inner()) = by_app;
         }
         Ok(())
     }
@@ -430,7 +452,17 @@ impl ServerState {
         for v in repo.list_all_app_views().map_err(|e| read("the views", e))? {
             app_views_cache.entry(v.app_slug.clone()).or_default().push(v);
         }
-        for mut m in repo.list_app_manifests().map_err(|e| read("the app manifests", e))? {
+        for (stored_slug, version, value) in repo.list_app_manifest_rows().map_err(|e| read("the app manifests", e))? {
+            // A definition that does not parse is that app's problem. The server starts and serves the others.
+            let mut m = match repo.parse_manifest(value) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Warning: the stored app '{stored_slug}' no longer parses and is not served: {e}");
+                    engine.mark_broken(&stored_slug, &e.to_string());
+                    engine.set_version(&stored_slug, version);
+                    continue;
+                }
+            };
             if !m.views.is_empty() {
                 if let Some(done) = repo.migrate_manifest_views(&m.slug).map_err(|e| read("the view migration", e))? {
                     let count = done.views.len();
@@ -452,9 +484,14 @@ impl ServerState {
             }
             let views = app_views_cache.get(&m.slug).cloned().unwrap_or_default();
             let slug = m.slug.clone();
-            if let Err(e) = engine.register_manifest(crate::repository_views::merged(m, &views)) {
-                eprintln!("Warning: the stored app '{slug}' no longer validates and is not loaded: {e}");
+            match engine.register_manifest(crate::repository_views::merged(m, &views)) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("Warning: the stored app '{slug}' no longer validates and is not served: {e}");
+                    engine.mark_broken(&slug, &e.to_string());
+                }
             }
+            engine.set_version(&stored_slug, version);
         }
 
         for ds in repo.list_published_datasets().map_err(|e| read("the datasets", e))? {
@@ -753,20 +790,9 @@ impl ServerState {
         Ok(self.repository.count_workspaces()?)
     }
 
-    /// Registers a manifest the way the engine runs it: with the stored views of its app merged in, so a manifest
-    /// that arrives with older copies of those views does not put them back.
-    pub fn register_runtime_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let views = self.app_views.read().map_err(|_| "views lock poisoned")?.get(&m.slug).cloned().unwrap_or_default();
-        self.engine.write().map_err(|_| "engine lock poisoned")?.register_manifest(crate::repository_views::merged(m, &views))?;
-        Ok(())
-    }
-
     pub fn persist_app_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.register_runtime_manifest(m.clone())?;
-        {
-        let repo = &self.repository;
-            repo.upsert_app_manifest(&m)?;
-        }
+        self.repository.upsert_app_manifest(&m)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -798,11 +824,8 @@ impl ServerState {
     }
 
     pub fn persist_automation(&self, rule: AutomationRule) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.automations.write().map_err(|_| "automations lock poisoned")?.entry(rule.app_slug.clone()).or_default().push(rule.clone());
-        {
-        let repo = &self.repository;
-            repo.upsert_workflow_automation(&rule)?;
-        }
+        self.repository.upsert_workflow_automation(&rule)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -1140,7 +1163,6 @@ impl ServerState {
             access: Default::default(),
             ceds_mappings: HashMap::new(),
         };
-        let _ = self.engine.write().unwrap().register_manifest(demo_app.clone());
 
         let mut automations = HashMap::new();
         automations.insert(
@@ -1436,11 +1458,11 @@ impl ServerState {
                 repo.upsert_dataset_relationship(rel)?;
             }
             if !manifest_stored {
-                let _ = repo.upsert_app_manifest(&demo_app);
+                repo.upsert_app_manifest(&demo_app)?;
             }
             for rules in automations.values() {
                 for r in rules {
-                    let _ = repo.upsert_workflow_automation(r);
+                    repo.upsert_workflow_automation(r)?;
                 }
             }
         }
@@ -1458,18 +1480,6 @@ impl ServerState {
 
         // The demo rows are stored. This instance reads them back, as it reads any other write.
         self.refresh()?;
-        for (k, v) in automations {
-            let mut guard = self.automations.write().unwrap();
-            let list = guard.entry(k).or_default();
-            for r in v {
-                if !list.iter().any(|x| x.id == r.id) {
-                    list.push(r);
-                }
-            }
-        }
-        if !manifest_stored {
-            let _ = self.engine.write().unwrap().register_manifest(demo_app);
-        }
         if ledger_is_new {
             self.ledger.write().unwrap().extend(vec![entry_1, entry_2, entry_3]);
         }
