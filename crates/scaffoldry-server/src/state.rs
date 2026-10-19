@@ -198,16 +198,11 @@ pub struct AuthSession {
 }
 
 pub struct ServerState {
-    /// Row rules by app slug. Until rules join the manifest (access-rules phase 5), this is where an
-    /// app's rules live. Read them through `service::scope::rules_of`.
-    pub access_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::RowRule>>>,
     /// The stored views of each app (`app_views`). The engine runs each app's manifest with these merged in.
     pub app_views: RwLock<HashMap<String, Vec<crate::repository_views::StoredView>>>,
     /// How long an exact row count may run, in milliseconds, before the answer becomes `at least`. Two seconds unless
     /// `SCAFFOLDRY_COUNT_TIMEOUT_MS` says otherwise. A test lowers it to make a count time out.
     pub count_timeout_ms: std::sync::atomic::AtomicU64,
-    /// Column rules by app slug, kept the same way.
-    pub column_rules: RwLock<HashMap<String, Vec<scaffoldry_core::access::ColumnRule>>>,
     pub workspaces: RwLock<HashMap<String, WorkspaceRecord>>,
     pub collaborators: RwLock<HashMap<String, Vec<CollaboratorRecord>>>,
     pub guards: RwLock<HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>>>,
@@ -262,6 +257,21 @@ impl ServerState {
                     }
                 }
                 held.insert(k, v);
+            }
+        }
+        if name == "manifests" {
+            // The engine holds the manifest an app runs, with its row and column rules. A manifest another instance
+            // approved, or one this instance never held, is registered again from what is stored. One that no longer
+            // validates is left out, as at start, and an app the engine does not hold shows no rows.
+            let stored = self.repository.list_app_manifests()?;
+            let views = self.app_views.read().unwrap_or_else(|p| p.into_inner());
+            let mut engine = self.engine.write().unwrap_or_else(|p| p.into_inner());
+            for m in stored {
+                let slug = m.slug.clone();
+                let own = views.get(&slug).cloned().unwrap_or_default();
+                if let Err(e) = engine.register_manifest(crate::repository_views::merged(m, &own)) {
+                    eprintln!("Warning: the stored app '{slug}' no longer validates and is not loaded: {e}");
+                }
             }
         }
         Ok(())
@@ -480,10 +490,8 @@ impl ServerState {
         });
 
         Ok(Self {
-            access_rules: RwLock::new(HashMap::new()),
             app_views: RwLock::new(app_views_cache),
             count_timeout_ms: std::sync::atomic::AtomicU64::new(std::env::var("SCAFFOLDRY_COUNT_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(2_000)),
-            column_rules: RwLock::new(HashMap::new()),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
             guards: RwLock::new(guards),

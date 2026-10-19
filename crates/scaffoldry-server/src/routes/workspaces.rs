@@ -187,7 +187,7 @@ async fn remove_collaborator(
 
 use sha2::{Digest, Sha256};
 use scaffoldry_core::guards::{compile_rules, GuardRule, WorkspaceGuardRecord, MAX_GUARD_RULES};
-use scaffoldry_policy::entities::{PrincipalCtx, RecordCtx, Resource, WorkspaceCtx};
+use scaffoldry_policy::entities::{RecordCtx, Resource};
 
 fn check_can_manage_guards(caller: &AuthUser, ws: &WorkspaceRecord, state: &SharedState) -> Result<(), ServiceError> {
     if caller.affiliation == "central_admin"  {
@@ -219,33 +219,6 @@ fn check_can_manage_guards(caller: &AuthUser, ws: &WorkspaceRecord, state: &Shar
         diagnostics: vec![],
         policy: None,
     })
-}
-
-fn principal_ctx_for(user: &AuthUser, state: &SharedState) -> PrincipalCtx {
-    let role_unit_ids: Vec<String> = state.roles_of(&user.eppn).iter().map(|r| r.organization_id.to_string()).collect();
-
-    let org_parents: std::collections::HashMap<String, Option<String>> = {
-        let o_read = state.organizations.read().ok();
-        let mut map = std::collections::HashMap::new();
-        if let Some(orgs) = o_read {
-            for (id, node) in orgs.iter() {
-                map.insert(id.to_string(), node.parent_id.map(|p| p.to_string()));
-            }
-        }
-        map
-    };
-
-    let all_unit_ids = scaffoldry_policy::entities::unit_ids_for(&role_unit_ids, &org_parents);
-    let is_platform_admin = user.affiliation == "central_admin" ;
-
-    PrincipalCtx {
-        eppn: user.eppn.clone(),
-        name: user.name.clone(),
-        scoped_affiliation: user.affiliation.clone(),
-        department: user.department.clone(),
-        unit_ids: all_unit_ids,
-        is_platform_admin,
-    }
 }
 
 fn build_proposed_policy_set(
@@ -490,27 +463,17 @@ async fn impact_workspace_guards(
             department: collab.department.clone(),
         view_as_by: None,
         });
-        let princ = principal_ctx_for(&collab_user, &state);
+        let princ = crate::service::access::principal_of(&state, &collab_user);
 
         for action in actions {
             for &sensitive in &sensitivities {
+                // The same resources production asks about: the workspace for the app actions, with the app's sensitivity.
+                let role = collab.role.to_lowercase();
                 let resource = match action {
-                    "access_workspace" => Resource::Workspace(WorkspaceCtx {
-                        workspace_id: id.clone(),
-                        department: ws.department.clone(),
-                        visibility: ws.visibility.clone(),
-                        data_classification: ws.data_classification.clone(),
-                        member_role: collab.role.to_lowercase(),
-                        unit_id: ws.organization_id.map(|u| u.to_string()).unwrap_or_default(),
-                        is_member: true,
-                    }),
-                    "read_app" => Resource::Record(RecordCtx {
-                        app_slug: "app".to_string(),
-                        department: ws.department.clone(),
-                        workspace_id: id.clone(),
-                        is_ferpa_sensitive: sensitive,
-                        categories: Default::default(),
-                    }),
+                    "access_workspace" => Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, Some(&role), None)),
+                    "read_app" | "write_record" => {
+                        Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, Some(&role), Some((sensitive, Default::default()))))
+                    }
                     _ => Resource::Record(RecordCtx {
                         app_slug: "app".to_string(),
                         department: ws.department.clone(),
@@ -588,21 +551,14 @@ async fn test_workspace_guards(
         department: ws.department.clone(),
         view_as_by: None,
     });
-    let princ = principal_ctx_for(&target_user, &state);
+    let princ = crate::service::access::principal_of(&state, &target_user);
 
     let role = crate::service::members::member_role_of(target_eppn, &id, &state);
-    let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()).unwrap_or_default());
+    let role = role.as_ref().map(|r| r.as_str());
 
     let resource = match action {
-        "access_workspace" => Resource::Workspace(WorkspaceCtx {
-            workspace_id: id.clone(),
-            department: ws.department.clone(),
-            visibility: ws.visibility.clone(),
-            data_classification: ws.data_classification.clone(),
-            member_role,
-            unit_id: ws.organization_id.map(|u| u.to_string()).unwrap_or_default(),
-            is_member,
-        }),
+        "access_workspace" => Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, role, None)),
+        "read_app" | "write_record" => Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, role, Some((is_sensitive, Default::default())))),
         _ => Resource::Record(RecordCtx {
             app_slug: "app".to_string(),
             department: ws.department.clone(),

@@ -5,9 +5,7 @@ use std::path::Path;
 /// The fields of `ServerState` that may hold a lock. The list starts as today's fields. Each phase removes the ones
 /// it turns into queries or into cached collections, and none is added.
 const ALLOWED_FIELDS: &[&str] = &[
-    "access_rules",
     "app_views",
-    "column_rules",
     "workspaces",
     "collaborators",
     "guards",

@@ -2,7 +2,10 @@
 //! Validates institutional RBAC/ABAC, FERPA safeguards, and InCommon scoped affiliations.
 
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
-use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine, WorkspaceActionInput};
+mod support;
+
+use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine};
+use support::{Asks, WorkspaceActionInput};
 
 #[test]
 fn test_ceds_eduperson_policy_authorization() {

@@ -1930,8 +1930,9 @@ impl PostgresRepository {
     pub fn update_app_manifest_checked(&self, m: &AppManifest, expected_version: i32) -> Result<RecordWrite, RepositoryError> {
         let m = m.clone();
         self.with_client(move |client| {
+            let mut tx = client.transaction()?;
             let manifest_json = serde_json::to_value(&m)?;
-            let updated = client.query_opt(
+            let updated = tx.query_opt(
                 "UPDATE app_manifests SET title = $2, description = $3, organization_code = $4, department = $5, \
                         herm_capability_id = $6, custom_domain = $7, custom_domain_verified = $8, workspace_id = $9, \
                         manifest = $10, version = version + 1, updated_at = NOW() \
@@ -1951,9 +1952,11 @@ impl PostgresRepository {
                 ],
             )?;
             if let Some(row) = updated {
+                crate::cache::bump(&mut tx, "manifests")?;
+                tx.commit()?;
                 return Ok(RecordWrite::Saved(row.get(0)));
             }
-            let current = client.query_opt("SELECT version FROM app_manifests WHERE slug = $1", &[&m.slug])?;
+            let current = tx.query_opt("SELECT version FROM app_manifests WHERE slug = $1", &[&m.slug])?;
             Ok(match current {
                 Some(row) => RecordWrite::Conflict(row.get(0)),
                 None => RecordWrite::Missing,
@@ -1964,8 +1967,9 @@ impl PostgresRepository {
     pub fn upsert_app_manifest(&self, m: &AppManifest) -> Result<(), RepositoryError> {
         let m = m.clone();
         self.with_client(move |client| {
+            let mut tx = client.transaction()?;
             let manifest_json = serde_json::to_value(&m)?;
-            client.execute(
+            tx.execute(
                 "INSERT INTO app_manifests (slug, title, description, organization_code, department, \
                         herm_capability_id, custom_domain, custom_domain_verified, workspace_id, manifest, updated_at) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) \
@@ -1994,6 +1998,8 @@ impl PostgresRepository {
                     &manifest_json,
                 ],
             )?;
+            crate::cache::bump(&mut tx, "manifests")?;
+            tx.commit()?;
             Ok(())
         })
     }

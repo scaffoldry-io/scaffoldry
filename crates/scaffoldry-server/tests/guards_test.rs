@@ -313,7 +313,10 @@ async fn test_04_guard_cannot_grant_access() {
         data_classification: "restricted".to_string(),
         member_role: "".to_string(),
         unit_id: "".to_string(),
+        unit_path_ids: vec![],
         is_member: false,
+        is_ferpa_sensitive: false,
+        categories: Default::default(),
     });
 
     let dec = decide(&c.state, &student_user, "access_workspace", &res);
@@ -460,7 +463,10 @@ async fn test_05_deny_access_outside_units() {
         data_classification: "restricted".to_string(),
         member_role: "owner".to_string(),
         unit_id: dept1_id.to_string(),
+        unit_path_ids: vec![],
         is_member: true,
+        is_ferpa_sensitive: false,
+        categories: Default::default(),
     });
 
     let curie_dec = decide(&c.state, &curie_user, "access_workspace", &res);

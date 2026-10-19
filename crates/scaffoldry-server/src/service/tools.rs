@@ -9,9 +9,7 @@ use crate::service::access::{authorize_app, authorize_workspace, AppAction};
 use crate::service::history::Origin;
 use crate::service::{records, workspaces, ServiceError};
 use crate::state::{AuthUser, SharedState};
-use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::DecisionType;
-use scaffoldry_policy::PolicyDecision;
 use scaffoldry_engine::HostRouter;
 use serde_json::{json, Map, Value};
 
@@ -578,57 +576,32 @@ fn run_simulate_cedar_policy(_caller: &AuthUser, _origin: &Origin, args: Value, 
         .unwrap_or_else(|| domain.split('.').next().unwrap_or("university").to_string());
 
     let affiliation = match affiliation_word.as_str() {
-        "faculty" => EduPersonAffiliation::Faculty,
-        "student" => EduPersonAffiliation::Student,
-        "staff" => EduPersonAffiliation::Staff,
-        "employee" => EduPersonAffiliation::Employee,
-        "affiliate" => EduPersonAffiliation::Affiliate,
-        "alum" => EduPersonAffiliation::Alum,
-        _ => EduPersonAffiliation::Member,
+        word @ ("faculty" | "student" | "staff" | "employee" | "affiliate" | "alum") => word,
+        _ => "member",
     };
-    let identity = EduPersonIdentity {
-        eppn: eppn.to_string(),
-        realm: domain,
-        affiliations: vec![affiliation],
-    };
-
-    let result = state
-        .policy_engine
-        .authorize_record_action(&identity, &department, action, "simulation", &department, ferpa_sensitive)
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let result = crate::service::access::simulate_record_action(state, eppn, affiliation, &department, action, "simulation", &department, ferpa_sensitive)?;
 
     Ok(json!({
-        "decision": if result.decision == PolicyDecision::Allow { "Allow" } else { "Deny" },
+        "decision": if result.allowed { "Allow" } else { "Deny" },
         "principal": eppn,
         "affiliation": affiliation_word,
         "action": action,
         "resource_ferpa_sensitive": ferpa_sensitive,
         "reasons": result.reasons,
         "diagnostics": result.diagnostics,
-        "deciding_policy": result.deciding_policy,
+        "deciding_policy": result.policy,
     }))
 }
 
 fn run_record_governance_decision(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     // The same Cedar rule the REST route applies. A student may not record a decision.
-    let auth = state
-        .policy_engine
-        .authorize_institutional_action(
-            &caller.eppn,
-            &caller.affiliation,
-            &caller.department,
-            "record_decision",
-            "governance-ledger",
-        )
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    if auth.decision == PolicyDecision::Deny {
-        return Err(ServiceError::Forbidden {
-            message: "Forbidden: Cedar policy denied ledger append".to_string(),
-            reasons: auth.reasons,
-            diagnostics: auth.diagnostics,
-            policy: auth.deciding_policy,
-        });
-    }
+    crate::service::access::require(
+        state,
+        caller,
+        "record_decision",
+        &scaffoldry_policy::entities::Resource::System(crate::service::access::ledger_resource()),
+        "Forbidden: Cedar policy denied ledger append",
+    )?;
 
     let org_code = required_str(&args, "organization_code")?;
     let decision_type = match required_str(&args, "decision_type")? {

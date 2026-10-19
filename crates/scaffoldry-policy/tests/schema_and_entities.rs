@@ -1,10 +1,13 @@
 //! Guards phase 1: one Cedar schema, one typed entity builder, plain descriptions,
 //! and denials that name the policy.
 
+mod support;
+
 use scaffoldry_policy::entities::{
     authorize, unit_ids_for, PrincipalCtx, RecordCtx, Resource, WorkspaceCtx,
 };
-use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine, WorkspaceActionInput};
+use scaffoldry_policy::{PolicyDecision, ScaffoldryPolicyEngine};
+use support::{Asks, WorkspaceActionInput};
 use std::collections::HashMap;
 
 fn principal(affiliation: &str, department: &str) -> PrincipalCtx {
@@ -14,6 +17,7 @@ fn principal(affiliation: &str, department: &str) -> PrincipalCtx {
         scoped_affiliation: affiliation.into(),
         department: department.into(),
         unit_ids: vec![],
+        admin_unit_ids: vec![],
         is_platform_admin: false,
     }
 }
@@ -44,7 +48,10 @@ fn a_non_member_has_an_empty_member_role_and_policy_13_evaluates_without_error()
         data_classification: String::new(),
         member_role: String::new(),
         unit_id: String::new(),
+        unit_path_ids: vec![],
         is_member: false,
+        is_ferpa_sensitive: false,
+        categories: Default::default(),
     };
     assert_eq!(ws.entity_member_role(), "");
     let result = authorize(&engine, &principal("faculty", "biology"), "manage_workspace", &Resource::Workspace(ws))
