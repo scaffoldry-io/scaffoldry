@@ -2277,8 +2277,8 @@ async fn test_phase5_scim_academic_and_position_sync() {
     let members: Value = serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let member_arr = members.as_array().unwrap();
     let admin_row = member_arr.iter().find(|m| m["eppn"] == "prof.planck@university.edu" && m["scoped_affiliation"] == "unit_admin");
-    assert!(admin_row.is_some(), "unit_admin must be inserted when scaffoldry role is provided");
-    assert_eq!(admin_row.unwrap()["source"], "scim");
+    // SCIM appoints no administrator (access-model phase 1). The role is read and ignored.
+    assert!(admin_row.is_none(), "SCIM must not insert a unit_admin appointment");
 
     // Also insert an api appointment
     let appoint_payload = json!({
@@ -2295,7 +2295,7 @@ async fn test_phase5_scim_academic_and_position_sync() {
     ).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    // 4: PUT removing the scaffoldry role drops the scim admin row and keeps api appointment
+    // 4: PUT without the scaffoldry role leaves no scim admin row and keeps the api appointment
     let mut remove_admin_payload = user_payload.clone();
     remove_admin_payload["roles"] = json!([
         { "value": "faculty@university.edu", "type": "eduPersonScopedAffiliation" }
