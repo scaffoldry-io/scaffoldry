@@ -268,14 +268,6 @@ pub fn create_workspace(
         }),
     }).map_err(|e| ServiceError::Internal(e.to_string()))?;
 
-    {
-        let mut ws_guard = state
-            .workspaces
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        ws_guard.insert(id.clone(), record.clone());
-    }
-
     let initial_owner = CollaboratorRecord {
         id: Uuid::new_v4().to_string(),
         workspace_id: id.clone(),
@@ -294,13 +286,7 @@ pub fn create_workspace(
         repo.upsert_collaborator(&initial_owner).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
-    {
-        let mut collabs_guard = state
-            .collaborators
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.entry(id.clone()).or_default().push(initial_owner);
-    }
+    super::reload_after_write(state)?;
 
     Ok(record)
 }
@@ -435,13 +421,7 @@ pub fn update_workspace(
         repo.upsert_workspace(&ws).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
-    {
-        let mut ws_guard = state
-            .workspaces
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        ws_guard.insert(id.to_string(), ws.clone());
-    }
+    super::reload_after_write(state)?;
 
     Ok(ws)
 }
@@ -599,16 +579,7 @@ pub fn add_collaborator(
         repo.upsert_collaborator(&new_member).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
-    {
-        let mut collabs_guard = state
-            .collaborators
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard
-            .entry(workspace_id.to_string())
-            .or_default()
-            .push(new_member.clone());
-    }
+    super::reload_after_write(state)?;
 
     Ok(new_member)
 }
@@ -678,13 +649,7 @@ pub fn update_collaborator_role(
         repo.upsert_collaborator(&updated).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
-    {
-        let mut collabs_guard = state
-            .collaborators
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.insert(workspace_id.to_string(), collabs);
-    }
+    super::reload_after_write(state)?;
 
     Ok(updated)
 }
@@ -751,13 +716,7 @@ pub fn remove_collaborator(
         repo.remove_collaborator(workspace_id, target_eppn, app).map_err(|e| ServiceError::Internal(e.to_string()))?;
     }
 
-    {
-        let mut collabs_guard = state
-            .collaborators
-            .write()
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
-        collabs_guard.insert(workspace_id.to_string(), remaining);
-    }
+    super::reload_after_write(state)?;
 
     Ok(())
 }

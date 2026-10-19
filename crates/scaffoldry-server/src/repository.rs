@@ -732,6 +732,16 @@ pub(crate) fn record_from_row(r: &postgres::Row) -> DatasetRecord {
     }
 }
 
+/// What `move_organization` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrgMove {
+    Moved,
+    /// The new parent is the unit or below it. Nothing changed.
+    Cycle,
+    /// The unit, or its new parent, is not in the table. Nothing changed.
+    Missing,
+}
+
 #[derive(Clone)]
 pub struct PostgresRepository {
     worker_tx: Sender<WorkerJob>,
@@ -1244,8 +1254,9 @@ impl PostgresRepository {
     pub fn upsert_workspace(&self, ws: &WorkspaceRecord) -> Result<(), RepositoryError> {
         let ws = ws.clone();
         self.with_client(move |client| {
+            let mut tx = client.transaction()?;
             let affs_json = serde_json::to_value(&ws.allowed_affiliations)?;
-            client.execute(
+            tx.execute(
                 "INSERT INTO workspaces (id, name, code, organization, department, description, \
                         icon, lead, visibility, allowed_affiliations, data_classification, organization_id) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
@@ -1276,6 +1287,8 @@ impl PostgresRepository {
                     &ws.organization_id,
                 ],
             )?;
+            crate::cache::bump(&mut tx, "workspaces")?;
+            tx.commit()?;
             Ok(())
         })
     }
@@ -1318,6 +1331,7 @@ impl PostgresRepository {
                     ],
                 )?;
             }
+            crate::cache::bump(&mut tx, "workspaces")?;
             tx.commit()?;
             Ok(())
         })
@@ -1363,7 +1377,8 @@ impl PostgresRepository {
         let (kind, id) = crate::service::members::split_principal(&c.eppn);
         let (kind, id) = (kind.as_str().to_string(), id.to_string());
         self.with_client(move |client| {
-            client.execute(
+            let mut tx = client.transaction()?;
+            tx.execute(
                 "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department, principal_type, principal_id, app_slug) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
                  ON CONFLICT (workspace_id, eppn, app_slug) DO UPDATE SET \
@@ -1375,6 +1390,8 @@ impl PostgresRepository {
                     principal_id = EXCLUDED.principal_id",
                 &[&c.id, &c.workspace_id, &c.eppn, &c.name, &c.role, &c.scoped_affiliation, &c.department, &kind, &id, &c.app_slug],
             )?;
+            crate::cache::bump(&mut tx, "workspaces")?;
+            tx.commit()?;
             Ok(())
         })
     }
@@ -1385,10 +1402,13 @@ impl PostgresRepository {
         let eppn_str = eppn.to_string();
         let app = app.to_string();
         self.with_client(move |client| {
-            client.execute(
+            let mut tx = client.transaction()?;
+            tx.execute(
                 "DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn = $2 AND app_slug = $3",
                 &[&ws_id, &eppn_str, &app],
             )?;
+            crate::cache::bump(&mut tx, "workspaces")?;
+            tx.commit()?;
             Ok(())
         })
     }
@@ -2027,8 +2047,9 @@ impl PostgresRepository {
     pub fn upsert_published_dataset(&self, ds: &PublishedDataset) -> Result<(), RepositoryError> {
         let ds = ds.clone();
         self.with_client(move |client| {
+            let mut tx = client.transaction()?;
             let payload_json = serde_json::to_value(&ds)?;
-            client.execute(
+            tx.execute(
                 "INSERT INTO published_datasets (id, name, description, department, organization, \
                         sensitivity_level, herm_capability_id, payload, updated_at) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) \
@@ -2052,6 +2073,8 @@ impl PostgresRepository {
                     &payload_json,
                 ],
             )?;
+            crate::cache::bump(&mut tx, "datasets")?;
+            tx.commit()?;
             Ok(())
         })
     }
@@ -2079,9 +2102,10 @@ impl PostgresRepository {
     pub fn upsert_dataset_relationship(&self, rel: &DatasetRelationship) -> Result<(), RepositoryError> {
         let rel = rel.clone();
         self.with_client(move |client| {
+            let mut tx = client.transaction()?;
             let payload_json = serde_json::to_value(&rel)?;
             let rel_type = format!("{:?}", rel.relationship_type);
-            client.execute(
+            tx.execute(
                 "INSERT INTO dataset_relationships (id, name, source_dataset_id, target_dataset_id, \
                         source_field, target_field, relationship_type, display_field, payload) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
@@ -2106,6 +2130,8 @@ impl PostgresRepository {
                     &payload_json,
                 ],
             )?;
+            crate::cache::bump(&mut tx, "relationships")?;
+            tx.commit()?;
             Ok(())
         })
     }
@@ -2318,7 +2344,8 @@ impl PostgresRepository {
     pub fn upsert_organization(&self, org: &OrganizationNode) -> Result<(), RepositoryError> {
         let org = org.clone();
         self.with_client(move |client| {
-            client.execute(
+            let mut tx = client.transaction()?;
+            tx.execute(
                 "INSERT INTO organizations (id, parent_id, name, code, org_type) \
                  VALUES ($1, $2, $3, $4, $5) \
                  ON CONFLICT (code) DO UPDATE SET \
@@ -2327,7 +2354,50 @@ impl PostgresRepository {
                     org_type = EXCLUDED.org_type",
                 &[&org.id, &org.parent_id, &org.name, &org.code, &org.org_type],
             )?;
+            crate::cache::bump(&mut tx, "organizations")?;
+            tx.commit()?;
             Ok(())
+        })
+    }
+
+    /// Changes a unit's parent or name. The unit's row is locked and the tree is checked for a cycle inside the same
+    /// transaction, so two moves made at once cannot each pass a check made before the other committed.
+    ///
+    /// `ponytail:` one advisory lock serializes every change to the shape of the tree. Moving a unit is rare, and a lock on
+    /// the unit and its ancestors would have to be taken in an order that two moves in opposite directions share.
+    pub fn move_organization(&self, org: &OrganizationNode) -> Result<OrgMove, RepositoryError> {
+        const TREE_LOCK: i64 = 0x5343_4f52_4754_5245; // "SCORGTRE"
+        let org = org.clone();
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&TREE_LOCK])?;
+            if tx.query_opt("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", &[&org.id])?.is_none() {
+                return Ok(OrgMove::Missing);
+            }
+            // Walk up from the new parent. Reaching the unit itself means the move would make a cycle. A step limit
+            // stops a cycle that is already in bad data.
+            let mut current = org.parent_id;
+            let mut steps = 0;
+            while let Some(id) = current {
+                if id == org.id {
+                    return Ok(OrgMove::Cycle);
+                }
+                steps += 1;
+                if steps > 64 {
+                    return Ok(OrgMove::Cycle);
+                }
+                match tx.query_opt("SELECT parent_id FROM organizations WHERE id = $1", &[&id])? {
+                    Some(row) => current = row.get::<_, Option<uuid::Uuid>>(0),
+                    None => return Ok(OrgMove::Missing),
+                }
+            }
+            tx.execute(
+                "UPDATE organizations SET parent_id = $2, name = $3, org_type = $4 WHERE id = $1",
+                &[&org.id, &org.parent_id, &org.name, &org.org_type],
+            )?;
+            crate::cache::bump(&mut tx, "organizations")?;
+            tx.commit()?;
+            Ok(OrgMove::Moved)
         })
     }
 
@@ -2389,9 +2459,10 @@ impl PostgresRepository {
     pub fn upsert_position_type(&self, pt: &crate::state::PositionType) -> Result<(), RepositoryError> {
         let pt = pt.clone();
         self.with_client(move |client| {
+            let mut tx = client.transaction()?;
             let org_types = serde_json::to_value(&pt.org_types).unwrap_or(serde_json::Value::Null);
             let retired = pt.retired_at.is_some();
-            client.execute(
+            tx.execute(
                 "INSERT INTO position_types (key, name, description, org_types, max_holders, retired_at, created_by) \
                  VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::bool THEN NOW() END, $7) \
                  ON CONFLICT (key) DO UPDATE SET \
@@ -2402,6 +2473,8 @@ impl PostgresRepository {
                     retired_at = CASE WHEN $6::bool THEN COALESCE(position_types.retired_at, NOW()) END",
                 &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &retired, &pt.created_by],
             )?;
+            crate::cache::bump(&mut tx, "position_types")?;
+            tx.commit()?;
             Ok(())
         })
     }
@@ -2910,10 +2983,13 @@ impl PostgresRepository {
     pub fn insert_workspace_guard(&self, guard: &scaffoldry_core::WorkspaceGuardRecord) -> Result<(), RepositoryError> {
         let g = guard.clone();
         self.with_client(move |client| {
-            client.execute(
+            let mut tx = client.transaction()?;
+            tx.execute(
                 "INSERT INTO workspace_guards (workspace_id, version, rules, compiled, reason, created_by, created_at)                  VALUES ($1, $2, $3, $4, $5, $6, NOW())",
                 &[&g.workspace_id, &g.version, &g.rules, &g.compiled, &g.reason, &g.created_by],
             )?;
+            crate::cache::bump(&mut tx, "guards")?;
+            tx.commit()?;
             Ok(())
         })
     }

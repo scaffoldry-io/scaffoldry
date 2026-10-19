@@ -486,27 +486,13 @@ async fn transfer_workspace_ownership(
                 collabs.push(new_collab);
             }
 
-            {
-                let mut collabs_guard = state
-                    .collaborators
-                    .write()
-                    .map_err(|e| ServiceError::internal(e.to_string()))?;
-                collabs_guard.insert(id.clone(), collabs);
-            }
-
             ws.lead = target_user.name.clone();
             {
         let repo = &state.repository;
                 repo.upsert_workspace(&ws)
                     .map_err(|e| ServiceError::internal(e.to_string()))?;
             }
-            {
-                let mut ws_guard = state
-                    .workspaces
-                    .write()
-                    .map_err(|e| ServiceError::internal(e.to_string()))?;
-                ws_guard.insert(id.clone(), ws.clone());
-            }
+            crate::service::reload_after_write(&state)?;
 
             Ok(ws)
         },

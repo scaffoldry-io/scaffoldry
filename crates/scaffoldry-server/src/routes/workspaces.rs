@@ -403,15 +403,9 @@ async fn put_workspace_guards(
         repo.insert_workspace_guard(&record).map_err(|e| ServiceError::internal(e.to_string()))?;
     }
 
-    {
-        let mut g_write = state.guards.write().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        g_write.entry(id.clone()).or_default().push(record.clone());
-    }
-
-    {
-        let mut c_write = state.guard_policy_cache.write().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        c_write.remove(&(id.clone(), new_version));
-    }
+    // The guard is stored and `guards` is bumped. Reading it back clears the compiled sets, on this instance now and
+    // on the others at their next request.
+    crate::service::reload_after_write(&state)?;
 
     Ok(Json(serde_json::json!({
         "current": {

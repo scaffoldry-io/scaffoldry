@@ -131,7 +131,7 @@ pub fn create_position(state: &SharedState, admin: &AuthUser, new: NewPosition, 
         if !created {
             return Err(ServiceError::conflict(format!("Position '{}' already exists", pt.key)));
         }
-        state.position_types.write().unwrap_or_else(|p| p.into_inner()).insert(pt.key.clone(), pt.clone());
+        crate::service::reload_after_write(state)?;
         Ok(())
     })?;
     Ok(row(&pt, 0))
@@ -188,7 +188,7 @@ pub fn patch_position(
             crate::repository::RepositoryError::Conflict(m) => ServiceError::conflict(m),
             other => ServiceError::Internal(other.to_string()),
         })?;
-        state.position_types.write().unwrap_or_else(|p| p.into_inner()).insert(pt.key.clone(), pt.clone());
+        crate::service::reload_after_write(state)?;
         Ok(())
     })?;
     Ok(row(&pt, held))

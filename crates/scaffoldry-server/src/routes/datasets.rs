@@ -205,12 +205,7 @@ async fn publish_dataset(
         sample_data,
     };
 
-    state.datasets.write().map_err(|_| lock_err())?.insert(id, dataset.clone());
-    {
-        let repo = &state.repository;
-        repo.upsert_published_dataset(&dataset)
-            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-    }
+    state.persist_dataset(dataset.clone()).map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     Ok((StatusCode::CREATED, Json(dataset)))
 }
 
@@ -291,11 +286,6 @@ async fn create_relationship(
         display_field,
     };
 
-    state.relationships.write().map_err(|_| lock_err())?.insert(id, rel.clone());
-    {
-        let repo = &state.repository;
-        repo.upsert_dataset_relationship(&rel)
-            .map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-    }
+    state.persist_relationship(rel.clone()).map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     Ok((StatusCode::CREATED, Json(rel)))
 }

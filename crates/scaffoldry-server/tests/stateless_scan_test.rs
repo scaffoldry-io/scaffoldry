@@ -79,3 +79,38 @@ fn no_static_holds_a_lock_outside_the_list() {
     }
     assert!(offenders.is_empty(), "statics that hold a lock: {offenders:?}");
 }
+
+/// The collections phase 3 moved onto the mechanism. Only `ServerState::reload` may replace them. Every other
+/// write reaches PostgreSQL first, bumps the counter, and lets `refresh` read it back.
+const RELOADED: &[&str] = &["organizations", "position_types", "workspaces", "collaborators", "guards", "datasets", "relationships"];
+
+fn without_space(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+#[test]
+fn only_reload_writes_the_collections_the_mechanism_owns() {
+    let mut files = Vec::new();
+    rust_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    let mut offenders = Vec::new();
+    for f in files {
+        let flat = without_space(&std::fs::read_to_string(&f).unwrap());
+        let is_state = f.file_name().is_some_and(|n| n == "state.rs");
+        // In state.rs a write is allowed between the start of `reload` and the start of `new`.
+        let allowed = if is_state { flat.find("fnreload(").zip(flat.find("pubfnnew()")) } else { None };
+        for name in RELOADED {
+            let needle = format!("{name}.write()");
+            let mut from = 0;
+            while let Some(i) = flat[from..].find(&needle) {
+                let at = from + i;
+                // `.write()` on a field only: `self.workspaces.write()` and `state.workspaces.write()`, not `x_workspaces`.
+                let field = at == 0 || matches!(flat.as_bytes()[at - 1], b'.');
+                if field && !allowed.is_some_and(|(start, end)| at > start && at < end) {
+                    offenders.push(format!("{}: {needle}", f.display()));
+                }
+                from = at + needle.len();
+            }
+        }
+    }
+    assert!(offenders.is_empty(), "these write a cached collection outside reload: {offenders:?}");
+}
