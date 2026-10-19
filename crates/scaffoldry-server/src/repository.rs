@@ -2413,13 +2413,17 @@ impl PostgresRepository {
         })
     }
 
-    pub fn delete_scim_roles_for_user(&self, eppn: &str) -> Result<(), RepositoryError> {
+    /// Removes the roles SCIM holds for a person, before a sync writes the ones it now reports. A `platform_admin` or
+    /// `unit_admin` row that SCIM wrote before SCIM stopped granting them is kept when `keep_admin_rows` is set. A
+    /// Platform Admin re-appoints or removes it. A person who is deactivated or deleted loses it with the rest.
+    pub fn delete_scim_roles_for_user(&self, eppn: &str, keep_admin_rows: bool) -> Result<(), RepositoryError> {
         let eppn_str = eppn.to_string();
         self.with_client(move |client| {
             client.execute(
                 "DELETE FROM roles r USING persons p \
-                 WHERE r.person_id = p.id AND p.eppn = $1 AND r.source = 'scim'",
-                &[&eppn_str],
+                 WHERE r.person_id = p.id AND p.eppn = $1 AND r.source = 'scim' \
+                   AND ($2::bool = false OR r.scoped_affiliation NOT IN ('platform_admin', 'unit_admin'))",
+                &[&eppn_str, &keep_admin_rows],
             )?;
             Ok(())
         })

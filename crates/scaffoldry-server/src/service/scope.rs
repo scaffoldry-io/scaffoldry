@@ -95,16 +95,30 @@ fn edit_manifest(app_slug: &str, state: &SharedState, edit: impl FnOnce(&mut sca
     state.persist_app_manifest(manifest).unwrap_or_else(|e| panic!("the manifest of '{app_slug}' did not save: {e}"));
 }
 
-/// What the rules know about a person.
+/// What the rules know about a person. Their units are the same set Cedar sees, with every ancestor. Each position
+/// they hold comes twice, as the bare key and as `key@unit-id`, so a rule can tell Chemistry's chair from Physics's.
 pub fn person_of(caller: &AuthUser, state: &SharedState) -> Person {
     let roles = state.roles_of(&caller.eppn);
     let group_ids = state.group_ids_of(&caller.eppn);
+    let mut position_keys: Vec<String> = Vec::new();
+    for r in &roles {
+        if let Some(key) = &r.position_key {
+            if !position_keys.contains(key) {
+                position_keys.push(key.clone());
+            }
+        }
+    }
+    for r in &roles {
+        if let Some(key) = &r.position_key {
+            position_keys.push(format!("{key}@{}", r.organization_id));
+        }
+    }
     Person {
         address: caller.eppn.clone(),
         department: caller.department.clone(),
         affiliation: caller.affiliation.clone(),
-        unit_ids: roles.iter().map(|r| r.organization_id.to_string()).collect(),
-        position_keys: roles.iter().filter_map(|r| r.position_key.clone()).collect(),
+        unit_ids: crate::service::access::unit_ids_of(state, &roles),
+        position_keys,
         group_ids,
     }
 }

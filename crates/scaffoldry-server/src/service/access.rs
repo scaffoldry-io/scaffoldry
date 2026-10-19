@@ -77,12 +77,18 @@ fn policy_set_for(state: &SharedState, ws_id: Option<&str>) -> Result<scaffoldry
     Ok(ps)
 }
 
+/// A person's units: every unit where they hold a role, and every ancestor of each. This is the one function. Cedar
+/// (`principal_of`) and the row and column rules (`scope::person_of`) both call it, so a person in Physics is in the
+/// College of Science for a guard, for a rule in Rust, and for a rule in SQL.
+pub fn unit_ids_of(state: &SharedState, roles: &[crate::state::RoleRow]) -> Vec<String> {
+    let role_unit_ids: Vec<String> = roles.iter().map(|r| r.organization_id.to_string()).collect();
+    scaffoldry_policy::entities::unit_ids_for(&role_unit_ids, &unit_parents(state))
+}
+
 /// What Cedar knows about a person: their units with all ancestors, and the units they administer.
 pub fn principal_of(state: &SharedState, caller: &AuthUser) -> PrincipalCtx {
     let roles = state.roles_of(&caller.eppn);
-    let role_unit_ids: Vec<String> = roles.iter().map(|r| r.organization_id.to_string()).collect();
     let admin_unit_ids: Vec<String> = roles.iter().filter(|r| r.scoped_affiliation == "unit_admin").map(|r| r.organization_id.to_string()).collect();
-    let org_parents = unit_parents(state);
     // A Platform Admin is a central administrator, or holds the `platform_admin` role on the root unit.
     let is_platform_admin = {
         let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
@@ -94,7 +100,7 @@ pub fn principal_of(state: &SharedState, caller: &AuthUser) -> PrincipalCtx {
         name: caller.name.clone(),
         scoped_affiliation: if is_platform_admin { "central_admin".to_string() } else { caller.affiliation.clone() },
         department: caller.department.clone(),
-        unit_ids: scaffoldry_policy::entities::unit_ids_for(&role_unit_ids, &org_parents),
+        unit_ids: unit_ids_of(state, &roles),
         admin_unit_ids,
         is_platform_admin,
     }

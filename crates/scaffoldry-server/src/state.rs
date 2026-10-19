@@ -535,8 +535,8 @@ impl ServerState {
         Ok(())
     }
 
-    pub fn delete_scim_roles(&self, eppn: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.repository.delete_scim_roles_for_user(eppn)?;
+    pub fn delete_scim_roles(&self, eppn: &str, keep_admin_rows: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.repository.delete_scim_roles_for_user(eppn, keep_admin_rows)?;
         Ok(())
     }
 
