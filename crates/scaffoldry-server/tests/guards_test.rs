@@ -357,40 +357,20 @@ async fn test_05_deny_access_outside_units() {
     let other_college_id = Uuid::new_v4();
     let dept2_id = Uuid::new_v4();
 
-    {
-        let mut orgs = c.state.organizations.write().unwrap();
-        orgs.insert(college_id, OrganizationNode {
-            id: college_id,
-            parent_id: None,
-            name: "College of Science".to_string(),
-            code: "COS".to_string(),
-            org_type: "College".to_string(),
-        });
-        orgs.insert(dept1_id, OrganizationNode {
-            id: dept1_id,
-            parent_id: Some(college_id),
-            name: "Biology Dept".to_string(),
-            code: "BIO".to_string(),
-            org_type: "Department".to_string(),
-        });
-        orgs.insert(other_college_id, OrganizationNode {
-            id: other_college_id,
-            parent_id: None,
-            name: "College of Arts".to_string(),
-            code: "COA".to_string(),
-            org_type: "College".to_string(),
-        });
-        orgs.insert(dept2_id, OrganizationNode {
-            id: dept2_id,
-            parent_id: Some(other_college_id),
-            name: "History Dept".to_string(),
-            code: "HIST".to_string(),
-            org_type: "Department".to_string(),
-        });
-    }
-
-    for id in [college_id, dept1_id, other_college_id, dept2_id] {
-        let node = c.state.organizations.read().unwrap().get(&id).cloned().unwrap();
+    // Stored parents first. This instance reads each unit back from the database.
+    let unit = |id: Uuid, parent: Option<Uuid>, name: &str, code: &str, org_type: &str| OrganizationNode {
+        id,
+        parent_id: parent,
+        name: name.to_string(),
+        code: code.to_string(),
+        org_type: org_type.to_string(),
+    };
+    for node in [
+        unit(college_id, None, "College of Science", "COS", "College"),
+        unit(dept1_id, Some(college_id), "Biology Dept", "BIO", "Department"),
+        unit(other_college_id, None, "College of Arts", "COA", "College"),
+        unit(dept2_id, Some(other_college_id), "History Dept", "HIST", "Department"),
+    ] {
         c.state.persist_organization(&node).unwrap();
     }
     {
