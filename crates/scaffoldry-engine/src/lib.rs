@@ -179,6 +179,25 @@ impl FieldType {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FieldConstraints {
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub unique: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetOn {
+    Create,
+    Change { fields: Vec<String> },
+}
+
 impl serde::Serialize for FieldType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -472,6 +491,12 @@ pub struct FieldSpec {
     /// A `Lookup`, `Rollup`, or `Count`: the `Link` field of this table it goes through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub computed_via: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_on: Option<SetOn>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<FieldConstraints>,
     #[serde(default)]
     pub notify_on_assign: bool,
 }
@@ -576,6 +601,9 @@ impl FieldSpec {
             link_related_field: None,
             link_on_delete: LinkOnDelete::Unlink,
             computed_via: None,
+            default: None,
+            set_on: None,
+            constraints: None,
             notify_on_assign: false,
         }
     }

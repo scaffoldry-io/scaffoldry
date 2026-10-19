@@ -112,6 +112,12 @@ pub enum ServiceError {
     UndoConflict { message: String, conflicts: Vec<Value> },
     /// A rule the app set stops the change, such as a delete while records still link to the record.
     ConstraintViolated(String),
+    /// A record violates a field constraint (required, unique, min, max).
+    ConstraintViolation {
+        message: String,
+        field: String,
+        constraint: String,
+    },
     /// A filter or sort names a field whose values are being calculated again.
     Calculating(String),
     /// A person or the server has too much queued work. They can try again when it clears.
@@ -162,7 +168,7 @@ impl ServiceError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden { .. } | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::ConstraintViolation { .. } | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -187,9 +193,9 @@ impl ServiceError {
             Self::StorageUnavailable(_) => "storage_unavailable",
             Self::IndexBuilding(_) => "index_building",
             Self::Calculating(_) => "calculating",
+            Self::ConstraintViolation { .. } | Self::ConstraintViolated(_) => "constraint_violated",
             Self::QuotaExceeded(_) => "quota_exceeded",
             Self::ViewAsReadOnly(_) => "view_as_read_only",
-            Self::ConstraintViolated(_) => "constraint_violated",
             Self::FieldHidden { .. } => "field_hidden",
             Self::TooManyIndexes { .. } => "too_many_indexes",
             Self::FieldReadOnly { .. } => "field_read_only",
@@ -216,7 +222,7 @@ impl ServiceError {
             | Self::ViewAsReadOnly(msg)
             | Self::ConstraintViolated(msg)
             | Self::Internal(msg) => msg,
-            Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
+            Self::ConstraintViolation { message, .. } | Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }
     }
 
@@ -232,6 +238,10 @@ impl ServiceError {
                 if let Some(policy) = policy {
                     body.insert("policy".to_string(), serde_json::to_value(policy).unwrap_or(Value::Null));
                 }
+            }
+            Self::ConstraintViolation { field, constraint, .. } => {
+                body.insert("field".to_string(), Value::String(field.clone()));
+                body.insert("constraint".to_string(), Value::String(constraint.clone()));
             }
             Self::Invalid { fields, .. } => {
                 body.insert("fields".to_string(), serde_json::to_value(fields).unwrap_or(Value::Null));

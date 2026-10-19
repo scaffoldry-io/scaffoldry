@@ -349,6 +349,7 @@ impl ServerState {
         settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
+        settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
         add_sensitivity_defaults(&mut settings_map);
 
         let repository = match crate::repository::PostgresRepository::connect(Some(database_url)) {
@@ -608,8 +609,8 @@ impl ServerState {
     }
 
     /// A new record, at version 1.
-    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), String> {
-        { let repo = &self.repository; repo.insert_record(rec, ctx).map_err(|e| e.to_string()) }
+    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), crate::repository::RepositoryError> {
+        self.repository.insert_record(rec, ctx)
     }
 
     /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
@@ -625,12 +626,15 @@ impl ServerState {
         data: &Value,
         expected_version: i32,
         ctx: &crate::repository::WriteCtx,
-    ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), String> {
+    ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), crate::repository::RepositoryError> {
         use crate::repository::RecordWrite;
-        let outcome = { let repo = &self.repository; repo
-                .update_record_checked(app_slug, id, data, expected_version, ctx)
-                .map_err(|e| e.to_string())? };
-        let saved = if matches!(outcome, RecordWrite::Saved(_)) { self.find_record(app_slug, id)? } else { None };
+        let outcome = self.repository
+            .update_record_checked(app_slug, id, data, expected_version, ctx)?;
+        let saved = if matches!(outcome, RecordWrite::Saved(_)) {
+            self.repository.get_record(app_slug, id)?
+        } else {
+            None
+        };
         Ok((outcome, saved))
     }
 
@@ -799,7 +803,7 @@ impl ServerState {
         self.user_by_id(id)
     }
 
-    
+
     pub fn platform_timezone(&self) -> String {
         self.settings
             .read()

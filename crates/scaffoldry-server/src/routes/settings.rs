@@ -183,6 +183,12 @@ async fn put_setting(
         return ServiceError::StorageUnavailable(format!("The setting was saved, but this server could not reload: {e}")).into_response();
     }
 
+    if key == "platform.timezone" {
+        if let Some(tz) = payload.as_str() {
+            scaffoldry_engine::formula::set_institution_timezone(tz);
+            let _ = crate::jobs::register_volatile_schedule(&state.repository, tz);
+        }
+    }
     (StatusCode::OK, Json(json!({ "key": key, "value": payload }))).into_response()
 }
 

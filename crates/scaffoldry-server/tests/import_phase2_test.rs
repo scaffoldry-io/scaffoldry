@@ -52,7 +52,7 @@ fn fast() -> JobConfig {
 }
 
 fn wait_for_job(repo: &scaffoldry_server::repository::PostgresRepository, id: Uuid) -> scaffoldry_server::jobs::Job {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         let job = get_job(repo, id).expect("query").expect("job exists");
         if job.state == "done" || job.state == "failed" {

@@ -81,6 +81,12 @@ pub enum RepositoryError {
     NotFound(String),
     #[error("Conflict: {0}")]
     Conflict(String),
+    #[error("Constraint violation on '{field}': {message}")]
+    ConstraintViolation {
+        message: String,
+        field: String,
+        constraint: String,
+    },
     /// A limit on queued or running jobs. The text is a plain sentence for the person.
     #[error("{0}")]
     Quota(String),
@@ -278,6 +284,9 @@ pub(crate) fn apply_formulas(data: &mut Value, ctx: &WriteCtx) {
 /// The same for a list of `(field, expression)`, in the order given.
 pub(crate) fn apply_formula_list(data: &mut Value, formulas: &[(String, String)]) {
     for (field, expression) in formulas {
+        if scaffoldry_engine::is_formula_volatile(expression) && data.get(field).is_some() {
+            continue;
+        }
         let value = scaffoldry_engine::evaluate_formula(expression, data);
         if let Some(map) = data.as_object_mut() {
             if value.is_null() {
@@ -1526,10 +1535,71 @@ impl PostgresRepository {
     }
 
     /// A new record. The version starts at 1. The history row commits with it.
+pub fn advisory_hash(app_slug: &str, table_id: &str, field: &str, value: &str) -> i64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (app_slug, table_id, field, value).hash(&mut hasher);
+    hasher.finish() as i64
+}
+
+pub fn check_unique_constraints(
+    tx: &mut postgres::Transaction<'_>,
+    app_slug: &str,
+    table: &str,
+    record_id: &str,
+    data: &Value,
+    fields: &[scaffoldry_engine::FieldSpec],
+) -> Result<(), RepositoryError> {
+    for f in fields {
+        if f.constraints.as_ref().is_some_and(|c| c.unique) {
+            if let Some(val) = data.get(&f.name) {
+                if !val.is_null() {
+                    let val_str = match val {
+                        Value::String(s) => s.to_lowercase(),
+                        Value::Number(n) => n.to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        _ => val.to_string(),
+                    };
+                    let lock_key = Self::advisory_hash(app_slug, table, &f.name, &val_str);
+                    tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&lock_key])?;
+
+                    let clash: Option<String> = match val {
+                        Value::Number(n) => {
+                            let num = n.as_f64().unwrap_or(0.0);
+                            tx.query_opt(
+                                "SELECT record_id FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND num = $4 AND record_id != $5 LIMIT 1",
+                                &[&app_slug, &table, &f.name, &num, &record_id],
+                            )?.map(|r| r.get(0))
+                        }
+                        Value::String(s) => {
+                            let s_lower = s.to_lowercase();
+                            tx.query_opt(
+                                "SELECT record_id FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND txt = $4 AND record_id != $5 LIMIT 1",
+                                &[&app_slug, &table, &f.name, &s_lower, &record_id],
+                            )?.map(|r| r.get(0))
+                        }
+                        _ => None,
+                    };
+                    if clash.is_some() {
+                        return Err(RepositoryError::ConstraintViolation {
+                            message: format!("field '{}' violates unique constraint", f.name),
+                            field: f.name.clone(),
+                            constraint: "unique".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
     pub fn insert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
         let (rec, ctx) = (rec.clone(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
+            let table = table_id_of(&rec.data);
+            Self::check_unique_constraints(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
             insert_record_in_tx(&mut tx, &rec, &ctx)?;
             tx.commit()?;
             Ok(())
@@ -1549,6 +1619,8 @@ impl PostgresRepository {
         let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
+            let table = table_id_of(&data);
+            Self::check_unique_constraints(&mut tx, &slug, &table, &id, &data, &ctx.index_fields)?;
             let outcome = update_record_in_tx(&mut tx, &slug, &id, &data, Some(expected_version), &ctx)?;
             tx.commit()?;
             Ok(outcome)

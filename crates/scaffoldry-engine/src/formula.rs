@@ -20,6 +20,7 @@ pub struct FormulaError {
 pub struct FormulaInfo {
     pub node_count: usize,
     pub field_refs: Vec<String>,
+    pub is_volatile: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -253,6 +254,17 @@ impl AstNode {
             AstNode::UnaryMinus(inner) => 1 + inner.count_nodes(),
             AstNode::BinaryOp { left, right, .. } => 1 + left.count_nodes() + right.count_nodes(),
             AstNode::Call { args, .. } => 1 + args.iter().map(|a| a.count_nodes()).sum::<usize>(),
+        }
+    }
+
+    pub fn is_volatile(&self) -> bool {
+        match self {
+            AstNode::Call { name, args } => {
+                name == "TODAY" || name == "NOW" || args.iter().any(|a| a.is_volatile())
+            }
+            AstNode::UnaryMinus(inner) => inner.is_volatile(),
+            AstNode::BinaryOp { left, right, .. } => left.is_volatile() || right.is_volatile(),
+            _ => false,
         }
     }
 
@@ -638,10 +650,16 @@ pub fn validate_formula(expression: &str) -> Result<FormulaInfo, FormulaError> {
     let mut field_refs: Vec<String> = refs.into_iter().collect();
     field_refs.sort();
 
+    let is_volatile = ast.is_volatile();
     Ok(FormulaInfo {
         node_count,
         field_refs,
+        is_volatile,
     })
+}
+
+pub fn is_formula_volatile(expression: &str) -> bool {
+    validate_formula(expression).map(|info| info.is_volatile).unwrap_or(false)
 }
 
 pub fn formula_field_refs(expression: &str) -> Option<Vec<String>> {
