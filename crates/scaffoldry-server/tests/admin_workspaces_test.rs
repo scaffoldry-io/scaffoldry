@@ -60,7 +60,8 @@ async fn send(app: &Router, method: &str, uri: &str, token: Option<&str>, body: 
 
 async fn last_ledger_entry(c: &Ctx) -> Value {
     let (_, body) = send(&c.app, "GET", "/api/v1/governance/ledger", Some(&c.admin), None).await;
-    body["entries"].as_array().unwrap().last().unwrap().clone()
+    // A page is newest first.
+    body["entries"].as_array().unwrap().first().unwrap().clone()
 }
 
 #[tokio::test]

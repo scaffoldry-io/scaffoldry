@@ -838,8 +838,7 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                 crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
                 other => ServiceError::Internal(format!("The approval was not kept: {other}")),
             })? {
-                Approval::Approved(done) => {
-                    state.ledger.write().unwrap_or_else(|p| p.into_inner()).extend(done.entries);
+                Approval::Approved(_) => {
                     // The approval committed the manifest, its rules and the process definitions, and bumped their
                     // counters. This instance reads them back as every other instance will, by their stored versions.
                     crate::service::reload_after_write(state)?;

@@ -843,7 +843,7 @@ async fn test_governance_decision_ledger_and_oscal_export() {
         .clone()
         .oneshot(
             authed_req()
-                .uri("/api/v1/governance/ledger")
+                .uri("/api/v1/governance/ledger?verify=true")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -856,8 +856,9 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     let initial_count = ledger_res["total_entries"].as_u64().unwrap();
     assert!(initial_count >= 4);
     let entries = ledger_res["entries"].as_array().unwrap();
-    assert_eq!(entries[0]["sequence"].as_u64().unwrap(), 0);
-    assert_eq!(entries[0]["oscal_control_id"], "PL-02");
+    // Newest first, so the genesis entry is last.
+    assert_eq!(entries.last().unwrap()["sequence"].as_u64().unwrap(), 0);
+    assert_eq!(entries.last().unwrap()["oscal_control_id"], "PL-02");
 
     // 2. POST /api/v1/governance/ledger/append - append an approval block
     let append_payload = json!({
@@ -1899,7 +1900,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         assigned_to: None,
         no_approver: None,
     };
-    state.process_instances.write().unwrap().insert(instance_id.clone(), initial_instance);
+    state.repository.upsert_process_instance(&initial_instance).unwrap();
 
     // 1. Student attempts decide -> 403 Forbidden
     let student_token = login_user(&app, "student.smith@science.state.edu").await;
@@ -1919,8 +1920,8 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
 
     // Instance must remain Waiting and record must not have changed
     {
-        let instances = state.process_instances.read().unwrap();
-        assert_eq!(instances[&instance_id].status, scaffoldry_core::ProcessStatus::Waiting);
+        let inst = state.repository.get_process_instance(&instance_id).unwrap().unwrap();
+        assert_eq!(inst.status, scaffoldry_core::ProcessStatus::Waiting);
         let rec = state.find_record(app_slug, rec_id).unwrap().unwrap();
         assert_eq!(rec.data["status"], "UnderReview");
     }
@@ -1943,8 +1944,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
 
     // Instance status must become Completed and waiting_step_id cleared
     {
-        let instances = state.process_instances.read().unwrap();
-        let inst = &instances[&instance_id];
+        let inst = state.repository.get_process_instance(&instance_id).unwrap().unwrap();
         assert_eq!(inst.status, scaffoldry_core::ProcessStatus::Completed);
         assert!(inst.waiting_step_id.is_none());
         let rec = state.find_record(app_slug, rec_id).unwrap().unwrap();
@@ -1953,7 +1953,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
 
     // Ledger must contain WorkflowRuleApproved entry with AC-03
     {
-        let ledger = state.ledger.read().unwrap();
+        let ledger = state.repository.ledger_page(None, 1_000_000).unwrap();
         assert!(ledger.iter().any(|entry| {
             entry.decision_type == scaffoldry_core::DecisionType::WorkflowRuleApproved
                 && entry.oscal_control_id == "AC-03"
@@ -2017,7 +2017,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
         &mut applied_ids,
     );
 
-    let instances_after_first = state.process_instances.read().unwrap().values().filter(|p| p.app_slug == app_slug).count();
+    let instances_after_first = state.repository.list_process_instances(Some(app_slug), None).unwrap().len();
     assert_eq!(instances_after_first, 1);
 
     // Trigger second time with fresh applied_ids
@@ -2032,7 +2032,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
         &mut applied_ids_2,
     );
 
-    let instances_after_second = state.process_instances.read().unwrap().values().filter(|p| p.app_slug == app_slug).count();
+    let instances_after_second = state.repository.list_process_instances(Some(app_slug), None).unwrap().len();
     assert_eq!(instances_after_second, 1);
 }
 

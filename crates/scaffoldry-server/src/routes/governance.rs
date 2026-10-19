@@ -1,7 +1,7 @@
 use crate::guard::session_user;
 use crate::state::{RecordDecisionInput, SharedState};
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -34,9 +34,22 @@ pub struct AppendDecisionRequest {
     pub payload: Value,
 }
 
+const DEFAULT_PAGE: i64 = 100;
+const MAX_PAGE: i64 = 1000;
+
+#[derive(Debug, Default, Deserialize)]
+struct LedgerQuery {
+    limit: Option<i64>,
+    /// The sequence the page starts under: entries older than it.
+    before: Option<u64>,
+    /// Also run the full chain check. It reads the whole chain, so it is not the default.
+    verify: Option<bool>,
+}
+
 async fn get_governance_ledger(
     State(state): State<SharedState>,
     headers: HeaderMap,
+    Query(query): Query<LedgerQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
@@ -45,19 +58,25 @@ async fn get_governance_ledger(
         return Err(ServiceError::forbidden("Forbidden: Requires Platform Admin or compliance affiliation").into_pair());
     }
 
-    let entries = { let repo = &state.repository;
-        repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone())
-    };
-    let is_valid = state.verify_ledger().unwrap_or(false);
-    let head_hash = entries
-        .last()
-        .map(|e| e.entry_hash.clone())
-        .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
+    // One page, newest first. The whole chain is not read to answer it, and not checked unless the caller asks.
+    let limit = query.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+    let entries = state
+        .repository
+        .ledger_page(query.before, limit)
+        .map_err(|e| ServiceError::StorageUnavailable(e.to_string()).into_pair())?;
+    let (total, head) = state
+        .repository
+        .ledger_summary()
+        .map_err(|e| ServiceError::StorageUnavailable(e.to_string()).into_pair())?;
+    let chain_valid = if query.verify.unwrap_or(false) { Some(state.verify_ledger().unwrap_or(false)) } else { None };
+    // A full page may have more behind it. Its cursor is the sequence of its oldest entry.
+    let next_cursor = if entries.len() as i64 == limit { entries.last().map(|e| e.sequence).filter(|s| *s > 0) } else { None };
 
     Ok(Json(json!({
-        "chain_valid": is_valid,
-        "total_entries": entries.len(),
-        "head_hash": head_hash,
+        "chain_valid": chain_valid,
+        "total_entries": total,
+        "head_hash": head.unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string()),
+        "next_cursor": next_cursor,
         "entries": entries
     })))
 }
@@ -94,20 +113,19 @@ async fn append_ledger_decision(
 }
 
 async fn verify_governance_ledger(State(state): State<SharedState>) -> impl IntoResponse {
-    let entries = { let repo = &state.repository;
-        repo.get_ledger().unwrap_or_else(|_| state.ledger.read().unwrap().clone())
-    };
-    match state.verify_ledger() {
-        Ok(valid) => Json(json!({
-            "verified": valid,
-            "total_entries": entries.len(),
+    let total = state.repository.ledger_summary().map(|(n, _)| n).unwrap_or(0);
+    let head = state.repository.ledger_summary().ok().and_then(|(_, h)| h);
+    match state.repository.verify_ledger_chain() {
+        Ok(report) => Json(json!({
+            "verified": true,
+            "total_entries": report.entries,
             "genesis_previous_hash": GENESIS_PREVIOUS_HASH,
-            "head_hash": entries.last().map(|e| e.entry_hash.as_str()).unwrap_or(GENESIS_PREVIOUS_HASH),
+            "head_hash": head.as_deref().unwrap_or(GENESIS_PREVIOUS_HASH),
             "verification_status": "All cryptographic SHA-256 blocks verified intact without drift or tampering"
         })),
         Err(e) => Json(json!({
             "verified": false,
-            "total_entries": entries.len(),
+            "total_entries": total,
             "error": format!("Ledger chain verification failed: {e}"),
             "verification_status": "Chain broken or signature mismatch detected"
         })),

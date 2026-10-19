@@ -208,7 +208,7 @@ impl World {
     }
 
     fn ledger_count(&self, decision: DecisionType) -> usize {
-        self.state.ledger.read().unwrap().iter().filter(|e| e.decision_type == decision).count()
+        self.state.repository.ledger_page(None, 1_000_000).unwrap().iter().filter(|e| e.decision_type == decision).count()
     }
 }
 

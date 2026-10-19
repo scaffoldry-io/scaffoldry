@@ -1173,7 +1173,8 @@ async fn test_phase_8_settings_cors_allowed_origins_preflight_and_ledger() {
     let (st, ledger_body) = send(&app, "GET", "/api/v1/governance/ledger", Some(&admin), &[], None).await;
     assert_eq!(st, StatusCode::OK);
     let entries = ledger_body["entries"].as_array().expect("ledger entries array");
-    let last = entries.last().expect("at least one ledger entry");
+    // A page is newest first.
+    let last = entries.first().expect("at least one ledger entry");
     assert_eq!(last["decision_type"], "PolicyRevision");
     assert!(last["rationale"].as_str().unwrap().contains("cors.allowed_origins"));
 }

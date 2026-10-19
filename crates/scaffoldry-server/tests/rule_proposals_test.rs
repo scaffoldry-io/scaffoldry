@@ -307,7 +307,7 @@ async fn a_waiting_instance_is_decided_by_the_version_it_started_under() {
     assert_eq!(s, StatusCode::CREATED, "{created}");
     let record_id = created["id"].as_str().unwrap().to_string();
     let instance_id = format!("{rule_id}:{record_id}");
-    let started = w.state.process_instances.read().unwrap().get(&instance_id).cloned().expect("an instance is waiting");
+    let started = w.state.repository.get_process_instance(&instance_id).unwrap().expect("an instance is waiting");
     assert_eq!(started.rule_version, 1);
 
     // Version 2 approves to Denied-for-test "Changed".

@@ -4,8 +4,7 @@ use chrono::Utc;
 use scaffoldry_core::{
     ActionType, AutomationRule, ConditionOperator, DatasetField,
     DatasetRelationship, DecisionType, FieldPredicate, LedgerEntry, LedgerError,
-    NewLedgerEntryParams, ProcessInstance, PublishedDataset, RelationshipType, TriggerEvent,
-    GENESIS_PREVIOUS_HASH,
+    PublishedDataset, RelationshipType, TriggerEvent,
 };
 use scaffoldry_engine::{AppManifest, ManifestEngine};
 use scaffoldry_policy::ScaffoldryPolicyEngine;
@@ -210,8 +209,6 @@ pub struct ServerState {
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
     pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
-    pub process_instances: RwLock<HashMap<String, ProcessInstance>>,
-    pub ledger: RwLock<Vec<LedgerEntry>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
     pub repository: Arc<crate::repository::PostgresRepository>,
@@ -366,26 +363,8 @@ impl ServerState {
         let mut position_types: HashMap<String, PositionType> = HashMap::new();
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
-        let mut process_instances = HashMap::new();
         let mut automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
         let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> = HashMap::new();
-
-        let now = Utc::now().to_rfc3339();
-
-        let entry_0 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 0,
-            timestamp_iso: now.clone(),
-            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
-            principal: "system@scaffoldry.internal".to_string(),
-            organization_code: "INST".to_string(),
-            app_slug: None,
-            decision_type: DecisionType::PolicyRevision,
-            oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional sovereign genesis ledger entry".to_string(),
-            payload: &json!({"system": "scaffoldry", "genesis": true}),
-        });
-
-        let mut ledger = vec![entry_0.clone()];
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
@@ -466,7 +445,7 @@ impl ServerState {
             if !m.views.is_empty() {
                 if let Some(done) = repo.migrate_manifest_views(&m.slug).map_err(|e| read("the view migration", e))? {
                     let count = done.views.len();
-                    let entry = repo
+                    repo
                         .append_ledger_decision(crate::repository::AppendDecisionParams {
                             principal: "system@scaffoldry.local".to_string(),
                             organization_code: m.organization_code.clone(),
@@ -477,7 +456,6 @@ impl ServerState {
                             payload: serde_json::json!({ "app_slug": m.slug, "views": count }),
                         })
                         .map_err(|e| read("the ledger", e))?;
-                    ledger.push(entry);
                     app_views_cache.entry(m.slug.clone()).or_default().extend(done.views);
                     m = done.manifest;
                 }
@@ -506,9 +484,6 @@ impl ServerState {
                 entry.push(r);
             }
         }
-        for inst in repo.list_process_instances(None, None).map_err(|e| read("the process instances", e))? {
-            process_instances.insert(inst.id.clone(), inst);
-        }
 
         for org in repo.list_organizations().map_err(|e| read("the organizations", e))? {
             organizations.insert(org.id, org);
@@ -523,27 +498,24 @@ impl ServerState {
 
         let archived_count = repo.count_legacy_workspace_guards().map_err(|e| read("the archived guards", e))?;
         if archived_count > 0 {
-            let already_recorded = ledger.iter().any(|e| {
-                e.decision_type == scaffoldry_core::ledger::DecisionType::PolicyRevision
-                    && (e.rationale.contains("workspace_guards_legacy") || e.rationale.contains("Archived legacy workspace guards"))
-            });
+            let already_recorded = repo
+                .ledger_has_rationale(scaffoldry_core::ledger::DecisionType::PolicyRevision, "Archived legacy workspace guards")
+                .map_err(|e| read("the ledger", e))?;
             if !already_recorded {
                 let payload = serde_json::json!({
                     "archived_rows": archived_count,
                     "table": "workspace_guards_legacy"
                 });
-                let entry = repo
-                    .append_ledger_decision(crate::repository::AppendDecisionParams {
-                        principal: "system@scaffoldry.local".to_string(),
-                        organization_code: "INST".to_string(),
-                        app_slug: None,
-                        decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
-                        oscal_control_id: "AC-03".to_string(),
-                        rationale: format!("Archived legacy workspace guards ({} rows)", archived_count),
-                        payload,
-                    })
-                    .map_err(|e| read("the ledger", e))?;
-                ledger.push(entry);
+                repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                    principal: "system@scaffoldry.local".to_string(),
+                    organization_code: "INST".to_string(),
+                    app_slug: None,
+                    decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
+                    oscal_control_id: "AC-03".to_string(),
+                    rationale: format!("Archived legacy workspace guards ({} rows)", archived_count),
+                    payload,
+                })
+                .map_err(|e| read("the ledger", e))?;
             }
         }
         for ws in repo.list_workspaces().map_err(|e| read("the workspaces", e))? {
@@ -554,12 +526,18 @@ impl ServerState {
 
         repo.insert_api_token(&default_scim_token).map_err(|e| read("the provisioning token", e))?;
 
-        // The ledger is the stored one. A database with none gets the genesis entry.
-        let persisted_ledger = repo.get_ledger().map_err(|e| read("the ledger", e))?;
-        if persisted_ledger.is_empty() {
-            repo.append_ledger_entry(&entry_0, &json!({"system": "scaffoldry", "genesis": true})).map_err(|e| read("the ledger", e))?;
-        } else {
-            ledger = persisted_ledger;
+        // The ledger stays in the database. A database with none gets the genesis entry.
+        if repo.ledger_summary().map_err(|e| read("the ledger", e))?.0 == 0 {
+            repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                principal: "system@scaffoldry.internal".to_string(),
+                organization_code: "INST".to_string(),
+                app_slug: None,
+                decision_type: DecisionType::PolicyRevision,
+                oscal_control_id: "AU-02".to_string(),
+                rationale: "Institutional sovereign genesis ledger entry".to_string(),
+                payload: json!({"system": "scaffoldry", "genesis": true}),
+            })
+            .map_err(|e| read("the ledger", e))?;
         }
 
         let cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()] = std::array::from_fn(|i| {
@@ -577,8 +555,6 @@ impl ServerState {
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
             automations: RwLock::new(automations),
-            process_instances: RwLock::new(process_instances),
-            ledger: RwLock::new(ledger),
             engine: RwLock::new(engine),
             policy_engine,
             repository,
@@ -829,15 +805,6 @@ impl ServerState {
         Ok(())
     }
 
-    pub fn persist_process_instance(&self, inst: ProcessInstance) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.process_instances.write().map_err(|_| "process_instances lock poisoned")?.insert(inst.id.clone(), inst.clone());
-        {
-        let repo = &self.repository;
-            repo.upsert_process_instance(&inst)?;
-        }
-        Ok(())
-    }
-
     pub fn persist_scim_user(&self, user: ScimUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_scim_user(&user)?;
         Ok(())
@@ -869,7 +836,6 @@ impl ServerState {
             rationale: input.rationale.clone(),
             payload: input.payload.clone(),
         }).map_err(|e| LedgerError::RepositoryError(e.to_string()))?;
-        self.ledger.write().unwrap().push(entry.clone());
         Ok(entry)
     }
 
@@ -881,7 +847,15 @@ impl ServerState {
     }
 
     pub fn export_oscal_component_definition(&self) -> Value {
-        let entries = self.repository.get_ledger().unwrap_or_else(|_| self.ledger.read().unwrap().clone());
+        // The export names every entry, oldest first. It reads the chain a page at a time.
+        let mut entries: Vec<LedgerEntry> = Vec::new();
+        let mut before = None;
+        while let Ok(page) = self.repository.ledger_page(before, crate::repository::LEDGER_BATCH) {
+            let Some(last) = page.last() else { break };
+            before = Some(last.sequence);
+            entries.extend(page);
+        }
+        entries.reverse();
         let now = chrono::Utc::now().to_rfc3339();
 
         let implemented_requirements: Vec<Value> = entries
@@ -1195,60 +1169,12 @@ impl ServerState {
 
 
 
-        let entry_0_hash = self.ledger.read().unwrap().first().map(|e| e.entry_hash.clone()).unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
-        let entry_0 = LedgerEntry {
-            sequence: 0,
-            timestamp_iso: now.clone(),
-            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
-            principal: "system@scaffoldry.internal".to_string(),
-            organization_code: "INST".to_string(),
-            app_slug: None,
-            decision_type: DecisionType::PolicyRevision,
-            oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional sovereign genesis ledger entry".to_string(),
-            payload_hash: String::new(),
-            entry_hash: entry_0_hash,
-        };
-        let entry_1 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 1,
-            timestamp_iso: now.clone(),
-            previous_hash: entry_0.entry_hash.clone(),
-            principal: "prof.curie@science.state.edu".to_string(),
-            organization_code: "DIV-SCIENCES".to_string(),
-            app_slug: Some("biology-lab-inventory".to_string()),
-            decision_type: DecisionType::VanityDnsBound,
-            oscal_control_id: "SC-07".to_string(),
-            rationale: "Vanity DNS alias bound with sovereign gateway validation".to_string(),
-            payload: &json!({"domain": "inventory.biology.state.edu", "verified": true}),
-        });
-
-        let entry_2 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 2,
-            timestamp_iso: now.clone(),
-            previous_hash: entry_1.entry_hash.clone(),
-            principal: "dr.watson@science.state.edu".to_string(),
-            organization_code: "DIV-COMPLIANCE".to_string(),
-            app_slug: Some("physics-admissions-review".to_string()),
-            decision_type: DecisionType::WorkflowRuleApproved,
-            oscal_control_id: "AC-03".to_string(),
-            rationale: "FERPA compliance and GPA threshold auto-admit rule approved".to_string(),
-            payload: &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}),
-        });
-
-        let entry_3 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 3,
-            timestamp_iso: now.clone(),
-            previous_hash: entry_2.entry_hash.clone(),
-            principal: "dr.watson@science.state.edu".to_string(),
-            organization_code: "DIV-COMPLIANCE".to_string(),
-            app_slug: Some("compliance-ferpa-requests".to_string()),
-            decision_type: DecisionType::StatutoryAttestation,
-            oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional statutory compliance attestation for 34 CFR Part 99".to_string(),
-            payload: &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
-        });
-
-
+        // The demo ledger entries, written once, when the ledger holds nothing but its genesis entry.
+        let demo_entries = [
+            ("prof.curie@science.state.edu", "DIV-SCIENCES", "biology-lab-inventory", DecisionType::VanityDnsBound, "SC-07", "Vanity DNS alias bound with sovereign gateway validation", json!({"domain": "inventory.biology.state.edu", "verified": true})),
+            ("dr.watson@science.state.edu", "DIV-COMPLIANCE", "physics-admissions-review", DecisionType::WorkflowRuleApproved, "AC-03", "FERPA compliance and GPA threshold auto-admit rule approved", json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"})),
+            ("dr.watson@science.state.edu", "DIV-COMPLIANCE", "compliance-ferpa-requests", DecisionType::StatutoryAttestation, "AU-02", "Institutional statutory compliance attestation for 34 CFR Part 99", json!({"framework": "FERPA", "standard": "34 CFR Part 99"})),
+        ];
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
@@ -1467,22 +1393,22 @@ impl ServerState {
             }
         }
 
-        // The ledger is only written while it holds nothing but the genesis entry.
-        let ledger_is_new = self.ledger.read().unwrap().len() <= 1;
-        if ledger_is_new {
-            {
-        let repo = &self.repository;
-                let _ = repo.append_ledger_entry(&entry_1, &json!({"domain": "inventory.biology.state.edu", "verified": true}));
-                let _ = repo.append_ledger_entry(&entry_2, &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}));
-                let _ = repo.append_ledger_entry(&entry_3, &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}));
+        if self.repository.ledger_summary()?.0 <= 1 {
+            for (principal, org, slug, decision_type, control, rationale, payload) in demo_entries {
+                let _ = self.repository.append_ledger_decision(crate::repository::AppendDecisionParams {
+                    principal: principal.to_string(),
+                    organization_code: org.to_string(),
+                    app_slug: Some(slug.to_string()),
+                    decision_type,
+                    oscal_control_id: control.to_string(),
+                    rationale: rationale.to_string(),
+                    payload,
+                });
             }
         }
 
         // The demo rows are stored. This instance reads them back, as it reads any other write.
         self.refresh()?;
-        if ledger_is_new {
-            self.ledger.write().unwrap().extend(vec![entry_1, entry_2, entry_3]);
-        }
 
         Ok(())
     }
