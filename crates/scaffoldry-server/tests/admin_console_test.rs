@@ -199,9 +199,9 @@ async fn test_admin_routes_enforce_platform_admin_and_auth() {
 
 #[tokio::test]
 async fn test_overview_counts_match_fixture() {
-    let _db = common::TestDb::new();
+    let db = common::TestDb::new();
     let state = Arc::new(ServerState::new().expect("server state"));
-    state.process_instances.write().unwrap().clear();
+    db.run(|c| c.execute("DELETE FROM process_instances", &[]).unwrap());
 
     // 1. Setup 2 units: the institution every database starts with, and a child department. Both are stored, and
     //    this instance reads them back.

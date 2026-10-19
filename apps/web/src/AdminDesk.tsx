@@ -902,7 +902,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         }
         const serverLedger = await apiClient.getGovernanceLedger().catch(() => null);
         if (!cancelled && serverLedger && Array.isArray(serverLedger.entries)) {
-          setLedger(serverLedger.entries);
+          // The server sends the newest page first. The desk reads the chain oldest first.
+          setLedger([...serverLedger.entries].reverse());
         }
         const serverOrgs = await apiClient.listOrganizations().catch(() => null);
         if (!cancelled && Array.isArray(serverOrgs)) {

@@ -879,7 +879,7 @@ impl PostgresRepository {
                 // Otherwise a concurrent boot sees the migrated schema, treats it as an existing
                 // install, and reports the not yet seeded ledger as tampering.
                 let verified = match mig_res {
-                    Ok(fresh_install) => Self::verify_client_ledger(&mut client, fresh_install),
+                    Ok(fresh_install) => Self::verify_client_ledger(&mut client, fresh_install).map(|_| ()),
                     Err(e) => Err(RepositoryError::Db(e)),
                 };
                 let _ = client.execute("SELECT pg_advisory_unlock(742199)", &[]);
@@ -1004,99 +1004,74 @@ impl PostgresRepository {
             .map_err(|_| RepositoryError::NotFound("Postgres worker response lost".to_string()))?
     }
 
-    fn verify_client_ledger(client: &mut Client, fresh_install: bool) -> Result<(), RepositoryError> {
-        let r = client.query(
-            "SELECT sequence, entry_hash, previous_hash, timestamp_iso, principal,                     organization_code, app_slug, decision_type, oscal_control_id, rationale, payload,                     COALESCE(payload_hash, '')              FROM governance_ledger ORDER BY sequence ASC",
-            &[],
-        )?;
-        let rows = r.into_iter().map(|row| {
-            let seq: i64 = row.get(0);
-            let entry_hash: String = row.get(1);
-            let prev_hash: String = row.get(2);
-            let timestamp_iso: String = row.get(3);
-            let principal: String = row.get(4);
-            let organization_code: String = row.get(5);
-            let app_slug: Option<String> = row.get(6);
-            let decision_type_str: String = row.get(7);
-            let oscal_control_id: String = row.get(8);
-            let rationale: String = row.get(9);
-            let payload: Value = row.get(10);
-            let raw_payload_hash: String = row.get(11);
-            (seq, entry_hash, prev_hash, timestamp_iso, principal, organization_code, app_slug, decision_type_str, oscal_control_id, rationale, payload, raw_payload_hash)
-        }).collect::<Vec<_>>();
-
-        if rows.is_empty() {
-            if fresh_install {
-                Self::seed_client_genesis_ledger(client)?;
-                return Ok(());
-            } else {
-                return Err(RepositoryError::TamperDetected(
-                    "Empty ledger on existing database installation".to_string(),
-                ));
-            }
-        }
-
+    fn verify_client_ledger(client: &mut Client, fresh_install: bool) -> Result<ChainReport, RepositoryError> {
+        let mut report = ChainReport { entries: 0, largest_batch: 0 };
         let mut prev_hash = GENESIS_PREVIOUS_HASH.to_string();
-
-        for (seq, entry_hash, recorded_prev_hash, timestamp_iso, principal, organization_code, app_slug, decision_type_str, oscal_control_id, rationale, payload, raw_payload_hash) in rows {
-            let sequence = seq as u64;
-
-            // Verify chain continuity
-            if sequence == 0 {
-                if recorded_prev_hash != GENESIS_PREVIOUS_HASH {
+        let mut after: i64 = -1;
+        loop {
+            // The chain is read a batch at a time. Appends only add at the head, so a batch never changes under the check.
+            let rows = client.query(
+                "SELECT sequence, entry_hash, previous_hash, timestamp_iso, principal, organization_code, app_slug, decision_type, \
+                        oscal_control_id, rationale, payload, COALESCE(payload_hash, '') \
+                 FROM governance_ledger WHERE sequence > $1 ORDER BY sequence ASC LIMIT $2",
+                &[&after, &LEDGER_BATCH],
+            )?;
+            if rows.is_empty() {
+                break;
+            }
+            report.largest_batch = report.largest_batch.max(rows.len());
+            for row in &rows {
+                let entry = ledger_entry_of(row)?;
+                // Chain continuity: the first entry follows the genesis hash, each later one the hash before it.
+                if entry.sequence == 0 {
+                    if entry.previous_hash != GENESIS_PREVIOUS_HASH {
+                        return Err(RepositoryError::TamperDetected(format!(
+                            "Genesis block (sequence 0) has invalid previous hash: {}",
+                            entry.previous_hash
+                        )));
+                    }
+                } else if entry.previous_hash != prev_hash {
                     return Err(RepositoryError::TamperDetected(format!(
-                        "Genesis block (sequence 0) has invalid previous hash: {}",
-                        recorded_prev_hash
+                        "Ledger hash chain broken at sequence {}: expected previous hash {}, got {}",
+                        entry.sequence, prev_hash, entry.previous_hash
                     )));
                 }
-            } else if recorded_prev_hash != prev_hash {
-                return Err(RepositoryError::TamperDetected(format!(
-                    "Ledger hash chain broken at sequence {}: expected previous hash {}, got {}",
-                    sequence, prev_hash, recorded_prev_hash
-                )));
+                if entry.sequence != report.entries {
+                    return Err(RepositoryError::TamperDetected(format!(
+                        "Ledger sequence broken: expected {}, found {}",
+                        report.entries, entry.sequence
+                    )));
+                }
+                if let Err(e) = entry.verify() {
+                    return Err(RepositoryError::TamperDetected(format!(
+                        "Cryptographic tamper detected at sequence {}: {}",
+                        entry.sequence, e
+                    )));
+                }
+                prev_hash = entry.entry_hash.clone();
+                report.entries += 1;
+                after = entry.sequence as i64;
             }
-
-            let decision_type = parse_decision_type(&decision_type_str)?;
-            let payload_hash = if raw_payload_hash.is_empty() {
-                LedgerEntry::compute_payload_hash(&payload)
-            } else {
-                raw_payload_hash
-            };
-
-            let entry = LedgerEntry {
-                sequence,
-                timestamp_iso,
-                previous_hash: recorded_prev_hash,
-                principal,
-                organization_code,
-                app_slug,
-                decision_type,
-                oscal_control_id,
-                rationale,
-                payload_hash,
-                entry_hash: entry_hash.clone(),
-            };
-
-            // Verify SHA-256 block hash integrity
-            if let Err(e) = entry.verify() {
-                return Err(RepositoryError::TamperDetected(format!(
-                    "Cryptographic tamper detected at sequence {}: {}",
-                    sequence, e
-                )));
-            }
-
-            prev_hash = entry_hash;
         }
-
-        Ok(())
+        if report.entries == 0 {
+            if fresh_install {
+                Self::seed_client_genesis_ledger(client)?;
+                return Ok(ChainReport { entries: 1, largest_batch: 1 });
+            }
+            return Err(RepositoryError::TamperDetected("Empty ledger on existing database installation".to_string()));
+        }
+        Ok(report)
     }
 
     /// Verifies the cryptographic SHA-256 block chain from sequence 0 to N.
     /// Fails closed if any block hash mismatch or chain discontinuity is found.
     pub fn verify_and_initialize_ledger(&self, fresh_install: bool) -> Result<(), RepositoryError> {
-        self.with_client(move |client| {
-            Self::verify_client_ledger(client, fresh_install)
-        })
+        self.with_client(move |client| Self::verify_client_ledger(client, fresh_install).map(|_| ()))
+    }
+
+    /// The chain check on its own: every entry, in batches of `LEDGER_BATCH`. Says how many it read and the most it held.
+    pub fn verify_ledger_chain(&self) -> Result<ChainReport, RepositoryError> {
+        self.with_client(|client| Self::verify_client_ledger(client, false))
     }
 
     fn seed_client_genesis_ledger(client: &mut Client) -> Result<(), RepositoryError> {
@@ -1918,72 +1893,51 @@ pub fn check_unique_constraints(
     // LEDGER
     // -------------------------------------------------------------------------
 
-    pub fn get_ledger(&self) -> Result<Vec<LedgerEntry>, RepositoryError> {
-        self.with_client(|client| {
+    /// One page of the ledger, newest first. `before` is a cursor: the sequence the page starts under.
+    pub fn ledger_page(&self, before: Option<u64>, limit: i64) -> Result<Vec<LedgerEntry>, RepositoryError> {
+        let before = before.map(|b| b as i64).unwrap_or(i64::MAX);
+        self.with_client(move |client| {
             let rows = client.query(
-                "SELECT sequence, entry_hash, previous_hash, timestamp_iso, principal, \
-                        organization_code, app_slug, decision_type, oscal_control_id, rationale, \
-                        payload, COALESCE(payload_hash, '') \
-                 FROM governance_ledger ORDER BY sequence ASC",
-                &[],
+                "SELECT sequence, entry_hash, previous_hash, timestamp_iso, principal, organization_code, app_slug, decision_type, \
+                        oscal_control_id, rationale, payload, COALESCE(payload_hash, '') \
+                 FROM governance_ledger WHERE sequence < $1 ORDER BY sequence DESC LIMIT $2",
+                &[&before, &limit],
             )?;
-
-            let mut entries = Vec::new();
-            for r in rows {
-                let seq: i64 = r.get(0);
-                let dec_str: String = r.get(7);
-                let payload: Value = r.get(10);
-                let raw_payload_hash: String = r.get(11);
-                let payload_hash = if raw_payload_hash.is_empty() {
-                    LedgerEntry::compute_payload_hash(&payload)
-                } else {
-                    raw_payload_hash
-                };
-                entries.push(LedgerEntry {
-                    sequence: seq as u64,
-                    entry_hash: r.get(1),
-                    previous_hash: r.get(2),
-                    timestamp_iso: r.get(3),
-                    principal: r.get(4),
-                    organization_code: r.get(5),
-                    app_slug: r.get(6),
-                    decision_type: parse_decision_type(&dec_str)?,
-                    oscal_control_id: r.get(8),
-                    rationale: r.get(9),
-                    payload_hash,
-                });
-            }
-            Ok(entries)
+            rows.iter().map(ledger_entry_of).collect()
         })
     }
 
-    pub fn append_ledger_entry(&self, entry: &LedgerEntry, payload: &Value) -> Result<(), RepositoryError> {
-        let entry = entry.clone();
-        let payload = payload.clone();
+    /// The entries one principal is named on, newest first.
+    pub fn ledger_by_principal(&self, principal: &str, limit: i64) -> Result<Vec<LedgerEntry>, RepositoryError> {
+        let principal = principal.to_string();
         self.with_client(move |client| {
-            let seq = entry.sequence as i64;
-            let dec_str = format!("{:?}", entry.decision_type);
-            client.execute(
-                "INSERT INTO governance_ledger (sequence, entry_hash, previous_hash, timestamp_iso, \
-                        principal, organization_code, app_slug, decision_type, oscal_control_id, \
-                        rationale, payload_hash, payload) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
-                &[
-                    &seq,
-                    &entry.entry_hash,
-                    &entry.previous_hash,
-                    &entry.timestamp_iso,
-                    &entry.principal,
-                    &entry.organization_code,
-                    &entry.app_slug,
-                    &dec_str,
-                    &entry.oscal_control_id,
-                    &entry.rationale,
-                    &entry.payload_hash,
-                    &payload,
-                ],
+            let rows = client.query(
+                "SELECT sequence, entry_hash, previous_hash, timestamp_iso, principal, organization_code, app_slug, decision_type, \
+                        oscal_control_id, rationale, payload, COALESCE(payload_hash, '') \
+                 FROM governance_ledger WHERE lower(principal) = lower($1) ORDER BY sequence DESC LIMIT $2",
+                &[&principal, &limit],
             )?;
-            Ok(())
+            rows.iter().map(ledger_entry_of).collect()
+        })
+    }
+
+    /// How many entries the ledger holds, and the hash at its head.
+    pub fn ledger_summary(&self) -> Result<(i64, Option<String>), RepositoryError> {
+        self.with_client(|client| {
+            let row = client.query_one(
+                "SELECT (SELECT count(*) FROM governance_ledger), \
+                        (SELECT entry_hash FROM governance_ledger ORDER BY sequence DESC LIMIT 1)",
+                &[],
+            )?;
+            Ok((row.get(0), row.get(1)))
+        })
+    }
+
+    /// Whether an entry of this type has a rationale containing `needle`.
+    pub fn ledger_has_rationale(&self, decision_type: DecisionType, needle: &str) -> Result<bool, RepositoryError> {
+        let (dec, like) = (format!("{decision_type:?}"), format!("%{needle}%"));
+        self.with_client(move |client| {
+            Ok(client.query_one("SELECT EXISTS (SELECT 1 FROM governance_ledger WHERE decision_type = $1 AND rationale LIKE $2)", &[&dec, &like])?.get(0))
         })
     }
 
@@ -2350,12 +2304,7 @@ pub fn check_unique_constraints(
         let inst = inst.clone();
         self.with_client(move |client| {
             let inst_json = serde_json::to_value(&inst)?;
-            let status_str = match inst.status {
-                ProcessStatus::Waiting => "Waiting",
-                ProcessStatus::Completed => "Completed",
-                ProcessStatus::Rejected => "Rejected",
-                ProcessStatus::Failed => "Failed",
-            };
+            let status_str = status_name(&inst.status);
             client.execute(
                 "INSERT INTO process_instances (id, app_slug, rule_id, status, instance_json, updated_at)                  VALUES ($1, $2, $3, $4, $5, NOW())                  ON CONFLICT (id) DO UPDATE SET                     app_slug = EXCLUDED.app_slug,                     rule_id = EXCLUDED.rule_id,                     status = EXCLUDED.status,                     instance_json = EXCLUDED.instance_json,                     updated_at = NOW()",
                 &[
@@ -2367,6 +2316,78 @@ pub fn check_unique_constraints(
                 ],
             )?;
             Ok(())
+        })
+    }
+
+    /// Stores an instance a rule has just started. An instance that is already waiting is left as it is, so a second
+    /// start for the same record does not reset a step someone may be deciding. Returns whether it was stored.
+    pub fn start_process_instance(&self, inst: &ProcessInstance) -> Result<bool, RepositoryError> {
+        let inst = inst.clone();
+        self.with_client(move |client| {
+            let json = serde_json::to_value(&inst)?;
+            let n = client.execute(
+                "INSERT INTO process_instances (id, app_slug, rule_id, status, instance_json, updated_at) VALUES ($1, $2, $3, $4, $5, NOW()) \
+                 ON CONFLICT (id) DO UPDATE SET app_slug = EXCLUDED.app_slug, rule_id = EXCLUDED.rule_id, status = EXCLUDED.status, \
+                     instance_json = EXCLUDED.instance_json, updated_at = NOW() \
+                 WHERE process_instances.status <> 'Waiting'",
+                &[&inst.id, &inst.app_slug, &inst.rule_id, &status_name(&inst.status), &json],
+            )?;
+            Ok(n > 0)
+        })
+    }
+
+    /// Rewrites an instance that is still waiting at the same step: the flag that says no one can decide it, or its
+    /// assignee. An instance someone has decided since it was read is not touched. Returns whether it was written.
+    pub fn update_waiting_instance(&self, inst: &ProcessInstance) -> Result<bool, RepositoryError> {
+        let inst = inst.clone();
+        self.with_client(move |client| {
+            let json = serde_json::to_value(&inst)?;
+            let step = inst.waiting_step_id.clone().unwrap_or_default();
+            let n = client.execute(
+                "UPDATE process_instances SET instance_json = $2, updated_at = NOW() \
+                 WHERE id = $1 AND status = 'Waiting' AND instance_json->>'waiting_step_id' = $3",
+                &[&inst.id, &json, &step],
+            )?;
+            Ok(n > 0)
+        })
+    }
+
+    /// How many instances have this status.
+    pub fn count_process_instances(&self, status: ProcessStatus) -> Result<i64, RepositoryError> {
+        self.with_client(move |client| Ok(client.query_one("SELECT count(*) FROM process_instances WHERE status = $1", &[&status_name(&status)])?.get(0)))
+    }
+
+    /// Decides a waiting step. In one transaction it locks the instance row, checks the instance is still waiting at the
+    /// step the caller named, writes the record the decision changes, the new state of the instance, and the ledger
+    /// entry, and commits. A decision that finds the step already decided writes nothing and returns `Stale`.
+    pub fn decide_process_instance(
+        &self,
+        next: &ProcessInstance,
+        waiting_step: &str,
+        record: Option<(String, String, Value, WriteCtx)>,
+        ledger: AppendDecisionParams,
+    ) -> Result<Decided, RepositoryError> {
+        let (next, step) = (next.clone(), waiting_step.to_string());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let Some(row) = tx.query_opt("SELECT instance_json FROM process_instances WHERE id = $1 FOR UPDATE", &[&next.id])? else {
+                return Ok(Decided::Stale);
+            };
+            let stored: ProcessInstance = serde_json::from_value(row.get(0))?;
+            if stored.status != ProcessStatus::Waiting || stored.waiting_step_id.as_deref() != Some(step.as_str()) {
+                return Ok(Decided::Stale);
+            }
+            if let Some((slug, id, data, ctx)) = &record {
+                update_record_in_tx(&mut tx, slug, id, data, None, ctx)?;
+            }
+            let json = serde_json::to_value(&next)?;
+            tx.execute(
+                "UPDATE process_instances SET status = $2, instance_json = $3, updated_at = NOW() WHERE id = $1",
+                &[&next.id, &status_name(&next.status), &json],
+            )?;
+            let entry = append_ledger_in_tx(&mut tx, ledger)?;
+            tx.commit()?;
+            Ok(Decided::Done(entry))
         })
     }
 
@@ -2761,6 +2782,54 @@ pub(crate) fn append_ledger_in_tx(
         ],
     )?;
     Ok(entry)
+}
+
+/// The outcome of a decision on a waiting step.
+pub enum Decided {
+    Done(LedgerEntry),
+    /// The instance is gone, or no longer waiting at that step.
+    Stale,
+}
+
+fn status_name(status: &ProcessStatus) -> &'static str {
+    match status {
+        ProcessStatus::Waiting => "Waiting",
+        ProcessStatus::Completed => "Completed",
+        ProcessStatus::Rejected => "Rejected",
+        ProcessStatus::Failed => "Failed",
+    }
+}
+
+/// How many ledger entries one read of the chain holds.
+pub const LEDGER_BATCH: i64 = 1000;
+
+/// What a chain check read: how many entries, and the most it held at once.
+#[derive(Debug, Clone, Copy)]
+pub struct ChainReport {
+    pub entries: u64,
+    pub largest_batch: usize,
+}
+
+/// A ledger row, in the column order every ledger read selects.
+fn ledger_entry_of(row: &postgres::Row) -> Result<LedgerEntry, RepositoryError> {
+    let dec_str: String = row.get(7);
+    let payload: Value = row.get(10);
+    let raw_payload_hash: String = row.get(11);
+    let payload_hash = if raw_payload_hash.is_empty() { LedgerEntry::compute_payload_hash(&payload) } else { raw_payload_hash };
+    let sequence: i64 = row.get(0);
+    Ok(LedgerEntry {
+        sequence: sequence as u64,
+        entry_hash: row.get(1),
+        previous_hash: row.get(2),
+        timestamp_iso: row.get(3),
+        principal: row.get(4),
+        organization_code: row.get(5),
+        app_slug: row.get(6),
+        decision_type: parse_decision_type(&dec_str)?,
+        oscal_control_id: row.get(8),
+        rationale: row.get(9),
+        payload_hash,
+    })
 }
 
 fn parse_decision_type(s: &str) -> Result<DecisionType, RepositoryError> {

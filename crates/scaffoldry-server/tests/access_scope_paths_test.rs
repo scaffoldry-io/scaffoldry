@@ -445,7 +445,7 @@ async fn the_process_queue_leaves_out_a_record_the_person_cannot_read() {
     };
     let (hidden_id, mine_id) = (format!("{slug}{:08}", 1), format!("{slug}{:08}", 333));
     for r in [&hidden_id, &mine_id] {
-        state.process_instances.write().unwrap().insert(format!("rule:{r}"), instance(r.clone()));
+        state.repository.upsert_process_instance(&instance(r.clone())).unwrap();
     }
     let app = build_app_with_state(state).expect("router");
     let token = issue_test_token_and_user(&ann);

@@ -74,20 +74,12 @@ async fn get_overview(
     let app_count = state.engine.read().unwrap().manifests_count();
 
     // 5. Processes
-    let waiting_instance_count = {
-        let instances = state.process_instances.read().unwrap();
-        instances
-            .values()
-            .filter(|p| matches!(p.status, ProcessStatus::Waiting))
-            .count()
-    };
+    let waiting_instance_count = state.repository.count_process_instances(ProcessStatus::Waiting).unwrap_or(0);
 
     // 6. Ledger
     let (ledger_count, head_hash) = {
-        let ledger = state.ledger.read().unwrap();
-        let count = ledger.len();
-        let head = ledger.last().map(|e| e.entry_hash.clone()).unwrap_or_default();
-        (count, head)
+        let (count, head) = state.repository.ledger_summary().unwrap_or((0, None));
+        (count, head.unwrap_or_default())
     };
 
     // 7. Jobs

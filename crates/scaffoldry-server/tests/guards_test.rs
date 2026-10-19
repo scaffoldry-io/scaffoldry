@@ -709,11 +709,7 @@ async fn test_11_legacy_archive_and_boot_ledger_entry() {
         }
 
         let state = ServerState::connect(&boot_url).expect("ServerState::new with legacy archive");
-        let ledger = state.ledger.read().unwrap();
-        let has_entry = ledger.iter().any(|e| {
-            e.decision_type == DecisionType::PolicyRevision
-                && (e.rationale.contains("workspace_guards_legacy") || e.rationale.contains("Archived legacy workspace guards"))
-        });
+        let has_entry = state.repository.ledger_has_rationale(DecisionType::PolicyRevision, "Archived legacy workspace guards").unwrap();
         assert!(has_entry, "Boot ledger must hold entry for legacy archive");
     })
     .await

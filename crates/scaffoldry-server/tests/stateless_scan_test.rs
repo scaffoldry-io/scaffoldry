@@ -13,8 +13,6 @@ const ALLOWED_FIELDS: &[&str] = &[
     "datasets",
     "relationships",
     "automations",
-    "process_instances",
-    "ledger",
     "engine",
     "organizations",
     "position_types",

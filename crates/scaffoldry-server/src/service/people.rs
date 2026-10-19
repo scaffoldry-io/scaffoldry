@@ -300,18 +300,14 @@ pub fn list_users(state: &SharedState, q: &UserQuery) -> Result<(Vec<Value>, Opt
 }
 
 fn ledger_rows(state: &SharedState, principal: &str) -> Vec<Value> {
-    let ledger = { let repo = &state.repository; repo
-            .get_ledger()
-            .unwrap_or_else(|_| state.ledger.read().unwrap_or_else(|p| p.into_inner()).clone()) };
-    let mut mine: Vec<Value> = ledger
+    // Newest first. The database picks the rows, so the chain is not read to find one person's.
+    state
+        .repository
+        .ledger_by_principal(principal, LEDGER_ROWS as i64)
+        .unwrap_or_default()
         .iter()
-        .filter(|e| e.principal.eq_ignore_ascii_case(principal))
         .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
-        .collect();
-    let keep_from = mine.len().saturating_sub(LEDGER_ROWS);
-    mine.drain(..keep_from);
-    mine.reverse(); // newest first
-    mine
+        .collect()
 }
 
 /// The user row, plus appointments, workspace memberships, tokens (never hashes), and the last

@@ -1794,20 +1794,12 @@ fn run_automations_in(
                 all_effects.extend(res.effects);
             }
             if let Some(inst) = res.waiting_instance {
-                let should_upsert = match state.process_instances.read() {
-                    Ok(map) => match map.get(&inst.id) {
-                        Some(existing) => existing.status != scaffoldry_core::ProcessStatus::Waiting,
-                        None => true,
-                    },
-                    Err(_) => false,
-                };
-                if should_upsert {
-                    let mut inst = inst;
-                    inst.started_by = Some(actor.identity.eppn.clone());
-                    inst.started_at = Utc::now().to_rfc3339();
-                    crate::service::approvers::refresh_no_approver(state, &mut inst);
-                    let _ = state.persist_process_instance(inst);
-                }
+                // An instance already waiting for this record is left as it is. The insert says so in one statement.
+                let mut inst = inst;
+                inst.started_by = Some(actor.identity.eppn.clone());
+                inst.started_at = Utc::now().to_rfc3339();
+                crate::service::approvers::refresh_no_approver(state, &mut inst);
+                let _ = state.repository.start_process_instance(&inst);
             }
         }
     }
