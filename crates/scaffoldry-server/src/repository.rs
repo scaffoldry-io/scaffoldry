@@ -2385,9 +2385,9 @@ pub fn check_unique_constraints(
                 "UPDATE process_instances SET status = $2, instance_json = $3, updated_at = NOW() WHERE id = $1",
                 &[&next.id, &status_name(&next.status), &json],
             )?;
-            let entry = append_ledger_in_tx(&mut tx, ledger)?;
+            append_ledger_in_tx(&mut tx, ledger)?;
             tx.commit()?;
-            Ok(Decided::Done(entry))
+            Ok(Decided::Done)
         })
     }
 
@@ -2786,7 +2786,7 @@ pub(crate) fn append_ledger_in_tx(
 
 /// The outcome of a decision on a waiting step.
 pub enum Decided {
-    Done(LedgerEntry),
+    Done,
     /// The instance is gone, or no longer waiting at that step.
     Stale,
 }

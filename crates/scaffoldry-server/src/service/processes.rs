@@ -271,7 +271,7 @@ pub fn decide_process(
         .decide_process_instance(&instance, &was_waiting_at, record_write, ledger)
         .map_err(|e| ServiceError::Internal(e.to_string()))?
     {
-        crate::repository::Decided::Done(_) => {}
+        crate::repository::Decided::Done => {}
         crate::repository::Decided::Stale => return Err(ServiceError::conflict("Process instance is not in Waiting status")),
     }
     Ok(instance)
