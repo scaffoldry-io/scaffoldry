@@ -20,7 +20,7 @@ test-threads = 4
 big-tables = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(=row_index_test) | binary(=row_scale_phase4_5_test) | binary(=computed_links_test) | binary(=record_links_two_way_test) | binary(=calc_recalc_test) | binary(=views_phase2_test) | binary(=views_phase3_test) | binary(=views_phase4_test) | binary(=index_jobs_test)'
+filter = 'binary(=row_index_test) | binary(=row_scale_phase4_5_test) | binary(=computed_links_test) | binary(=record_links_two_way_test) | binary(=calc_recalc_test) | binary(=views_phase2_test) | binary(=views_phase3_test) | binary(=views_phase4_test) | binary(=index_jobs_test) | binary(=import_phase1_test) | binary(=import_phase2_test)'
 test-group = 'big-tables'
 
 # Tests that assert a wall-clock limit run alone: nothing else runs while one of them does, so its

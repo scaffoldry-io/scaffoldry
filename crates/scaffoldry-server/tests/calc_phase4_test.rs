@@ -1,5 +1,7 @@
 //! Calculation graph phase 4 tests: time, defaults, and constraints.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -21,42 +23,6 @@ static LOCK: Mutex<()> = Mutex::const_new(());
 const OWNER: &str = "prof.curie@science.state.edu";
 const WORKSPACE: &str = "ws-bio-lab";
 
-fn db_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry".to_string())
-}
-
-fn db<R: Send + 'static>(f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
-    let url = db_url();
-    std::thread::spawn(move || {
-        let mut c = postgres::Client::connect(&url, postgres::NoTls).expect("database");
-        f(&mut c)
-    })
-    .join()
-    .expect("database thread")
-}
-
-struct Cleanup(String);
-impl Drop for Cleanup {
-    fn drop(&mut self) {
-        let slug = self.0.clone();
-        let url = db_url();
-        let _ = std::thread::spawn(move || {
-            if let Ok(mut c) = postgres::Client::connect(&url, postgres::NoTls) {
-                let _ = c.execute("DELETE FROM record_links WHERE app_slug = $1", &[&slug]);
-                let _ = c.execute("DELETE FROM record_index WHERE app_slug = $1", &[&slug]);
-                let _ = c.execute("DELETE FROM record_history WHERE app_slug = $1", &[&slug]);
-                let _ = c.execute("DELETE FROM jobs WHERE payload->>'app_slug' = $1 OR kind = 'recalc_volatile'", &[&slug]);
-                let _ = c.execute("DELETE FROM job_schedules WHERE kind = 'recalc_volatile'", &[]);
-                let _ = c.execute("DELETE FROM dataset_records WHERE app_slug = $1", &[&slug]);
-                let _ = c.execute("DELETE FROM app_proposals WHERE app_slug = $1", &[&slug]);
-                let _ = c.execute("DELETE FROM app_manifests WHERE slug = $1", &[&slug]);
-            }
-        })
-        .join();
-    }
-}
-
 async fn send(app: &Router, method: &str, uri: &str, token: &str, body: Option<Value>) -> (StatusCode, Value) {
     let b = Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {token}"));
     let req = match body {
@@ -74,21 +40,28 @@ struct World {
     state: Arc<ServerState>,
     token: String,
     slug: String,
-    _cleanup: Cleanup,
+    db: common::TestDb,
+}
+
+impl World {
+    fn run<R: Send + 'static>(&self, f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
+        self.db.run(f)
+    }
 }
 
 async fn world(m: AppManifest) -> World {
-    let state = Arc::new(ServerState::new().expect("state"));
+    let db = common::TestDb::new();
+    let state = db.state();
     state.seed_demo().expect("seed");
     let slug = m.slug.clone();
     state.engine.write().unwrap().register_manifest(m.clone()).unwrap();
     let _ = state.repository.upsert_app_manifest(&m);
     World {
         app: build_app_with_state(state.clone()).expect("router"),
-        state,
         token: issue_test_token_and_user(OWNER),
-        _cleanup: Cleanup(slug.clone()),
         slug,
+        state,
+        db,
     }
 }
 
@@ -165,7 +138,7 @@ async fn a_today_field_is_recomputed_by_the_nightly_job_and_not_by_anything_else
     let past = "2020-01-01";
     let slug_clone = slug.clone();
     let id_clone = id.clone();
-    db(move |c| {
+    w.run(move |c| {
         c.execute(
             "UPDATE dataset_records SET data = jsonb_set(data, '{today_val}', '\"2020-01-01\"'::jsonb) WHERE app_slug = $1 AND id = $2",
             &[&slug_clone, &id_clone],
@@ -178,18 +151,19 @@ async fn a_today_field_is_recomputed_by_the_nightly_job_and_not_by_anything_else
     // 1b. Normal update does NOT recompute TODAY()
     let (s_patch, p_res) = patch(&w, &id, version, json!({ "code": "updated" })).await;
     assert_eq!(s_patch, StatusCode::OK, "{p_res}");
+
     let rec_after_patch = get(&w, &id).await;
     assert_eq!(rec_after_patch["data"]["today_val"], past, "today_val must not change on normal write");
 
     // 1c. Nightly job recalc_volatile DOES recompute it
     let repo = &w.state.repository;
     register_volatile_schedule(repo, "UTC").unwrap();
-    db(|c| {
+    w.run(|c| {
         c.execute("DELETE FROM jobs WHERE kind = 'recalc_volatile'", &[]).unwrap();
         c.execute("UPDATE job_schedules SET next_run_at = NOW() - INTERVAL '1 second' WHERE kind = 'recalc_volatile'", &[]).unwrap();
     });
 
-    let other_kinds: Vec<String> = db(|c| {
+    let other_kinds: Vec<String> = w.run(|c| {
         c.query("SELECT kind FROM job_schedules WHERE kind != 'recalc_volatile'", &[])
             .unwrap()
             .into_iter()
@@ -211,12 +185,12 @@ async fn a_today_field_is_recomputed_by_the_nightly_job_and_not_by_anything_else
 
     // 1d. Setting the timezone shifts the run
     register_volatile_schedule(repo, "UTC").unwrap();
-    let utc_next: chrono::DateTime<chrono::Utc> = db(|c| {
+    let utc_next: chrono::DateTime<chrono::Utc> = w.run(|c| {
         c.query_one("SELECT next_run_at FROM job_schedules WHERE kind = 'recalc_volatile'", &[]).unwrap().get(0)
     });
 
     register_volatile_schedule(repo, "America/New_York").unwrap();
-    let ny_next: chrono::DateTime<chrono::Utc> = db(|c| {
+    let ny_next: chrono::DateTime<chrono::Utc> = w.run(|c| {
         c.query_one("SELECT next_run_at FROM job_schedules WHERE kind = 'recalc_volatile'", &[]).unwrap().get(0)
     });
 
@@ -265,7 +239,7 @@ async fn a_volatile_field_on_a_600_000_row_table_is_refused() {
 
     // Simulate 600,000 rows in dataset_records for table t1
     let slug_clone = slug.clone();
-    db(move |c| {
+    w.run(move |c| {
         c.execute(
             "INSERT INTO dataset_records (id, app_slug, table_id, data, ceds_mapping, is_ferpa_sensitive, created_by, version) \
              SELECT 'dummy-' || g, $1, 't1', '{\"_table_id\": \"t1\"}'::jsonb, '{}'::jsonb, false, 'admin', 1 \
