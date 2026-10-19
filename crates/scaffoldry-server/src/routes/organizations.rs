@@ -224,9 +224,18 @@ async fn patch_org(
         }
     }
 
-    state
-        .persist_organization(&node)
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+    // The check against the tree above read memory. This one reads the table, under a lock, so a move made at the same
+    // moment elsewhere cannot slip past it.
+    match state.repository.move_organization(&node).map_err(|e| ServiceError::Internal(e.to_string()))? {
+        crate::repository::OrgMove::Moved => {}
+        crate::repository::OrgMove::Cycle => {
+            return Err(ServiceError::Conflict("The organization tree changed while this move was being made, and it would now make a cycle".to_string()));
+        }
+        crate::repository::OrgMove::Missing => {
+            return Err(ServiceError::BadRequest("The organization or its new parent no longer exists".to_string()));
+        }
+    }
+    crate::service::reload_after_write(&state)?;
 
     Ok(Json(node))
 }

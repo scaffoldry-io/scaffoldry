@@ -259,6 +259,46 @@ impl ServerState {
                 held.insert(k, v);
             }
         }
+        match name {
+            "organizations" => {
+                let all: HashMap<uuid::Uuid, OrganizationNode> = self.repository.list_organizations()?.into_iter().map(|o| (o.id, o)).collect();
+                *self.organizations.write().unwrap_or_else(|p| p.into_inner()) = all;
+            }
+            "position_types" => {
+                let all: HashMap<String, PositionType> = self.repository.list_position_types()?.into_iter().map(|p| (p.key.clone(), p)).collect();
+                *self.position_types.write().unwrap_or_else(|p| p.into_inner()) = all;
+            }
+            "workspaces" => {
+                // A workspace and its collaborators are one collection. Both are read before either is replaced.
+                let mut workspaces = HashMap::new();
+                let mut collaborators = HashMap::new();
+                for ws in self.repository.list_workspaces()? {
+                    collaborators.insert(ws.id.clone(), self.repository.get_collaborators(&ws.id)?);
+                    workspaces.insert(ws.id.clone(), ws);
+                }
+                *self.workspaces.write().unwrap_or_else(|p| p.into_inner()) = workspaces;
+                *self.collaborators.write().unwrap_or_else(|p| p.into_inner()) = collaborators;
+            }
+            "guards" => {
+                let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> = HashMap::new();
+                for g in self.repository.list_all_workspace_guards()? {
+                    guards.entry(g.workspace_id.clone()).or_default().push(g);
+                }
+                *self.guards.write().unwrap_or_else(|p| p.into_inner()) = guards;
+                // The compiled sets are keyed by workspace and guard version, so they are right without this. A
+                // reload drops them anyway, so a set built from a guard that was rewritten does not outlive it.
+                self.guard_policy_cache.write().unwrap_or_else(|p| p.into_inner()).clear();
+            }
+            "datasets" => {
+                let all: HashMap<String, PublishedDataset> = self.repository.list_published_datasets()?.into_iter().map(|d| (d.id.clone(), d)).collect();
+                *self.datasets.write().unwrap_or_else(|p| p.into_inner()) = all;
+            }
+            "relationships" => {
+                let all: HashMap<String, DatasetRelationship> = self.repository.list_dataset_relationships()?.into_iter().map(|r| (r.id.clone(), r)).collect();
+                *self.relationships.write().unwrap_or_else(|p| p.into_inner()) = all;
+            }
+            _ => {}
+        }
         if name == "manifests" {
             // The engine holds the manifest an app runs, with its row and column rules. A manifest another instance
             // approved, or one this instance never held, is registered again from what is stored. One that no longer
@@ -527,12 +567,11 @@ pub struct RecordDecisionInput<'a> {
 }
 
 impl ServerState {
+    /// Stores a unit, then makes this instance read it back. The write commits first and bumps `organizations`, so
+    /// memory never holds a unit the database refused and another instance reads it on its next request.
     pub fn persist_organization(&self, org: &OrganizationNode) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.organizations.write().unwrap().insert(org.id, org.clone());
-        {
-        let repo = &self.repository;
-            repo.upsert_organization(org)?;
-        }
+        self.repository.upsert_organization(org)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -651,11 +690,8 @@ impl ServerState {
     }
 
     pub fn persist_position_type(&self, pt: &PositionType) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        {
-        let repo = &self.repository;
-            repo.upsert_position_type(pt)?;
-        }
-        self.position_types.write().unwrap().insert(pt.key.clone(), pt.clone());
+        self.repository.upsert_position_type(pt)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -692,11 +728,8 @@ impl ServerState {
     }
 
     pub fn persist_workspace(&self, ws: WorkspaceRecord) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.workspaces.write().unwrap().insert(ws.id.clone(), ws.clone());
-        {
-        let repo = &self.repository;
-            repo.upsert_workspace(&ws)?;
-        }
+        self.repository.upsert_workspace(&ws)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -711,14 +744,8 @@ impl ServerState {
     }
 
     pub fn persist_workspaces_batch(&self, batch: &[WorkspaceRecord]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut guard = self.workspaces.write().unwrap();
-        for ws in batch {
-            guard.insert(ws.id.clone(), ws.clone());
-        }
-        {
-        let repo = &self.repository;
-            repo.persist_workspaces_batch(batch)?;
-        }
+        self.repository.persist_workspaces_batch(batch)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -755,11 +782,8 @@ impl ServerState {
     }
 
     pub fn persist_dataset(&self, ds: PublishedDataset) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.datasets.write().map_err(|_| "datasets lock poisoned")?.insert(ds.id.clone(), ds.clone());
-        {
-        let repo = &self.repository;
-            repo.upsert_published_dataset(&ds)?;
-        }
+        self.repository.upsert_published_dataset(&ds)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -768,11 +792,8 @@ impl ServerState {
     }
 
     pub fn persist_relationship(&self, rel: DatasetRelationship) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.relationships.write().map_err(|_| "relationships lock poisoned")?.insert(rel.id.clone(), rel.clone());
-        {
-        let repo = &self.repository;
-            repo.upsert_dataset_relationship(&rel)?;
-        }
+        self.repository.upsert_dataset_relationship(&rel)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -1401,18 +1422,18 @@ impl ServerState {
         {
         let repo = &self.repository;
             for ws in workspaces.values() {
-                let _ = repo.upsert_workspace(ws);
+                repo.upsert_workspace(ws)?;
             }
             for list in collaborators.values() {
                 for c in list {
-                    let _ = repo.upsert_collaborator(c);
+                    repo.upsert_collaborator(c)?;
                 }
             }
             for ds in datasets.values() {
-                let _ = repo.upsert_published_dataset(ds);
+                repo.upsert_published_dataset(ds)?;
             }
             for rel in relationships.values() {
-                let _ = repo.upsert_dataset_relationship(rel);
+                repo.upsert_dataset_relationship(rel)?;
             }
             if !manifest_stored {
                 let _ = repo.upsert_app_manifest(&demo_app);
@@ -1435,18 +1456,8 @@ impl ServerState {
             }
         }
 
-        for (k, v) in workspaces {
-            self.workspaces.write().unwrap().entry(k).or_insert(v);
-        }
-        for (k, v) in collaborators {
-            self.collaborators.write().unwrap().entry(k).or_insert(v);
-        }
-        for (k, v) in datasets {
-            self.datasets.write().unwrap().entry(k).or_insert(v);
-        }
-        for (k, v) in relationships {
-            self.relationships.write().unwrap().entry(k).or_insert(v);
-        }
+        // The demo rows are stored. This instance reads them back, as it reads any other write.
+        self.refresh()?;
         for (k, v) in automations {
             let mut guard = self.automations.write().unwrap();
             let list = guard.entry(k).or_default();

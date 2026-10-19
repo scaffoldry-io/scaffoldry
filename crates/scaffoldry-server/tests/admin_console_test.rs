@@ -203,38 +203,19 @@ async fn test_overview_counts_match_fixture() {
     let state = Arc::new(ServerState::new().expect("server state"));
     state.process_instances.write().unwrap().clear();
 
-    // 1. Setup 2 units: root and a child department
-    let root_id = Uuid::new_v4();
+    // 1. Setup 2 units: the institution every database starts with, and a child department. Both are stored, and
+    //    this instance reads them back.
+    let root_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
     let dept_id = Uuid::new_v4();
-    {
-        let mut orgs = state.organizations.write().unwrap();
-        orgs.clear();
-        orgs.insert(
-            root_id,
-            OrganizationNode {
-                id: root_id,
-                parent_id: None,
-                code: "INST-ROOT".to_string(),
-                name: "State University".to_string(),
-                org_type: "institution".to_string(),
-            },
-        );
-        orgs.insert(
-            dept_id,
-            OrganizationNode {
-                id: dept_id,
-                parent_id: Some(root_id),
-                code: "DEPT-MATH".to_string(),
-                name: "Mathematics".to_string(),
-                org_type: "department".to_string(),
-            },
-        );
-    }
-    // A role has a foreign key to its unit, so the units are stored, not only held in memory.
-    let stored: Vec<OrganizationNode> = state.organizations.read().unwrap().values().cloned().collect();
-    for o in stored.iter().filter(|o| o.parent_id.is_none()).chain(stored.iter().filter(|o| o.parent_id.is_some())) {
-        state.persist_organization(o).unwrap();
-    }
+    state
+        .persist_organization(&OrganizationNode {
+            id: dept_id,
+            parent_id: Some(root_id),
+            code: "DEPT-MATH".to_string(),
+            name: "Mathematics".to_string(),
+            org_type: "department".to_string(),
+        })
+        .unwrap();
 
     // 2. Setup 3 users: 1 central admin (active), 1 on hold, 1 regular active
     let admin_eppn = "admin.lead@state.edu";
@@ -302,29 +283,24 @@ async fn test_overview_counts_match_fixture() {
     })
     .unwrap();
 
-    // 3. Setup 1 workspace
-    {
-        let mut workspaces = state.workspaces.write().unwrap();
-        workspaces.clear();
-        workspaces.insert(
-            "ws-fixture-1".to_string(),
-            scaffoldry_server::state::WorkspaceRecord {
-                id: "ws-fixture-1".to_string(),
-                name: "Research Analytics".to_string(),
-                code: "analytics".to_string(),
-                organization: "State University".to_string(),
-                department: "Mathematics".to_string(),
-                description: "Research data analytics workspace".to_string(),
-                icon: "chart".to_string(),
-                lead: admin_eppn.to_string(),
-                visibility: "restricted".to_string(),
-                allowed_affiliations: vec![],
-                data_classification: "Internal".to_string(),
-                created_at: "2026-10-10T00:00:00Z".to_string(),
-                organization_id: Some(dept_id),
-            },
-        );
-    }
+    // 3. Setup 1 workspace, stored
+    state
+        .persist_workspace(scaffoldry_server::state::WorkspaceRecord {
+            id: "ws-fixture-1".to_string(),
+            name: "Research Analytics".to_string(),
+            code: "analytics".to_string(),
+            organization: "State University".to_string(),
+            department: "Mathematics".to_string(),
+            description: "Research data analytics workspace".to_string(),
+            icon: "chart".to_string(),
+            lead: admin_eppn.to_string(),
+            visibility: "restricted".to_string(),
+            allowed_affiliations: vec![],
+            data_classification: "Internal".to_string(),
+            created_at: "2026-10-10T00:00:00Z".to_string(),
+            organization_id: Some(dept_id),
+        })
+        .unwrap();
 
     // Issue token for admin_eppn
     let admin_token = "sct_fixture_admin_token";

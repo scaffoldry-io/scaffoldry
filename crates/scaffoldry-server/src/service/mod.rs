@@ -280,3 +280,9 @@ impl IntoResponse for ServiceError {
         self.into_pair().into_response()
     }
 }
+
+/// After a write to a cached collection: this instance reads the database again, so the request that wrote sees its
+/// own change. The write has committed. When the reload fails, the answer says so, and the next request tries again.
+pub fn reload_after_write(state: &crate::state::ServerState) -> Result<(), ServiceError> {
+    state.refresh().map_err(|e| ServiceError::StorageUnavailable(format!("The change was saved, but this server could not reload: {e}")))
+}

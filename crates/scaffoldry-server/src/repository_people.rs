@@ -285,11 +285,16 @@ impl PostgresRepository {
         let pt = pt.clone();
         self.with_client(move |c| {
             let org_types = serde_json::to_value(&pt.org_types)?;
-            let n = c.execute(
+            let mut tx = c.transaction()?;
+            let n = tx.execute(
                 "INSERT INTO position_types (key, name, description, org_types, max_holders, created_by) \
                  VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (key) DO NOTHING",
                 &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &pt.created_by],
             )?;
+            if n == 1 {
+                crate::cache::bump(&mut tx, "position_types")?;
+            }
+            tx.commit()?;
             Ok(n == 1)
         })
     }
@@ -316,6 +321,7 @@ impl PostgresRepository {
                     retired_at = CASE WHEN $6::bool THEN COALESCE(retired_at, NOW()) END WHERE key = $1",
                 &[&pt.key, &pt.name, &pt.description, &org_types, &pt.max_holders, &retired],
             )?;
+            crate::cache::bump(&mut tx, "position_types")?;
             tx.commit()?;
             Ok(())
         })
