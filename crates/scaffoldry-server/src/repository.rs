@@ -759,6 +759,9 @@ pub struct PostgresRepository {
     /// How many times work went to the database through `with_client`. A test reads it to count the statements a
     /// request makes.
     statements: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// How many app definitions this repository has parsed from stored JSON. A test reads it to show that approving one
+    /// app among many reads one.
+    manifests_parsed: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl std::fmt::Debug for PostgresRepository {
@@ -942,11 +945,23 @@ impl PostgresRepository {
             worker_count: num_workers,
             db_url: std::sync::Arc::new(db_url),
             statements: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            manifests_parsed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         Ok(repo)
     }
 
     /// The number of calls to `with_client` so far.
+    /// App definitions parsed from storage so far. Every parse goes through `parse_manifest`.
+    pub fn manifests_parsed(&self) -> u64 {
+        self.manifests_parsed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Parses one stored app definition and counts it.
+    pub fn parse_manifest(&self, value: Value) -> Result<AppManifest, serde_json::Error> {
+        self.manifests_parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        serde_json::from_value(value)
+    }
+
     pub fn statements(&self) -> u64 {
         self.statements.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -1977,7 +1992,8 @@ pub fn check_unique_constraints(
     // -------------------------------------------------------------------------
 
     pub fn list_app_manifests(&self) -> Result<Vec<AppManifest>, RepositoryError> {
-        self.with_client(|client| {
+        let parsed = self.manifests_parsed.clone();
+        self.with_client(move |client| {
             let rows = client.query(
                 "SELECT manifest FROM app_manifests ORDER BY updated_at ASC",
                 &[],
@@ -1985,6 +2001,7 @@ pub fn check_unique_constraints(
             let mut manifests = Vec::new();
             for r in rows {
                 let val: Value = r.get(0);
+                parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let m: AppManifest = serde_json::from_value(val)?;
                 manifests.push(m);
             }
@@ -1994,6 +2011,7 @@ pub fn check_unique_constraints(
 
     pub fn get_app_manifest(&self, slug: &str) -> Result<Option<AppManifest>, RepositoryError> {
         let slug = slug.to_string();
+        let parsed = self.manifests_parsed.clone();
         self.with_client(move |client| {
             let row = client.query_opt(
                 "SELECT manifest FROM app_manifests WHERE slug = $1",
@@ -2002,11 +2020,36 @@ pub fn check_unique_constraints(
             match row {
                 Some(r) => {
                     let val: Value = r.get(0);
+                    parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let m: AppManifest = serde_json::from_value(val)?;
                     Ok(Some(m))
                 }
                 None => Ok(None),
             }
+        })
+    }
+
+    /// The stored version of every app definition, in one statement and without reading any definition. A server
+    /// compares these with the versions it holds to find what changed.
+    pub fn app_manifest_versions(&self) -> Result<Vec<(String, i32)>, RepositoryError> {
+        self.with_client(|client| Ok(client.query("SELECT slug, version FROM app_manifests", &[])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
+    }
+
+    /// One stored definition with its version, not parsed. The caller parses it with `parse_manifest`, so a definition
+    /// that no longer parses is its own problem and not the repository's.
+    pub fn get_app_manifest_row(&self, slug: &str) -> Result<Option<(i32, Value)>, RepositoryError> {
+        let slug = slug.to_string();
+        self.with_client(move |client| Ok(client.query_opt("SELECT version, manifest FROM app_manifests WHERE slug = $1", &[&slug])?.map(|r| (r.get(0), r.get(1)))))
+    }
+
+    /// Every stored definition with its slug and version, not parsed.
+    pub fn list_app_manifest_rows(&self) -> Result<Vec<(String, i32, Value)>, RepositoryError> {
+        self.with_client(|client| {
+            Ok(client
+                .query("SELECT slug, version, manifest FROM app_manifests ORDER BY updated_at ASC", &[])?
+                .iter()
+                .map(|r| (r.get(0), r.get(1), r.get(2)))
+                .collect())
         })
     }
 
@@ -2238,8 +2281,9 @@ pub fn check_unique_constraints(
     pub fn upsert_workflow_automation(&self, rule: &AutomationRule) -> Result<(), RepositoryError> {
         let rule = rule.clone();
         self.with_client(move |client| {
+            let mut tx = client.transaction()?;
             let rule_json = serde_json::to_value(&rule)?;
-            client.execute(
+            tx.execute(
                 "INSERT INTO workflow_automations (id, app_slug, name, rule_json, enabled, updated_at) \
                  VALUES ($1, $2, $3, $4, $5, NOW()) \
                  ON CONFLICT (id) DO UPDATE SET \
@@ -2256,6 +2300,8 @@ pub fn check_unique_constraints(
                     &rule.enabled,
                 ],
             )?;
+            crate::cache::bump(&mut tx, "rules")?;
+            tx.commit()?;
             Ok(())
         })
     }

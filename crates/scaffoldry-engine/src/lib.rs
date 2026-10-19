@@ -1107,6 +1107,11 @@ pub trait HostRouter {
 pub struct ManifestEngine {
     manifests_by_slug: HashMap<String, AppManifest>,
     manifests_by_domain: HashMap<String, String>,
+    /// The stored version each definition was read at. A server compares these with the stored versions to find the
+    /// definitions that changed, so one approval reloads one app.
+    versions: HashMap<String, i32>,
+    /// Apps whose stored definition did not parse or validate, with the reason. Such an app is not served.
+    broken: HashMap<String, String>,
 }
 
 impl ManifestEngine {
@@ -1117,7 +1122,34 @@ impl ManifestEngine {
         Ok(Self {
             manifests_by_slug: HashMap::new(),
             manifests_by_domain: HashMap::new(),
+            versions: HashMap::new(),
+            broken: HashMap::new(),
         })
+    }
+
+    /// Notes the stored version a definition was read at.
+    pub fn set_version(&mut self, slug: &str, version: i32) {
+        self.versions.insert(slug.to_string(), version);
+    }
+
+    /// The stored version of every definition this engine holds or has given up on.
+    pub fn versions(&self) -> &HashMap<String, i32> {
+        &self.versions
+    }
+
+    /// Stops serving an app whose stored definition cannot be read. Other apps are not touched.
+    pub fn mark_broken(&mut self, slug: &str, reason: &str) {
+        if let Some(old) = self.manifests_by_slug.remove(slug) {
+            if let Some(domain) = old.custom_domain {
+                self.manifests_by_domain.remove(&domain);
+            }
+        }
+        self.broken.insert(slug.to_string(), reason.to_string());
+    }
+
+    /// Why an app is not served, when its stored definition could not be read.
+    pub fn broken_reason(&self, slug: &str) -> Option<&str> {
+        self.broken.get(slug).map(String::as_str)
     }
 
     pub fn manifests_count(&self) -> usize {
@@ -1139,6 +1171,7 @@ impl ManifestEngine {
             }
         }
 
+        self.broken.remove(&manifest.slug);
         self.manifests_by_slug.insert(manifest.slug.clone(), manifest);
         Ok(())
     }
