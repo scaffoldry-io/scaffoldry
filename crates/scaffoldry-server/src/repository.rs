@@ -786,6 +786,9 @@ impl PostgresRepository {
         let db_url_0 = db_url.clone();
         let init_tx_0 = init_tx;
         let rx_0 = worker_rx.clone();
+        // Raised by a worker that finds its connection dead. The others check theirs before their next job.
+        let lost = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let lost_0 = lost.clone();
 
         std::thread::Builder::new()
             .name("scaffoldry-db-worker-0".to_string())
@@ -890,6 +893,7 @@ impl PostgresRepository {
 
                 let _ = init_tx_0.send(Ok(()));
 
+                let mut lost_seen = lost_0.load(std::sync::atomic::Ordering::SeqCst);
                 loop {
                     let job = {
                         let rx = match rx_0.lock() {
@@ -901,7 +905,9 @@ impl PostgresRepository {
                             Err(_) => break,
                         }
                     };
+                    prepare_connection(&mut client, &db_url_0, &lost_0, &mut lost_seen);
                     job(&mut client);
+                    note_if_lost(&client, &lost_0);
                 }
             })
             .map_err(|e| RepositoryError::NotFound(format!("Failed to spawn db worker thread 0: {e}")))?;
@@ -913,6 +919,7 @@ impl PostgresRepository {
         for w_idx in 1..num_workers {
             let db_url_w = db_url.clone();
             let rx_w = worker_rx.clone();
+            let lost_w = lost.clone();
             std::thread::Builder::new()
                 .name(format!("scaffoldry-db-worker-{w_idx}"))
                 .spawn(move || {
@@ -923,6 +930,7 @@ impl PostgresRepository {
                             return;
                         }
                     };
+                    let mut lost_seen = lost_w.load(std::sync::atomic::Ordering::SeqCst);
                     loop {
                         let job = {
                             let rx = match rx_w.lock() {
@@ -934,7 +942,9 @@ impl PostgresRepository {
                                 Err(_) => break,
                             }
                         };
+                        prepare_connection(&mut client, &db_url_w, &lost_w, &mut lost_seen);
                         job(&mut client);
+                        note_if_lost(&client, &lost_w);
                     }
                 })
                 .map_err(|e| RepositoryError::NotFound(format!("Failed to spawn db worker thread {w_idx}: {e}")))?;
@@ -2782,6 +2792,31 @@ pub(crate) fn append_ledger_in_tx(
         ],
     )?;
     Ok(entry)
+}
+
+/// A worker's connection ends when the database restarts or drops it. The synchronous client only learns that when it
+/// next uses the connection, so the worker that finds out raises `lost`, and every other worker checks its own
+/// connection before its next job. A dead one is replaced, so a database that comes back is served again without
+/// restarting this process. When it cannot connect, the job runs on the closed connection and fails with the
+/// database's own error, which the request reports as `storage_unavailable`.
+fn prepare_connection(client: &mut Client, url: &str, lost: &std::sync::atomic::AtomicU64, seen: &mut u64) {
+    let now = lost.load(std::sync::atomic::Ordering::SeqCst);
+    if !client.is_closed() && *seen == now {
+        return;
+    }
+    *seen = now;
+    if client.is_closed() || client.is_valid(std::time::Duration::from_secs(2)).is_err() {
+        if let Ok(fresh) = Client::connect(url, NoTls) {
+            *client = fresh;
+        }
+    }
+}
+
+/// After a job: a connection that has closed is told to the other workers.
+fn note_if_lost(client: &Client, lost: &std::sync::atomic::AtomicU64) {
+    if client.is_closed() {
+        lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// The outcome of a decision on a waiting step.
