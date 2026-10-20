@@ -4,42 +4,12 @@
 //! but a person, `eppn` holds `{type}:{principal_id}`, so the unique key on `(workspace, eppn)` holds.
 
 use crate::state::{AuthUser, CollaboratorRecord, SharedState};
+use scaffoldry_core::reach::{holder_set, role_at, AnchorKind, Grant, HolderKind, HolderSet, Holding, Object};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-/// Roles in rank order. A person with several memberships has the highest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Role {
-    Viewer,
-    Commenter,
-    Editor,
-    Admin,
-    Owner,
-}
-
-impl Role {
-    pub fn parse(s: &str) -> Option<Role> {
-        match s.to_lowercase().as_str() {
-            "viewer" => Some(Role::Viewer),
-            "commenter" => Some(Role::Commenter),
-            "editor" => Some(Role::Editor),
-            "admin" => Some(Role::Admin),
-            "owner" => Some(Role::Owner),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Role::Viewer => "viewer",
-            Role::Commenter => "commenter",
-            Role::Editor => "editor",
-            Role::Admin => "admin",
-            Role::Owner => "owner",
-        }
-    }
-}
+pub use scaffoldry_core::reach::Role;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -154,47 +124,6 @@ pub fn people_of(c: &CollaboratorRecord, state: &SharedState) -> Vec<String> {
     }
 }
 
-/// Whether the membership means this person. It asks the database about the person, not about everyone.
-fn includes(c: &CollaboratorRecord, eppn: &str, state: &SharedState) -> bool {
-    let (kind, id) = split_principal(&c.eppn);
-    match kind {
-        Kind::User => id.eq_ignore_ascii_case(eppn),
-        Kind::Group => {
-            let Ok(Some(group)) = state.repository.group_by_id(id) else {
-                return false;
-            };
-            let my_id = state.user_by_name(eppn).map(|u| u.id);
-            group
-                .members
-                .iter()
-                .filter_map(|m| m.get("value").and_then(Value::as_str))
-                .any(|v| v.eq_ignore_ascii_case(eppn) || my_id.as_deref() == Some(v))
-        }
-        Kind::Unit => {
-            let Ok(unit) = Uuid::parse_str(id) else {
-                return false;
-            };
-            let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
-            state
-                .roles_of(eppn)
-                .iter()
-                .any(|r| tree.contains(unit, r.organization_id))
-        }
-        Kind::Position => {
-            let Some((key, unit)) = id.split_once('@') else {
-                return false;
-            };
-            let Ok(unit) = Uuid::parse_str(unit) else {
-                return false;
-            };
-            state
-                .roles_of(eppn)
-                .iter()
-                .any(|r| r.organization_id == unit && r.position_key.as_deref() == Some(key))
-        }
-    }
-}
-
 /// Every workspace that has a membership.
 pub fn workspace_ids(state: &SharedState) -> Vec<String> {
     state
@@ -232,18 +161,6 @@ pub fn direct_memberships(state: &SharedState) -> Vec<CollaboratorRecord> {
         .collect()
 }
 
-/// The memberships limited to one app of the workspace.
-fn app_memberships(workspace: &str, app: &str, state: &SharedState) -> Vec<CollaboratorRecord> {
-    let all = state
-        .collaborators
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(workspace)
-        .cloned()
-        .unwrap_or_default();
-    all.into_iter().filter(|c| c.app_slug == app).collect()
-}
-
 /// A person's role in one app: the highest of their workspace-wide memberships and those limited to this app.
 pub fn member_role_in_app(
     user: &AuthUser,
@@ -251,7 +168,7 @@ pub fn member_role_in_app(
     app: &str,
     state: &SharedState,
 ) -> Option<Role> {
-    member_role_of_in_app(&user.eppn, workspace, app, state)
+    role_for(&user.eppn, workspace, Some(app), state)
 }
 
 /// The same for a person named by address.
@@ -261,28 +178,118 @@ pub fn member_role_of_in_app(
     app: &str,
     state: &SharedState,
 ) -> Option<Role> {
-    let limited = app_memberships(workspace, app, state)
-        .into_iter()
-        .filter_map(|c| Role::parse(&c.role).filter(|_| includes(&c, eppn, state)))
-        .max();
-    limited.max(member_role_of(eppn, workspace, state))
+    role_for(eppn, workspace, Some(app), state)
 }
 
-/// The highest role among every membership that matches the person. This is the only place that
-/// turns the workspace's memberships into a person's role.
+/// The highest role among every grant that reaches the workspace. This is the only place that turns grants and
+/// memberships into a person's role.
 pub fn member_role(user: &AuthUser, workspace: &str, state: &SharedState) -> Option<Role> {
-    memberships(workspace, state)
-        .iter()
-        .filter_map(|c| Role::parse(&c.role).filter(|_| includes(c, &user.eppn, state)))
-        .max()
+    role_for(&user.eppn, workspace, None, state)
 }
 
 /// The role of a person named by address, for a caller who has no `AuthUser`.
 pub fn member_role_of(eppn: &str, workspace: &str, state: &SharedState) -> Option<Role> {
-    memberships(workspace, state)
-        .iter()
-        .filter_map(|c| Role::parse(&c.role).filter(|_| includes(c, eppn, state)))
-        .max()
+    role_for(eppn, workspace, None, state)
+}
+
+/// A membership is a container grant: on the workspace when it covers the workspace, on the app when it is limited to one.
+fn membership_grant(c: &CollaboratorRecord, index: usize) -> Option<Grant> {
+    let (kind, id) = split_principal(&c.eppn);
+    let (holder_kind, holder_id) = match kind {
+        Kind::User => (HolderKind::Person, id.to_string()),
+        Kind::Group => (HolderKind::Group, id.to_string()),
+        Kind::Unit => (HolderKind::Unit, id.to_string()),
+        Kind::Position => (HolderKind::Position, id.to_string()),
+    };
+    let anchor = if c.app_slug.is_empty() { format!("workspace:{}", c.workspace_id) } else { format!("app:{}", c.app_slug) };
+    Some(Grant {
+        id: -(index as i64) - 1,
+        holder_kind,
+        holder_id,
+        role: Role::parse(&c.role)?,
+        hierarchy: None,
+        anchor_kind: AnchorKind::Container,
+        anchor_id: Some(anchor),
+        depth: None,
+        domain: None,
+        valid_from: 0,
+        valid_until: None,
+        revoked: false,
+    })
+}
+
+/// The `(kind, id)` pairs a stored grant may be held under for this person.
+fn holder_pairs(h: &HolderSet) -> Vec<(String, String)> {
+    let mut pairs = vec![("person".to_string(), h.person.clone())];
+    for (key, unit) in &h.positions {
+        pairs.push(("position".to_string(), format!("{key}@{unit}")));
+        pairs.push(("position".to_string(), format!("{key}@*")));
+    }
+    pairs.extend(h.units.iter().map(|u| ("unit".to_string(), u.to_string())));
+    pairs.extend(h.groups.iter().map(|g| ("group".to_string(), g.clone())));
+    pairs
+}
+
+/// `role_at` for a workspace, or for one app in it.
+fn role_for(eppn: &str, workspace: &str, app: Option<&str>, state: &SharedState) -> Option<Role> {
+    let now = chrono::Utc::now().timestamp();
+    let rows = state.repository.holdings_of(eppn).unwrap_or_default();
+    let holdings: Vec<Holding> = rows.iter().map(|(h, _)| h.clone()).collect();
+    let groups = state.group_ids_of(eppn);
+
+    let memberships: Vec<CollaboratorRecord> = state
+        .collaborators
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(workspace)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| c.app_slug.is_empty() || Some(c.app_slug.as_str()) == app)
+        .collect();
+    let mut grants: Vec<Grant> = memberships.iter().enumerate().filter_map(|(i, c)| membership_grant(c, i)).collect();
+
+    let ws = state.workspaces.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned();
+    let manifest = app.and_then(|slug| {
+        use scaffoldry_engine::HostRouter;
+        state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(slug).cloned()
+    });
+    let mut containers = vec![format!("workspace:{workspace}")];
+    containers.extend(app.map(|a| format!("app:{a}")));
+
+    // A unit_admin appointment is a grant: the person is admin of the unit's whole subtree. It is derived here, never stored.
+    for (i, (h, affiliation)) in rows.iter().enumerate().filter(|(_, (_, a))| a == "unit_admin") {
+        let _ = affiliation;
+        grants.push(Grant {
+            id: -1_000_000 - i as i64,
+            holder_kind: HolderKind::Person,
+            holder_id: eppn.to_string(),
+            role: Role::Admin,
+            hierarchy: None,
+            anchor_kind: AnchorKind::Unit,
+            anchor_id: Some(h.unit.to_string()),
+            depth: None,
+            domain: None,
+            valid_from: h.effective.unwrap_or(0),
+            valid_until: h.end,
+            revoked: false,
+        });
+    }
+
+    crate::service::coordinates::with_world(state, |places, tree| {
+        for g in grants.iter_mut().filter(|g| g.anchor_kind == AnchorKind::Unit && g.hierarchy.is_none()) {
+            g.hierarchy = g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok()).and_then(|u| tree.hierarchy_of(u)).map(str::to_string);
+        }
+        let holders = holder_set(eppn, &holdings, tree, groups, now);
+        grants.extend(state.repository.grants_held_by(&holder_pairs(&holders)).unwrap_or_default());
+        let (units, domain) = match &ws {
+            Some(ws) => crate::service::coordinates::object_place(places, tree, ws, manifest.as_ref()),
+            None => (Default::default(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()),
+        };
+        role_at(&holders, &grants, &Object { containers, units, domain }, tree, places, now).map(|(role, _)| role)
+    })
+    .ok()
+    .flatten()
 }
 
 /// Everyone with a role in the workspace and their highest role, by address.

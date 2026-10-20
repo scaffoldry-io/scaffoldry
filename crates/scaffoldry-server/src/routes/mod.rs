@@ -5,6 +5,7 @@ pub mod formula;
 pub mod admin_people;
 pub mod positions;
 pub mod proposals;
+pub mod access_grants;
 pub mod admin_workspaces;
 pub mod apps;
 pub mod auth;
@@ -51,6 +52,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(positions::router())
         .merge(proposals::router())
         .merge(admin_workspaces::router())
+        .merge(access_grants::router())
         .merge(workspaces::router())
         .merge(organizations::router())
         .merge(apps::router())
@@ -84,7 +86,7 @@ pub fn api_router(state: SharedState) -> Router {
     let mcp_root = mcp::router().with_state(state.clone());
     let discovery_routes = discovery::router().with_state(state.clone());
     let ws_root = workspaces::router().with_state(state.clone());
-    let admin_root = admin::router().merge(admin_workspaces::router()).with_state(state.clone());
+    let admin_root = admin::router().merge(admin_workspaces::router()).merge(access_grants::router()).with_state(state.clone());
 
     Router::new()
         .route("/healthz", get(health_check))

@@ -128,6 +128,13 @@ async fn can_read(w: &World, who: &str, ws: &str) -> bool {
     s == StatusCode::OK
 }
 
+/// The role the workspace page reports for the caller: `None` for a non-member, even when the page opens by visibility.
+async fn role_in(w: &World, who: &str, ws: &str) -> Option<String> {
+    let (s, body) = send(&w.app, "GET", &format!("/api/v1/workspaces/{ws}"), who, None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    body["user_role"].as_str().map(str::to_string)
+}
+
 // 7. A grant is not in force until a different person confirms it. The proposer's confirm is 403.
 #[tokio::test]
 async fn a_grant_is_not_in_force_until_a_different_person_confirms() {
@@ -197,7 +204,8 @@ async fn an_org_unit_admin_cannot_anchor_above_their_unit_or_grant_owner() {
 async fn a_grant_to_a_whole_hierarchy_is_too_broad_unless_it_is_one_container_viewer() {
     let w = world();
     let to_root = |role: &str, anchor_kind: &str, anchor_id: &str| {
-        json!({ "holder_kind": "unit", "holder_id": ROOT, "role": role, "hierarchy": "academic", "anchor_kind": anchor_kind, "anchor_id": anchor_id, "source": "request", "reason": "All" })
+        let hierarchy = if anchor_kind == "container" { Value::Null } else { json!("academic") };
+        json!({ "holder_kind": "unit", "holder_id": ROOT, "role": role, "hierarchy": hierarchy, "anchor_kind": anchor_kind, "anchor_id": anchor_id, "source": "request", "reason": "All" })
     };
     let (s, body) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(to_root("viewer", "unit", &w.physics.to_string()))).await;
     assert_eq!((s, body["code"].as_str()), (StatusCode::BAD_REQUEST, Some("grant_too_broad")), "{body}");
@@ -262,18 +270,18 @@ async fn revoking_a_grant_applies_at_once_and_keeps_the_row() {
 #[tokio::test]
 async fn one_chair_grant_serves_every_department_and_follows_the_appointment() {
     let w = world();
-    let state = w.db.state();
-    appoint(&state, CHAIR, w.physics, "faculty", Some("chair"));
-    let app = build_app_with_state(state.clone()).expect("router");
-    let w = World { app, ..w };
+    let (s, body) = send(&w.app, "POST", "/api/v1/admin/positions", ADMIN, Some(json!({ "key": "chair", "name": "Chair", "description": "A department chair", "org_types": ["Department"], "max_holders": 1, "reason": "Define the position" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    appoint(&w.db.state(), CHAIR, w.physics, "faculty", Some("chair"));
+    assert_eq!(role_in(&w, CHAIR, "ws-physics").await, None, "before the grant, holding the post gives no role");
     grant(&w, json!({ "holder_kind": "position", "holder_id": "chair@*", "role": "viewer", "hierarchy": "academic", "anchor_kind": "holder_unit", "source": "rule", "reason": "Chairs see their department" })).await;
 
-    assert!(can_read(&w, CHAIR, "ws-physics").await, "the Physics chair reads the Physics workspace");
-    assert!(!can_read(&w, CHAIR, "ws-chemistry").await, "and nothing on Chemistry");
+    assert_eq!(role_in(&w, CHAIR, "ws-physics").await.as_deref(), Some("viewer"), "the Physics chair is a viewer of the Physics workspace");
+    assert_eq!(role_in(&w, CHAIR, "ws-chemistry").await, None, "and has no role on Chemistry");
 
     appoint(&w.db.state(), NEW_CHAIR, w.chemistry, "faculty", Some("chair"));
-    assert!(can_read(&w, NEW_CHAIR, "ws-chemistry").await, "a new chair in Chemistry gets Chemistry with no other change");
-    assert!(!can_read(&w, NEW_CHAIR, "ws-physics").await);
+    assert_eq!(role_in(&w, NEW_CHAIR, "ws-chemistry").await.as_deref(), Some("viewer"), "a new chair in Chemistry gets Chemistry with no other change");
+    assert_eq!(role_in(&w, NEW_CHAIR, "ws-physics").await, None);
 }
 
 // 9. A workspace guard forbids read_app to a person who holds a matching unit grant.

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/access-grant.schema.json",
+  "title": "Access grant",
+  "description": "A holder has a role at an anchor. Grants permit. Guards forbid. The highest role among the grants that reach an object is the role a person has there.",
+  "type": "object",
+  "required": ["holder_kind", "holder_id", "role", "anchor_kind", "source", "reason"],
+  "additionalProperties": true,
+  "properties": {
+    "id": { "type": "integer" },
+    "holder_kind": { "enum": ["person", "position", "unit", "group"] },
+    "holder_id": { "type": "string", "minLength": 1, "maxLength": 255, "description": "An address, key@<unit id>, key@* for every holder of a position, a unit id, or a group id." },
+    "role": { "enum": ["viewer", "commenter", "editor", "admin", "owner"] },
+    "hierarchy": { "type": ["string", "null"], "description": "The hierarchy key the anchor is in. Null for a container anchor." },
+    "anchor_kind": { "enum": ["container", "unit", "holder_unit"] },
+    "anchor_id": { "type": ["string", "null"], "description": "workspace:<id>, app:<slug> or a unit id. Null for holder_unit." },
+    "depth": { "type": ["integer", "null"], "minimum": 0, "description": "0 is the anchor only. Null is the whole subtree." },
+    "domain": { "type": ["string", "null"] },
+    "clearance": { "type": ["string", "null"], "enum": ["Public", "Directory", "Internal", "Restricted", null] },
+    "valid_from": { "type": "string", "format": "date-time" },
+    "valid_until": { "type": ["string", "null"], "format": "date-time" },
+    "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+    "revoked_by": { "type": ["string", "null"] },
+    "source": { "enum": ["membership", "appointment", "rule", "request", "task", "flow"] },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+  }
+}

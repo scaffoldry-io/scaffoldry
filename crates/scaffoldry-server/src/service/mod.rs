@@ -9,6 +9,7 @@ pub mod history;
 pub mod organizations;
 pub mod records;
 pub mod access;
+pub mod access_grants;
 pub mod coordinates;
 pub mod catalog;
 pub mod guidance;
@@ -73,6 +74,8 @@ pub const ERROR_CODES: &[&str] = &[
     "archived",
     "too_many_indexes",
     "storage_unavailable",
+    "grant_outside_scope",
+    "grant_too_broad",
 ];
 
 #[derive(Debug, Clone)]
@@ -131,6 +134,10 @@ pub enum ServiceError {
     TooManyIndexes { message: String, unused: Vec<String> },
     /// A write names fields the person may not change.
     FieldReadOnly { message: String, fields: Vec<String>, reason: String, remedy: String },
+    /// The caller may not grant this: the anchor is outside their subtree, or the role is above what they may give.
+    GrantOutsideScope(String),
+    /// A grant to everyone below a hierarchy's root. Institutional visibility already says that.
+    GrantTooBroad(String),
     Internal(String),
 }
 
@@ -167,9 +174,9 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::ConstraintViolation { .. } | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -201,6 +208,8 @@ impl ServiceError {
             Self::TooManyIndexes { .. } => "too_many_indexes",
             Self::FieldReadOnly { .. } => "field_read_only",
             Self::UndoConflict { .. } => "undo_conflict",
+            Self::GrantOutsideScope(_) => "grant_outside_scope",
+            Self::GrantTooBroad(_) => "grant_too_broad",
             Self::Internal(_) => "internal",
         }
     }
@@ -222,6 +231,8 @@ impl ServiceError {
             | Self::QuotaExceeded(msg)
             | Self::ViewAsReadOnly(msg)
             | Self::ConstraintViolated(msg)
+            | Self::GrantOutsideScope(msg)
+            | Self::GrantTooBroad(msg)
             | Self::Internal(msg) => msg,
             Self::ConstraintViolation { message, .. } | Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }

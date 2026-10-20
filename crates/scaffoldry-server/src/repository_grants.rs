@@ -1,0 +1,243 @@
+//! Access model phase 4: grants and the changes that wait for a second person. Grants are not cached. They are read
+//! by holder on each request, with the index on `(holder_kind, holder_id)`.
+
+use crate::repository::{PostgresRepository, RepositoryError};
+use scaffoldry_core::reach::{AnchorKind, Grant, HolderKind, Holding, Role};
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+const GRANT_SELECT: &str = "SELECT id, holder_kind, holder_id, role, hierarchy_key, anchor_kind, anchor_id, depth, domain, clearance, \
+    FLOOR(EXTRACT(EPOCH FROM valid_from))::bigint, FLOOR(EXTRACT(EPOCH FROM valid_until))::bigint, FLOOR(EXTRACT(EPOCH FROM revoked_at))::bigint, revoked_by, \
+    source, reason, created_by, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+    to_char(valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), to_char(valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+    to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM access_grants";
+
+/// A stored grant with everything the API returns.
+#[derive(Debug, Clone)]
+pub struct GrantRow {
+    pub grant: Grant,
+    pub hierarchy: Option<String>,
+    pub clearance: Option<String>,
+    pub revoked_by: Option<String>,
+    pub source: String,
+    pub reason: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub valid_from: String,
+    pub valid_until: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
+impl GrantRow {
+    fn of(r: &postgres::Row) -> Option<GrantRow> {
+        let grant = Grant {
+            id: r.get(0),
+            holder_kind: HolderKind::parse(&r.get::<_, String>(1))?,
+            holder_id: r.get(2),
+            role: Role::parse(&r.get::<_, String>(3))?,
+            hierarchy: r.get(4),
+            anchor_kind: AnchorKind::parse(&r.get::<_, String>(5))?,
+            anchor_id: r.get(6),
+            depth: r.get(7),
+            domain: r.get(8),
+            valid_from: r.get(10),
+            valid_until: r.get(11),
+            revoked: r.get::<_, Option<i64>>(12).is_some(),
+        };
+        Some(GrantRow {
+            hierarchy: grant.hierarchy.clone(),
+            clearance: r.get(9),
+            revoked_by: r.get(13),
+            source: r.get(14),
+            reason: r.get(15),
+            created_by: r.get(16),
+            created_at: r.get(17),
+            valid_from: r.get(18),
+            valid_until: r.get(19),
+            revoked_at: r.get(20),
+            grant,
+        })
+    }
+
+    /// The row as the schema `access-grant.schema.json` describes it.
+    pub fn json(&self) -> Value {
+        let g = &self.grant;
+        json!({
+            "id": g.id, "holder_kind": g.holder_kind.as_str(), "holder_id": g.holder_id, "role": g.role.as_str(),
+            "hierarchy": self.hierarchy, "anchor_kind": g.anchor_kind.as_str(), "anchor_id": g.anchor_id, "depth": g.depth,
+            "domain": g.domain, "clearance": self.clearance, "valid_from": self.valid_from, "valid_until": self.valid_until,
+            "revoked_at": self.revoked_at, "revoked_by": self.revoked_by, "source": self.source, "reason": self.reason,
+            "created_by": self.created_by, "created_at": self.created_at,
+        })
+    }
+}
+
+/// The filters of the grant list.
+#[derive(Debug, Default, Clone)]
+pub struct GrantFilter {
+    pub holder: Option<String>,
+    pub anchor: Option<String>,
+    pub hierarchy: Option<String>,
+    pub source: Option<String>,
+    /// `active`, `revoked`, `expired`, or `all`.
+    pub state: String,
+    pub after: i64,
+    pub limit: i64,
+}
+
+/// What `decide_access_change` found.
+pub enum ChangeDecision {
+    /// Decided. A confirmed grant change names the grant it made.
+    Done { grant_id: Option<i64> },
+    Missing,
+    AlreadyDecided,
+    OwnChange,
+}
+
+pub enum RevokeOutcome {
+    Done,
+    Missing,
+    AlreadyRevoked,
+}
+
+impl PostgresRepository {
+    /// Unrevoked grants held by any of these `(kind, id)` pairs.
+    pub fn grants_held_by(&self, pairs: &[(String, String)]) -> Result<Vec<Grant>, RepositoryError> {
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (kinds, ids): (Vec<String>, Vec<String>) = pairs.iter().cloned().unzip();
+        self.with_client(move |c| {
+            let sql = format!("{GRANT_SELECT} WHERE revoked_at IS NULL AND (holder_kind, holder_id) IN (SELECT * FROM unnest($1::text[], $2::text[]))");
+            Ok(c.query(&sql, &[&kinds, &ids])?.iter().filter_map(GrantRow::of).map(|r| r.grant).collect())
+        })
+    }
+
+    /// The roles a person holds with their dates and their scoped affiliation, for the holder set and for the grants an
+    /// appointment implies.
+    pub fn holdings_of(&self, eppn: &str) -> Result<Vec<(Holding, String)>, RepositoryError> {
+        let eppn = eppn.to_string();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT r.organization_id, r.position_key, FLOOR(EXTRACT(EPOCH FROM r.effective_date::timestamptz))::bigint, \
+                        FLOOR(EXTRACT(EPOCH FROM (r.end_date + 1)::timestamptz))::bigint - 1, r.scoped_affiliation \
+                 FROM roles r JOIN persons p ON r.person_id = p.id WHERE lower(p.eppn) = lower($1)",
+                &[&eppn],
+            )?;
+            Ok(rows.iter().map(|r| (Holding { unit: r.get(0), position_key: r.get(1), effective: r.get(2), end: r.get(3) }, r.get(4))).collect())
+        })
+    }
+
+    pub fn list_grant_rows(&self, f: &GrantFilter) -> Result<Vec<GrantRow>, RepositoryError> {
+        let f = f.clone();
+        self.with_client(move |c| {
+            let state = match f.state.as_str() {
+                "revoked" => "revoked_at IS NOT NULL",
+                "expired" => "revoked_at IS NULL AND valid_until IS NOT NULL AND valid_until <= NOW()",
+                "all" => "TRUE",
+                _ => "revoked_at IS NULL AND (valid_until IS NULL OR valid_until > NOW())",
+            };
+            let sql = format!(
+                "{GRANT_SELECT} WHERE id > $1 AND {state} AND ($2::text IS NULL OR lower(holder_id) = lower($2)) AND ($3::text IS NULL OR anchor_id = $3) \
+                 AND ($4::text IS NULL OR hierarchy_key = $4) AND ($5::text IS NULL OR source = $5) ORDER BY id LIMIT $6"
+            );
+            Ok(c.query(&sql, &[&f.after, &f.holder, &f.anchor, &f.hierarchy, &f.source, &f.limit])?.iter().filter_map(GrantRow::of).collect())
+        })
+    }
+
+    pub fn grant_row(&self, id: i64) -> Result<Option<GrantRow>, RepositoryError> {
+        self.with_client(move |c| Ok(c.query_opt(&format!("{GRANT_SELECT} WHERE id = $1"), &[&id])?.as_ref().and_then(GrantRow::of)))
+    }
+
+    /// Stores a change that waits for a second person.
+    pub fn propose_access_change(&self, change: &Value, widens: bool, reason: &str, proposed_by: &str) -> Result<Uuid, RepositoryError> {
+        let (change, reason, proposed_by) = (change.clone(), reason.to_string(), proposed_by.to_string());
+        self.with_client(move |c| {
+            let id = Uuid::new_v4();
+            c.execute(
+                "INSERT INTO access_changes (id, change, widens, reason, proposed_by) VALUES ($1, $2, $3, $4, $5)",
+                &[&id, &change, &widens, &reason, &proposed_by],
+            )?;
+            Ok(id)
+        })
+    }
+
+    /// A change by id: `(change, status, proposed_by, reason)`.
+    pub fn access_change(&self, id: Uuid) -> Result<Option<(Value, String, String, String)>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query_opt("SELECT change, status, proposed_by, reason FROM access_changes WHERE id = $1", &[&id])?
+                .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))))
+        })
+    }
+
+    pub fn list_access_changes(&self, status: &str) -> Result<Vec<Value>, RepositoryError> {
+        let status = status.to_string();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT id, change, widens, reason, status, proposed_by, to_char(proposed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
+                 FROM access_changes WHERE status = $1 ORDER BY proposed_at, id",
+                &[&status],
+            )?;
+            Ok(rows
+                .iter()
+                .map(|r| {
+                    let id: Uuid = r.get(0);
+                    json!({ "change_id": id, "grant": r.get::<_, Value>(1)["grant"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6) })
+                })
+                .collect())
+        })
+    }
+
+    /// Decides a change. The row is locked, so two people deciding at once decide it once. A confirmed grant change
+    /// writes the grant in the same transaction. The person who proposed a change cannot confirm it.
+    pub fn decide_access_change(&self, id: Uuid, decider: &str, confirm: bool) -> Result<ChangeDecision, RepositoryError> {
+        let decider = decider.to_string();
+        self.with_client(move |c| {
+            let mut tx = c.transaction()?;
+            let Some(row) = tx.query_opt("SELECT change, status, proposed_by FROM access_changes WHERE id = $1 FOR UPDATE", &[&id])? else {
+                return Ok(ChangeDecision::Missing);
+            };
+            let (change, status, proposed_by): (Value, String, String) = (row.get(0), row.get(1), row.get(2));
+            if status != "Pending" {
+                return Ok(ChangeDecision::AlreadyDecided);
+            }
+            if confirm && proposed_by.eq_ignore_ascii_case(&decider) {
+                return Ok(ChangeDecision::OwnChange);
+            }
+            let mut grant_id = None;
+            if confirm {
+                let g = &change["grant"];
+                let text = |k: &str| g[k].as_str().map(str::to_string);
+                let depth = g["depth"].as_i64().map(|d| d as i16);
+                let valid_until = text("valid_until");
+                let reason: String = text("reason").unwrap_or_default();
+                let new_id: i64 = tx
+                    .query_one(
+                        "INSERT INTO access_grants (holder_kind, holder_id, role, hierarchy_key, anchor_kind, anchor_id, depth, domain, clearance, \
+                            valid_until, source, reason, created_by) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::timestamptz, $11, $12, $13) RETURNING id",
+                        &[&text("holder_kind"), &text("holder_id"), &text("role"), &text("hierarchy"), &text("anchor_kind"), &text("anchor_id"), &depth, &text("domain"), &text("clearance"), &valid_until, &text("source"), &reason, &proposed_by],
+                    )?
+                    .get(0);
+                grant_id = Some(new_id);
+            }
+            let new_status = if confirm { "Confirmed" } else { "Rejected" };
+            tx.execute("UPDATE access_changes SET status = $2, decided_by = $3, decided_at = NOW(), grant_id = $4 WHERE id = $1", &[&id, &new_status, &decider, &grant_id])?;
+            tx.commit()?;
+            Ok(ChangeDecision::Done { grant_id })
+        })
+    }
+
+    /// Revokes a grant. A revoked grant stays in the table.
+    pub fn revoke_grant(&self, id: i64, by: &str) -> Result<RevokeOutcome, RepositoryError> {
+        let by = by.to_string();
+        self.with_client(move |c| {
+            let n = c.execute("UPDATE access_grants SET revoked_at = NOW(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL", &[&id, &by])?;
+            if n == 1 {
+                return Ok(RevokeOutcome::Done);
+            }
+            let exists = c.query_opt("SELECT 1 FROM access_grants WHERE id = $1", &[&id])?.is_some();
+            Ok(if exists { RevokeOutcome::AlreadyRevoked } else { RevokeOutcome::Missing })
+        })
+    }
+}
