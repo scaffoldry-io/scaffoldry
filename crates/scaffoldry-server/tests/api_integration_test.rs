@@ -1803,6 +1803,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         department: "physics".to_string(),
         workspace_id: Some("ws-physics-optics".to_string()),
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![],

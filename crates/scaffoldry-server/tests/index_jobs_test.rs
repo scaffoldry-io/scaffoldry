@@ -83,6 +83,7 @@ fn manifest(slug: &str, views: Vec<AppView>) -> AppManifest {
         department: "biology".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
@@ -94,6 +95,8 @@ fn manifest(slug: &str, views: Vec<AppView>) -> AppManifest {
             fields: fields(),
             primary_field: None,
             sample_records: vec![],
+            coordinates: None,
+            row_place: Default::default(),
         }],
         relationships: vec![],
         views,

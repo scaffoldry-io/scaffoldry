@@ -15,6 +15,7 @@ fn sample_manifest() -> AppManifest {
         department: "biology".to_string(),
         workspace_id: None,
         herm_capability_id: Some("2.2.3".to_string()),
+        coordinates: None,
         custom_domain: Some("bio-inventory.science.state.edu".to_string()),
         custom_domain_verified: true,
         views: vec![

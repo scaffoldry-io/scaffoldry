@@ -85,11 +85,12 @@ pub struct Widening {
 }
 
 impl fmt::Display for Widening {
+    /// The words without the path: the caller puts the path of the object in front, such as `table 'people' field 'gpa'`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.unknown {
-            write!(f, "the {} names {} '{}', which is not one of {}", self.level, self.axis, self.value, SENSITIVITY_LEVELS.join(", "))
+            write!(f, "{} '{}' is not one of {}", self.axis, self.value, SENSITIVITY_LEVELS.join(", "))
         } else {
-            write!(f, "the {} names {} '{}', which would widen its container's '{}'", self.level, self.axis, self.value, self.container)
+            write!(f, "{} '{}' would widen its container's '{}'", self.axis, self.value, self.container)
         }
     }
 }

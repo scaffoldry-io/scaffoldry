@@ -131,6 +131,7 @@ fn manifest_with_select(slug: &str, options: Vec<SelectOption>) -> AppManifest {
         department: "biology".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
@@ -145,6 +146,8 @@ fn manifest_with_select(slug: &str, options: Vec<SelectOption>) -> AppManifest {
             ],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
+            coordinates: None,
+            row_place: Default::default(),
         }],
         relationships: vec![],
         views: vec![],
@@ -516,6 +519,7 @@ async fn multiselect_with_three_values_makes_three_index_rows_and_filters_by_any
         department: "biology".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
@@ -530,6 +534,8 @@ async fn multiselect_with_three_values_makes_three_index_rows_and_filters_by_any
             ],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
+            coordinates: None,
+            row_place: Default::default(),
         }],
         relationships: vec![],
         views: vec![],

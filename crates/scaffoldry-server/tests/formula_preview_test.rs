@@ -25,6 +25,7 @@ fn make_manifest(slug: &str) -> AppManifest {
         department: "testing".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
@@ -39,6 +40,8 @@ fn make_manifest(slug: &str) -> AppManifest {
                 FieldSpec::simple("spent", "Spent", FieldType::Number, false, false),
             ],
             primary_field: Some("title".to_string()),
+            coordinates: None,
+            row_place: Default::default(),
             sample_records: vec![json!({
                 "id": "GRANT-1",
                 "title": "Bio Research",

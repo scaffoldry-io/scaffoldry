@@ -178,6 +178,7 @@ async fn fixture() -> Fixture {
             department: "biology".to_string(),
             workspace_id: Some(WORKSPACE.to_string()),
             herm_capability_id: None,
+            coordinates: None,
             custom_domain: None,
             custom_domain_verified: false,
             views: vec![AppView::table("main", "Main", ViewType::Table, fields())],
@@ -193,6 +194,8 @@ async fn fixture() -> Fixture {
                 fields: fields(),
                 primary_field: Some("title".to_string()),
                 sample_records: vec![],
+                coordinates: None,
+                row_place: Default::default(),
             }],
             relationships: vec![],
         })

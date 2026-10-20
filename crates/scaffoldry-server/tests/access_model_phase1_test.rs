@@ -300,6 +300,7 @@ fn sensitive_app(state: &ServerState, slug: &str, ws: &str) {
         department: "biology".to_string(),
         workspace_id: Some(ws.to_string()),
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
@@ -314,6 +315,8 @@ fn sensitive_app(state: &ServerState, slug: &str, ws: &str) {
             ],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
+            coordinates: None,
+            row_place: Default::default(),
         }],
         relationships: vec![],
         views: vec![],
