@@ -674,7 +674,6 @@ async fn simulate_cedar_policy_calls_the_engine_and_needs_a_platform_admin() {
         scoped_affiliation: "student".into(),
         department: "science".into(),
         unit_ids: vec![],
-        admin_unit_ids: vec![],
         is_platform_admin: false,
     };
     let record = Resource::Record(RecordCtx {

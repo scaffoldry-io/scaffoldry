@@ -71,12 +71,16 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             StatusCode::FORBIDDEN,
         ),
         (ServiceError::UndoConflict { message: "Moved on".into(), conflicts: vec![] }, "undo_conflict", StatusCode::CONFLICT),
+        (ServiceError::GrantOutsideScope("Outside".into()), "grant_outside_scope", StatusCode::FORBIDDEN),
+        (ServiceError::GrantTooBroad("Broad".into()), "grant_too_broad", StatusCode::BAD_REQUEST),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];
     for (e, _, _) in &samples {
         match e {
             ServiceError::Unauthorized(_)
             | ServiceError::Forbidden { .. }
+            | ServiceError::GrantOutsideScope(_)
+            | ServiceError::GrantTooBroad(_)
             | ServiceError::NotFound(_)
             | ServiceError::BadRequest(_)
             | ServiceError::Invalid { .. }

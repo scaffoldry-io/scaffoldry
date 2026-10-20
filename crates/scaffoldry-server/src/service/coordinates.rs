@@ -61,6 +61,32 @@ pub fn with_places<R>(state: &SharedState, f: impl FnOnce(&dyn Places) -> R) -> 
     Ok(f(&ServerPlaces { tree: &tree, orgs: &orgs, domains }))
 }
 
+/// Runs `f` with the places this instance holds and the unit tree they come from.
+pub fn with_world<R>(state: &SharedState, f: impl FnOnce(&dyn Places, &OrgTree) -> R) -> Result<R, ServiceError> {
+    let domains = domains(state)?;
+    let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+    let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+    Ok(f(&ServerPlaces { tree: &tree, orgs: &orgs, domains }, &tree))
+}
+
+/// Where a workspace, or one app in it, sits: a unit in each hierarchy and a domain. A workspace's own unit is its place
+/// in that unit's hierarchy.
+pub fn object_place(places: &dyn Places, tree: &OrgTree, ws: &WorkspaceRecord, app: Option<&AppManifest>) -> (BTreeMap<String, Uuid>, String) {
+    let ws_coords = (!ws.coordinates.is_empty()).then_some(&ws.coordinates);
+    let effective = match app {
+        None => workspace_effective(ws_coords, places).ok(),
+        Some(m) => walk(ws_coords, m, places).0.map(|(a, _)| a),
+    };
+    let Some(e) = effective else { return (BTreeMap::new(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()) };
+    let mut units: BTreeMap<String, Uuid> = e.units.iter().filter_map(|(h, u)| Uuid::parse_str(u).ok().map(|u| (h.clone(), u))).collect();
+    if let Some(own) = ws.organization_id {
+        if let Some(h) = tree.hierarchy_of(own) {
+            units.insert(h.to_string(), own);
+        }
+    }
+    (units, e.domain)
+}
+
 /// Names every coordinate that points at a hierarchy, unit, or domain that is not there.
 pub fn missing(own: &Coordinates, places: &dyn Places) -> Vec<String> {
     let mut out = Vec::new();

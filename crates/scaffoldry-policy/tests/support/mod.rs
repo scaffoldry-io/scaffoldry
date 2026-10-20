@@ -29,7 +29,6 @@ pub fn plain_principal(eppn: &str, affiliation: &str, department: &str) -> Princ
         scoped_affiliation: affiliation.to_string(),
         department: department.to_string(),
         unit_ids: Vec::new(),
-        admin_unit_ids: Vec::new(),
         is_platform_admin: false,
     }
 }

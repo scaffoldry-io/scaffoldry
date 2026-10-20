@@ -564,17 +564,6 @@ impl ScaffoldryPolicyEngine {
                     resource.member_role == "admin"
                 ))
             };
-
-            // 26. Permit a unit administrator to read and manage the apps of a workspace in their unit or below it
-            @description("Unit administrators can read and manage the apps of workspaces in their unit and the units below it.")
-            permit (
-                principal,
-                action in [Action::"read_app", Action::"manage_app"],
-                resource is Workspace
-            )
-            when {
-                principal.admin_unit_ids.containsAny(resource.unit_path_ids)
-            };
         "#;
         Self::new(default_policies)
     }

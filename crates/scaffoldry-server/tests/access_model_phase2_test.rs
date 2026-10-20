@@ -413,7 +413,6 @@ fn test_6_five_rewritten_policies_allow_descendant_and_deny_outside() {
         scoped_affiliation: "faculty".into(),
         department: "physics".into(),
         unit_ids: vec![physics_dept_id.into(), college_id.into()],
-        admin_unit_ids: vec![],
         is_platform_admin: false,
     };
 
@@ -424,7 +423,6 @@ fn test_6_five_rewritten_policies_allow_descendant_and_deny_outside() {
         scoped_affiliation: "faculty".into(),
         department: "biology".into(),
         unit_ids: vec![biology_dept_id.into()],
-        admin_unit_ids: vec![],
         is_platform_admin: false,
     };
 

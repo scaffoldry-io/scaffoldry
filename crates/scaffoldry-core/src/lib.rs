@@ -6,6 +6,7 @@ pub mod approver;
 pub mod dataset;
 pub mod guards;
 pub mod ledger;
+pub mod reach;
 pub mod standards;
 pub mod tree;
 pub mod workflow;

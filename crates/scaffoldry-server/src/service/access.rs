@@ -138,14 +138,10 @@ pub fn unit_ids_of(state: &SharedState, roles: &[crate::state::RoleRow]) -> Vec<
     ids.into_iter().collect()
 }
 
-/// What Cedar knows about a person: their units with all ancestors, and the units they administer.
+/// What Cedar knows about a person: their units with all ancestors. A unit administrator's reach is a grant derived from
+/// the appointment, so it reaches Cedar as the workspace's member role.
 pub fn principal_of(state: &SharedState, caller: &AuthUser) -> PrincipalCtx {
     let roles = state.roles_of(&caller.eppn);
-    let admin_unit_ids: Vec<String> = roles
-        .iter()
-        .filter(|r| r.scoped_affiliation == "unit_admin")
-        .map(|r| r.organization_id.to_string())
-        .collect();
     // A Platform Admin is a central administrator, or holds the `platform_admin` role on the root unit.
     let is_platform_admin = {
         if caller.affiliation == "central_admin" {
@@ -169,7 +165,6 @@ pub fn principal_of(state: &SharedState, caller: &AuthUser) -> PrincipalCtx {
         },
         department: caller.department.clone(),
         unit_ids: unit_ids_of(state, &roles),
-        admin_unit_ids,
         is_platform_admin,
     }
 }
@@ -241,7 +236,6 @@ pub fn simulate_record_action(
         scoped_affiliation: affiliation.to_string(),
         department: principal_department.to_string(),
         unit_ids: Vec::new(),
-        admin_unit_ids: Vec::new(),
         is_platform_admin: false,
     };
     let resource = Resource::Record(scaffoldry_policy::entities::RecordCtx {

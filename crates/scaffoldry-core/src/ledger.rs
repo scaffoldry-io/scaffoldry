@@ -70,6 +70,9 @@ pub enum DecisionType {
     FileInfected,
     DataImported,
     DataExported,
+    AccessGrantChanged,
+    CoordinatesChanged,
+    HierarchyChanged,
 }
 
 impl DecisionType {
@@ -104,6 +107,9 @@ impl DecisionType {
         DecisionType::FileInfected,
         DecisionType::DataImported,
         DecisionType::DataExported,
+        DecisionType::AccessGrantChanged,
+        DecisionType::CoordinatesChanged,
+        DecisionType::HierarchyChanged,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -138,6 +144,9 @@ impl DecisionType {
             DecisionType::FileInfected => "FileInfected",
             DecisionType::DataImported => "DataImported",
             DecisionType::DataExported => "DataExported",
+            DecisionType::AccessGrantChanged => "AccessGrantChanged",
+            DecisionType::CoordinatesChanged => "CoordinatesChanged",
+            DecisionType::HierarchyChanged => "HierarchyChanged",
         }
     }
 
