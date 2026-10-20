@@ -1,9 +1,10 @@
 //! Scaffoldry API Server Daemon Entrypoint
 
-use scaffoldry_server::{build_app_with_state, files, jobs, service, state::ServerState};
+use scaffoldry_server::{build_app_with_state, files, jobs, serve, service, state::ServerState};
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -58,13 +59,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "purge_unattached_files", 60 * 60)?;
     // A safety net for uploads whose scan job could not be queued.
     jobs::register_schedule(repo, "scan_file", 10 * 60)?;
-    let _job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?;
+    let job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?;
 
     let app = build_app_with_state(state)?;
 
     println!("Scaffoldry Sovereign API Server listening on http://{}", addr);
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // On SIGTERM the server takes no new connections, finishes the requests it holds for up to 30 seconds, and returns.
+    serve::serve_until(listener, app, serve::termination(), Duration::from_secs(30)).await?;
+    println!("Stopped taking requests. Waiting for the job in progress.");
+    // Dropping the runner stops its workers after the job each is on, so a job is never cut off halfway.
+    drop(job_runner);
 
     Ok(())
 }

@@ -24,6 +24,7 @@ pub mod repository_imports;
 pub mod repository_views;
 pub mod routes;
 pub mod scan;
+pub mod serve;
 pub mod service;
 pub mod state;
 pub mod testing;
@@ -99,6 +100,10 @@ async fn refresh_state(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    // Liveness checks nothing, and readiness runs the refresh itself and reports what it finds.
+    if matches!(request.uri().path(), "/healthz" | "/readyz") {
+        return next.run(request).await;
+    }
     match state.refresh() {
         Ok(()) => next.run(request).await,
         Err(e) => service::ServiceError::StorageUnavailable(format!("The server cannot read its database: {e}")).into_response(),
