@@ -41,6 +41,34 @@ impl Coordinates {
     pub fn is_empty(&self) -> bool {
         self.units.is_empty() && self.domain.is_none() && self.sensitivity.is_none()
     }
+
+    /// The stored form: one `(axis, value)` row for each coordinate. An axis is `unit:<hierarchy key>`, `domain`, or
+    /// `sensitivity`.
+    pub fn to_axes(&self) -> Vec<(String, String)> {
+        let mut rows: Vec<(String, String)> = self.units.iter().map(|(h, u)| (format!("unit:{h}"), u.clone())).collect();
+        if let Some(d) = &self.domain {
+            rows.push(("domain".to_string(), d.clone()));
+        }
+        if let Some(s) = &self.sensitivity {
+            rows.push(("sensitivity".to_string(), s.clone()));
+        }
+        rows
+    }
+
+    /// The same from stored rows. A row with an axis nobody knows is ignored.
+    pub fn from_axes(rows: impl IntoIterator<Item = (String, String)>) -> Coordinates {
+        let mut out = Coordinates::default();
+        for (axis, value) in rows {
+            if let Some(h) = axis.strip_prefix("unit:") {
+                out.units.insert(h.to_string(), value);
+            } else if axis == "domain" {
+                out.domain = Some(value);
+            } else if axis == "sensitivity" {
+                out.sensitivity = Some(value);
+            }
+        }
+        out
+    }
 }
 
 /// The ancestry the rules need. A unit or a domain is within itself.

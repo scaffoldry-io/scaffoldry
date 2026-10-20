@@ -288,7 +288,6 @@ export interface Workspace {
   lead: string;
   appCount: number;
   visibility: "restricted" | "departmental" | "institutional";
-  allowed_affiliations?: string[];
   data_classification?: string;
   collaborators: Collaborator[];
 }

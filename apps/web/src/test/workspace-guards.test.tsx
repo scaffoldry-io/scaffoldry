@@ -42,7 +42,6 @@ const sampleWorkspace: Workspace = {
   icon: "🔬",
   lead: "prof.curie@science.state.edu",
   visibility: "restricted",
-  allowed_affiliations: ["faculty", "staff"],
   data_classification: "Level 4 Restricted",
   created_at: new Date().toISOString(),
   collaborators: [

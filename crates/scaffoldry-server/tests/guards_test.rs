@@ -89,11 +89,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
         icon: "dna".to_string(),
         lead: "Dr. Marie Curie".to_string(),
         visibility: "departmental".to_string(),
-        allowed_affiliations: vec![
-            "faculty".to_string(),
-            "staff".to_string(),
-            "student".to_string(),
-        ],
+        coordinates: Default::default(),
         data_classification: "restricted".to_string(),
         created_at: now.clone(),
         organization_id: None,

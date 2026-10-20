@@ -112,14 +112,6 @@ async fn create_workspace(
             .get("visibility")
             .and_then(|v| v.as_str())
             .map(str::to_string),
-        allowed_affiliations: payload
-            .get("allowed_affiliations")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| s.as_str().map(str::to_string))
-                    .collect()
-            }),
         data_classification: payload
             .get("data_classification")
             .and_then(|v| v.as_str())

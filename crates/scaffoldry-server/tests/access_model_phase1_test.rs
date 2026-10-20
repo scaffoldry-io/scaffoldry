@@ -253,7 +253,7 @@ fn workspace(state: &ServerState, id: &str, unit: Option<Uuid>, members: &[(&str
         icon: "dna".to_string(),
         lead: "Lead".to_string(),
         visibility: "departmental".to_string(),
-        allowed_affiliations: vec!["faculty".into(), "staff".into(), "student".into()],
+        coordinates: Default::default(),
         data_classification: "restricted".to_string(),
         created_at: now.clone(),
         organization_id: unit,

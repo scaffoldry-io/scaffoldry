@@ -89,14 +89,16 @@ pub struct WorkspaceRecord {
     pub lead: String,
     #[serde(default = "default_visibility")]
     pub visibility: String, // "restricted" | "departmental" | "institutional"
-    #[serde(default)]
-    pub allowed_affiliations: Vec<String>,
     #[serde(default = "default_classification")]
     pub data_classification: String,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]
     pub organization_id: Option<uuid::Uuid>,
+    /// The workspace's place on the axes that are not its `academic` unit (which stays in `organization_id`): a unit in
+    /// each other hierarchy, a domain, and a sensitivity. A value left out is the root of the axis, and `Internal`.
+    #[serde(default, skip_serializing_if = "scaffoldry_core::coordinates::Coordinates::is_empty")]
+    pub coordinates: scaffoldry_core::coordinates::Coordinates,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1483,7 +1485,7 @@ impl ServerState {
             icon: "🔬".to_string(),
             lead: "Dr. Marie Curie".to_string(),
             visibility: "restricted".to_string(),
-            allowed_affiliations: vec!["faculty".to_string(), "staff".to_string(), "student".to_string()],
+            coordinates: Default::default(),
             data_classification: "Restricted".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
@@ -1539,7 +1541,7 @@ impl ServerState {
             icon: "⚡".to_string(),
             lead: "Albert Einstein".to_string(),
             visibility: "restricted".to_string(),
-            allowed_affiliations: vec!["faculty".to_string(), "student".to_string()],
+            coordinates: Default::default(),
             data_classification: "Internal".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
@@ -1571,7 +1573,7 @@ impl ServerState {
             icon: "🛡️".to_string(),
             lead: "Dr. Arthur Watson".to_string(),
             visibility: "departmental".to_string(),
-            allowed_affiliations: vec!["staff".to_string(), "compliance".to_string()],
+            coordinates: Default::default(),
             data_classification: "FERPA Sensitive".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
@@ -1616,7 +1618,7 @@ impl ServerState {
             icon: "💻".to_string(),
             lead: "Dr. Sarah Connor".to_string(),
             visibility: "restricted".to_string(),
-            allowed_affiliations: vec!["faculty".to_string(), "staff".to_string()],
+            coordinates: Default::default(),
             data_classification: "Internal".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),

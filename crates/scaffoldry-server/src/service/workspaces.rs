@@ -30,7 +30,6 @@ pub struct CreateWorkspacePayload {
     pub description: Option<String>,
     pub icon: Option<String>,
     pub visibility: Option<String>,
-    pub allowed_affiliations: Option<Vec<String>>,
     pub data_classification: Option<String>,
     pub organization_id: Option<uuid::Uuid>,
 }
@@ -41,7 +40,6 @@ pub struct UpdateWorkspacePayload {
     pub description: Option<String>,
     pub department: Option<String>,
     pub visibility: Option<String>,
-    pub allowed_affiliations: Option<Vec<String>>,
     pub data_classification: Option<String>,
     pub icon: Option<String>,
     pub organization_id: Option<uuid::Uuid>,
@@ -255,16 +253,10 @@ pub fn create_workspace(
         visibility: payload
             .visibility
             .unwrap_or_else(|| "restricted".to_string()),
-        allowed_affiliations: payload.allowed_affiliations.unwrap_or_else(|| {
-            vec![
-                "faculty".to_string(),
-                "staff".to_string(),
-                "student".to_string(),
-            ]
-        }),
         data_classification: payload
             .data_classification
             .unwrap_or_else(|| "Internal".to_string()),
+        coordinates: Default::default(),
         created_at: now.clone(),
         organization_id: payload
             .organization_id
@@ -392,9 +384,6 @@ pub fn update_workspace(
     }
     if let Some(visibility) = payload.visibility {
         ws.visibility = visibility;
-    }
-    if let Some(affiliations) = payload.allowed_affiliations {
-        ws.allowed_affiliations = affiliations;
     }
     if let Some(classification) = payload.data_classification {
         ws.data_classification = classification;

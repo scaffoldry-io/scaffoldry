@@ -244,7 +244,6 @@ async fn test_workspace_update_fails_when_ledger_fails() {
             description: None,
             department: None,
             visibility: Some(new_visibility.clone()),
-            allowed_affiliations: None,
             data_classification: None,
             icon: None,
             organization_id: None,

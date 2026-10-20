@@ -170,14 +170,6 @@ export const canUserAccessApp = (
     if (!isMember && !matchesDept) return false;
   }
 
-  // C. Allowed Affiliations Gate
-  if (ws.allowed_affiliations && ws.allowed_affiliations.length > 0) {
-    if (!ws.allowed_affiliations.includes(persona.affiliation)) {
-      const isMember = ws.collaborators?.some((c) => c.eppn === persona.eppn);
-      if (!isMember) return false;
-    }
-  }
-
   return true;
 };
 
@@ -193,7 +185,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     lead: "Dr. Marie Curie",
     appCount: 2,
     visibility: "restricted",
-    allowed_affiliations: ["faculty", "staff", "student"],
     data_classification: "Level 4 Restricted",
     collaborators: [
       { id: "collab-bio-1", eppn: "prof.curie@science.state.edu", name: "Dr. Marie Curie", role: "owner", department: "biology", scoped_affiliation: "faculty" },
@@ -212,7 +203,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     lead: "Albert Einstein",
     appCount: 1,
     visibility: "restricted",
-    allowed_affiliations: ["faculty", "student"],
     data_classification: "Level 3 Internal",
     collaborators: [
       { id: "collab-phys-1", eppn: "einstein@physics.state.edu", name: "Albert Einstein", role: "owner", department: "physics", scoped_affiliation: "student" },
@@ -229,7 +219,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     lead: "Dr. Arthur Watson",
     appCount: 1,
     visibility: "departmental",
-    allowed_affiliations: ["staff", "compliance"],
     data_classification: "Level 4 Restricted",
     collaborators: [
       { id: "collab-comp-1", eppn: "dr.watson@science.state.edu", name: "Dr. Arthur Watson", role: "owner", department: "compliance", scoped_affiliation: "staff" },
@@ -247,7 +236,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
     lead: "Dr. Sarah Connor",
     appCount: 1,
     visibility: "restricted",
-    allowed_affiliations: ["faculty", "staff"],
     data_classification: "Level 2 Campus-Wide",
     collaborators: [
       { id: "collab-cs-1", eppn: "sarah.connor@state.edu", name: "Dr. Sarah Connor", role: "owner", department: "Computer Science", scoped_affiliation: "faculty" },
