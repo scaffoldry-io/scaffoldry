@@ -1,8 +1,7 @@
 // Scaffoldry Cedar schema.
 // Every attribute is required. A non-member has member_role set to the empty string.
 // Workspace.workspace_id equals the workspace's id.
-// Workspace.unit_path_ids is the workspace's unit and every ancestor of it. User.admin_unit_ids is the units where the
-// person is a unit administrator. A workspace asked about an app carries that app's sensitivity.
+// Workspace.unit_path_ids is the workspace's unit and every ancestor of it. A workspace asked about an app carries that app's sensitivity.
 //
 // Phase 3: Workspace.domain_path is the domain of the workspace, or of the app asked about, and every domain above it.
 // Workspace.sensitivity_rank is its place on the ladder Public 0, Directory 1, Internal 2, Restricted 3.
@@ -22,7 +21,6 @@ entity User = {
   department: String,
   units: Set<Unit>,
   unit_ids: Set<String>,
-  admin_unit_ids: Set<String>,
   is_platform_admin: Bool,
 };
 

@@ -20,6 +20,9 @@ pub fn add(m: &mut Entries) {
     }
     for (root, prefix) in [("/api/v1/admin", "/api/v1/admin"), ("/admin", "/admin")] {
         let k = |method: &str, path: &str| format!("{method} {prefix}{path}");
+        m.insert(k("POST", "/access/grants"), case!(grant_propose, root));
+        m.insert(k("POST", "/access/grants/{id}/revoke"), case!(grant_revoke, root));
+        m.insert(k("POST", "/access/changes/{id}/decide"), case!(grant_decide, root));
         m.insert(k("PATCH", "/workspaces/{id}"), case!(admin_ws_move, root));
         m.insert(k("POST", "/workspaces/{id}/transfer-ownership"), case!(admin_ws_transfer, root));
     }
@@ -139,6 +142,45 @@ async fn coordinates_decide(w: World, root: &'static str) -> Outcome {
     status(w.rb("POST", &format!("{root}/workspaces/{id}/coordinates/changes/{change}/decide"), &second, Some(json!({ "decision": "confirm" }))).await, StatusCode::OK, "B confirms")?;
     let seen = status(w.wa("GET", &format!("/api/v1/workspaces/{id}/coordinates"), ADMIN, None).await, StatusCode::OK, "A reads them")?;
     ensure(seen["effective"]["sensitivity"] == "Directory", format!("A shows the change B confirmed: {seen}"))
+}
+
+/// A unit, a unit admin of it, and a grant to a new person anchored in it, proposed on A as the Platform Admin.
+async fn grant_fixture(w: &World, root: &str) -> Result<(String, String, String, String), String> {
+    let unit = make_unit(w, &unique("P6GU")).await?;
+    let boss = person("p6boss");
+    make_user(w, &boss).await?;
+    status(
+        w.wa("POST", &format!("/api/v1/orgs/{unit}/appointments"), ADMIN, Some(json!({ "eppn": boss, "scoped_affiliation": "unit_admin", "reason": "Fixture" }))).await,
+        StatusCode::CREATED,
+        "appoint the unit admin",
+    )?;
+    let holder = person("p6holder");
+    let body = json!({ "holder_kind": "person", "holder_id": holder, "role": "viewer", "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": unit, "source": "request", "reason": "Fixture grant" });
+    let pending = status(w.wa("POST", &format!("{root}/access/grants"), ADMIN, Some(body)).await, StatusCode::ACCEPTED, "propose the grant")?;
+    let change = pending["change_id"].as_str().ok_or("a change id")?.to_string();
+    Ok((unit, boss, holder, change))
+}
+
+async fn grant_propose(w: World, root: &'static str) -> Outcome {
+    let (_, _, holder, change) = grant_fixture(&w, root).await?;
+    let seen = status(w.rb("GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
+    ensure(has(&seen["changes"], &change) && has(&seen["changes"], &holder), format!("B shows the change A stored: {seen}"))
+}
+
+async fn grant_decide(w: World, root: &'static str) -> Outcome {
+    let (_, boss, holder, change) = grant_fixture(&w, root).await?;
+    status(w.rb("POST", &format!("{root}/access/changes/{change}/decide"), &boss, Some(json!({ "decision": "confirm", "reason": "Reviewed" }))).await, StatusCode::OK, "B confirms")?;
+    let seen = status(w.wa("GET", &format!("/api/v1/admin/access/grants?state=active&holder={holder}"), ADMIN, None).await, StatusCode::OK, "A lists the active grants")?;
+    ensure(seen["grants"].as_array().is_some_and(|g| g.len() == 1), format!("A shows the grant B confirmed: {seen}"))
+}
+
+async fn grant_revoke(w: World, root: &'static str) -> Outcome {
+    let (_, boss, holder, change) = grant_fixture(&w, root).await?;
+    let done = status(w.rb("POST", &format!("{root}/access/changes/{change}/decide"), &boss, Some(json!({ "decision": "confirm", "reason": "Reviewed" }))).await, StatusCode::OK, "B confirms")?;
+    let id = done["grant_id"].as_i64().ok_or("a grant id")?;
+    status(w.wa("POST", &format!("{root}/access/grants/{id}/revoke"), ADMIN, Some(json!({ "reason": "Done" }))).await, StatusCode::OK, "A revokes")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/access/grants?state=revoked&holder={holder}"), ADMIN, None).await, StatusCode::OK, "B lists the revoked grants")?;
+    ensure(seen["grants"].as_array().is_some_and(|g| g.len() == 1), format!("B shows the grant A revoked: {seen}"))
 }
 
 async fn admin_ws_move(w: World, root: &'static str) -> Outcome {

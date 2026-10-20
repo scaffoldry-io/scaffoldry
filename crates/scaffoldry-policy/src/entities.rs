@@ -17,7 +17,6 @@ pub struct PrincipalCtx {
     pub department: String,
     pub unit_ids: Vec<String>,
     /// The units where the person is a unit administrator. Not their descendants: the workspace carries its ancestors.
-    pub admin_unit_ids: Vec<String>,
     pub is_platform_admin: bool,
 }
 
@@ -108,7 +107,6 @@ impl PrincipalCtx {
                 "department": self.department,
                 "units": units_val,
                 "unit_ids": self.unit_ids,
-                "admin_unit_ids": self.admin_unit_ids,
                 "is_platform_admin": self.is_platform_admin,
             }),
         )

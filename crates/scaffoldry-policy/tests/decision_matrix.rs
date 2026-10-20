@@ -158,7 +158,6 @@ fn principal(eppn: &str, affiliation: &str, department: &str) -> PrincipalCtx {
         scoped_affiliation: affiliation.to_string(),
         department: department.to_string(),
         unit_ids: vec![],
-        admin_unit_ids: vec![],
         is_platform_admin: false,
     }
 }

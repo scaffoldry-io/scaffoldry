@@ -17,7 +17,6 @@ fn principal(affiliation: &str, department: &str) -> PrincipalCtx {
         scoped_affiliation: affiliation.into(),
         department: department.into(),
         unit_ids: vec![],
-        admin_unit_ids: vec![],
         is_platform_admin: false,
     }
 }
