@@ -213,6 +213,8 @@ fn evaluate_direct(engine: &ScaffoldryPolicyEngine, case: &Case) -> String {
                 is_member: member_role.is_some(),
                 is_ferpa_sensitive: false,
                 categories: Default::default(),
+                domain_path: Default::default(),
+                sensitivity_rank: 2,
             }),
         ),
     };

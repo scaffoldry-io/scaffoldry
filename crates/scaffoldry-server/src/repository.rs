@@ -1551,6 +1551,88 @@ impl PostgresRepository {
         })
     }
 
+    /// Records a change to a workspace's coordinates. `Applied` writes the coordinates at once. `Pending` waits for a
+    /// second person (`decide_coordinate_change`).
+    pub fn record_coordinate_change(
+        &self,
+        workspace_id: &str,
+        coordinates: &scaffoldry_core::coordinates::Coordinates,
+        reason: &str,
+        proposed_by: &str,
+        apply: bool,
+    ) -> Result<uuid::Uuid, RepositoryError> {
+        let (workspace_id, coordinates, reason, proposed_by) = (workspace_id.to_string(), coordinates.clone(), reason.to_string(), proposed_by.to_string());
+        self.with_client(move |client| {
+            let id = uuid::Uuid::new_v4();
+            let mut tx = client.transaction()?;
+            let status = if apply { "Applied" } else { "Pending" };
+            let json = serde_json::to_value(&coordinates).unwrap_or(Value::Null);
+            tx.execute(
+                "INSERT INTO workspace_coordinate_changes (id, workspace_id, coordinates, reason, proposed_by, status) VALUES ($1, $2, $3, $4, $5, $6)",
+                &[&id, &workspace_id, &json, &reason, &proposed_by, &status],
+            )?;
+            if apply {
+                write_workspace_coordinates(&mut tx, &workspace_id, &coordinates)?;
+                crate::cache::bump(&mut tx, "workspaces")?;
+            }
+            tx.commit()?;
+            Ok(id)
+        })
+    }
+
+    /// The changes to a workspace's coordinates that wait for a second person, oldest first.
+    pub fn pending_coordinate_changes(&self, workspace_id: &str) -> Result<Vec<Value>, RepositoryError> {
+        let workspace_id = workspace_id.to_string();
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT id, coordinates, reason, proposed_by, proposed_at::text FROM workspace_coordinate_changes \
+                 WHERE workspace_id = $1 AND status = 'Pending' ORDER BY proposed_at, id",
+                &[&workspace_id],
+            )?;
+            Ok(rows
+                .iter()
+                .map(|r| {
+                    let id: uuid::Uuid = r.get(0);
+                    serde_json::json!({ "change_id": id, "coordinates": r.get::<_, Value>(1), "reason": r.get::<_, String>(2), "proposed_by": r.get::<_, String>(3), "proposed_at": r.get::<_, String>(4) })
+                })
+                .collect())
+        })
+    }
+
+    /// Decides a pending change. The row is locked, so two people deciding at once decide it once. The person who
+    /// proposed a change cannot confirm it.
+    pub fn decide_coordinate_change(&self, workspace_id: &str, change: uuid::Uuid, decider: &str, confirm: bool) -> Result<CoordinateDecision, RepositoryError> {
+        let (workspace_id, decider) = (workspace_id.to_string(), decider.to_string());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let Some(row) = tx.query_opt(
+                "SELECT coordinates, proposed_by, status FROM workspace_coordinate_changes WHERE id = $1 AND workspace_id = $2 FOR UPDATE",
+                &[&change, &workspace_id],
+            )? else {
+                return Ok(CoordinateDecision::Missing);
+            };
+            let (json, proposed_by, status): (Value, String, String) = (row.get(0), row.get(1), row.get(2));
+            if status != "Pending" {
+                return Ok(CoordinateDecision::AlreadyDecided);
+            }
+            if confirm && proposed_by == decider {
+                return Ok(CoordinateDecision::OwnChange);
+            }
+            let new_status = if confirm { "Confirmed" } else { "Rejected" };
+            tx.execute(
+                "UPDATE workspace_coordinate_changes SET status = $2, decided_by = $3, decided_at = NOW() WHERE id = $1",
+                &[&change, &new_status, &decider],
+            )?;
+            if confirm {
+                let coordinates: scaffoldry_core::coordinates::Coordinates = serde_json::from_value(json).unwrap_or_default();
+                write_workspace_coordinates(&mut tx, &workspace_id, &coordinates)?;
+                crate::cache::bump(&mut tx, "workspaces")?;
+            }
+            tx.commit()?;
+            Ok(CoordinateDecision::Done)
+        })
+    }
+
     pub fn count_workspaces(&self) -> Result<usize, RepositoryError> {
         self.with_client(|client| {
             let row = client.query_one("SELECT COUNT(*) FROM workspaces", &[])?;
@@ -2765,6 +2847,10 @@ impl PostgresRepository {
         })
     }
 
+    pub fn list_domains(&self) -> Result<Vec<(String, Option<String>)>, RepositoryError> {
+        self.with_client(|c| Ok(c.query("SELECT key, parent_key FROM access_domains ORDER BY key", &[])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
+    }
+
     pub fn list_hierarchies(&self) -> Result<Vec<crate::state::HierarchyRecord>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query(
@@ -3283,6 +3369,14 @@ fn note_if_lost(client: &Client, lost: &std::sync::atomic::AtomicU64) {
     if client.is_closed() {
         lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// The outcome of a decision on a pending change to a workspace's coordinates.
+pub enum CoordinateDecision {
+    Done,
+    Missing,
+    AlreadyDecided,
+    OwnChange,
 }
 
 /// The outcome of a decision on a waiting step.

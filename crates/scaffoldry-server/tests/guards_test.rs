@@ -334,6 +334,8 @@ async fn test_04_guard_cannot_grant_access() {
         is_member: false,
         is_ferpa_sensitive: false,
         categories: Default::default(),
+        domain_path: Default::default(),
+        sensitivity_rank: 2,
     });
 
     let dec = decide(&c.state, &student_user, "access_workspace", &res);
@@ -493,6 +495,8 @@ async fn test_05_deny_access_outside_units() {
         is_member: true,
         is_ferpa_sensitive: false,
         categories: Default::default(),
+        domain_path: Default::default(),
+        sensitivity_rank: 2,
     });
 
     let curie_dec = decide(&c.state, &curie_user, "access_workspace", &res);

@@ -22,6 +22,8 @@ pub const ALLOWED_TEMPLATES: &[&str] = &[
     "deny_write_for_affiliation",
     "deny_access_outside_units",
     "deny_sensitive_unless_affiliation",
+    "deny_outside_domain",
+    "deny_above_sensitivity",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,6 +33,12 @@ pub struct GuardRule {
     pub affiliations: Vec<String>,
     #[serde(default)]
     pub unit_ids: Vec<String>,
+    /// For `deny_outside_domain`: the domains an app may sit in, each with the domains below it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<String>,
+    /// For `deny_above_sensitivity`: the highest level an app may have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensitivity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +75,12 @@ impl GuardRule {
             "deny_access_outside_units" if self.unit_ids.is_empty() => {
                 return Err(format!("Template '{}' requires at least one unit_id", self.template));
             }
+            "deny_outside_domain" if self.domains.is_empty() => {
+                return Err(format!("Template '{}' requires at least one domain", self.template));
+            }
+            "deny_above_sensitivity" if self.sensitivity.as_deref().and_then(crate::coordinates::sensitivity_rank).is_none() => {
+                return Err(format!("Template '{}' requires a sensitivity of {}", self.template, crate::coordinates::SENSITIVITY_LEVELS.join(", ")));
+            }
             _ => {}
         }
 
@@ -94,6 +108,10 @@ impl GuardRule {
                     "Only {} may see or export sensitive student data here.",
                     self.affiliations.join(", ")
                 )
+            }
+            "deny_outside_domain" => format!("Only apps in {} may be used in this workspace.", self.domains.join(", ")),
+            "deny_above_sensitivity" => {
+                format!("Apps above {} may not be used in this workspace.", self.sensitivity.as_deref().unwrap_or_default())
             }
             _ => String::new(),
         }
@@ -189,6 +207,40 @@ when {{
     resource has workspace_id &&
     resource.workspace_id == "{workspace_id}" &&
     {when_clause}
+}};"#
+                )
+            }
+            "deny_outside_domain" => {
+                let outside = self.domains.iter().map(|d| format!("!resource.domain_path.contains(\"{d}\")")).collect::<Vec<_>>().join(" && ");
+                format!(
+                    r#"@description("{sentence}")
+forbid (
+    principal,
+    action in [Action::"read_app", Action::"write_record", Action::"export"],
+    resource
+)
+when {{
+    resource has domain_path &&
+    resource has workspace_id &&
+    resource.workspace_id == "{workspace_id}" &&
+    {outside}
+}};"#
+                )
+            }
+            "deny_above_sensitivity" => {
+                let rank = self.sensitivity.as_deref().and_then(crate::coordinates::sensitivity_rank).unwrap_or_default();
+                format!(
+                    r#"@description("{sentence}")
+forbid (
+    principal,
+    action in [Action::"read_app", Action::"write_record", Action::"export"],
+    resource
+)
+when {{
+    resource has sensitivity_rank &&
+    resource has workspace_id &&
+    resource.workspace_id == "{workspace_id}" &&
+    resource.sensitivity_rank > {rank}
 }};"#
                 )
             }

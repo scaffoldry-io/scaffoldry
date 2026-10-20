@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 /// The checks that need a second person to approve when they fail.
-pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity", "rule_effects", "access_loosened"];
+pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity", "rule_effects", "access_loosened", "coordinates_widened"];
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProposalRow {

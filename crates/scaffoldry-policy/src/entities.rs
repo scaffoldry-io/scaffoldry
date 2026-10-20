@@ -36,6 +36,10 @@ pub struct WorkspaceCtx {
     /// categories of those fields. A plain workspace question leaves them false and empty.
     pub is_ferpa_sensitive: bool,
     pub categories: std::collections::BTreeSet<String>,
+    /// The domain the workspace sits in, or the app when the question is about one, and every domain above it.
+    pub domain_path: std::collections::BTreeSet<String>,
+    /// The place of its sensitivity on the ladder: 0 Public, 1 Directory, 2 Internal, 3 Restricted.
+    pub sensitivity_rank: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +153,8 @@ impl WorkspaceCtx {
                 "is_member": self.is_member,
                 "is_ferpa_sensitive": self.is_ferpa_sensitive,
                 "categories": self.categories,
+                "domain_path": self.domain_path,
+                "sensitivity_rank": self.sensitivity_rank,
             }),
             parents,
         )

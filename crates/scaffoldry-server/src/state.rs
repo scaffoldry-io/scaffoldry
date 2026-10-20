@@ -245,6 +245,8 @@ pub struct ServerState {
     pub labels: RwLock<scaffoldry_engine::LabelSet>,
     pub settings: RwLock<HashMap<String, serde_json::Value>>,
     pub formula_rate_limits: RwLock<HashMap<String, (std::time::Instant, u32)>>,
+    /// The domain tree (`access_domains`): `(key, parent key)`. It changes only by migration, so it is read once.
+    pub domains: std::sync::OnceLock<Vec<(String, Option<String>)>>,
 }
 
 impl ServerState {
@@ -691,6 +693,7 @@ impl ServerState {
             labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
             settings: RwLock::new(settings_map),
             formula_rate_limits: RwLock::new(HashMap::new()),
+            domains: std::sync::OnceLock::new(),
         })
     }
 }
