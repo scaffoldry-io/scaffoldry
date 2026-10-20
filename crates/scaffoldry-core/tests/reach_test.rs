@@ -90,14 +90,14 @@ fn a_holder_unit_grant_serves_every_department_and_follows_the_appointment() {
     let physics_chair = holder_set("ada@x.edu", &[holding(w.physics, Some("chair"))], &w.tree, [], NOW);
     let physics_ws = object_in(w.physics, "institution");
     let chemistry_ws = object_in(w.chemistry, "institution");
-    assert_eq!(role_at(&physics_chair, &[g.clone()], &physics_ws, &w.tree, &Domains, NOW), Some((Role::Viewer, vec![1])));
-    assert_eq!(role_at(&physics_chair, &[g.clone()], &chemistry_ws, &w.tree, &Domains, NOW), None, "nothing on Chemistry");
-    assert_eq!(role_at(&physics_chair, &[g.clone()], &object_in(w.lab, "institution"), &w.tree, &Domains, NOW).map(|r| r.0), Some(Role::Viewer), "the subtree below Physics is reached");
+    assert_eq!(role_at(&physics_chair, std::slice::from_ref(&g), &physics_ws, &w.tree, &Domains, NOW), Some((Role::Viewer, vec![1])));
+    assert_eq!(role_at(&physics_chair, std::slice::from_ref(&g), &chemistry_ws, &w.tree, &Domains, NOW), None, "nothing on Chemistry");
+    assert_eq!(role_at(&physics_chair, std::slice::from_ref(&g), &object_in(w.lab, "institution"), &w.tree, &Domains, NOW).map(|r| r.0), Some(Role::Viewer), "the subtree below Physics is reached");
 
     // The same grant, a new chair in Chemistry, and no other change.
     let chemistry_chair = holder_set("bo@x.edu", &[holding(w.chemistry, Some("chair"))], &w.tree, [], NOW);
-    assert_eq!(role_at(&chemistry_chair, &[g.clone()], &chemistry_ws, &w.tree, &Domains, NOW).map(|r| r.0), Some(Role::Viewer));
-    assert_eq!(role_at(&chemistry_chair, &[g.clone()], &physics_ws, &w.tree, &Domains, NOW), None);
+    assert_eq!(role_at(&chemistry_chair, std::slice::from_ref(&g), &chemistry_ws, &w.tree, &Domains, NOW).map(|r| r.0), Some(Role::Viewer));
+    assert_eq!(role_at(&chemistry_chair, std::slice::from_ref(&g), &physics_ws, &w.tree, &Domains, NOW), None);
     // A dean is not a chair.
     let dean = holder_set("cy@x.edu", &[holding(w.physics, Some("dean"))], &w.tree, [], NOW);
     assert_eq!(role_at(&dean, &[g], &physics_ws, &w.tree, &Domains, NOW), None);
@@ -109,7 +109,7 @@ fn a_unit_grant_with_depth_one_reaches_the_child_and_not_the_grandchild() {
     let w = world();
     let g = grant(2, (HolderKind::Person, "ada@x.edu"), Role::Editor, (AnchorKind::Unit, Some(w.science.to_string())), Some(1));
     let ada = holder_set("ada@x.edu", &[], &w.tree, [], NOW);
-    let at = |unit| role_at(&ada, &[g.clone()], &object_in(unit, "institution"), &w.tree, &Domains, NOW).map(|r| r.0);
+    let at = |unit| role_at(&ada, std::slice::from_ref(&g), &object_in(unit, "institution"), &w.tree, &Domains, NOW).map(|r| r.0);
     assert_eq!(at(w.science), Some(Role::Editor), "the anchor itself");
     assert_eq!(at(w.physics), Some(Role::Editor), "a department");
     assert_eq!(at(w.lab), None, "a lab below the department");
@@ -117,7 +117,7 @@ fn a_unit_grant_with_depth_one_reaches_the_child_and_not_the_grandchild() {
     let all = Grant { depth: None, ..g.clone() };
     assert_eq!(role_at(&ada, &[all], &object_in(w.lab, "institution"), &w.tree, &Domains, NOW).map(|r| r.0), Some(Role::Editor), "no depth is the whole subtree");
     let only = Grant { depth: Some(0), ..g };
-    assert_eq!(role_at(&ada, &[only.clone()], &object_in(w.physics, "institution"), &w.tree, &Domains, NOW), None, "depth 0 is the anchor only");
+    assert_eq!(role_at(&ada, std::slice::from_ref(&only), &object_in(w.physics, "institution"), &w.tree, &Domains, NOW), None, "depth 0 is the anchor only");
     assert!(role_at(&ada, &[only], &object_in(w.science, "institution"), &w.tree, &Domains, NOW).is_some());
 }
 
@@ -127,7 +127,7 @@ fn a_grant_with_a_domain_reaches_that_domain_and_below() {
     let w = world();
     let g = Grant { domain: Some("research".to_string()), ..grant(3, (HolderKind::Person, "ada@x.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.root.to_string())), None) };
     let ada = holder_set("ada@x.edu", &[], &w.tree, [], NOW);
-    let at = |domain: &str| role_at(&ada, &[g.clone()], &object_in(w.physics, domain), &w.tree, &Domains, NOW).map(|r| r.0);
+    let at = |domain: &str| role_at(&ada, std::slice::from_ref(&g), &object_in(w.physics, domain), &w.tree, &Domains, NOW).map(|r| r.0);
     assert_eq!(at("research"), Some(Role::Viewer));
     assert_eq!(at("grants"), Some(Role::Viewer), "a domain below research");
     assert_eq!(at("finance"), None);
@@ -156,7 +156,7 @@ fn expired_revoked_and_ended_things_count_for_nothing() {
     let future = Holding { effective: Some(NOW + DAY), ..holding(w.physics, Some("chair")) };
     for h in [ended, future] {
         let set = holder_set("ada@x.edu", &[h], &w.tree, [], NOW);
-        assert_eq!(role_at(&set, &[pos.clone()], &obj, &w.tree, &Domains, NOW), None);
+        assert_eq!(role_at(&set, std::slice::from_ref(&pos), &obj, &w.tree, &Domains, NOW), None);
     }
 }
 
@@ -190,7 +190,7 @@ fn a_container_grant_reaches_its_container_only() {
     let g = grant(20, (HolderKind::Person, "ada@x.edu"), Role::Editor, (AnchorKind::Container, Some("app:payroll".to_string())), None);
     let mut inside = object_in(w.physics, "institution");
     inside.containers.push("app:payroll".to_string());
-    assert_eq!(role_at(&ada, &[g.clone()], &inside, &w.tree, &Domains, NOW).map(|r| r.0), Some(Role::Editor));
+    assert_eq!(role_at(&ada, std::slice::from_ref(&g), &inside, &w.tree, &Domains, NOW).map(|r| r.0), Some(Role::Editor));
     assert_eq!(role_at(&ada, &[g], &object_in(w.physics, "institution"), &w.tree, &Domains, NOW), None, "the workspace alone is not inside the app");
 }
 

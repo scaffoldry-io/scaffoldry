@@ -91,7 +91,7 @@ fn workspace_of_anchor(state: &SharedState, anchor: &str) -> Option<String> {
 }
 
 /// Whether the caller may create (or revoke, or confirm) this grant.
-fn within_scope(state: &SharedState, rights: &Rights, caller: &AuthUser, g: &NewGrant) -> Result<(), ServiceError> {
+fn scope_allows(state: &SharedState, rights: &Rights, caller: &AuthUser, g: &NewGrant) -> Result<(), ServiceError> {
     if rights.platform {
         return Ok(());
     }
@@ -231,8 +231,12 @@ fn check_holder(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
 /// Stores a new grant as a change that waits for a different person.
 pub fn propose_grant(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
     let r = rights(state, caller);
+    // Only a workspace owner or admin can grant without administering a unit, and only on a container.
+    if !r.platform && r.admin_units.is_empty() && body.get("anchor_kind").and_then(Value::as_str) != Some("container") {
+        return Err(ServiceError::GrantOutsideScope("You may not give access here".to_string()));
+    }
     let g = parse_new_grant(state, body)?;
-    within_scope(state, &r, caller, &g)?;
+    scope_allows(state, &r, caller, &g)?;
     let change = json!({ "kind": "grant", "grant": g.json() });
     let id = state.repository.propose_access_change(&change, true, &g.reason, &caller.eppn).map_err(internal)?;
     Ok(json!({ "change_id": id, "status": "Pending", "widens": true, "message": "A different person with the same right must confirm this grant before it takes effect." }))
@@ -255,19 +259,19 @@ fn reason_of(body: &Value) -> Result<String, ServiceError> {
 
 /// Confirms or rejects a change. The proposer cannot confirm. The decider needs the right to make the grant.
 pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Value) -> Result<Value, ServiceError> {
-    let confirm = match body.get("decision").and_then(Value::as_str) {
-        Some("confirm") => true,
-        Some("reject") => false,
-        _ => return Err(bad("decision must be 'confirm' or 'reject'")),
-    };
-    let reason = reason_of(body)?;
     let (change, status, proposed_by, _) = state.repository.access_change(id).map_err(internal)?.ok_or_else(|| missing(state, caller, "Change"))?;
     if status != "Pending" {
         return Err(ServiceError::conflict("That change has already been decided"));
     }
     let g = NewGrant::of_json(&change["grant"]).ok_or_else(|| ServiceError::Internal("The stored change is not a grant".to_string()))?;
     let r = rights(state, caller);
-    within_scope(state, &r, caller, &g).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?;
+    scope_allows(state, &r, caller, &g).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?;
+    let confirm = match body.get("decision").and_then(Value::as_str) {
+        Some("confirm") => true,
+        Some("reject") => false,
+        _ => return Err(bad("decision must be 'confirm' or 'reject'")),
+    };
+    let reason = reason_of(body)?;
     if confirm && proposed_by.eq_ignore_ascii_case(&caller.eppn) {
         return Err(ServiceError::forbidden("The person who proposed a change cannot confirm it"));
     }
@@ -288,10 +292,10 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
 
 /// Revokes a grant. It narrows access, so it applies at once.
 pub fn revoke_grant(state: &SharedState, caller: &AuthUser, id: i64, body: &Value) -> Result<Value, ServiceError> {
-    let reason = reason_of(body)?;
     let row = state.repository.grant_row(id).map_err(internal)?.ok_or_else(|| missing(state, caller, "Grant"))?;
     let as_new = NewGrant::of_json(&row.json()).ok_or_else(|| ServiceError::Internal("The stored grant is not a grant".to_string()))?;
-    within_scope(state, &rights(state, caller), caller, &as_new)?;
+    scope_allows(state, &rights(state, caller), caller, &as_new)?;
+    let reason = reason_of(body)?;
     if row.grant.revoked {
         return Err(ServiceError::conflict("That grant is already revoked"));
     }
