@@ -59,6 +59,8 @@ fn table(id: &str, fields: Vec<FieldSpec>, primary: &str) -> AppTable {
         fields,
         primary_field: Some(primary.into()),
         sample_records: vec![],
+        coordinates: None,
+        row_place: Default::default(),
     }
 }
 
@@ -77,6 +79,7 @@ fn manifest(slug: &str) -> AppManifest {
         department: "biology".into(),
         workspace_id: Some(WORKSPACE.into()),
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![

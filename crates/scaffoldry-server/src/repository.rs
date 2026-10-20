@@ -69,6 +69,7 @@ const SCHEMA_0055: &str =
     include_str!("../../scaffoldry-core/migrations/0055_member_app_scope.sql");
 const SCHEMA_0056: &str = include_str!("../../scaffoldry-core/migrations/0056_imports.sql");
 const SCHEMA_0057: &str = include_str!("../../scaffoldry-core/migrations/0057_hierarchies.sql");
+const SCHEMA_0058: &str = include_str!("../../scaffoldry-core/migrations/0058_coordinates.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str =
@@ -990,7 +991,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 42] = [
+                        let migrations: [(&str, &str); 43] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -1029,6 +1030,7 @@ impl PostgresRepository {
                             ("0055_member_app_scope.sql", SCHEMA_0055),
                             ("0056_imports.sql", SCHEMA_0056),
                             ("0057_hierarchies.sql", SCHEMA_0057),
+                            ("0058_coordinates.sql", SCHEMA_0058),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -1401,19 +1403,19 @@ impl PostgresRepository {
         self.with_client(|client| {
             let rows = client.query(
                 "SELECT id, name, code, organization, department, description, icon, lead, \
-                        visibility, allowed_affiliations, data_classification, \
+                        visibility, data_classification, \
                         created_at::text, organization_id \
                  FROM workspaces ORDER BY created_at ASC",
                 &[],
             )?;
+            let mut coordinates = workspace_coordinates(client)?;
 
             let mut workspaces = Vec::new();
             for r in rows {
-                let allowed_affiliations: Value = r.get(9);
-                let affs: Vec<String> =
-                    serde_json::from_value(allowed_affiliations).unwrap_or_default();
+                let id: String = r.get(0);
                 workspaces.push(WorkspaceRecord {
-                    id: r.get(0),
+                    coordinates: coordinates.remove(&id).unwrap_or_default(),
+                    id,
                     name: r.get(1),
                     code: r.get(2),
                     organization: r.get(3),
@@ -1422,10 +1424,9 @@ impl PostgresRepository {
                     icon: r.get(6),
                     lead: r.get(7),
                     visibility: r.get(8),
-                    allowed_affiliations: affs,
-                    data_classification: r.get(10),
-                    created_at: r.get(11),
-                    organization_id: r.get(12),
+                    data_classification: r.get(9),
+                    created_at: r.get(10),
+                    organization_id: r.get(11),
                 });
             }
             Ok(workspaces)
@@ -1437,18 +1438,18 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let row = client.query_opt(
                 "SELECT id, name, code, organization, department, description, icon, lead, \
-                        visibility, allowed_affiliations, data_classification, \
+                        visibility, data_classification, \
                         created_at::text, organization_id \
                  FROM workspaces WHERE id = $1",
                 &[&id_str],
             )?;
+            let mut coordinates = workspace_coordinates(client)?;
 
             Ok(row.map(|r| {
-                let allowed_affiliations: Value = r.get(9);
-                let affs: Vec<String> =
-                    serde_json::from_value(allowed_affiliations).unwrap_or_default();
+                let id: String = r.get(0);
                 WorkspaceRecord {
-                    id: r.get(0),
+                    coordinates: coordinates.remove(&id).unwrap_or_default(),
+                    id,
                     name: r.get(1),
                     code: r.get(2),
                     organization: r.get(3),
@@ -1457,10 +1458,9 @@ impl PostgresRepository {
                     icon: r.get(6),
                     lead: r.get(7),
                     visibility: r.get(8),
-                    allowed_affiliations: affs,
-                    data_classification: r.get(10),
-                    created_at: r.get(11),
-                    organization_id: r.get(12),
+                    data_classification: r.get(9),
+                    created_at: r.get(10),
+                    organization_id: r.get(11),
                 }
             }))
         })
@@ -1470,11 +1470,10 @@ impl PostgresRepository {
         let ws = ws.clone();
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let affs_json = serde_json::to_value(&ws.allowed_affiliations)?;
             tx.execute(
                 "INSERT INTO workspaces (id, name, code, organization, department, description, \
-                        icon, lead, visibility, allowed_affiliations, data_classification, organization_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+                        icon, lead, visibility, data_classification, organization_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
                  ON CONFLICT (id) DO UPDATE SET \
                     name = EXCLUDED.name, \
                     code = EXCLUDED.code, \
@@ -1484,7 +1483,6 @@ impl PostgresRepository {
                     icon = EXCLUDED.icon, \
                     lead = EXCLUDED.lead, \
                     visibility = EXCLUDED.visibility, \
-                    allowed_affiliations = EXCLUDED.allowed_affiliations, \
                     data_classification = EXCLUDED.data_classification, \
                     organization_id = EXCLUDED.organization_id",
                 &[
@@ -1497,11 +1495,11 @@ impl PostgresRepository {
                     &ws.icon,
                     &ws.lead,
                     &ws.visibility,
-                    &affs_json,
                     &ws.data_classification,
                     &ws.organization_id,
                 ],
             )?;
+            write_workspace_coordinates(&mut tx, &ws.id, &ws.coordinates)?;
             crate::cache::bump(&mut tx, "workspaces")?;
             tx.commit()?;
             Ok(())
@@ -1516,11 +1514,10 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             for ws in batch {
-                let affs_json = serde_json::to_value(&ws.allowed_affiliations)?;
                 tx.execute(
                     "INSERT INTO workspaces (id, name, code, organization, department, description, \
-                            icon, lead, visibility, allowed_affiliations, data_classification, organization_id) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+                            icon, lead, visibility, data_classification, organization_id) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
                      ON CONFLICT (id) DO UPDATE SET \
                         name = EXCLUDED.name, \
                         code = EXCLUDED.code, \
@@ -1530,7 +1527,6 @@ impl PostgresRepository {
                         icon = EXCLUDED.icon, \
                         lead = EXCLUDED.lead, \
                         visibility = EXCLUDED.visibility, \
-                        allowed_affiliations = EXCLUDED.allowed_affiliations, \
                         data_classification = EXCLUDED.data_classification, \
                         organization_id = EXCLUDED.organization_id",
                     &[
@@ -1543,15 +1539,97 @@ impl PostgresRepository {
                         &ws.icon,
                         &ws.lead,
                         &ws.visibility,
-                        &affs_json,
                         &ws.data_classification,
                         &ws.organization_id,
                     ],
                 )?;
+                write_workspace_coordinates(&mut tx, &ws.id, &ws.coordinates)?;
             }
             crate::cache::bump(&mut tx, "workspaces")?;
             tx.commit()?;
             Ok(())
+        })
+    }
+
+    /// Records a change to a workspace's coordinates. `Applied` writes the coordinates at once. `Pending` waits for a
+    /// second person (`decide_coordinate_change`).
+    pub fn record_coordinate_change(
+        &self,
+        workspace_id: &str,
+        coordinates: &scaffoldry_core::coordinates::Coordinates,
+        reason: &str,
+        proposed_by: &str,
+        apply: bool,
+    ) -> Result<uuid::Uuid, RepositoryError> {
+        let (workspace_id, coordinates, reason, proposed_by) = (workspace_id.to_string(), coordinates.clone(), reason.to_string(), proposed_by.to_string());
+        self.with_client(move |client| {
+            let id = uuid::Uuid::new_v4();
+            let mut tx = client.transaction()?;
+            let status = if apply { "Applied" } else { "Pending" };
+            let json = serde_json::to_value(&coordinates).unwrap_or(Value::Null);
+            tx.execute(
+                "INSERT INTO workspace_coordinate_changes (id, workspace_id, coordinates, reason, proposed_by, status) VALUES ($1, $2, $3, $4, $5, $6)",
+                &[&id, &workspace_id, &json, &reason, &proposed_by, &status],
+            )?;
+            if apply {
+                write_workspace_coordinates(&mut tx, &workspace_id, &coordinates)?;
+                crate::cache::bump(&mut tx, "workspaces")?;
+            }
+            tx.commit()?;
+            Ok(id)
+        })
+    }
+
+    /// The changes to a workspace's coordinates that wait for a second person, oldest first.
+    pub fn pending_coordinate_changes(&self, workspace_id: &str) -> Result<Vec<Value>, RepositoryError> {
+        let workspace_id = workspace_id.to_string();
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT id, coordinates, reason, proposed_by, proposed_at::text FROM workspace_coordinate_changes \
+                 WHERE workspace_id = $1 AND status = 'Pending' ORDER BY proposed_at, id",
+                &[&workspace_id],
+            )?;
+            Ok(rows
+                .iter()
+                .map(|r| {
+                    let id: uuid::Uuid = r.get(0);
+                    serde_json::json!({ "change_id": id, "coordinates": r.get::<_, Value>(1), "reason": r.get::<_, String>(2), "proposed_by": r.get::<_, String>(3), "proposed_at": r.get::<_, String>(4) })
+                })
+                .collect())
+        })
+    }
+
+    /// Decides a pending change. The row is locked, so two people deciding at once decide it once. The person who
+    /// proposed a change cannot confirm it.
+    pub fn decide_coordinate_change(&self, workspace_id: &str, change: uuid::Uuid, decider: &str, confirm: bool) -> Result<CoordinateDecision, RepositoryError> {
+        let (workspace_id, decider) = (workspace_id.to_string(), decider.to_string());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let Some(row) = tx.query_opt(
+                "SELECT coordinates, proposed_by, status FROM workspace_coordinate_changes WHERE id = $1 AND workspace_id = $2 FOR UPDATE",
+                &[&change, &workspace_id],
+            )? else {
+                return Ok(CoordinateDecision::Missing);
+            };
+            let (json, proposed_by, status): (Value, String, String) = (row.get(0), row.get(1), row.get(2));
+            if status != "Pending" {
+                return Ok(CoordinateDecision::AlreadyDecided);
+            }
+            if confirm && proposed_by == decider {
+                return Ok(CoordinateDecision::OwnChange);
+            }
+            let new_status = if confirm { "Confirmed" } else { "Rejected" };
+            tx.execute(
+                "UPDATE workspace_coordinate_changes SET status = $2, decided_by = $3, decided_at = NOW() WHERE id = $1",
+                &[&change, &new_status, &decider],
+            )?;
+            if confirm {
+                let coordinates: scaffoldry_core::coordinates::Coordinates = serde_json::from_value(json).unwrap_or_default();
+                write_workspace_coordinates(&mut tx, &workspace_id, &coordinates)?;
+                crate::cache::bump(&mut tx, "workspaces")?;
+            }
+            tx.commit()?;
+            Ok(CoordinateDecision::Done)
         })
     }
 
@@ -2769,6 +2847,10 @@ impl PostgresRepository {
         })
     }
 
+    pub fn list_domains(&self) -> Result<Vec<(String, Option<String>)>, RepositoryError> {
+        self.with_client(|c| Ok(c.query("SELECT key, parent_key FROM access_domains ORDER BY key", &[])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
+    }
+
     pub fn list_hierarchies(&self) -> Result<Vec<crate::state::HierarchyRecord>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query(
@@ -3289,11 +3371,38 @@ fn note_if_lost(client: &Client, lost: &std::sync::atomic::AtomicU64) {
     }
 }
 
+/// The outcome of a decision on a pending change to a workspace's coordinates.
+pub enum CoordinateDecision {
+    Done,
+    Missing,
+    AlreadyDecided,
+    OwnChange,
+}
+
 /// The outcome of a decision on a waiting step.
 pub enum Decided {
     Done,
     /// The instance is gone, or no longer waiting at that step.
     Stale,
+}
+
+/// The coordinates every workspace names, by workspace id.
+fn workspace_coordinates(client: &mut Client) -> Result<HashMap<String, scaffoldry_core::coordinates::Coordinates>, RepositoryError> {
+    let rows = client.query("SELECT workspace_id, axis, value FROM workspace_coordinates ORDER BY workspace_id, axis", &[])?;
+    let mut grouped: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for r in rows {
+        grouped.entry(r.get(0)).or_default().push((r.get(1), r.get(2)));
+    }
+    Ok(grouped.into_iter().map(|(id, axes)| (id, scaffoldry_core::coordinates::Coordinates::from_axes(axes))).collect())
+}
+
+/// Replaces the coordinate rows of a workspace inside the caller's transaction.
+fn write_workspace_coordinates(tx: &mut postgres::Transaction<'_>, workspace_id: &str, coordinates: &scaffoldry_core::coordinates::Coordinates) -> Result<(), RepositoryError> {
+    tx.execute("DELETE FROM workspace_coordinates WHERE workspace_id = $1", &[&workspace_id])?;
+    for (axis, value) in coordinates.to_axes() {
+        tx.execute("INSERT INTO workspace_coordinates (workspace_id, axis, value) VALUES ($1, $2, $3)", &[&workspace_id, &axis, &value])?;
+    }
+    Ok(())
 }
 
 fn status_name(status: &ProcessStatus) -> &'static str {

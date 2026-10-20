@@ -32,7 +32,7 @@ pub fn index_column(t: FieldType) -> IndexColumn {
         Date | DateTime | CreatedTime | LastModifiedTime => IndexColumn::Ts,
         // A formula's column follows its result, so this is only the default for a sort on it.
         // A Link is never indexed here. `record_links` holds it.
-        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link | Collaborator { .. } | CreatedBy | LastModifiedBy | LongText | Attachment { .. } => IndexColumn::Txt,
+        Text | Select | Email | Phone | Url | Relation | MultiSelect | Lookup | Formula | Link | Collaborator { .. } | CreatedBy | LastModifiedBy | LongText | Attachment { .. } | Unit => IndexColumn::Txt,
     }
 }
 
@@ -41,6 +41,8 @@ pub fn index_column(t: FieldType) -> IndexColumn {
 pub fn indexed_fields(m: &AppManifest, table_id: &str) -> BTreeSet<String> {
     let Some(table) = m.tables.iter().find(|t| t.id == table_id) else { return BTreeSet::new() };
     let mut out: BTreeSet<String> = table.fields.iter().filter(|f| f.indexed || f.constraints.as_ref().is_some_and(|c| c.unique)).map(|f| f.name.clone()).collect();
+    // A field that places the rows of the table in a hierarchy is always indexed, so access by place can use it.
+    out.extend(table.row_place.values().cloned());
     for view in m.views.iter().filter(|v| v.table_id.as_deref() == Some(table_id)) {
         out.extend(view.sort_rules.iter().map(|r| r.field_name.clone()));
         if let Some(filter) = &view.filters {

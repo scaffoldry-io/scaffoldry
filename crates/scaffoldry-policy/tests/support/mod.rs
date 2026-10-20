@@ -121,6 +121,8 @@ impl Asks for ScaffoldryPolicyEngine {
             is_member: input.is_member,
             is_ferpa_sensitive: false,
             categories: Default::default(),
+            domain_path: Default::default(),
+            sensitivity_rank: 2,
         });
         authorize(self, &plain_principal(input.principal_eppn, input.principal_affiliation, input.principal_department), input.action_name, &resource)
     }

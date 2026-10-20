@@ -13,6 +13,8 @@ pub fn add(m: &mut Entries) {
         m.insert(k("PUT", "/workspaces/{id}/collaborators/{eppn}"), case!(collab_change, root));
         m.insert(k("DELETE", "/workspaces/{id}/collaborators/{eppn}"), case!(collab_remove, root));
         m.insert(k("PUT", "/workspaces/{id}/guards"), case!(guards_put, root));
+        m.insert(k("PUT", "/workspaces/{id}/coordinates"), case!(coordinates_put, root));
+        m.insert(k("POST", "/workspaces/{id}/coordinates/changes/{change}/decide"), case!(coordinates_decide, root));
         exempt(m, &k("POST", "/workspaces/{id}/guards/impact"), "evaluates a guard against the workspace and stores nothing");
         exempt(m, &k("POST", "/workspaces/{id}/guards/test"), "evaluates a guard against a request and stores nothing");
     }
@@ -115,6 +117,28 @@ async fn guards_put(w: World, root: &'static str) -> Outcome {
     )?;
     let seen = status(w.rb("GET", &format!("/api/v1/workspaces/{id}/guards"), ADMIN, None).await, StatusCode::OK, "B reads the guards")?;
     ensure(has(&seen, "deny_access_outside_units"), format!("B shows the guard A set: {seen}"))
+}
+
+async fn coordinates_put(w: World, root: &'static str) -> Outcome {
+    let id = make_workspace(&w, &unique("P6CO"), "restricted").await?;
+    status(w.wa("PUT", &format!("{root}/workspaces/{id}/coordinates"), ADMIN, Some(json!({ "sensitivity": "Restricted", "reason": "Narrowing" }))).await, StatusCode::OK, "narrow")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/workspaces/{id}/coordinates"), ADMIN, None).await, StatusCode::OK, "B reads them")?;
+    ensure(seen["effective"]["sensitivity"] == "Restricted", format!("B shows the sensitivity A set: {seen}"))
+}
+
+async fn coordinates_decide(w: World, root: &'static str) -> Outcome {
+    let id = make_workspace(&w, &unique("P6CD"), "restricted").await?;
+    let second = person("p6second");
+    make_user(&w, &second).await?;
+    status(w.wa("POST", &format!("/api/v1/workspaces/{id}/collaborators"), ADMIN, Some(json!({ "eppn": second, "role": "admin" }))).await, StatusCode::CREATED, "add the second person")?;
+    status(w.wa("PUT", &format!("{root}/workspaces/{id}/coordinates"), ADMIN, Some(json!({ "sensitivity": "Restricted", "reason": "Narrowing" }))).await, StatusCode::OK, "narrow")?;
+    let pending = status(w.wa("PUT", &format!("{root}/workspaces/{id}/coordinates"), ADMIN, Some(json!({ "sensitivity": "Directory", "reason": "Widening" }))).await, StatusCode::ACCEPTED, "widen")?;
+    let change = pending["change_id"].as_str().unwrap_or_default().to_string();
+    let listed = status(w.rb("GET", &format!("/api/v1/workspaces/{id}/coordinates"), ADMIN, None).await, StatusCode::OK, "B lists the pending change")?;
+    ensure(has(&listed["pending"], &change), format!("B lists the change A stored: {listed}"))?;
+    status(w.rb("POST", &format!("{root}/workspaces/{id}/coordinates/changes/{change}/decide"), &second, Some(json!({ "decision": "confirm" }))).await, StatusCode::OK, "B confirms")?;
+    let seen = status(w.wa("GET", &format!("/api/v1/workspaces/{id}/coordinates"), ADMIN, None).await, StatusCode::OK, "A reads them")?;
+    ensure(seen["effective"]["sensitivity"] == "Directory", format!("A shows the change B confirmed: {seen}"))
 }
 
 async fn admin_ws_move(w: World, root: &'static str) -> Outcome {

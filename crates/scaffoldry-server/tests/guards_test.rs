@@ -89,11 +89,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
         icon: "dna".to_string(),
         lead: "Dr. Marie Curie".to_string(),
         visibility: "departmental".to_string(),
-        allowed_affiliations: vec![
-            "faculty".to_string(),
-            "staff".to_string(),
-            "student".to_string(),
-        ],
+        coordinates: Default::default(),
         data_classification: "restricted".to_string(),
         created_at: now.clone(),
         organization_id: None,
@@ -338,6 +334,8 @@ async fn test_04_guard_cannot_grant_access() {
         is_member: false,
         is_ferpa_sensitive: false,
         categories: Default::default(),
+        domain_path: Default::default(),
+        sensitivity_rank: 2,
     });
 
     let dec = decide(&c.state, &student_user, "access_workspace", &res);
@@ -497,6 +495,8 @@ async fn test_05_deny_access_outside_units() {
         is_member: true,
         is_ferpa_sensitive: false,
         categories: Default::default(),
+        domain_path: Default::default(),
+        sensitivity_rank: 2,
     });
 
     let curie_dec = decide(&c.state, &curie_user, "access_workspace", &res);

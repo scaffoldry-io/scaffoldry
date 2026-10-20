@@ -35,6 +35,14 @@ pub fn router() -> Router<SharedState> {
             get(get_workspace_guards).put(put_workspace_guards),
         )
         .route(
+            "/workspaces/{id}/coordinates",
+            get(get_workspace_coordinates).put(put_workspace_coordinates),
+        )
+        .route(
+            "/workspaces/{id}/coordinates/changes/{change}/decide",
+            axum::routing::post(decide_workspace_coordinates),
+        )
+        .route(
             "/workspaces/{id}/guards/impact",
             axum::routing::post(impact_workspace_guards),
         )
@@ -112,14 +120,6 @@ async fn create_workspace(
             .get("visibility")
             .and_then(|v| v.as_str())
             .map(str::to_string),
-        allowed_affiliations: payload
-            .get("allowed_affiliations")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| s.as_str().map(str::to_string))
-                    .collect()
-            }),
         data_classification: payload
             .get("data_classification")
             .and_then(|v| v.as_str())
@@ -217,6 +217,7 @@ async fn remove_collaborator(
 
 use scaffoldry_core::guards::{compile_rules, GuardRule, WorkspaceGuardRecord, MAX_GUARD_RULES};
 use scaffoldry_policy::entities::{RecordCtx, Resource};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 fn check_can_manage_guards(
@@ -422,6 +423,13 @@ async fn put_workspace_guards(
                             )));
                         }
                     }
+                }
+            }
+
+            let known = crate::service::coordinates::domains(&state)?;
+            for domain in rules.iter().flat_map(|r| &r.domains) {
+                if !known.iter().any(|(k, _)| k == domain) {
+                    return Err(ServiceError::bad_request(format!("Domain '{domain}' does not exist")));
                 }
             }
 
@@ -738,4 +746,111 @@ async fn test_workspace_guards(
             "policy": prop_pol,
         }
     })))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Workspace coordinates (access model phase 3)
+// ---------------------------------------------------------------------------------------------
+
+fn workspace_for_coordinates(id: &str, state: &SharedState) -> Result<WorkspaceRecord, ServiceError> {
+    state
+        .workspaces
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .get(id)
+        .cloned()
+        .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))
+}
+
+fn effective_json(e: &scaffoldry_core::coordinates::Effective) -> Value {
+    json!({ "units": e.units, "domain": e.domain, "sensitivity": e.sensitivity })
+}
+
+async fn get_workspace_coordinates(
+    State(state): State<SharedState>,
+    user: Option<Extension<AuthUser>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ServiceError> {
+    let caller = resolve_caller(user, &headers, &state)?;
+    let ws = workspace_for_coordinates(&id, &state)?;
+    crate::service::access::authorize_workspace_denying(&caller, &ws, "access_workspace", "Forbidden: this workspace is not open to you", &state)?;
+    let own = (!ws.coordinates.is_empty()).then_some(&ws.coordinates);
+    let effective = crate::service::coordinates::with_places(&state, |p| scaffoldry_core::coordinates::workspace_effective(own, p).map(|e| effective_json(&e)))?
+        .map_err(|_| ServiceError::internal("The workspace's coordinates do not resolve"))?;
+    let pending = state.repository.pending_coordinate_changes(&id).map_err(|e| ServiceError::internal(e.to_string()))?;
+    Ok(Json(json!({ "coordinates": ws.coordinates, "effective": effective, "pending": pending })))
+}
+
+/// Replaces the workspace's coordinates. A change that only narrows is applied. A change that widens waits for a second
+/// person.
+async fn put_workspace_coordinates(
+    State(state): State<SharedState>,
+    user: Option<Extension<AuthUser>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(payload): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), ServiceError> {
+    let caller = resolve_caller(user, &headers, &state)?;
+    let ws = workspace_for_coordinates(&id, &state)?;
+    check_can_manage_guards(&caller, &ws, &state)?;
+    let reason = payload
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| ServiceError::bad_request("reason is required and cannot be empty"))?
+        .to_string();
+    let proposed: scaffoldry_core::coordinates::Coordinates = serde_json::from_value(payload)
+        .map_err(|e| ServiceError::bad_request(format!("Invalid coordinates: {e}")))?;
+
+    let current = (!ws.coordinates.is_empty()).then_some(&ws.coordinates);
+    let (problems, widens) = crate::service::coordinates::with_places(&state, |p| {
+        match crate::service::coordinates::effective_of_workspace(Some(&proposed), p) {
+            Err(problems) => (problems, false),
+            Ok(next) => {
+                let widens = match scaffoldry_core::coordinates::workspace_effective(current, p) {
+                    Ok(now) => !crate::service::coordinates::looser(&now, &next, p).is_empty(),
+                    Err(_) => false,
+                };
+                (Vec::new(), widens)
+            }
+        }
+    })?;
+    if !problems.is_empty() {
+        return Err(ServiceError::bad_request(problems.join("; ")));
+    }
+    let change = state
+        .repository
+        .record_coordinate_change(&id, &proposed, &reason, &caller.eppn, !widens)
+        .map_err(|e| ServiceError::internal(e.to_string()))?;
+    if widens {
+        Ok((StatusCode::ACCEPTED, Json(json!({ "change_id": change, "status": "Pending", "message": "This widens the workspace's coordinates. A different person must confirm it." }))))
+    } else {
+        Ok((StatusCode::OK, Json(json!({ "change_id": change, "status": "Applied" }))))
+    }
+}
+
+async fn decide_workspace_coordinates(
+    State(state): State<SharedState>,
+    user: Option<Extension<AuthUser>>,
+    headers: HeaderMap,
+    Path((id, change)): Path<(String, String)>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ServiceError> {
+    use crate::repository::CoordinateDecision as D;
+    let caller = resolve_caller(user, &headers, &state)?;
+    let ws = workspace_for_coordinates(&id, &state)?;
+    check_can_manage_guards(&caller, &ws, &state)?;
+    let confirm = match payload.get("decision").and_then(Value::as_str) {
+        Some("confirm") => true,
+        Some("reject") => false,
+        _ => return Err(ServiceError::bad_request("decision must be 'confirm' or 'reject'")),
+    };
+    let change = uuid::Uuid::parse_str(&change).map_err(|_| ServiceError::NotFound("Change not found".to_string()))?;
+    match state.repository.decide_coordinate_change(&id, change, &caller.eppn, confirm).map_err(|e| ServiceError::internal(e.to_string()))? {
+        D::Done => Ok(Json(json!({ "change_id": change, "status": if confirm { "Confirmed" } else { "Rejected" } }))),
+        D::Missing => Err(ServiceError::NotFound("Change not found".to_string())),
+        D::AlreadyDecided => Err(ServiceError::conflict("That change has already been decided")),
+        D::OwnChange => Err(ServiceError::forbidden("The person who proposed a change cannot confirm it")),
+    }
 }

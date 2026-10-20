@@ -356,7 +356,7 @@ async fn test_overview_counts_match_fixture() {
             icon: "chart".to_string(),
             lead: admin_eppn.to_string(),
             visibility: "restricted".to_string(),
-            allowed_affiliations: vec![],
+            coordinates: Default::default(),
             data_classification: "Internal".to_string(),
             created_at: "2026-10-10T00:00:00Z".to_string(),
             organization_id: Some(dept_id),

@@ -169,6 +169,9 @@ pub enum FieldType {
     Attachment {
         allow_multiple: bool,
     },
+    /// A unit of the hierarchy the field's `hierarchy` names. The value is a unit id, validated against that
+    /// hierarchy and indexed as text. A table may use it to place its rows (`AppTable::row_place`).
+    Unit,
 }
 
 impl FieldType {
@@ -233,6 +236,7 @@ impl serde::Serialize for FieldType {
             FieldType::Duration { .. } => serializer.serialize_str("Duration"),
             FieldType::DateTime => serializer.serialize_str("DateTime"),
             FieldType::Attachment { .. } => serializer.serialize_str("Attachment"),
+            FieldType::Unit => serializer.serialize_str("Unit"),
         }
     }
 }
@@ -274,6 +278,7 @@ impl<'de> serde::Deserialize<'de> for FieldType {
                 "Duration" => Ok(FieldType::Duration { format: DurationFormat::HMm }),
                 "DateTime" => Ok(FieldType::DateTime),
                 "Attachment" => Ok(FieldType::Attachment { allow_multiple: true }),
+                "Unit" => Ok(FieldType::Unit),
                 other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
             },
             serde_json::Value::Object(map) => {
@@ -499,6 +504,13 @@ pub struct FieldSpec {
     pub constraints: Option<FieldConstraints>,
     #[serde(default)]
     pub notify_on_assign: bool,
+    /// The field's own sensitivity, a level on the ladder. It may be higher than its table's and never lower. A field
+    /// keeps its `categories` as well.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensitivity: Option<String>,
+    /// A `Unit` field: the key of the hierarchy whose units it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hierarchy: Option<String>,
 }
 
 /// How many records a link field holds.
@@ -605,6 +617,8 @@ impl FieldSpec {
             set_on: None,
             constraints: None,
             notify_on_assign: false,
+            sensitivity: None,
+            hierarchy: None,
         }
     }
 }
@@ -707,6 +721,13 @@ pub struct AppTable {
     pub primary_field: Option<String>,
     #[serde(default)]
     pub sample_records: Vec<Value>,
+    /// Where the table sits, narrower than its app's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinates: Option<scaffoldry_core::coordinates::Coordinates>,
+    /// For each hierarchy, the field that places a row in it: a `Unit` field of that hierarchy, or a `Collaborator`
+    /// field for a hierarchy of people. Changing it is a manifest change.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub row_place: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1056,6 +1077,9 @@ pub struct AppManifest {
     pub pages: Vec<AppPage>,
     #[serde(default)]
     pub access: AccessManifest,
+    /// Where the app sits, narrower than its workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinates: Option<scaffoldry_core::coordinates::Coordinates>,
 }
 
 /// A screen of an app: a built-in view, or a custom page an agent wrote.

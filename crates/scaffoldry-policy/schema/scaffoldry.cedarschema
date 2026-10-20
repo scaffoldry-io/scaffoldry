@@ -4,6 +4,9 @@
 // Workspace.unit_path_ids is the workspace's unit and every ancestor of it. User.admin_unit_ids is the units where the
 // person is a unit administrator. A workspace asked about an app carries that app's sensitivity.
 //
+// Phase 3: Workspace.domain_path is the domain of the workspace, or of the app asked about, and every domain above it.
+// Workspace.sensitivity_rank is its place on the ladder Public 0, Directory 1, Internal 2, Restricted 3.
+//
 // Phase 2: One notion of place.
 // Unit entity carries hierarchy attribute and ancestor units as parents.
 // Workspace, App, Record, and System carry their unit attribute and parents.
@@ -35,6 +38,8 @@ entity Workspace in [Unit] = {
   is_member: Bool,
   is_ferpa_sensitive: Bool,
   categories: Set<String>,
+  domain_path: Set<String>,
+  sensitivity_rank: Long,
 };
 
 entity App in [Unit] = {

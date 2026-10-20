@@ -96,6 +96,19 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
             problems.push(format!("table '{}' indexes {} fields, the limit is {MAX_INDEXED_FIELDS}", table.id, indexed.len()));
         }
         for f in &table.fields {
+            match (f.field_type == FieldType::Unit, &f.hierarchy) {
+                (true, None) => problems.push(format!("table '{}': Unit field '{}' must name its hierarchy", table.id, f.name)),
+                (false, Some(_)) => problems.push(format!("table '{}': field '{}' names a hierarchy but is not a Unit field", table.id, f.name)),
+                _ => {}
+            }
+        }
+        for (hierarchy, field) in &table.row_place {
+            let ok = table.fields.iter().any(|f| f.name == *field && f.field_type == FieldType::Unit && f.hierarchy.as_deref() == Some(hierarchy.as_str()));
+            if !ok {
+                problems.push(format!("table '{}': row place for hierarchy '{hierarchy}' names '{field}', which is not a Unit field of that hierarchy", table.id));
+            }
+        }
+        for f in &table.fields {
             if f.indexed && f.field_type == FieldType::Lookup {
                 problems.push(format!("table '{}': Lookup field '{}' cannot be indexed", table.id, f.name));
             }

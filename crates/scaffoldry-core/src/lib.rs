@@ -1,6 +1,7 @@
 //! Scaffoldry Core Domain Models & Standards Crosswalks
 
 pub mod access;
+pub mod coordinates;
 pub mod approver;
 pub mod dataset;
 pub mod guards;

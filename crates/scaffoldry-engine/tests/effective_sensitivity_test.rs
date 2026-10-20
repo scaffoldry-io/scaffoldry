@@ -90,6 +90,7 @@ fn manifest() -> AppManifest {
         department: "x".to_string(),
         workspace_id: None,
         herm_capability_id: None,
+        coordinates: None,
         custom_domain: None,
         custom_domain_verified: false,
         views: vec![AppView::table(

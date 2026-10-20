@@ -311,6 +311,11 @@ fn check_manifest_part(
         return Err(ServiceError::BadRequest(format!("schema: the manifest has {} problem(s): {}", problems.len(), problems.join("; "))));
     }
 
+    let placed = crate::service::coordinates::manifest_problems(state, ws, &manifest)?;
+    if !placed.is_empty() {
+        return Err(ServiceError::BadRequest(format!("coordinates: the manifest has {} problem(s): {}", placed.len(), placed.join("; "))));
+    }
+
     for table in &manifest.tables {
         for f in &table.fields {
             if f.field_type == scaffoldry_engine::FieldType::Formula {
@@ -536,6 +541,10 @@ fn check_manifest_part(
         }
     }
 
+    let coordinates_widened = match live {
+        Some(l) => crate::service::coordinates::widened(state, ws, l, &manifest)?,
+        None => vec![],
+    };
     let checks = vec![
         check("schema", vec![]),
         check("sensitivity", sensitivity_problems),
@@ -545,6 +554,7 @@ fn check_manifest_part(
         warn("relationships", scaffoldry_engine::manifest_warnings(&manifest)),
         warn("access_rules", access_problems),
         check("access_loosened", loosened),
+        check("coordinates_widened", coordinates_widened),
     ];
     Ok(ManifestPart { manifest, checks, sources: provided.into_iter().collect() })
 }

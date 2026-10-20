@@ -196,6 +196,14 @@ fn validate_record_constraints(
                 });
             }
         }
+        if f.field_type == scaffoldry_engine::FieldType::Unit {
+            if let (Some(hierarchy), Some(unit)) = (f.hierarchy.as_deref(), val.and_then(Value::as_str).filter(|u| !u.is_empty())) {
+                let there = crate::service::coordinates::with_places(state, |p| p.unit_within(hierarchy, unit, unit))?;
+                if !there {
+                    return Err(ServiceError::BadRequest(format!("field '{}': '{unit}' is not a unit of the '{hierarchy}' hierarchy", f.name)));
+                }
+            }
+        }
         if let Some(ref c) = f.constraints {
             if let Some(val) = val {
                 if let Some(num) = val.as_f64() {

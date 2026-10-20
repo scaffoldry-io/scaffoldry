@@ -315,6 +315,7 @@ pub fn workspace_ctx(
         None => Vec::new(),
     };
     let (is_ferpa_sensitive, categories) = sensitivity.unwrap_or_default();
+    let (domain_path, sensitivity_rank) = crate::service::coordinates::cedar_place(state, ws, None);
     WorkspaceCtx {
         workspace_id: ws.id.clone(),
         department: ws.department.clone(),
@@ -326,6 +327,8 @@ pub fn workspace_ctx(
         is_member: role.is_some(),
         is_ferpa_sensitive,
         categories,
+        domain_path,
+        sensitivity_rank,
     }
 }
 
@@ -486,13 +489,17 @@ pub fn authorize_app(
         AppAction::Manage => "manage_app",
     };
 
-    let resource = workspace_resource(
+    let mut resource = workspace_resource(
         state,
         caller,
         &ws,
         Some(slug),
         Some(app_sensitivity(&app, state)),
     );
+    // The question is about this app, so the place Cedar sees is the app's.
+    if let Resource::Workspace(ctx) = &mut resource {
+        (ctx.domain_path, ctx.sensitivity_rank) = crate::service::coordinates::cedar_place(state, &ws, Some(&app));
+    }
     // A forbid from a guard is final. A unit administrator is let in by a Cedar permit, never by a fallback after a deny.
     require(
         state,

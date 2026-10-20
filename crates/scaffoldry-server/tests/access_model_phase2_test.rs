@@ -483,6 +483,8 @@ fn test_6_five_rewritten_policies_allow_descendant_and_deny_outside() {
         is_member: false,
         is_ferpa_sensitive: false,
         categories: Default::default(),
+        domain_path: Default::default(),
+        sensitivity_rank: 2,
     });
     let dec_in = scaffoldry_policy::entities::authorize(
         &engine,

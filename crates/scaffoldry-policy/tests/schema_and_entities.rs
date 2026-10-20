@@ -52,6 +52,8 @@ fn a_non_member_has_an_empty_member_role_and_policy_13_evaluates_without_error()
         is_member: false,
         is_ferpa_sensitive: false,
         categories: Default::default(),
+        domain_path: Default::default(),
+        sensitivity_rank: 2,
     };
     assert_eq!(ws.entity_member_role(), "");
     let result = authorize(&engine, &principal("faculty", "biology"), "manage_workspace", &Resource::Workspace(ws))

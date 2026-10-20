@@ -415,7 +415,6 @@ fn schema_update_workspace() -> Value {
             "description": { "type": "string" },
             "department": { "type": "string" },
             "visibility": { "type": "string", "description": "restricted, departmental, or institutional" },
-            "allowed_affiliations": { "type": "array", "items": { "type": "string" } },
             "data_classification": { "type": "string" },
             "icon": { "type": "string" }
         },
@@ -516,10 +515,6 @@ fn run_update_workspace(caller: &AuthUser, _origin: &Origin, args: Value, state:
         description: text(&args, "description"),
         department: text(&args, "department"),
         visibility: text(&args, "visibility"),
-        allowed_affiliations: args
-            .get("allowed_affiliations")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()),
         data_classification: text(&args, "data_classification"),
         icon: text(&args, "icon"),
         organization_id: text(&args, "organization_id").and_then(|s| uuid::Uuid::parse_str(&s).ok()),
