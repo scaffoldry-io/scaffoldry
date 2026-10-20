@@ -11,6 +11,9 @@
 //! A route that changes nothing (a preview, a simulation, a check) has an `exempt` entry with its reason, so the list
 //! of exemptions is read in review and is not silent.
 
+// Two test binaries use this module, and each uses part of it.
+#![allow(dead_code)]
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
