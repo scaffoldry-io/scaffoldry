@@ -96,7 +96,7 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | 64 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | **COMPLETED** |
 | 65 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | **COMPLETED** |
 | 66 | [stateless-server.md](stateless-server.md) | 6 | Every write is proven across two instances. A readiness route and a clean stop | **COMPLETED** |
-| 67 | [access-model.md](access-model.md) | 2 | Hierarchies are data. One closure table replaces four tree walks. Cedar and policies use the unit tree, not a department string | |
+| 67 | [access-model.md](access-model.md) | 2 | Hierarchies are data. One closure table replaces four tree walks. Cedar and policies use the unit tree, not a department string | **COMPLETED** |
 | 68 | [access-model.md](access-model.md) | 3 | Every workspace, app, table and field has a unit, a domain and a sensitivity, and a child can only narrow them | |
 | 69 | [access-model.md](access-model.md) | 4 | One grant shape and one function, role_at. A position grant on the holder's own unit serves every department | |
 | 70 | [access-model.md](access-model.md) | 5 | A synthetic institution from a seed, and a reference evaluator that the real one is tested against | |
