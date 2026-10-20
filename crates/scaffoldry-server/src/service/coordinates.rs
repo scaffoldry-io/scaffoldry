@@ -93,9 +93,12 @@ pub fn effective_of_workspace(own: Option<&Coordinates>, places: &dyn Places) ->
     }
 }
 
+/// The effective coordinates of an app, and of each of its tables by id.
+type Walked = (Effective, BTreeMap<String, Effective>);
+
 /// The effective coordinates of an app and of each of its tables. A level that would widen takes its container's, so the
 /// walk goes on and every problem is found. The problems are returned beside the result.
-fn walk(ws: Option<&Coordinates>, m: &AppManifest, places: &dyn Places) -> (Option<(Effective, BTreeMap<String, Effective>)>, Vec<String>) {
+fn walk(ws: Option<&Coordinates>, m: &AppManifest, places: &dyn Places) -> (Option<Walked>, Vec<String>) {
     let mut problems = Vec::new();
     let base = match workspace_effective(ws, places) {
         Ok(e) => e,
