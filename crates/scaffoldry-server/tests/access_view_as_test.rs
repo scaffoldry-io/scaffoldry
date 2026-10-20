@@ -301,7 +301,7 @@ async fn each_start_is_a_ledger_entry() {
     view_as(&w, &w.olga, &w.slug, &target(&w)).await;
     let (_, after) = send(&w.app, "GET", "/api/v1/governance/ledger", &w.admin, None).await;
     assert_eq!(count(&after), count(&before) + 2);
-    let last = after["entries"].as_array().unwrap().iter().rfind(|e| e["app_slug"] == w.slug.as_str()).unwrap();
+    let last = after["entries"].as_array().unwrap().iter().find(|e| e["app_slug"] == w.slug.as_str()).unwrap();
     assert_eq!(last["decision_type"], "ViewAsStarted");
     assert_eq!(last["app_slug"], w.slug.as_str());
 }

@@ -361,17 +361,14 @@ async fn list_app_processes(
         .map_err(ServiceError::into_pair)?;
 
     let mut all: Vec<ProcessInstance> = state
-        .process_instances
-        .read()
-        .map_err(|_| lock_err())?
-        .values()
-        .filter(|inst| inst.app_slug == slug)
-        .cloned()
-        .collect();
-    // Who may decide changes as people are appointed, so the flag is refreshed when listed.
+        .repository
+        .list_process_instances(Some(&slug), None)
+        .map_err(|e| ServiceError::StorageUnavailable(e.to_string()).into_pair())?;
+    // Who may decide changes as people are appointed, so the flag is refreshed when listed. An instance someone
+    // decided since it was read is not written back.
     for inst in all.iter_mut() {
         if crate::service::approvers::refresh_no_approver(&state, inst) {
-            let _ = state.persist_process_instance(inst.clone());
+            let _ = state.repository.update_waiting_instance(inst);
         }
     }
     // An instance on a record the caller cannot read is left out.

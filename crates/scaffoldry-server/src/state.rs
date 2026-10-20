@@ -2,9 +2,9 @@
 
 use chrono::Utc;
 use scaffoldry_core::{
-    ActionType, AutomationRule, ConditionOperator, DatasetField, DatasetRelationship, DecisionType,
-    FieldPredicate, LedgerEntry, LedgerError, NewLedgerEntryParams, ProcessInstance,
-    PublishedDataset, RelationshipType, TriggerEvent, GENESIS_PREVIOUS_HASH,
+    ActionType, AutomationRule, ConditionOperator, DatasetField,
+    DatasetRelationship, DecisionType, FieldPredicate, LedgerEntry, LedgerError,
+    PublishedDataset, RelationshipType, TriggerEvent,
 };
 use scaffoldry_engine::{AppManifest, ManifestEngine};
 use scaffoldry_policy::ScaffoldryPolicyEngine;
@@ -230,8 +230,6 @@ pub struct ServerState {
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
     pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
-    pub process_instances: RwLock<HashMap<String, ProcessInstance>>,
-    pub ledger: RwLock<Vec<LedgerEntry>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
     pub repository: Arc<crate::repository::PostgresRepository>,
@@ -264,6 +262,26 @@ impl ServerState {
             self.reload(&name)?;
             self.cache_seen[i].store(version, SeqCst);
         }
+        Ok(())
+    }
+
+    /// Reads one stored app definition and puts it in the engine, with the stored views of its app merged in. One that
+    /// no longer parses or validates is taken out of service by name and logged. The other apps are not touched, and
+    /// the version is noted either way, so a damaged definition is not parsed again until it changes.
+    fn load_app(&self, slug: &str) -> Result<(), crate::repository::RepositoryError> {
+        let Some((version, value)) = self.repository.get_app_manifest_row(slug)? else { return Ok(()) };
+        let own = self.app_views.read().unwrap_or_else(|p| p.into_inner()).get(slug).cloned().unwrap_or_default();
+        let outcome = self
+            .repository
+            .parse_manifest(value)
+            .map_err(|e| e.to_string())
+            .and_then(|m| self.engine.write().unwrap_or_else(|p| p.into_inner()).register_manifest(crate::repository_views::merged(m, &own)).map_err(|e| e.to_string()));
+        let mut engine = self.engine.write().unwrap_or_else(|p| p.into_inner());
+        if let Err(reason) = outcome {
+            eprintln!("Warning: the stored app '{slug}' no longer parses and is not served: {reason}");
+            engine.mark_broken(slug, &reason);
+        }
+        engine.set_version(slug, version);
         Ok(())
     }
 
@@ -362,19 +380,21 @@ impl ServerState {
             _ => {}
         }
         if name == "manifests" {
-            // The engine holds the manifest an app runs, with its row and column rules. A manifest another instance
-            // approved, or one this instance never held, is registered again from what is stored. One that no longer
-            // validates is left out, as at start, and an app the engine does not hold shows no rows.
-            let stored = self.repository.list_app_manifests()?;
-            let views = self.app_views.read().unwrap_or_else(|p| p.into_inner());
-            let mut engine = self.engine.write().unwrap_or_else(|p| p.into_inner());
-            for m in stored {
-                let slug = m.slug.clone();
-                let own = views.get(&slug).cloned().unwrap_or_default();
-                if let Err(e) = engine.register_manifest(crate::repository_views::merged(m, &own)) {
-                    eprintln!("Warning: the stored app '{slug}' no longer validates and is not loaded: {e}");
+            // One statement lists the stored versions. Only a definition whose version differs from the one this engine
+            // holds is read and parsed, so approving one app among hundreds reloads one.
+            let held = self.engine.read().unwrap_or_else(|p| p.into_inner()).versions().clone();
+            for (slug, version) in self.repository.app_manifest_versions()? {
+                if held.get(&slug) != Some(&version) {
+                    self.load_app(&slug)?;
                 }
             }
+        }
+        if name == "rules" {
+            let mut by_app: HashMap<String, Vec<AutomationRule>> = HashMap::new();
+            for rule in self.repository.list_workflow_automations(None)? {
+                by_app.entry(rule.app_slug.clone()).or_default().push(rule);
+            }
+            *self.automations.write().unwrap_or_else(|p| p.into_inner()) = by_app;
         }
         Ok(())
     }
@@ -409,27 +429,9 @@ impl ServerState {
         let mut position_types: HashMap<String, PositionType> = HashMap::new();
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
-        let mut process_instances = HashMap::new();
         let mut automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
         let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> =
             HashMap::new();
-
-        let now = Utc::now().to_rfc3339();
-
-        let entry_0 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 0,
-            timestamp_iso: now.clone(),
-            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
-            principal: "system@scaffoldry.internal".to_string(),
-            organization_code: "INST".to_string(),
-            app_slug: None,
-            decision_type: DecisionType::PolicyRevision,
-            oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional sovereign genesis ledger entry".to_string(),
-            payload: &json!({"system": "scaffoldry", "genesis": true}),
-        });
-
-        let mut ledger = vec![entry_0.clone()];
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
@@ -510,17 +512,24 @@ impl ServerState {
                 .or_default()
                 .push(v);
         }
-        for mut m in repo
-            .list_app_manifests()
-            .map_err(|e| read("the app manifests", e))?
-        {
+        for (stored_slug, version, value) in repo.list_app_manifest_rows().map_err(|e| read("the app manifests", e))? {
+            // A definition that does not parse is that app's problem. The server starts and serves the others.
+            let mut m = match repo.parse_manifest(value) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Warning: the stored app '{stored_slug}' no longer parses and is not served: {e}");
+                    engine.mark_broken(&stored_slug, &e.to_string());
+                    engine.set_version(&stored_slug, version);
+                    continue;
+                }
+            };
             if !m.views.is_empty() {
                 if let Some(done) = repo
                     .migrate_manifest_views(&m.slug)
                     .map_err(|e| read("the view migration", e))?
                 {
                     let count = done.views.len();
-                    let entry = repo
+                    repo
                         .append_ledger_decision(crate::repository::AppendDecisionParams {
                             principal: "system@scaffoldry.local".to_string(),
                             organization_code: m.organization_code.clone(),
@@ -531,21 +540,20 @@ impl ServerState {
                             payload: serde_json::json!({ "app_slug": m.slug, "views": count }),
                         })
                         .map_err(|e| read("the ledger", e))?;
-                    ledger.push(entry);
-                    app_views_cache
-                        .entry(m.slug.clone())
-                        .or_default()
-                        .extend(done.views);
+                    app_views_cache.entry(m.slug.clone()).or_default().extend(done.views);
                     m = done.manifest;
                 }
             }
             let views = app_views_cache.get(&m.slug).cloned().unwrap_or_default();
             let slug = m.slug.clone();
-            if let Err(e) = engine.register_manifest(crate::repository_views::merged(m, &views)) {
-                eprintln!(
-                    "Warning: the stored app '{slug}' no longer validates and is not loaded: {e}"
-                );
+            match engine.register_manifest(crate::repository_views::merged(m, &views)) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("Warning: the stored app '{slug}' no longer validates and is not served: {e}");
+                    engine.mark_broken(&slug, &e.to_string());
+                }
             }
+            engine.set_version(&stored_slug, version);
         }
 
         for ds in repo
@@ -568,12 +576,6 @@ impl ServerState {
             if !entry.iter().any(|existing| existing.id == r.id) {
                 entry.push(r);
             }
-        }
-        for inst in repo
-            .list_process_instances(None, None)
-            .map_err(|e| read("the process instances", e))?
-        {
-            process_instances.insert(inst.id.clone(), inst);
         }
 
         for org in repo
@@ -604,31 +606,24 @@ impl ServerState {
             .count_legacy_workspace_guards()
             .map_err(|e| read("the archived guards", e))?;
         if archived_count > 0 {
-            let already_recorded = ledger.iter().any(|e| {
-                e.decision_type == scaffoldry_core::ledger::DecisionType::PolicyRevision
-                    && (e.rationale.contains("workspace_guards_legacy")
-                        || e.rationale.contains("Archived legacy workspace guards"))
-            });
+            let already_recorded = repo
+                .ledger_has_rationale(scaffoldry_core::ledger::DecisionType::PolicyRevision, "Archived legacy workspace guards")
+                .map_err(|e| read("the ledger", e))?;
             if !already_recorded {
                 let payload = serde_json::json!({
                     "archived_rows": archived_count,
                     "table": "workspace_guards_legacy"
                 });
-                let entry = repo
-                    .append_ledger_decision(crate::repository::AppendDecisionParams {
-                        principal: "system@scaffoldry.local".to_string(),
-                        organization_code: "INST".to_string(),
-                        app_slug: None,
-                        decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
-                        oscal_control_id: "AC-03".to_string(),
-                        rationale: format!(
-                            "Archived legacy workspace guards ({} rows)",
-                            archived_count
-                        ),
-                        payload,
-                    })
-                    .map_err(|e| read("the ledger", e))?;
-                ledger.push(entry);
+                repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                    principal: "system@scaffoldry.local".to_string(),
+                    organization_code: "INST".to_string(),
+                    app_slug: None,
+                    decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
+                    oscal_control_id: "AC-03".to_string(),
+                    rationale: format!("Archived legacy workspace guards ({} rows)", archived_count),
+                    payload,
+                })
+                .map_err(|e| read("the ledger", e))?;
             }
         }
         for ws in repo
@@ -645,13 +640,18 @@ impl ServerState {
         repo.insert_api_token(&default_scim_token)
             .map_err(|e| read("the provisioning token", e))?;
 
-        // The ledger is the stored one. A database with none gets the genesis entry.
-        let persisted_ledger = repo.get_ledger().map_err(|e| read("the ledger", e))?;
-        if persisted_ledger.is_empty() {
-            repo.append_ledger_entry(&entry_0, &json!({"system": "scaffoldry", "genesis": true}))
-                .map_err(|e| read("the ledger", e))?;
-        } else {
-            ledger = persisted_ledger;
+        // The ledger stays in the database. A database with none gets the genesis entry.
+        if repo.ledger_summary().map_err(|e| read("the ledger", e))?.0 == 0 {
+            repo.append_ledger_decision(crate::repository::AppendDecisionParams {
+                principal: "system@scaffoldry.internal".to_string(),
+                organization_code: "INST".to_string(),
+                app_slug: None,
+                decision_type: DecisionType::PolicyRevision,
+                oscal_control_id: "AU-02".to_string(),
+                rationale: "Institutional sovereign genesis ledger entry".to_string(),
+                payload: json!({"system": "scaffoldry", "genesis": true}),
+            })
+            .map_err(|e| read("the ledger", e))?;
         }
 
         let cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()] =
@@ -679,8 +679,6 @@ impl ServerState {
             datasets: RwLock::new(datasets),
             relationships: RwLock::new(relationships),
             automations: RwLock::new(automations),
-            process_instances: RwLock::new(process_instances),
-            ledger: RwLock::new(ledger),
             engine: RwLock::new(engine),
             policy_engine,
             repository,
@@ -1026,35 +1024,9 @@ impl ServerState {
         Ok(self.repository.count_workspaces()?)
     }
 
-    /// Registers a manifest the way the engine runs it: with the stored views of its app merged in, so a manifest
-    /// that arrives with older copies of those views does not put them back.
-    pub fn register_runtime_manifest(
-        &self,
-        m: AppManifest,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let views = self
-            .app_views
-            .read()
-            .map_err(|_| "views lock poisoned")?
-            .get(&m.slug)
-            .cloned()
-            .unwrap_or_default();
-        self.engine
-            .write()
-            .map_err(|_| "engine lock poisoned")?
-            .register_manifest(crate::repository_views::merged(m, &views))?;
-        Ok(())
-    }
-
-    pub fn persist_app_manifest(
-        &self,
-        m: AppManifest,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.register_runtime_manifest(m.clone())?;
-        {
-            let repo = &self.repository;
-            repo.upsert_app_manifest(&m)?;
-        }
+    pub fn persist_app_manifest(&self, m: AppManifest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.repository.upsert_app_manifest(&m)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -1091,35 +1063,9 @@ impl ServerState {
         Ok(())
     }
 
-    pub fn persist_automation(
-        &self,
-        rule: AutomationRule,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.automations
-            .write()
-            .map_err(|_| "automations lock poisoned")?
-            .entry(rule.app_slug.clone())
-            .or_default()
-            .push(rule.clone());
-        {
-            let repo = &self.repository;
-            repo.upsert_workflow_automation(&rule)?;
-        }
-        Ok(())
-    }
-
-    pub fn persist_process_instance(
-        &self,
-        inst: ProcessInstance,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.process_instances
-            .write()
-            .map_err(|_| "process_instances lock poisoned")?
-            .insert(inst.id.clone(), inst.clone());
-        {
-            let repo = &self.repository;
-            repo.upsert_process_instance(&inst)?;
-        }
+    pub fn persist_automation(&self, rule: AutomationRule) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.repository.upsert_workflow_automation(&rule)?;
+        self.refresh()?;
         Ok(())
     }
 
@@ -1151,19 +1097,15 @@ impl ServerState {
         &self,
         input: RecordDecisionInput<'_>,
     ) -> Result<LedgerEntry, LedgerError> {
-        let entry = self
-            .repository
-            .append_ledger_decision(crate::repository::AppendDecisionParams {
-                principal: input.principal.clone(),
-                organization_code: input.organization_code.clone(),
-                app_slug: input.app_slug.clone(),
-                decision_type: input.decision_type,
-                oscal_control_id: input.oscal_control_id.clone(),
-                rationale: input.rationale.clone(),
-                payload: input.payload.clone(),
-            })
-            .map_err(|e| LedgerError::RepositoryError(e.to_string()))?;
-        self.ledger.write().unwrap().push(entry.clone());
+        let entry = self.repository.append_ledger_decision(crate::repository::AppendDecisionParams {
+            principal: input.principal.clone(),
+            organization_code: input.organization_code.clone(),
+            app_slug: input.app_slug.clone(),
+            decision_type: input.decision_type,
+            oscal_control_id: input.oscal_control_id.clone(),
+            rationale: input.rationale.clone(),
+            payload: input.payload.clone(),
+        }).map_err(|e| LedgerError::RepositoryError(e.to_string()))?;
         Ok(entry)
     }
 
@@ -1175,10 +1117,15 @@ impl ServerState {
     }
 
     pub fn export_oscal_component_definition(&self) -> Value {
-        let entries = self
-            .repository
-            .get_ledger()
-            .unwrap_or_else(|_| self.ledger.read().unwrap().clone());
+        // The export names every entry, oldest first. It reads the chain a page at a time.
+        let mut entries: Vec<LedgerEntry> = Vec::new();
+        let mut before = None;
+        while let Ok(page) = self.repository.ledger_page(before, crate::repository::LEDGER_BATCH) {
+            let Some(last) = page.last() else { break };
+            before = Some(last.sequence);
+            entries.extend(page);
+        }
+        entries.reverse();
         let now = chrono::Utc::now().to_rfc3339();
 
         let implemented_requirements: Vec<Value> = entries
@@ -1478,11 +1425,6 @@ impl ServerState {
             access: Default::default(),
             ceds_mappings: HashMap::new(),
         };
-        let _ = self
-            .engine
-            .write()
-            .unwrap()
-            .register_manifest(demo_app.clone());
 
         let mut automations = HashMap::new();
         automations.insert(
@@ -1518,65 +1460,14 @@ impl ServerState {
             }],
         );
 
-        let entry_0_hash = self
-            .ledger
-            .read()
-            .unwrap()
-            .first()
-            .map(|e| e.entry_hash.clone())
-            .unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string());
-        let entry_0 = LedgerEntry {
-            sequence: 0,
-            timestamp_iso: now.clone(),
-            previous_hash: GENESIS_PREVIOUS_HASH.to_string(),
-            principal: "system@scaffoldry.internal".to_string(),
-            organization_code: "INST".to_string(),
-            app_slug: None,
-            decision_type: DecisionType::PolicyRevision,
-            oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional sovereign genesis ledger entry".to_string(),
-            payload_hash: String::new(),
-            entry_hash: entry_0_hash,
-        };
-        let entry_1 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 1,
-            timestamp_iso: now.clone(),
-            previous_hash: entry_0.entry_hash.clone(),
-            principal: "prof.curie@science.state.edu".to_string(),
-            organization_code: "DIV-SCIENCES".to_string(),
-            app_slug: Some("biology-lab-inventory".to_string()),
-            decision_type: DecisionType::VanityDnsBound,
-            oscal_control_id: "SC-07".to_string(),
-            rationale: "Vanity DNS alias bound with sovereign gateway validation".to_string(),
-            payload: &json!({"domain": "inventory.biology.state.edu", "verified": true}),
-        });
 
-        let entry_2 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 2,
-            timestamp_iso: now.clone(),
-            previous_hash: entry_1.entry_hash.clone(),
-            principal: "dr.watson@science.state.edu".to_string(),
-            organization_code: "DIV-COMPLIANCE".to_string(),
-            app_slug: Some("physics-admissions-review".to_string()),
-            decision_type: DecisionType::WorkflowRuleApproved,
-            oscal_control_id: "AC-03".to_string(),
-            rationale: "FERPA compliance and GPA threshold auto-admit rule approved".to_string(),
-            payload: &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}),
-        });
 
-        let entry_3 = LedgerEntry::new(NewLedgerEntryParams {
-            sequence: 3,
-            timestamp_iso: now.clone(),
-            previous_hash: entry_2.entry_hash.clone(),
-            principal: "dr.watson@science.state.edu".to_string(),
-            organization_code: "DIV-COMPLIANCE".to_string(),
-            app_slug: Some("compliance-ferpa-requests".to_string()),
-            decision_type: DecisionType::StatutoryAttestation,
-            oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional statutory compliance attestation for 34 CFR Part 99"
-                .to_string(),
-            payload: &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
-        });
+        // The demo ledger entries, written once, when the ledger holds nothing but its genesis entry.
+        let demo_entries = [
+            ("prof.curie@science.state.edu", "DIV-SCIENCES", "biology-lab-inventory", DecisionType::VanityDnsBound, "SC-07", "Vanity DNS alias bound with sovereign gateway validation", json!({"domain": "inventory.biology.state.edu", "verified": true})),
+            ("dr.watson@science.state.edu", "DIV-COMPLIANCE", "physics-admissions-review", DecisionType::WorkflowRuleApproved, "AC-03", "FERPA compliance and GPA threshold auto-admit rule approved", json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"})),
+            ("dr.watson@science.state.edu", "DIV-COMPLIANCE", "compliance-ferpa-requests", DecisionType::StatutoryAttestation, "AU-02", "Institutional statutory compliance attestation for 34 CFR Part 99", json!({"framework": "FERPA", "standard": "34 CFR Part 99"})),
+        ];
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
@@ -1814,55 +1705,31 @@ impl ServerState {
                 repo.upsert_dataset_relationship(rel)?;
             }
             if !manifest_stored {
-                let _ = repo.upsert_app_manifest(&demo_app);
+                repo.upsert_app_manifest(&demo_app)?;
             }
             for rules in automations.values() {
                 for r in rules {
-                    let _ = repo.upsert_workflow_automation(r);
+                    repo.upsert_workflow_automation(r)?;
                 }
             }
         }
 
-        // The ledger is only written while it holds nothing but the genesis entry.
-        let ledger_is_new = self.ledger.read().unwrap().len() <= 1;
-        if ledger_is_new {
-            {
-                let repo = &self.repository;
-                let _ = repo.append_ledger_entry(
-                    &entry_1,
-                    &json!({"domain": "inventory.biology.state.edu", "verified": true}),
-                );
-                let _ = repo.append_ledger_entry(
-                    &entry_2,
-                    &json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}),
-                );
-                let _ = repo.append_ledger_entry(
-                    &entry_3,
-                    &json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
-                );
+        if self.repository.ledger_summary()?.0 <= 1 {
+            for (principal, org, slug, decision_type, control, rationale, payload) in demo_entries {
+                let _ = self.repository.append_ledger_decision(crate::repository::AppendDecisionParams {
+                    principal: principal.to_string(),
+                    organization_code: org.to_string(),
+                    app_slug: Some(slug.to_string()),
+                    decision_type,
+                    oscal_control_id: control.to_string(),
+                    rationale: rationale.to_string(),
+                    payload,
+                });
             }
         }
 
         // The demo rows are stored. This instance reads them back, as it reads any other write.
         self.refresh()?;
-        for (k, v) in automations {
-            let mut guard = self.automations.write().unwrap();
-            let list = guard.entry(k).or_default();
-            for r in v {
-                if !list.iter().any(|x| x.id == r.id) {
-                    list.push(r);
-                }
-            }
-        }
-        if !manifest_stored {
-            let _ = self.engine.write().unwrap().register_manifest(demo_app);
-        }
-        if ledger_is_new {
-            self.ledger
-                .write()
-                .unwrap()
-                .extend(vec![entry_1, entry_2, entry_3]);
-        }
 
         Ok(())
     }

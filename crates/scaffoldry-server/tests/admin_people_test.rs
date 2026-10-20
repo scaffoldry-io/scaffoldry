@@ -90,10 +90,10 @@ async fn ledger_len(c: &Ctx) -> u64 {
     body["total_entries"].as_u64().unwrap()
 }
 
-/// The newest ledger entry.
+/// The newest ledger entry. A page is newest first.
 async fn last_entry(c: &Ctx) -> Value {
     let (_, body) = send(&c.app, "GET", "/api/v1/governance/ledger", Some(&c.admin), None).await;
-    body["entries"].as_array().unwrap().last().unwrap().clone()
+    body["entries"].as_array().unwrap().first().unwrap().clone()
 }
 
 fn api_token(eppn: &str, kind: &str, raw: &str) -> ApiToken {

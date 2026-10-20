@@ -125,7 +125,7 @@ impl World {
             version: 1,
         }, &scaffoldry_server::repository::WriteCtx::system("test fixture")).unwrap();
         let id = format!("{rule_id}:{record_id}");
-        self.state.process_instances.write().unwrap().insert(id.clone(), ProcessInstance { rule_version: 0,
+        self.state.repository.upsert_process_instance(&ProcessInstance { rule_version: 0,
             id: id.clone(),
             rule_id,
             app_slug: APP.to_string(),
@@ -139,7 +139,7 @@ impl World {
             started_at: String::new(),
             assigned_to: assigned_to.map(str::to_string),
             no_approver: None,
-        });
+        }).unwrap();
         id
     }
 
@@ -432,7 +432,7 @@ async fn a_new_instance_records_its_starter_and_flags_a_vacant_step_with_a_log_l
         &w.state, APP, TriggerEvent::RecordCreated, &json!({ "id": "rec-n1", "status": "New" }),
         &scaffoldry_server::service::records::Actor { identity: &identity, department: "physics" }, 0, &mut applied,
     );
-    let inst = w.state.process_instances.read().unwrap().get("n1:rec-n1").cloned().expect("the instance was created");
+    let inst = w.state.repository.get_process_instance("n1:rec-n1").unwrap().expect("the instance was created");
     assert_eq!(inst.started_by.as_deref(), Some(p.sam.as_str()));
     assert!(!inst.started_at.is_empty());
     assert_eq!(inst.no_approver.as_deref(), Some("position_vacant"));

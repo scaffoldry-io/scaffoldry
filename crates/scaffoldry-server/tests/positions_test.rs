@@ -72,8 +72,10 @@ async fn ledger_len(c: &Ctx) -> u64 {
 /// The last `n` ledger entries, oldest first.
 async fn last_entries(c: &Ctx, n: usize) -> Vec<Value> {
     let (_, body) = send(&c.app, "GET", "/api/v1/governance/ledger", Some(&c.admin), None).await;
-    let all = body["entries"].as_array().unwrap();
-    all[all.len() - n..].to_vec()
+    // A page is newest first.
+    let mut newest = body["entries"].as_array().unwrap()[..n].to_vec();
+    newest.reverse();
+    newest
 }
 
 async fn create_unit(c: &Ctx, name: &str, org_type: &str, parent: &str) -> String {

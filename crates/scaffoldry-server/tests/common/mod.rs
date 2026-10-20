@@ -78,6 +78,20 @@ impl TestDb {
         self.app()
     }
 
+    /// Makes this database unreachable: it refuses new connections and drops the ones open. Its data stays.
+    pub fn cut_off(&self) {
+        let name = self.name.clone();
+        on_server(format!(
+            "ALTER DATABASE {name} ALLOW_CONNECTIONS false; \
+             SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{name}' AND pid <> pg_backend_pid();"
+        ));
+    }
+
+    /// Lets connections in again after `cut_off`.
+    pub fn restore(&self) {
+        on_server(format!("ALTER DATABASE {} ALLOW_CONNECTIONS true", self.name));
+    }
+
     /// Direct database work on its own thread.
     pub fn run<R: Send + 'static>(&self, f: impl FnOnce(&mut postgres::Client) -> R + Send + 'static) -> R {
         let url = self.url.clone();

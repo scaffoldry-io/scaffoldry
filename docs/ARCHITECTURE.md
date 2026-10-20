@@ -46,7 +46,10 @@ The platform cleanly separates four critical duties:
 3. **Authorization:** Decided by an embedded Cedar policy engine at the API boundary.
 4. **Audit & Governance:** Permanently recorded in an immutable SHA-256 cryptographic decision ledger.
 
-### 2.4 Write for People
+### 2.4 PostgreSQL Is the Only Source of Truth
+PostgreSQL holds every fact the platform keeps, and a server holds nothing between requests that it cannot read again from the database. A server keeps copies of eleven collections of configuration, and only these: `settings`, `labels`, `position_types`, `organizations`, `workspaces` (with their collaborators), `guards`, `datasets`, `relationships`, `manifests` (with the saved views of each app), `rules`, and `policy`. Each has a counter in the `cache_versions` table. A writer raises the counter in the transaction that writes, and every request reads the counters first and reloads any collection whose counter moved. People, appointments, sessions, tokens, records, process instances, and the ledger are never copied: they are read from the database each time, and a decision on a waiting step or an append to the ledger locks the row it changes. Because of this, any number of server instances may serve one database. A write through one is read through the next request to any other, a request that reaches an instance that cannot read the database fails with `storage_unavailable`, and `GET /readyz` tells a load balancer whether an instance can read it. On `SIGTERM` an instance stops taking connections, finishes the requests it holds for up to 30 seconds, lets the job it is running finish, and exits.
+
+### 2.5 Write for People
 All documentation, user interfaces, error messages, and commit histories must follow the `write-for-people` standard:
 - One idea per sentence.
 - Use plain, precise language instead of academic or artificial jargon.

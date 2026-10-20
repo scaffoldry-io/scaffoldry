@@ -494,7 +494,7 @@ async fn exporting_the_log_is_capped_and_is_a_ledger_entry() {
 
     let (_, after) = send(&w.app, "GET", "/api/v1/governance/ledger", &w.admin, None).await;
     assert_eq!(ledger_count(&after), ledger_count(&before) + 1);
-    let last = after["entries"].as_array().unwrap().last().unwrap();
+    let last = after["entries"].as_array().unwrap().first().unwrap();
     assert_eq!((last["decision_type"].as_str(), last["principal"].as_str()), (Some("DisclosureLogExported"), Some(COMPLIANCE)));
 
     let (s, _) = send(&w.app, "GET", &format!("/api/v1/admin/disclosures/export?app={}", w.slug), &w.faculty, None).await;

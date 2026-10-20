@@ -7,7 +7,7 @@
 use crate::service::access::{authorize_app, AppAction};
 use crate::service::history::Origin;
 use crate::service::ServiceError;
-use crate::state::{AuthUser, RecordDecisionInput, SharedState};
+use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::approver::{effective_approver, validate_approver};
 use scaffoldry_core::workflow::{ActionType, FieldPredicate, StepKind, TriggerEvent};
 use scaffoldry_core::standards::eduperson::EduPersonAffiliation;
@@ -158,22 +158,11 @@ pub fn save_rule(
         return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
     }
     let repo = &*state.repository;
-    let (saved, entry) = repo
+    let (saved, _) = repo
         .save_rule(&rule, summary, proposal_id, changed_by, &manifest.organization_code)
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(entry);
-    reload_rules(state, app_slug);
+    super::reload_after_write(state)?;
     Ok(saved)
-}
-
-/// Replaces the in-memory rules of an app with the live rows.
-pub fn reload_rules(state: &SharedState, app_slug: &str) {
-    {
-        let repo = &state.repository;
-        if let Ok(rows) = repo.list_workflow_automations(Some(app_slug)) {
-            state.automations.write().unwrap_or_else(|p| p.into_inner()).insert(app_slug.to_string(), rows);
-        }
-    }
 }
 
 /// Decides a waiting process step. The REST route and the `decide_process` tool both call this.
@@ -197,12 +186,11 @@ pub fn decide_process(
     // Unknown affiliation is 403.
     EduPersonAffiliation::from_str(&caller.affiliation).map_err(|_| ServiceError::forbidden("Unknown affiliation"))?;
 
+    // The instance is read from the database. The decision below locks its row and checks it again.
     let mut instance = state
-        .process_instances
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?
-        .get(instance_id)
-        .cloned()
+        .repository
+        .get_process_instance(instance_id)
+        .map_err(|e| ServiceError::StorageUnavailable(e.to_string()))?
         .ok_or_else(|| ServiceError::NotFound("Process instance not found".to_string()))?;
     if instance.app_slug != slug {
         return Err(ServiceError::NotFound("Process instance not found in this app".to_string()));
@@ -250,7 +238,8 @@ pub fn decide_process(
         return Err(ServiceError::forbidden("Forbidden: Caller may not decide this step"));
     }
 
-    // Apply field effects and write the record. This is a system write, so it needs no version.
+    // The record the decision changes is a system write, so it needs no version. It commits with the decision.
+    let mut record_write = None;
     if !field_effects.is_empty() {
         let current = state.find_record(slug, &instance.record_id).map_err(ServiceError::Internal)?;
         if let Some(rec) = current {
@@ -258,26 +247,33 @@ pub fn decide_process(
             scaffoldry_core::workflow::apply_field_effects(&mut data, &field_effects);
             // The person who decided is the actor.
             let ctx = crate::service::history::ctx_for(&caller.eppn, crate::repository::ActorKind::User, slug, &data, state);
-            state.overwrite_record_data(slug, &instance.record_id, &data, &ctx).map_err(ServiceError::Internal)?;
+            record_write = Some((slug.to_string(), instance.record_id.clone(), data, ctx));
         }
     }
 
     let decision_payload = json!({ "instance_id": instance.id, "decision": decision });
-    state
-        .append_ledger_entry(RecordDecisionInput {
-            principal: caller.eppn.clone(),
-            organization_code: "institutional".to_string(),
-            app_slug: Some(instance.app_slug.clone()),
-            decision_type: DecisionType::WorkflowRuleApproved,
-            oscal_control_id: "AC-03".to_string(),
-            rationale: format!("{decision} by {} on {}", caller.eppn, instance.id),
-            payload: &decision_payload,
-        })
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-
+    let ledger = crate::repository::AppendDecisionParams {
+        principal: caller.eppn.clone(),
+        organization_code: "institutional".to_string(),
+        app_slug: Some(instance.app_slug.clone()),
+        decision_type: DecisionType::WorkflowRuleApproved,
+        oscal_control_id: "AC-03".to_string(),
+        rationale: format!("{decision} by {} on {}", caller.eppn, instance.id),
+        payload: decision_payload,
+    };
+    let was_waiting_at = waiting_step_id.clone();
     instance.status = if decision == "approve" { ProcessStatus::Completed } else { ProcessStatus::Rejected };
     instance.waiting_step_id = None;
-    state.persist_process_instance(instance.clone()).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    // One transaction: lock the instance, check it is still waiting at this step, then write the record, the new
+    // state, and the ledger entry. A second decision on the same step finds it decided and writes nothing.
+    match state
+        .repository
+        .decide_process_instance(&instance, &was_waiting_at, record_write, ledger)
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+    {
+        crate::repository::Decided::Done => {}
+        crate::repository::Decided::Stale => return Err(ServiceError::conflict("Process instance is not in Waiting status")),
+    }
     Ok(instance)
 }
 
@@ -287,13 +283,9 @@ pub const MAX_WAITING: usize = 200;
 /// Waiting instances in apps the caller can read, where the caller may decide now.
 pub fn list_waiting_decisions(caller: &AuthUser, state: &SharedState) -> Result<Vec<Value>, ServiceError> {
     let waiting: Vec<ProcessInstance> = state
-        .process_instances
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?
-        .values()
-        .filter(|i| i.status == ProcessStatus::Waiting)
-        .cloned()
-        .collect();
+        .repository
+        .list_process_instances(None, Some("Waiting"))
+        .map_err(|e| ServiceError::StorageUnavailable(e.to_string()))?;
     let mut readable: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
     let mut out: Vec<Value> = Vec::new();
     let mut sorted = waiting;

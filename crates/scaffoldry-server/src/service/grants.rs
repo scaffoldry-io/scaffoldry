@@ -4,7 +4,7 @@
 use crate::service::members;
 use crate::state::SharedState;
 use scaffoldry_core::approver::ApproverSpec;
-use scaffoldry_core::{ProcessStatus, StepKind};
+use scaffoldry_core::StepKind;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -53,8 +53,8 @@ pub fn direct_grants(state: &SharedState) -> Vec<Value> {
         }
     }
 
-    if let Ok(instances) = state.process_instances.read() {
-        for inst in instances.values().filter(|i| i.status == ProcessStatus::Waiting) {
+    if let Ok(instances) = state.repository.list_process_instances(None, Some("Waiting")) {
+        for inst in instances.iter() {
             if let Some(who) = &inst.assigned_to {
                 rows.push(json!({
                     "kind": "assignment", "scope": "app", "app_slug": inst.app_slug, "who": who,

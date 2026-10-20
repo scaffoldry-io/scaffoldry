@@ -1179,18 +1179,31 @@ export const apiClient = {
   },
 
   // Decision Ledger & Governance
-  getGovernanceLedger: async (): Promise<{
-    chain_valid: boolean;
+  // One page of the ledger, newest first. `before` is the `next_cursor` of the page before. `verify` also runs the full
+  // chain check, which reads the whole chain, so `chain_valid` is null unless it is asked for.
+  getGovernanceLedger: async (params?: {
+    limit?: number;
+    before?: number;
+    verify?: boolean;
+  }): Promise<{
+    chain_valid: boolean | null;
     total_entries: number;
     head_hash: string;
+    next_cursor: number | null;
     entries: LedgerEntryItem[];
   }> => {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.set("limit", String(params.limit));
+    if (params?.before !== undefined) query.set("before", String(params.before));
+    if (params?.verify) query.set("verify", "true");
+    const suffix = query.toString() ? `?${query.toString()}` : "";
     return request<{
-      chain_valid: boolean;
+      chain_valid: boolean | null;
       total_entries: number;
       head_hash: string;
+      next_cursor: number | null;
       entries: LedgerEntryItem[];
-    }>("/governance/ledger");
+    }>(`/governance/ledger${suffix}`);
   },
 
   verifyGovernanceLedger: async (): Promise<{

@@ -161,7 +161,7 @@ async fn put_setting(
     }
 
     // The row, the counter, and the ledger entry commit together. Then this instance reloads, as every other will.
-    let entry = match state.repository.put_platform_setting(
+    match state.repository.put_platform_setting(
         &key,
         &payload,
         &user.eppn,
@@ -175,10 +175,9 @@ async fn put_setting(
             payload: json!({ "key": key, "value_sha256": val_hash }),
         },
     ) {
-        Ok(entry) => entry,
+        Ok(_) => {}
         Err(e) => return ServiceError::internal(format!("Database write failed: {e}")).into_pair().into_response(),
     };
-    state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(entry);
     if let Err(e) = state.refresh() {
         return ServiceError::StorageUnavailable(format!("The setting was saved, but this server could not reload: {e}")).into_response();
     }
@@ -263,12 +262,11 @@ async fn enable_preset(
             ledger,
         ))
     });
-    let (updates, entry) = match outcome {
+    let (updates, _) = match outcome {
         Err(e) => return ServiceError::internal(format!("Database write failed: {e}")).into_pair().into_response(),
         Ok(Err(refusal)) => return refusal.into_pair().into_response(),
         Ok(Ok(done)) => done,
     };
-    state.ledger.write().unwrap_or_else(|p| p.into_inner()).push(entry);
     if let Err(e) = state.refresh() {
         return ServiceError::StorageUnavailable(format!("The preset was saved, but this server could not reload: {e}")).into_response();
     }

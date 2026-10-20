@@ -516,8 +516,7 @@ fn test_concurrent_ledger_appends_across_twenty_threads() {
         }
     };
 
-    let initial_entries = repo.get_ledger().expect("get ledger");
-    let initial_count = initial_entries.len();
+    let initial_count = repo.ledger_summary().expect("ledger summary").0 as usize;
 
     let mut handles = Vec::new();
     for i in 0..20 {
@@ -542,7 +541,8 @@ fn test_concurrent_ledger_appends_across_twenty_threads() {
     // Verify the ledger hash chain
     repo.verify_and_initialize_ledger(false).expect("Ledger must verify cleanly");
 
-    let entries = repo.get_ledger().expect("get ledger");
+    let mut entries = repo.ledger_page(None, 1_000_000).expect("read the ledger");
+    entries.reverse();
     assert_eq!(
         entries.len(),
         initial_count + 20,

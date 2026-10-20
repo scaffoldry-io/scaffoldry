@@ -73,6 +73,8 @@ async fn list_orgs(
             in_scope_orgs.push(org.clone());
         }
     }
+    // A map has no order, so two instances (or one after a restart) would answer in different orders.
+    in_scope_orgs.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
 
     Ok(Json(in_scope_orgs))
 }

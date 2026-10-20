@@ -392,7 +392,9 @@ async fn handle_mcp_request(
                         ]
                     }),
                     "scaffoldry://governance/decision-ledger" => {
-                        let ledger = state.ledger.read().unwrap_or_else(|p| p.into_inner());
+                        // The newest page, not the chain: `total_blocks` says how long the chain is.
+                        let total = state.repository.ledger_summary().map(|(n, _)| n).unwrap_or(0);
+                        let blocks = state.repository.ledger_page(None, crate::repository::LEDGER_BATCH).unwrap_or_default();
                         let is_valid = state.verify_ledger().unwrap_or(false);
                         json!({
                             "contents": [
@@ -401,8 +403,8 @@ async fn handle_mcp_request(
                                     "mimeType": "application/json",
                                     "text": serde_json::to_string_pretty(&json!({
                                         "chain_valid": is_valid,
-                                        "total_blocks": ledger.len(),
-                                        "blocks": *ledger
+                                        "total_blocks": total,
+                                        "blocks": blocks
                                     })).unwrap_or_default()
                                 }
                             ]

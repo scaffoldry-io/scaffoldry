@@ -2,27 +2,33 @@
 
 use std::path::Path;
 
-/// The fields of `ServerState` that may hold a lock. The list starts as today's fields. Each phase removes the ones
-/// it turns into queries or into cached collections, and none is added.
-const ALLOWED_FIELDS: &[&str] = &[
-    "app_views",
-    "workspaces",
-    "collaborators",
-    "guards",
-    "guard_policy_cache",
-    "datasets",
-    "relationships",
-    "automations",
-    "process_instances",
-    "ledger",
-    "engine",
-    "organizations",
-    "tree",
-    "position_types",
-    "labels",
-    "settings",
-    "formula_rate_limits",
+/// The fields of `ServerState` that may hold a lock, each with the cached collection it belongs to. The collection must
+/// be on the closed list in `cache::NAMES`. A field is a cache of that collection and is replaced only through the
+/// mechanism. `collaborators` is read with `workspaces`, `app_views` and `engine` with `manifests`, `automations` with
+/// `rules`, and `guard_policy_cache` is cleared when `guards` reloads.
+const FIELD_COLLECTION: &[(&str, &str)] = &[
+    ("app_views", "manifests"),
+    ("workspaces", "workspaces"),
+    ("collaborators", "workspaces"),
+    ("guards", "guards"),
+    ("guard_policy_cache", "guards"),
+    ("datasets", "datasets"),
+    ("relationships", "relationships"),
+    ("automations", "rules"),
+    ("engine", "manifests"),
+    ("organizations", "organizations"),
+    ("tree", "organizations"),
+    ("position_types", "position_types"),
+    ("labels", "labels"),
+    ("settings", "settings"),
 ];
+
+/// A lock that holds no stored data. `formula_rate_limits` counts the formula previews one user has made in the last
+/// second, so one user cannot saturate the evaluator. It is a throttle on this process. With N instances a user may make
+/// N times the limit, which still bounds the load on each. It is not a copy of anything in PostgreSQL, so no instance
+/// can be wrong about it. Moving it to the database would add a table and a statement to each preview. The list does not
+/// grow without a person deciding it should.
+const PER_PROCESS: &[&str] = &["formula_rate_limits"];
 
 /// The `static` locks that may remain. None does after phase 2.
 const ALLOWED_STATICS: &[&str] = &[];
@@ -67,14 +73,15 @@ fn server_state_holds_no_lock_that_is_not_on_the_list() {
             .to_string();
         found.push(name);
     }
-    let unlisted: Vec<&String> = found
-        .iter()
-        .filter(|f| !ALLOWED_FIELDS.contains(&f.as_str()))
-        .collect();
-    assert!(
-        unlisted.is_empty(),
-        "these fields hold state between requests and are not on the list: {unlisted:?}"
-    );
+    let known = |f: &str| FIELD_COLLECTION.iter().any(|(name, _)| *name == f) || PER_PROCESS.contains(&f);
+    let unlisted: Vec<&String> = found.iter().filter(|f| !known(f)).collect();
+    assert!(unlisted.is_empty(), "these fields hold state between requests and are not on the list: {unlisted:?}");
+    // Every field names a collection on the closed list, and `memory_records` is gone.
+    for (field, collection) in FIELD_COLLECTION {
+        assert!(scaffoldry_server::cache::NAMES.contains(collection), "{field} belongs to '{collection}', which is not on the closed list");
+    }
+    assert!(!found.iter().any(|f| f == "memory_records"), "memory_records is gone");
+    assert_eq!(PER_PROCESS, ["formula_rate_limits"], "the per-process list does not grow");
 }
 
 #[test]
@@ -120,15 +127,7 @@ fn no_static_holds_a_lock_outside_the_list() {
 
 /// The collections phase 3 moved onto the mechanism. Only `ServerState::reload` may replace them. Every other
 /// write reaches PostgreSQL first, bumps the counter, and lets `refresh` read it back.
-const RELOADED: &[&str] = &[
-    "organizations",
-    "position_types",
-    "workspaces",
-    "collaborators",
-    "guards",
-    "datasets",
-    "relationships",
-];
+const RELOADED: &[&str] = &["organizations", "tree", "position_types", "workspaces", "collaborators", "guards", "datasets", "relationships", "automations"];
 
 fn without_space(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -169,4 +168,24 @@ fn only_reload_writes_the_collections_the_mechanism_owns() {
         offenders.is_empty(),
         "these write a cached collection outside reload: {offenders:?}"
     );
+}
+
+/// Only these files put an app definition into the engine. The load from storage is in `state.rs`. A saved view
+/// re-merges itself into the copy this instance holds, in `service/views.rs`. An approval, a route, or a tool does not
+/// register a definition: it commits to PostgreSQL, bumps `manifests`, and lets `refresh` load the app whose version moved.
+const MAY_REGISTER: &[&str] = &["state.rs", "views.rs"];
+
+#[test]
+fn only_the_load_and_a_saved_view_put_an_app_definition_in_the_engine() {
+    let mut files = Vec::new();
+    rust_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    let mut offenders = Vec::new();
+    for f in files {
+        let name = f.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+        let flat = without_space(&std::fs::read_to_string(&f).unwrap());
+        if !MAY_REGISTER.contains(&name.as_str()) && (flat.contains(".register_manifest(") || flat.contains(".register_runtime_manifest(")) {
+            offenders.push(f.display().to_string());
+        }
+    }
+    assert!(offenders.is_empty(), "these register an app definition themselves: {offenders:?}");
 }

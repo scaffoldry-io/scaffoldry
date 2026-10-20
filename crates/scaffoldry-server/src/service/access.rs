@@ -444,6 +444,11 @@ pub fn authorize_app(
             .engine
             .read()
             .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        // A definition that no longer parses fails the requests for that app, by name, and no other.
+        if let Some(reason) = engine.broken_reason(slug) {
+            eprintln!("Warning: a request needs the app '{slug}', whose stored definition no longer parses: {reason}");
+            return Err(ServiceError::StorageUnavailable(format!("The app '{slug}' cannot be read: its stored definition no longer parses")));
+        }
         engine
             .resolve_by_slug(slug)
             .cloned()

@@ -12,8 +12,9 @@ use axum::{
 use crate::service::ServiceError;
 
 /// Paths that stay reachable without an authenticated session.
-const PUBLIC_PATHS: [&str; 5] = [
+const PUBLIC_PATHS: [&str; 6] = [
     "/healthz",
+    "/readyz",
     "/.well-known/oauth-protected-resource",
     "/.well-known/openid-configuration",
     "/.well-known/jwks.json",

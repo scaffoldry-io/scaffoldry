@@ -93,9 +93,9 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | 61 | [stateless-server.md](stateless-server.md) | 2 | People, appointments, sessions, and tokens are queries. A revoked token stops on every instance at once | **COMPLETED** |
 | 62 | [access-model.md](access-model.md) | 1 | Rules survive a restart, every check goes through one decision, a forbid always wins, and SCIM grants no admin role | **COMPLETED** |
 | 63 | [stateless-server.md](stateless-server.md) | 3 | Workspaces, guards, labels, datasets, and the org tree agree across instances | **COMPLETED** |
-| 64 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | |
-| 65 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | |
-| 66 | [stateless-server.md](stateless-server.md) | 6 | Every write is proven across two instances. A readiness route and a clean stop | |
+| 64 | [stateless-server.md](stateless-server.md) | 4 | An approved change is live on every instance on the next request | **COMPLETED** |
+| 65 | [stateless-server.md](stateless-server.md) | 5 | Process instances and the ledger are never held in memory. Two instances cannot both decide | **COMPLETED** |
+| 66 | [stateless-server.md](stateless-server.md) | 6 | Every write is proven across two instances. A readiness route and a clean stop | **COMPLETED** |
 | 67 | [access-model.md](access-model.md) | 2 | Hierarchies are data. One closure table replaces four tree walks. Cedar and policies use the unit tree, not a department string | |
 | 68 | [access-model.md](access-model.md) | 3 | Every workspace, app, table and field has a unit, a domain and a sensitivity, and a child can only narrow them | |
 | 69 | [access-model.md](access-model.md) | 4 | One grant shape and one function, role_at. A position grant on the holder's own unit serves every department | |

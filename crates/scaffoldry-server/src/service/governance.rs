@@ -11,15 +11,15 @@ pub fn verify_decision_ledger(state: &SharedState) -> Result<serde_json::Value, 
     let is_valid = state
         .verify_ledger()
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    let ledger = state
-        .ledger
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+    let (total, head) = state
+        .repository
+        .ledger_summary()
+        .map_err(|e| ServiceError::StorageUnavailable(e.to_string()))?;
 
     Ok(json!({
         "verified": is_valid,
-        "total_blocks": ledger.len(),
-        "head_hash": ledger.last().map(|e| e.entry_hash.as_str()).unwrap_or(""),
+        "total_blocks": total,
+        "head_hash": head.unwrap_or_default(),
         "integrity_audit": if is_valid { "ALL_BLOCKS_VALID" } else { "TAMPER_DETECTED" }
     }))
 }
@@ -126,10 +126,11 @@ pub fn render_ui_decision_ledger(
     _caller: &AuthUser,
     state: &SharedState,
 ) -> Result<String, ServiceError> {
+    // The newest page, not the chain.
     let ledger = state
-        .ledger
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        .repository
+        .ledger_page(None, 100)
+        .map_err(|e| ServiceError::StorageUnavailable(e.to_string()))?;
     let is_valid = state
         .verify_ledger()
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
