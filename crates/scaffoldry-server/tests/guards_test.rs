@@ -12,14 +12,12 @@ use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::access::decide;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::{
-    AuthUser, CollaboratorRecord, OrganizationNode, RoleRow, ServerState,
-    WorkspaceRecord,
+    AuthUser, CollaboratorRecord, OrganizationNode, RoleRow, ServerState, WorkspaceRecord,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
-
 
 struct Ctx {
     app: Router,
@@ -91,12 +89,20 @@ fn seed_workspace(state: &ServerState, id: &str) {
         icon: "dna".to_string(),
         lead: "Dr. Marie Curie".to_string(),
         visibility: "departmental".to_string(),
-        allowed_affiliations: vec!["faculty".to_string(), "staff".to_string(), "student".to_string()],
+        allowed_affiliations: vec![
+            "faculty".to_string(),
+            "staff".to_string(),
+            "student".to_string(),
+        ],
         data_classification: "restricted".to_string(),
         created_at: now.clone(),
         organization_id: None,
     };
-    state.workspaces.write().unwrap().insert(id.to_string(), ws.clone());
+    state
+        .workspaces
+        .write()
+        .unwrap()
+        .insert(id.to_string(), ws.clone());
     {
         let repo = &state.repository;
         let _ = repo.upsert_workspace(&ws);
@@ -136,7 +142,11 @@ fn seed_workspace(state: &ServerState, id: &str) {
             app_slug: String::new(),
         },
     ];
-    state.collaborators.write().unwrap().insert(id.to_string(), collabs.clone());
+    state
+        .collaborators
+        .write()
+        .unwrap()
+        .insert(id.to_string(), collabs.clone());
     {
         let repo = &state.repository;
         for c in &collabs {
@@ -200,7 +210,10 @@ async fn test_01_deny_export_unless_affiliation() {
     assert!(!faculty_dec.allowed, "Faculty must be forbidden to export");
     let pol = faculty_dec.policy.expect("Must name deciding policy");
     assert_eq!(pol.id, "guard-ws-guard-1-1");
-    assert_eq!(pol.description, "Only staff may export from this workspace.");
+    assert_eq!(
+        pol.description,
+        "Only staff may export from this workspace."
+    );
 
     let staff_dec = decide(&c.state, &staff_user, "export", &resource);
     assert!(staff_dec.allowed, "Staff must still be allowed to export");
@@ -225,7 +238,11 @@ async fn test_02_every_compiled_policy_is_forbid_raw_permit_is_400() {
         Some(bad_source),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "Raw permit must be 400: {resp:?}");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Raw permit must be 400: {resp:?}"
+    );
 }
 
 // 3. A guard on workspace A has no effect on a request in workspace B, including a request by the same person.
@@ -296,7 +313,11 @@ async fn test_04_guard_cannot_grant_access() {
         ws.visibility = "restricted".to_string();
         ws_map.insert("ws-restricted".to_string(), ws);
     }
-    c.state.collaborators.write().unwrap().insert("ws-restricted".to_string(), vec![]);
+    c.state
+        .collaborators
+        .write()
+        .unwrap()
+        .insert("ws-restricted".to_string(), vec![]);
 
     let student_user = AuthUser {
         eppn: "student.alice@state.edu".to_string(),
@@ -357,48 +378,77 @@ async fn test_05_deny_access_outside_units() {
     let other_college_id = Uuid::new_v4();
     let dept2_id = Uuid::new_v4();
 
+    let root_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
     // Stored parents first. This instance reads each unit back from the database.
-    let unit = |id: Uuid, parent: Option<Uuid>, name: &str, code: &str, org_type: &str| OrganizationNode {
-        id,
-        parent_id: parent,
-        name: name.to_string(),
-        code: code.to_string(),
-        org_type: org_type.to_string(),
-    };
+    let unit =
+        |id: Uuid, parent: Option<Uuid>, name: &str, code: &str, org_type: &str| OrganizationNode {
+            id,
+            parent_id: parent,
+            name: name.to_string(),
+            code: code.to_string(),
+            org_type: org_type.to_string(),
+            hierarchy_key: "academic".to_string(),
+        };
     for node in [
-        unit(college_id, None, "College of Science", "COS", "College"),
-        unit(dept1_id, Some(college_id), "Biology Dept", "BIO", "Department"),
-        unit(other_college_id, None, "College of Arts", "COA", "College"),
-        unit(dept2_id, Some(other_college_id), "History Dept", "HIST", "Department"),
+        unit(
+            college_id,
+            Some(root_id),
+            "College of Science",
+            "COS",
+            "College",
+        ),
+        unit(
+            dept1_id,
+            Some(college_id),
+            "Biology Dept",
+            "BIO",
+            "Department",
+        ),
+        unit(
+            other_college_id,
+            Some(root_id),
+            "College of Arts",
+            "COA",
+            "College",
+        ),
+        unit(
+            dept2_id,
+            Some(other_college_id),
+            "History Dept",
+            "HIST",
+            "Department",
+        ),
     ] {
         c.state.persist_organization(&node).unwrap();
     }
     {
         let roles = &c.state;
-        roles.persist_role(&RoleRow {
-            id: Uuid::new_v4(),
-            person_id: Uuid::new_v4(),
-            organization_id: dept1_id,
-            role_title: "Researcher".to_string(),
-            scoped_affiliation: "faculty".to_string(),
-            is_primary: true,
-            source: "scim".to_string(),
-            eppn: "faculty.curie@state.edu".to_string(),
-            position_key: None,
-        })
-        .unwrap();
-        roles.persist_role(&RoleRow {
-            id: Uuid::new_v4(),
-            person_id: Uuid::new_v4(),
-            organization_id: dept2_id,
-            role_title: "Historian".to_string(),
-            scoped_affiliation: "faculty".to_string(),
-            is_primary: true,
-            source: "scim".to_string(),
-            eppn: "albert.einstein@state.edu".to_string(),
-            position_key: None,
-        })
-        .unwrap();
+        roles
+            .persist_role(&RoleRow {
+                id: Uuid::new_v4(),
+                person_id: Uuid::new_v4(),
+                organization_id: dept1_id,
+                role_title: "Researcher".to_string(),
+                scoped_affiliation: "faculty".to_string(),
+                is_primary: true,
+                source: "scim".to_string(),
+                eppn: "faculty.curie@state.edu".to_string(),
+                position_key: None,
+            })
+            .unwrap();
+        roles
+            .persist_role(&RoleRow {
+                id: Uuid::new_v4(),
+                person_id: Uuid::new_v4(),
+                organization_id: dept2_id,
+                role_title: "Historian".to_string(),
+                scoped_affiliation: "faculty".to_string(),
+                is_primary: true,
+                source: "scim".to_string(),
+                eppn: "albert.einstein@state.edu".to_string(),
+                position_key: None,
+            })
+            .unwrap();
     }
 
     let put_body = json!({
@@ -450,10 +500,16 @@ async fn test_05_deny_access_outside_units() {
     });
 
     let curie_dec = decide(&c.state, &curie_user, "access_workspace", &res);
-    assert!(curie_dec.allowed, "Curie in BIO (under COS) must be allowed");
+    assert!(
+        curie_dec.allowed,
+        "Curie in BIO (under COS) must be allowed"
+    );
 
     let other_dec = decide(&c.state, &other_user, "access_workspace", &res);
-    assert!(!other_dec.allowed, "Einstein in HIST (under COA) must be denied");
+    assert!(
+        !other_dec.allowed,
+        "Einstein in HIST (under COA) must be denied"
+    );
 }
 
 // 6. Rules over 20, or a unit that does not exist, are 400.
@@ -478,7 +534,11 @@ async fn test_06_rules_over_20_or_missing_unit_is_400() {
         Some(json!({ "rules": rules_21, "reason": "Too many rules" })),
     )
     .await;
-    assert_eq!(s1, StatusCode::BAD_REQUEST, "Over 20 rules must be 400: {r1:?}");
+    assert_eq!(
+        s1,
+        StatusCode::BAD_REQUEST,
+        "Over 20 rules must be 400: {r1:?}"
+    );
 
     let bad_unit = json!({
         "rules": [
@@ -497,7 +557,11 @@ async fn test_06_rules_over_20_or_missing_unit_is_400() {
         Some(bad_unit),
     )
     .await;
-    assert_eq!(s2, StatusCode::BAD_REQUEST, "Missing unit must be 400: {r2:?}");
+    assert_eq!(
+        s2,
+        StatusCode::BAD_REQUEST,
+        "Missing unit must be 400: {r2:?}"
+    );
 }
 
 // 7. A ledger failure makes PUT fail and the version unchanged.
@@ -522,7 +586,14 @@ async fn test_07_ledger_failure_aborts_guard_put() {
     .await;
     assert_eq!(s, StatusCode::OK);
 
-    let (sg, resg) = send(&c.app, "GET", "/api/v1/workspaces/ws-ledger-fail/guards", Some(&c.faculty_token), None).await;
+    let (sg, resg) = send(
+        &c.app,
+        "GET",
+        "/api/v1/workspaces/ws-ledger-fail/guards",
+        Some(&c.faculty_token),
+        None,
+    )
+    .await;
     assert_eq!(sg, StatusCode::OK);
     assert_eq!(resg["current"]["version"], 1);
 
@@ -542,9 +613,19 @@ async fn test_07_ledger_failure_aborts_guard_put() {
     .await;
     assert_eq!(sf, StatusCode::BAD_REQUEST);
 
-    let (sg2, resg2) = send(&c.app, "GET", "/api/v1/workspaces/ws-ledger-fail/guards", Some(&c.faculty_token), None).await;
+    let (sg2, resg2) = send(
+        &c.app,
+        "GET",
+        "/api/v1/workspaces/ws-ledger-fail/guards",
+        Some(&c.faculty_token),
+        None,
+    )
+    .await;
     assert_eq!(sg2, StatusCode::OK);
-    assert_eq!(resg2["current"]["version"], 1, "Version must remain 1 after failed update");
+    assert_eq!(
+        resg2["current"]["version"], 1,
+        "Version must remain 1 after failed update"
+    );
 }
 
 // 8. impact for a four-member workspace lists exactly the members and actions whose result changes, and nothing else.
@@ -601,7 +682,11 @@ async fn test_08_impact_route_lists_only_changes() {
             app_slug: String::new(),
         },
     ];
-    c.state.collaborators.write().unwrap().insert("ws-impact".to_string(), collabs.clone());
+    c.state
+        .collaborators
+        .write()
+        .unwrap()
+        .insert("ws-impact".to_string(), collabs.clone());
     {
         let repo = &c.state.repository;
         for cl in &collabs {
@@ -630,8 +715,14 @@ async fn test_08_impact_route_lists_only_changes() {
     let changes = resp["changes"].as_array().expect("changes array");
     for change in changes {
         let eppn = change["eppn"].as_str().unwrap();
-        assert_ne!(eppn, "marcus.vance@state.edu", "Staff (Vance) must have no change");
-        assert_eq!(change["action"], "export", "Only export action should change");
+        assert_ne!(
+            eppn, "marcus.vance@state.edu",
+            "Staff (Vance) must have no change"
+        );
+        assert_eq!(
+            change["action"], "export",
+            "Only export action should change"
+        );
     }
 }
 
@@ -640,11 +731,21 @@ async fn test_08_impact_route_lists_only_changes() {
 async fn test_09_no_cedar_policy_guard_remains() {
     let _db = common::TestDb::new();
     let output = std::process::Command::new("grep")
-        .args(["-rn", "--exclude=*.sql", "--exclude=guards_test.rs", "cedar_policy_guard", "crates/", "apps/web/src"])
+        .args([
+            "-rn",
+            "--exclude=*.sql",
+            "--exclude=guards_test.rs",
+            "cedar_policy_guard",
+            "crates/",
+            "apps/web/src",
+        ])
         .output()
         .expect("grep failed");
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.trim().is_empty(), "cedar_policy_guard must not remain in codebase: {text}");
+    assert!(
+        text.trim().is_empty(),
+        "cedar_policy_guard must not remain in codebase: {text}"
+    );
 }
 
 // 10. An automation whose triggering user is forbidden run_automation by a guard applies no effects.

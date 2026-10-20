@@ -1,6 +1,6 @@
-use scaffoldry_engine::HostRouter;
 use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState, WorkspaceRecord};
+use scaffoldry_engine::HostRouter;
 use scaffoldry_policy::entities::{PrincipalCtx, Resource, WorkspaceCtx};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -30,19 +30,43 @@ pub struct Decision {
 
 impl Decision {
     fn failed(message: impl Into<String>) -> Self {
-        Self { allowed: false, policy: None, reasons: Vec::new(), diagnostics: Vec::new(), error: Some(message.into()) }
+        Self {
+            allowed: false,
+            policy: None,
+            reasons: Vec::new(),
+            diagnostics: Vec::new(),
+            error: Some(message.into()),
+        }
     }
 }
 
 /// The institutional policies plus the guards of one workspace, cached by (workspace_id, version). A guard that cannot
 /// be read, parsed, or compiled is an error. It is never skipped, because a skipped guard widens access.
-fn policy_set_for(state: &SharedState, ws_id: Option<&str>) -> Result<scaffoldry_policy::PolicySet, String> {
-    let Some(wid) = ws_id.filter(|w| !w.is_empty()) else { return Ok(state.policy_engine.policies().clone()) };
-    let current_guard = state.guards.read().unwrap_or_else(|p| p.into_inner()).get(wid).and_then(|h| h.last().cloned());
-    let Some(guard) = current_guard else { return Ok(state.policy_engine.policies().clone()) };
+fn policy_set_for(
+    state: &SharedState,
+    ws_id: Option<&str>,
+) -> Result<scaffoldry_policy::PolicySet, String> {
+    let Some(wid) = ws_id.filter(|w| !w.is_empty()) else {
+        return Ok(state.policy_engine.policies().clone());
+    };
+    let current_guard = state
+        .guards
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(wid)
+        .and_then(|h| h.last().cloned());
+    let Some(guard) = current_guard else {
+        return Ok(state.policy_engine.policies().clone());
+    };
 
     let cache_key = (wid.to_string(), guard.version);
-    if let Some(cached) = state.guard_policy_cache.read().unwrap_or_else(|p| p.into_inner()).get(&cache_key).cloned() {
+    if let Some(cached) = state
+        .guard_policy_cache
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&cache_key)
+        .cloned()
+    {
         return Ok(cached);
     }
 
@@ -57,23 +81,46 @@ fn policy_set_for(state: &SharedState, ws_id: Option<&str>) -> Result<scaffoldry
                 .map(|(id, node)| (id.to_string(), node.name.clone()))
                 .collect();
             for (i, rule) in rules.iter().enumerate() {
-                let text = rule.compile_policy_text(wid, i + 1, &org_names).map_err(|e| format!("guard {} of workspace '{wid}' does not compile: {e}", i + 1))?;
+                let text = rule
+                    .compile_policy_text(wid, i + 1, &org_names)
+                    .map_err(|e| {
+                        format!("guard {} of workspace '{wid}' does not compile: {e}", i + 1)
+                    })?;
                 let policy_id = format!("guard-{wid}-{}", i + 1);
-                let policy = scaffoldry_policy::parse_guard_policy(&policy_id, &text).map_err(|e| format!("guard {} of workspace '{wid}' is not a valid policy: {e}", i + 1))?;
-                ps.add(policy).map_err(|e| format!("guard {} of workspace '{wid}' cannot be added: {e}", i + 1))?;
+                let policy =
+                    scaffoldry_policy::parse_guard_policy(&policy_id, &text).map_err(|e| {
+                        format!(
+                            "guard {} of workspace '{wid}' is not a valid policy: {e}",
+                            i + 1
+                        )
+                    })?;
+                ps.add(policy).map_err(|e| {
+                    format!("guard {} of workspace '{wid}' cannot be added: {e}", i + 1)
+                })?;
             }
         }
         Err(_) if !guard.compiled.trim().is_empty() => {
-            let raw_set = scaffoldry_policy::validate_raw_source(&guard.compiled).map_err(|e| format!("the guard source of workspace '{wid}' is not valid: {e}"))?;
+            let raw_set = scaffoldry_policy::validate_raw_source(&guard.compiled)
+                .map_err(|e| format!("the guard source of workspace '{wid}' is not valid: {e}"))?;
             for p in raw_set.policies() {
-                ps.add(p.clone()).map_err(|e| format!("the guard source of workspace '{wid}' cannot be added: {e}"))?;
+                ps.add(p.clone()).map_err(|e| {
+                    format!("the guard source of workspace '{wid}' cannot be added: {e}")
+                })?;
             }
         }
         // A guard version with no rules at all holds nothing to enforce.
         Err(_) if guard.rules.is_null() => {}
-        Err(e) => return Err(format!("the guard rules of workspace '{wid}' cannot be read: {e}")),
+        Err(e) => {
+            return Err(format!(
+                "the guard rules of workspace '{wid}' cannot be read: {e}"
+            ))
+        }
     }
-    state.guard_policy_cache.write().unwrap_or_else(|p| p.into_inner()).insert(cache_key, ps.clone());
+    state
+        .guard_policy_cache
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(cache_key, ps.clone());
     Ok(ps)
 }
 
@@ -81,34 +128,50 @@ fn policy_set_for(state: &SharedState, ws_id: Option<&str>) -> Result<scaffoldry
 /// (`principal_of`) and the row and column rules (`scope::person_of`) both call it, so a person in Physics is in the
 /// College of Science for a guard, for a rule in Rust, and for a rule in SQL.
 pub fn unit_ids_of(state: &SharedState, roles: &[crate::state::RoleRow]) -> Vec<String> {
-    let role_unit_ids: Vec<String> = roles.iter().map(|r| r.organization_id.to_string()).collect();
-    scaffoldry_policy::entities::unit_ids_for(&role_unit_ids, &unit_parents(state))
+    let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+    let mut ids = std::collections::BTreeSet::new();
+    for r in roles {
+        for anc in tree.ancestors(r.organization_id) {
+            ids.insert(anc.to_string());
+        }
+    }
+    ids.into_iter().collect()
 }
 
 /// What Cedar knows about a person: their units with all ancestors, and the units they administer.
 pub fn principal_of(state: &SharedState, caller: &AuthUser) -> PrincipalCtx {
     let roles = state.roles_of(&caller.eppn);
-    let admin_unit_ids: Vec<String> = roles.iter().filter(|r| r.scoped_affiliation == "unit_admin").map(|r| r.organization_id.to_string()).collect();
+    let admin_unit_ids: Vec<String> = roles
+        .iter()
+        .filter(|r| r.scoped_affiliation == "unit_admin")
+        .map(|r| r.organization_id.to_string())
+        .collect();
     // A Platform Admin is a central administrator, or holds the `platform_admin` role on the root unit.
     let is_platform_admin = {
-        let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
-        let who = crate::service::organizations::OrgCaller { eppn: caller.eppn.clone(), affiliation: caller.affiliation.clone() };
-        crate::service::organizations::is_platform_admin(&who, &orgs, &roles)
+        if caller.affiliation == "central_admin" {
+            true
+        } else {
+            let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+            roles.iter().any(|r| {
+                r.eppn == caller.eppn
+                    && r.scoped_affiliation == "platform_admin"
+                    && tree.parent_of(r.organization_id).is_none()
+            })
+        }
     };
     PrincipalCtx {
         eppn: caller.eppn.clone(),
         name: caller.name.clone(),
-        scoped_affiliation: if is_platform_admin { "central_admin".to_string() } else { caller.affiliation.clone() },
+        scoped_affiliation: if is_platform_admin {
+            "central_admin".to_string()
+        } else {
+            caller.affiliation.clone()
+        },
         department: caller.department.clone(),
         unit_ids: unit_ids_of(state, &roles),
         admin_unit_ids,
         is_platform_admin,
     }
-}
-
-/// Each unit's parent, by id.
-fn unit_parents(state: &SharedState) -> std::collections::HashMap<String, Option<String>> {
-    state.organizations.read().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, node)| (id.to_string(), node.parent_id.map(|p| p.to_string()))).collect()
 }
 
 /// Unified access evaluation for all resources and actions.
@@ -141,7 +204,13 @@ pub fn decide_for(
         Ok(ps) => ps,
         Err(e) => return Decision::failed(e),
     };
-    match scaffoldry_policy::entities::authorize_with_policy_set(&state.policy_engine, &policy_set, principal, action, resource) {
+    match scaffoldry_policy::entities::authorize_with_policy_set(
+        &state.policy_engine,
+        &policy_set,
+        principal,
+        action,
+        resource,
+    ) {
         Ok(res) => Decision {
             allowed: res.decision == scaffoldry_policy::PolicyDecision::Allow,
             policy: res.deciding_policy,
@@ -191,7 +260,11 @@ pub fn simulate_record_action(
 
 /// The governance ledger as Cedar sees it: a system resource of the central administration.
 pub fn ledger_resource() -> scaffoldry_policy::entities::SystemCtx {
-    scaffoldry_policy::entities::SystemCtx { id: "governance-ledger".to_string(), department: "central_admin".to_string(), is_ferpa_sensitive: false }
+    scaffoldry_policy::entities::SystemCtx {
+        id: "governance-ledger".to_string(),
+        department: "central_admin".to_string(),
+        is_ferpa_sensitive: false,
+    }
 }
 
 /// Decides one action and turns the result into `Ok` or an error. A denial is `Forbidden` with `denied` as its message
@@ -210,16 +283,35 @@ pub fn require(
     if decision.allowed {
         return Ok(());
     }
-    Err(ServiceError::Forbidden { message: denied.to_string(), reasons: decision.reasons, diagnostics: decision.diagnostics, policy: decision.policy })
+    Err(ServiceError::Forbidden {
+        message: denied.to_string(),
+        reasons: decision.reasons,
+        diagnostics: decision.diagnostics,
+        policy: decision.policy,
+    })
 }
 
 /// The Cedar entity for a workspace, for someone who holds `role` in it (`None` for a non-member). It carries the
 /// workspace's unit and every ancestor of it. `sensitivity` is set when the question is about one app in the
 /// workspace: whether its fields hold protected data, and the categories of those fields.
-pub fn workspace_ctx(state: &SharedState, ws: &WorkspaceRecord, role: Option<&str>, sensitivity: Option<(bool, BTreeSet<String>)>) -> WorkspaceCtx {
-    let unit_id = ws.organization_id.map(|u| u.to_string()).unwrap_or_default();
+pub fn workspace_ctx(
+    state: &SharedState,
+    ws: &WorkspaceRecord,
+    role: Option<&str>,
+    sensitivity: Option<(bool, BTreeSet<String>)>,
+) -> WorkspaceCtx {
+    let unit_id = ws
+        .organization_id
+        .map(|u| u.to_string())
+        .unwrap_or_default();
     let unit_path_ids = match ws.organization_id {
-        Some(_) => scaffoldry_policy::entities::unit_ids_for(std::slice::from_ref(&unit_id), &unit_parents(state)),
+        Some(uid) => {
+            let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+            tree.ancestors(uid)
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect()
+        }
         None => Vec::new(),
     };
     let (is_ferpa_sensitive, categories) = sensitivity.unwrap_or_default();
@@ -238,16 +330,30 @@ pub fn workspace_ctx(state: &SharedState, ws: &WorkspaceRecord, role: Option<&st
 }
 
 /// The Cedar resource for a workspace as `caller` meets it. `app_slug` narrows their membership to that app.
-pub fn workspace_resource(state: &SharedState, caller: &AuthUser, ws: &WorkspaceRecord, app_slug: Option<&str>, sensitivity: Option<(bool, BTreeSet<String>)>) -> Resource {
+pub fn workspace_resource(
+    state: &SharedState,
+    caller: &AuthUser,
+    ws: &WorkspaceRecord,
+    app_slug: Option<&str>,
+    sensitivity: Option<(bool, BTreeSet<String>)>,
+) -> Resource {
     let role = match app_slug {
         Some(slug) => crate::service::members::member_role_in_app(caller, &ws.id, slug, state),
         None => crate::service::members::member_role(caller, &ws.id, state),
     };
-    Resource::Workspace(workspace_ctx(state, ws, role.as_ref().map(|r| r.as_str()), sensitivity))
+    Resource::Workspace(workspace_ctx(
+        state,
+        ws,
+        role.as_ref().map(|r| r.as_str()),
+        sensitivity,
+    ))
 }
 
 /// Whether any field of the app is protected under the effective rule, and the categories its fields carry.
-fn app_sensitivity(app: &scaffoldry_engine::AppManifest, state: &SharedState) -> (bool, BTreeSet<String>) {
+fn app_sensitivity(
+    app: &scaffoldry_engine::AppManifest,
+    state: &SharedState,
+) -> (bool, BTreeSet<String>) {
     let categories = state.sensitivity_categories();
     let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
     let mut protected = false;
@@ -284,19 +390,41 @@ pub fn authorize_workspace(
 }
 
 /// The same check for a workspace the caller already holds.
-pub fn authorize_workspace_record(caller: &AuthUser, ws: &WorkspaceRecord, cedar_action: &str, state: &SharedState) -> Result<(), ServiceError> {
-    authorize_workspace_denying(caller, ws, cedar_action, &format!("403 Forbidden: Cedar Policy denies {cedar_action} on this workspace"), state)
+pub fn authorize_workspace_record(
+    caller: &AuthUser,
+    ws: &WorkspaceRecord,
+    cedar_action: &str,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    authorize_workspace_denying(
+        caller,
+        ws,
+        cedar_action,
+        &format!("403 Forbidden: Cedar Policy denies {cedar_action} on this workspace"),
+        state,
+    )
 }
 
 /// The same check with the words a refusal uses.
-pub fn authorize_workspace_denying(caller: &AuthUser, ws: &WorkspaceRecord, cedar_action: &str, denied: &str, state: &SharedState) -> Result<(), ServiceError> {
+pub fn authorize_workspace_denying(
+    caller: &AuthUser,
+    ws: &WorkspaceRecord,
+    cedar_action: &str,
+    denied: &str,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
     let resource = workspace_resource(state, caller, ws, None, None);
     require(state, caller, cedar_action, &resource, denied)
 }
 
 /// Whether the caller may take `cedar_action` on a workspace, for a list that filters. A decision that cannot be made
 /// is an error, so a list never drops a workspace without saying why.
-pub fn workspace_allowed(caller: &AuthUser, ws: &WorkspaceRecord, cedar_action: &str, state: &SharedState) -> Result<bool, ServiceError> {
+pub fn workspace_allowed(
+    caller: &AuthUser,
+    ws: &WorkspaceRecord,
+    cedar_action: &str,
+    state: &SharedState,
+) -> Result<bool, ServiceError> {
     let resource = workspace_resource(state, caller, ws, None, None);
     let decision = decide(state, caller, cedar_action, &resource);
     match decision.error {
@@ -358,7 +486,19 @@ pub fn authorize_app(
         AppAction::Manage => "manage_app",
     };
 
-    let resource = workspace_resource(state, caller, &ws, Some(slug), Some(app_sensitivity(&app, state)));
+    let resource = workspace_resource(
+        state,
+        caller,
+        &ws,
+        Some(slug),
+        Some(app_sensitivity(&app, state)),
+    );
     // A forbid from a guard is final. A unit administrator is let in by a Cedar permit, never by a fallback after a deny.
-    require(state, caller, action_name, &resource, "403 Forbidden: Cedar Policy restricts access to this app")
+    require(
+        state,
+        caller,
+        action_name,
+        &resource,
+        "403 Forbidden: Cedar Policy restricts access to this app",
+    )
 }

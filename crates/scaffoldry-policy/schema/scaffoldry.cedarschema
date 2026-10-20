@@ -3,23 +3,33 @@
 // Workspace.workspace_id equals the workspace's id.
 // Workspace.unit_path_ids is the workspace's unit and every ancestor of it. User.admin_unit_ids is the units where the
 // person is a unit administrator. A workspace asked about an app carries that app's sensitivity.
+//
+// Phase 2: One notion of place.
+// Unit entity carries hierarchy attribute and ancestor units as parents.
+// Workspace, App, Record, and System carry their unit attribute and parents.
+
+entity Unit in [Unit] = {
+  hierarchy: String,
+};
 
 entity User = {
   eppn: String,
   name: String,
   scoped_affiliation: String,
   department: String,
+  units: Set<Unit>,
   unit_ids: Set<String>,
   admin_unit_ids: Set<String>,
   is_platform_admin: Bool,
 };
 
-entity Workspace = {
+entity Workspace in [Unit] = {
   workspace_id: String,
   department: String,
   visibility: String,
   data_classification: String,
   member_role: String,
+  unit: Unit,
   unit_id: String,
   unit_path_ids: Set<String>,
   is_member: Bool,
@@ -27,22 +37,25 @@ entity Workspace = {
   categories: Set<String>,
 };
 
-entity App = {
+entity App in [Unit] = {
   slug: String,
   department: String,
   workspace_id: String,
+  unit: Unit,
 };
 
-entity Record = {
+entity Record in [Unit] = {
   app_slug: String,
   department: String,
   workspace_id: String,
+  unit: Unit,
   is_ferpa_sensitive: Bool,
   categories: Set<String>,
 };
 
-entity System = {
+entity System in [Unit] = {
   department: String,
+  unit: Unit,
   is_ferpa_sensitive: Bool,
 };
 

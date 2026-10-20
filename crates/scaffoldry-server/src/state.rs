@@ -44,7 +44,10 @@ pub struct ScimUser {
     pub emails: Vec<Value>,
     #[serde(default)]
     pub roles: Vec<Value>,
-    #[serde(default, rename = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User")]
+    #[serde(
+        default,
+        rename = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+    )]
     pub enterprise_extension: Option<Value>,
     #[serde(default)]
     pub title: Option<String>,
@@ -103,6 +106,24 @@ pub struct OrganizationNode {
     pub name: String,
     pub code: String,
     pub org_type: String,
+    #[serde(default = "default_hierarchy_key")]
+    pub hierarchy_key: String,
+}
+
+pub fn default_hierarchy_key() -> String {
+    "academic".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HierarchyRecord {
+    pub key: String,
+    pub name: String,
+    pub kind: String,
+    pub source: String,
+    pub status: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub retired_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +236,7 @@ pub struct ServerState {
     /// The version of each cached collection this instance holds, in the order of `cache::NAMES`.
     pub cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()],
     pub organizations: RwLock<HashMap<uuid::Uuid, OrganizationNode>>,
+    pub tree: RwLock<scaffoldry_core::tree::OrgTree>,
     pub position_types: RwLock<HashMap<String, PositionType>>,
     /// Sensitivity labels by `(app, table, field)`. They can only raise a field's sensitivity.
     /// Empty until the label table exists (admin console phase 4, later part).
@@ -231,7 +253,9 @@ impl ServerState {
     pub fn refresh(&self) -> Result<(), crate::repository::RepositoryError> {
         use std::sync::atomic::Ordering::SeqCst;
         for (name, version) in self.repository.cache_versions()? {
-            let Some(i) = crate::cache::index_of(&name) else { continue };
+            let Some(i) = crate::cache::index_of(&name) else {
+                continue;
+            };
             if self.cache_seen[i].load(SeqCst) == version {
                 continue;
             }
@@ -278,12 +302,31 @@ impl ServerState {
         }
         match name {
             "organizations" => {
-                let all: HashMap<uuid::Uuid, OrganizationNode> = self.repository.list_organizations()?.into_iter().map(|o| (o.id, o)).collect();
-                *self.organizations.write().unwrap_or_else(|p| p.into_inner()) = all;
+                let all: HashMap<uuid::Uuid, OrganizationNode> = self
+                    .repository
+                    .list_organizations()?
+                    .into_iter()
+                    .map(|o| (o.id, o))
+                    .collect();
+                let closure = self.repository.list_org_closure()?;
+                let tree = scaffoldry_core::tree::OrgTree::new(closure);
+                *self
+                    .organizations
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner()) = all;
+                *self.tree.write().unwrap_or_else(|p| p.into_inner()) = tree;
             }
             "position_types" => {
-                let all: HashMap<String, PositionType> = self.repository.list_position_types()?.into_iter().map(|p| (p.key.clone(), p)).collect();
-                *self.position_types.write().unwrap_or_else(|p| p.into_inner()) = all;
+                let all: HashMap<String, PositionType> = self
+                    .repository
+                    .list_position_types()?
+                    .into_iter()
+                    .map(|p| (p.key.clone(), p))
+                    .collect();
+                *self
+                    .position_types
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner()) = all;
             }
             "workspaces" => {
                 // A workspace and its collaborators are one collection. Both are read before either is replaced.
@@ -294,25 +337,45 @@ impl ServerState {
                     workspaces.insert(ws.id.clone(), ws);
                 }
                 *self.workspaces.write().unwrap_or_else(|p| p.into_inner()) = workspaces;
-                *self.collaborators.write().unwrap_or_else(|p| p.into_inner()) = collaborators;
+                *self
+                    .collaborators
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner()) = collaborators;
             }
             "guards" => {
-                let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> = HashMap::new();
+                let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> =
+                    HashMap::new();
                 for g in self.repository.list_all_workspace_guards()? {
                     guards.entry(g.workspace_id.clone()).or_default().push(g);
                 }
                 *self.guards.write().unwrap_or_else(|p| p.into_inner()) = guards;
                 // The compiled sets are keyed by workspace and guard version, so they are right without this. A
                 // reload drops them anyway, so a set built from a guard that was rewritten does not outlive it.
-                self.guard_policy_cache.write().unwrap_or_else(|p| p.into_inner()).clear();
+                self.guard_policy_cache
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clear();
             }
             "datasets" => {
-                let all: HashMap<String, PublishedDataset> = self.repository.list_published_datasets()?.into_iter().map(|d| (d.id.clone(), d)).collect();
+                let all: HashMap<String, PublishedDataset> = self
+                    .repository
+                    .list_published_datasets()?
+                    .into_iter()
+                    .map(|d| (d.id.clone(), d))
+                    .collect();
                 *self.datasets.write().unwrap_or_else(|p| p.into_inner()) = all;
             }
             "relationships" => {
-                let all: HashMap<String, DatasetRelationship> = self.repository.list_dataset_relationships()?.into_iter().map(|r| (r.id.clone(), r)).collect();
-                *self.relationships.write().unwrap_or_else(|p| p.into_inner()) = all;
+                let all: HashMap<String, DatasetRelationship> = self
+                    .repository
+                    .list_dataset_relationships()?
+                    .into_iter()
+                    .map(|r| (r.id.clone(), r))
+                    .collect();
+                *self
+                    .relationships
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner()) = all;
             }
             _ => {}
         }
@@ -349,14 +412,17 @@ impl ServerState {
         let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
             .map_err(|e| format!("Failed to initialize PolicyEngine: {e}"))?;
 
-        let mut app_views_cache: HashMap<String, Vec<crate::repository_views::StoredView>> = HashMap::new();
-        let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let mut app_views_cache: HashMap<String, Vec<crate::repository_views::StoredView>> =
+            HashMap::new();
+        let default_root_id =
+            uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
         let default_root_org = OrganizationNode {
             id: default_root_id,
             parent_id: None,
             name: "Institution".to_string(),
             code: "INST".to_string(),
             org_type: "Institution".to_string(),
+            hierarchy_key: "academic".to_string(),
         };
         let mut organizations = HashMap::new();
         organizations.insert(default_root_id, default_root_org);
@@ -364,7 +430,8 @@ impl ServerState {
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
         let mut automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
-        let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> = HashMap::new();
+        let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> =
+            HashMap::new();
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
@@ -380,7 +447,7 @@ impl ServerState {
             expires_at: Utc::now() + chrono::Duration::days(365),
             last_used_at: None,
             revoked_at: None,
-        app_slug: None,
+            app_slug: None,
         };
 
         let mut settings_map = HashMap::new();
@@ -404,14 +471,21 @@ impl ServerState {
         };
         let repo = &*repository;
         // A read that fails stops the server. It does not start with a collection empty and say nothing.
-        let read = |what: &str, e: crate::repository::RepositoryError| -> Box<dyn std::error::Error + Send + Sync> {
+        let read = |what: &str,
+                    e: crate::repository::RepositoryError|
+         -> Box<dyn std::error::Error + Send + Sync> {
             format!("Failed to read {what} at start: {e}").into()
         };
 
         // The counters come first. A write that lands while the rest loads is then seen by the first refresh.
-        let versions = repo.cache_versions().map_err(|e| read("the cache versions", e))?;
+        let versions = repo
+            .cache_versions()
+            .map_err(|e| read("the cache versions", e))?;
 
-        for (k, v) in repo.get_platform_settings().map_err(|e| read("the settings", e))? {
+        for (k, v) in repo
+            .get_platform_settings()
+            .map_err(|e| read("the settings", e))?
+        {
             if k == "platform.timezone" {
                 if let Some(tz) = v.as_str() {
                     scaffoldry_engine::formula::set_institution_timezone(tz);
@@ -422,14 +496,21 @@ impl ServerState {
 
         // The root organization exists before anything that hangs from it.
         for org in organizations.values() {
-            repo.upsert_organization(org).map_err(|e| read("the root organization", e))?;
+            repo.upsert_organization(org)
+                .map_err(|e| read("the root organization", e))?;
         }
 
         // Views live in their own table. A manifest stored with views still in it has them moved, once, and
         // the migration is one ledger entry with the count. What the engine runs is the manifest with the
         // stored views merged back in, so nothing that reads a manifest's views changes.
-        for v in repo.list_all_app_views().map_err(|e| read("the views", e))? {
-            app_views_cache.entry(v.app_slug.clone()).or_default().push(v);
+        for v in repo
+            .list_all_app_views()
+            .map_err(|e| read("the views", e))?
+        {
+            app_views_cache
+                .entry(v.app_slug.clone())
+                .or_default()
+                .push(v);
         }
         for (stored_slug, version, value) in repo.list_app_manifest_rows().map_err(|e| read("the app manifests", e))? {
             // A definition that does not parse is that app's problem. The server starts and serves the others.
@@ -443,7 +524,10 @@ impl ServerState {
                 }
             };
             if !m.views.is_empty() {
-                if let Some(done) = repo.migrate_manifest_views(&m.slug).map_err(|e| read("the view migration", e))? {
+                if let Some(done) = repo
+                    .migrate_manifest_views(&m.slug)
+                    .map_err(|e| read("the view migration", e))?
+                {
                     let count = done.views.len();
                     repo
                         .append_ledger_decision(crate::repository::AppendDecisionParams {
@@ -472,31 +556,55 @@ impl ServerState {
             engine.set_version(&stored_slug, version);
         }
 
-        for ds in repo.list_published_datasets().map_err(|e| read("the datasets", e))? {
+        for ds in repo
+            .list_published_datasets()
+            .map_err(|e| read("the datasets", e))?
+        {
             datasets.insert(ds.id.clone(), ds);
         }
-        for rel in repo.list_dataset_relationships().map_err(|e| read("the relationships", e))? {
+        for rel in repo
+            .list_dataset_relationships()
+            .map_err(|e| read("the relationships", e))?
+        {
             relationships.insert(rel.id.clone(), rel);
         }
-        for r in repo.list_workflow_automations(None).map_err(|e| read("the automations", e))? {
+        for r in repo
+            .list_workflow_automations(None)
+            .map_err(|e| read("the automations", e))?
+        {
             let entry = automations.entry(r.app_slug.clone()).or_default();
             if !entry.iter().any(|existing| existing.id == r.id) {
                 entry.push(r);
             }
         }
 
-        for org in repo.list_organizations().map_err(|e| read("the organizations", e))? {
+        for org in repo
+            .list_organizations()
+            .map_err(|e| read("the organizations", e))?
+        {
             organizations.insert(org.id, org);
         }
-        for pt in repo.list_position_types().map_err(|e| read("the position types", e))? {
+        let closure = repo
+            .list_org_closure()
+            .map_err(|e| read("the org closure", e))?;
+        let tree = scaffoldry_core::tree::OrgTree::new(closure);
+        for pt in repo
+            .list_position_types()
+            .map_err(|e| read("the position types", e))?
+        {
             position_types.insert(pt.key.clone(), pt);
         }
 
-        for g in repo.list_all_workspace_guards().map_err(|e| read("the workspace guards", e))? {
+        for g in repo
+            .list_all_workspace_guards()
+            .map_err(|e| read("the workspace guards", e))?
+        {
             guards.entry(g.workspace_id.clone()).or_default().push(g);
         }
 
-        let archived_count = repo.count_legacy_workspace_guards().map_err(|e| read("the archived guards", e))?;
+        let archived_count = repo
+            .count_legacy_workspace_guards()
+            .map_err(|e| read("the archived guards", e))?;
         if archived_count > 0 {
             let already_recorded = repo
                 .ledger_has_rationale(scaffoldry_core::ledger::DecisionType::PolicyRevision, "Archived legacy workspace guards")
@@ -518,13 +626,19 @@ impl ServerState {
                 .map_err(|e| read("the ledger", e))?;
             }
         }
-        for ws in repo.list_workspaces().map_err(|e| read("the workspaces", e))? {
-            let collabs = repo.get_collaborators(&ws.id).map_err(|e| read("the collaborators", e))?;
+        for ws in repo
+            .list_workspaces()
+            .map_err(|e| read("the workspaces", e))?
+        {
+            let collabs = repo
+                .get_collaborators(&ws.id)
+                .map_err(|e| read("the collaborators", e))?;
             collaborators.insert(ws.id.clone(), collabs);
             workspaces.insert(ws.id.clone(), ws);
         }
 
-        repo.insert_api_token(&default_scim_token).map_err(|e| read("the provisioning token", e))?;
+        repo.insert_api_token(&default_scim_token)
+            .map_err(|e| read("the provisioning token", e))?;
 
         // The ledger stays in the database. A database with none gets the genesis entry.
         if repo.ledger_summary().map_err(|e| read("the ledger", e))?.0 == 0 {
@@ -540,14 +654,24 @@ impl ServerState {
             .map_err(|e| read("the ledger", e))?;
         }
 
-        let cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()] = std::array::from_fn(|i| {
-            let version = versions.iter().find(|(n, _)| n == crate::cache::NAMES[i]).map(|(_, v)| *v).unwrap_or(-1);
-            std::sync::atomic::AtomicI64::new(version)
-        });
+        let cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()] =
+            std::array::from_fn(|i| {
+                let version = versions
+                    .iter()
+                    .find(|(n, _)| n == crate::cache::NAMES[i])
+                    .map(|(_, v)| *v)
+                    .unwrap_or(-1);
+                std::sync::atomic::AtomicI64::new(version)
+            });
 
         Ok(Self {
             app_views: RwLock::new(app_views_cache),
-            count_timeout_ms: std::sync::atomic::AtomicU64::new(std::env::var("SCAFFOLDRY_COUNT_TIMEOUT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(2_000)),
+            count_timeout_ms: std::sync::atomic::AtomicU64::new(
+                std::env::var("SCAFFOLDRY_COUNT_TIMEOUT_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(2_000),
+            ),
             workspaces: RwLock::new(workspaces),
             collaborators: RwLock::new(collaborators),
             guards: RwLock::new(guards),
@@ -560,6 +684,7 @@ impl ServerState {
             repository,
             cache_seen,
             organizations: RwLock::new(organizations),
+            tree: RwLock::new(tree),
             position_types: RwLock::new(position_types),
             labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
             settings: RwLock::new(settings_map),
@@ -582,14 +707,22 @@ pub struct RecordDecisionInput<'a> {
 impl ServerState {
     /// Stores a unit, then makes this instance read it back. The write commits first and bumps `organizations`, so
     /// memory never holds a unit the database refused and another instance reads it on its next request.
-    pub fn persist_organization(&self, org: &OrganizationNode) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_organization(
+        &self,
+        org: &OrganizationNode,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_organization(org)?;
         self.refresh()?;
         Ok(())
     }
 
-    pub fn delete_scim_roles(&self, eppn: &str, keep_admin_rows: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.repository.delete_scim_roles_for_user(eppn, keep_admin_rows)?;
+    pub fn delete_scim_roles(
+        &self,
+        eppn: &str,
+        keep_admin_rows: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.repository
+            .delete_scim_roles_for_user(eppn, keep_admin_rows)?;
         Ok(())
     }
 
@@ -598,7 +731,10 @@ impl ServerState {
     // -------------------------------------------------------------------------
 
     pub fn list_app_records(&self, app_slug: &str) -> Result<Vec<DatasetRecord>, String> {
-        { let repo = &self.repository; repo.list_records(app_slug).map_err(|e| e.to_string()) }
+        {
+            let repo = &self.repository;
+            repo.list_records(app_slug).map_err(|e| e.to_string())
+        }
     }
 
     /// One page of a table in `(created_at, id)` order, after `cursor` when given.
@@ -609,47 +745,117 @@ impl ServerState {
         limit: usize,
         cursor: Option<(String, String)>,
     ) -> Result<Vec<DatasetRecord>, String> {
-        { let repo = &self.repository; repo.list_records_page(app_slug, table_id, limit, cursor).map_err(|e| e.to_string()) }
+        {
+            let repo = &self.repository;
+            repo.list_records_page(app_slug, table_id, limit, cursor)
+                .map_err(|e| e.to_string())
+        }
     }
 
     /// One page that filters or sorts.
-    pub fn query_records(&self, app_slug: &str, query: &crate::repository::RecordQuery) -> Result<Vec<DatasetRecord>, String> {
-        { let repo = &self.repository; repo.query_records(app_slug, query).map_err(|e| e.to_string()) }
+    pub fn query_records(
+        &self,
+        app_slug: &str,
+        query: &crate::repository::RecordQuery,
+    ) -> Result<Vec<DatasetRecord>, String> {
+        {
+            let repo = &self.repository;
+            repo.query_records(app_slug, query)
+                .map_err(|e| e.to_string())
+        }
     }
 
     /// Aggregate over record_index.
-    pub fn aggregate_records(&self, plan: &crate::repository_index::AggregatePlan) -> Result<crate::repository_index::AggregateResultRaw, String> {
-        { let repo = &self.repository; repo.aggregate_records(plan).map_err(|e| e.to_string()) }
+    pub fn aggregate_records(
+        &self,
+        plan: &crate::repository_index::AggregatePlan,
+    ) -> Result<crate::repository_index::AggregateResultRaw, String> {
+        {
+            let repo = &self.repository;
+            repo.aggregate_records(plan).map_err(|e| e.to_string())
+        }
     }
 
     /// The percent done of the build holding back one of `fields`, or `None` when none is building.
-    pub fn index_building_percent(&self, app_slug: &str, table_id: &str, fields: &[String]) -> Result<Option<i64>, String> {
-        { let repo = &self.repository; repo.index_building_percent(app_slug, table_id, fields).map_err(|e| e.to_string()) }
+    pub fn index_building_percent(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        fields: &[String],
+    ) -> Result<Option<i64>, String> {
+        {
+            let repo = &self.repository;
+            repo.index_building_percent(app_slug, table_id, fields)
+                .map_err(|e| e.to_string())
+        }
     }
 
     /// One page through the pivot index.
-    pub fn indexed_page(&self, query: &crate::repository::IndexedQuery) -> Result<Vec<DatasetRecord>, String> {
-        { let repo = &self.repository; repo.indexed_page(query).map_err(|e| e.to_string()) }
+    pub fn indexed_page(
+        &self,
+        query: &crate::repository::IndexedQuery,
+    ) -> Result<Vec<DatasetRecord>, String> {
+        {
+            let repo = &self.repository;
+            repo.indexed_page(query).map_err(|e| e.to_string())
+        }
     }
 
     /// How many records point at `record_id` through any of `fields`.
-    pub fn count_links_to(&self, app_slug: &str, record_id: &str, fields: &[String]) -> Result<i64, String> {
-        { let repo = &self.repository; repo.count_links_to(app_slug, record_id, fields).map_err(|e| e.to_string()) }
+    pub fn count_links_to(
+        &self,
+        app_slug: &str,
+        record_id: &str,
+        fields: &[String],
+    ) -> Result<i64, String> {
+        {
+            let repo = &self.repository;
+            repo.count_links_to(app_slug, record_id, fields)
+                .map_err(|e| e.to_string())
+        }
     }
 
     /// Which of `ids` are records of this table of this app.
-    pub fn existing_record_ids(&self, app_slug: &str, table_id: &str, ids: &[String]) -> Result<Vec<String>, String> {
-        { let repo = &self.repository; repo.existing_record_ids(app_slug, table_id, ids).map_err(|e| e.to_string()) }
+    pub fn existing_record_ids(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<String>, String> {
+        {
+            let repo = &self.repository;
+            repo.existing_record_ids(app_slug, table_id, ids)
+                .map_err(|e| e.to_string())
+        }
     }
 
     /// True when a table holds more than `limit` rows.
-    pub fn table_has_more_than(&self, app_slug: &str, table_id: &str, limit: i64) -> Result<bool, String> {
-        { let repo = &self.repository; repo.table_has_more_than(app_slug, table_id, limit).map_err(|e| e.to_string()) }
+    pub fn table_has_more_than(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        limit: i64,
+    ) -> Result<bool, String> {
+        {
+            let repo = &self.repository;
+            repo.table_has_more_than(app_slug, table_id, limit)
+                .map_err(|e| e.to_string())
+        }
     }
 
     /// Deletes a record only if it is still at `expected_version`.
-    pub fn remove_record_checked(&self, app_slug: &str, id: &str, expected_version: i32, ctx: &crate::repository::WriteCtx) -> Result<crate::repository::RecordWrite, String> {
-        { let repo = &self.repository; repo.delete_record_checked(app_slug, id, expected_version, ctx).map_err(|e| e.to_string()) }
+    pub fn remove_record_checked(
+        &self,
+        app_slug: &str,
+        id: &str,
+        expected_version: i32,
+        ctx: &crate::repository::WriteCtx,
+    ) -> Result<crate::repository::RecordWrite, String> {
+        {
+            let repo = &self.repository;
+            repo.delete_record_checked(app_slug, id, expected_version, ctx)
+                .map_err(|e| e.to_string())
+        }
     }
 
     pub fn count_app_records(&self, app_slug: &str) -> Result<usize, String> {
@@ -657,17 +863,31 @@ impl ServerState {
     }
 
     pub fn find_record(&self, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, String> {
-        { let repo = &self.repository; repo.get_record(app_slug, id).map_err(|e| e.to_string()) }
+        {
+            let repo = &self.repository;
+            repo.get_record(app_slug, id).map_err(|e| e.to_string())
+        }
     }
 
     /// A new record, at version 1.
-    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), crate::repository::RepositoryError> {
+    pub fn insert_record(
+        &self,
+        rec: &DatasetRecord,
+        ctx: &crate::repository::WriteCtx,
+    ) -> Result<(), crate::repository::RepositoryError> {
         self.repository.insert_record(rec, ctx)
     }
 
     /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
-    pub fn put_record(&self, rec: &DatasetRecord, ctx: &crate::repository::WriteCtx) -> Result<(), String> {
-        { let repo = &self.repository; repo.upsert_record(rec, ctx).map_err(|e| e.to_string()) }
+    pub fn put_record(
+        &self,
+        rec: &DatasetRecord,
+        ctx: &crate::repository::WriteCtx,
+    ) -> Result<(), String> {
+        {
+            let repo = &self.repository;
+            repo.upsert_record(rec, ctx).map_err(|e| e.to_string())
+        }
     }
 
     /// Saves new data when the stored version is the one the caller read.
@@ -678,10 +898,14 @@ impl ServerState {
         data: &Value,
         expected_version: i32,
         ctx: &crate::repository::WriteCtx,
-    ) -> Result<(crate::repository::RecordWrite, Option<DatasetRecord>), crate::repository::RepositoryError> {
+    ) -> Result<
+        (crate::repository::RecordWrite, Option<DatasetRecord>),
+        crate::repository::RepositoryError,
+    > {
         use crate::repository::RecordWrite;
-        let outcome = self.repository
-            .update_record_checked(app_slug, id, data, expected_version, ctx)?;
+        let outcome =
+            self.repository
+                .update_record_checked(app_slug, id, data, expected_version, ctx)?;
         let saved = if matches!(outcome, RecordWrite::Saved(_)) {
             self.repository.get_record(app_slug, id)?
         } else {
@@ -691,29 +915,55 @@ impl ServerState {
     }
 
     /// A write by the system, such as an automation. It always applies and still bumps the version.
-    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value, ctx: &crate::repository::WriteCtx) -> Result<bool, String> {
-        { let repo = &self.repository; repo
-                .overwrite_record_data(app_slug, id, data, ctx)
+    pub fn overwrite_record_data(
+        &self,
+        app_slug: &str,
+        id: &str,
+        data: &Value,
+        ctx: &crate::repository::WriteCtx,
+    ) -> Result<bool, String> {
+        {
+            let repo = &self.repository;
+            repo.overwrite_record_data(app_slug, id, data, ctx)
                 .map(|v| v.is_some())
-                .map_err(|e| e.to_string()) }
+                .map_err(|e| e.to_string())
+        }
     }
 
-    pub fn remove_record(&self, app_slug: &str, id: &str, ctx: &crate::repository::WriteCtx) -> Result<bool, String> {
-        { let repo = &self.repository; repo.delete_record(app_slug, id, ctx).map_err(|e| e.to_string()) }
+    pub fn remove_record(
+        &self,
+        app_slug: &str,
+        id: &str,
+        ctx: &crate::repository::WriteCtx,
+    ) -> Result<bool, String> {
+        {
+            let repo = &self.repository;
+            repo.delete_record(app_slug, id, ctx)
+                .map_err(|e| e.to_string())
+        }
     }
 
-    pub fn persist_position_type(&self, pt: &PositionType) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_position_type(
+        &self,
+        pt: &PositionType,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_position_type(pt)?;
         self.refresh()?;
         Ok(())
     }
 
-    pub fn delete_role(&self, id: uuid::Uuid) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn delete_role(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.delete_role(id)?;
         Ok(())
     }
 
-    pub fn persist_role(&self, role: &RoleRow) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_role(
+        &self,
+        role: &RoleRow,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_role(role)?;
         Ok(())
     }
@@ -727,7 +977,9 @@ impl ServerState {
     pub fn group_ids_of(&self, eppn: &str) -> Vec<String> {
         let mut values = vec![eppn.to_string()];
         values.extend(self.user_by_name(eppn).map(|u| u.id));
-        self.repository.group_ids_with_member(&values).unwrap_or_default()
+        self.repository
+            .group_ids_with_member(&values)
+            .unwrap_or_default()
     }
 
     /// The user with this id, read now.
@@ -740,7 +992,10 @@ impl ServerState {
         self.repository.user_by_name(name).ok().flatten()
     }
 
-    pub fn persist_workspace(&self, ws: WorkspaceRecord) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_workspace(
+        &self,
+        ws: WorkspaceRecord,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_workspace(&ws)?;
         self.refresh()?;
         Ok(())
@@ -748,7 +1003,7 @@ impl ServerState {
 
     pub fn get_workspace(&self, id: &str) -> Option<WorkspaceRecord> {
         {
-        let repo = &self.repository;
+            let repo = &self.repository;
             if let Ok(Some(ws)) = repo.get_workspace(id) {
                 return Some(ws);
             }
@@ -756,7 +1011,10 @@ impl ServerState {
         self.workspaces.read().unwrap().get(id).cloned()
     }
 
-    pub fn persist_workspaces_batch(&self, batch: &[WorkspaceRecord]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_workspaces_batch(
+        &self,
+        batch: &[WorkspaceRecord],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.persist_workspaces_batch(batch)?;
         self.refresh()?;
         Ok(())
@@ -774,7 +1032,7 @@ impl ServerState {
 
     pub fn get_app_manifest(&self, slug: &str) -> Option<AppManifest> {
         {
-        let repo = &self.repository;
+            let repo = &self.repository;
             if let Ok(Some(m)) = repo.get_app_manifest(slug) {
                 return Some(m);
             }
@@ -783,7 +1041,10 @@ impl ServerState {
         self.engine.read().ok()?.resolve_by_slug(slug).cloned()
     }
 
-    pub fn persist_dataset(&self, ds: PublishedDataset) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_dataset(
+        &self,
+        ds: PublishedDataset,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_published_dataset(&ds)?;
         self.refresh()?;
         Ok(())
@@ -793,7 +1054,10 @@ impl ServerState {
         self.datasets.read().ok()?.get(id).cloned()
     }
 
-    pub fn persist_relationship(&self, rel: DatasetRelationship) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_relationship(
+        &self,
+        rel: DatasetRelationship,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_dataset_relationship(&rel)?;
         self.refresh()?;
         Ok(())
@@ -805,7 +1069,10 @@ impl ServerState {
         Ok(())
     }
 
-    pub fn persist_scim_user(&self, user: ScimUser) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_scim_user(
+        &self,
+        user: ScimUser,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_scim_user(&user)?;
         Ok(())
     }
@@ -814,12 +1081,15 @@ impl ServerState {
         self.user_by_id(id)
     }
 
-
     pub fn platform_timezone(&self) -> String {
         self.settings
             .read()
             .ok()
-            .and_then(|s| s.get("platform.timezone").and_then(|v| v.as_str()).map(str::to_string))
+            .and_then(|s| {
+                s.get("platform.timezone")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
             .unwrap_or_else(|| "UTC".to_string())
     }
 
@@ -920,7 +1190,10 @@ impl ServerState {
         })
     }
 
-    pub fn persist_api_token(&self, token: &ApiToken) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn persist_api_token(
+        &self,
+        token: &ApiToken,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.insert_api_token(token)?;
         Ok(())
     }
@@ -929,19 +1202,32 @@ impl ServerState {
         self.repository.get_api_token(hash).ok().flatten()
     }
 
-    pub fn update_token_last_used(&self, hash: &str, now: chrono::DateTime<chrono::Utc>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn update_token_last_used(
+        &self,
+        hash: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.update_token_last_used(hash, now)?;
         Ok(())
     }
 
-    pub fn revoke_api_token(&self, id: uuid::Uuid, caller_eppn: &str, is_platform_admin: bool) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(self.repository.revoke_api_token(id, caller_eppn, is_platform_admin)?)
+    pub fn revoke_api_token(
+        &self,
+        id: uuid::Uuid,
+        caller_eppn: &str,
+        is_platform_admin: bool,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self
+            .repository
+            .revoke_api_token(id, caller_eppn, is_platform_admin)?)
     }
 
-    pub fn revoke_api_token_by_hash(&self, hash: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn revoke_api_token_by_hash(
+        &self,
+        hash: &str,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         Ok(self.repository.revoke_api_token_by_hash(hash)?)
     }
-
 
     pub fn check_formula_rate_limit(&self, user_key: &str) -> bool {
         let mut limits = match self.formula_rate_limits.write() {
@@ -968,7 +1254,8 @@ impl ServerState {
 
     pub fn seed_demo(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let now = chrono::Utc::now().to_rfc3339();
-        let default_root_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let default_root_id =
+            uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
 
         let mut datasets = HashMap::new();
         let mut relationships = HashMap::new();
@@ -1123,7 +1410,8 @@ impl ServerState {
         let demo_app = AppManifest {
             slug: "physics-admissions-review".to_string(),
             title: "Physics Admissions Review".to_string(),
-            description: "Graduate admissions review and fellowship nomination portal for Physics.".to_string(),
+            description: "Graduate admissions review and fellowship nomination portal for Physics."
+                .to_string(),
             organization_code: "DIV-COMPLIANCE".to_string(),
             department: "physics".to_string(),
             workspace_id: Some("ws-physics-optics".to_string()),
@@ -1141,13 +1429,18 @@ impl ServerState {
         let mut automations = HashMap::new();
         automations.insert(
             "physics-admissions-review".to_string(),
-            vec![AutomationRule { version: 0,
+            vec![AutomationRule {
+                version: 0,
                 id: "rule-admissions-auto-approve".to_string(),
                 app_slug: "physics-admissions-review".to_string(),
                 name: "Honors Fellowship Notification".to_string(),
-                description: "Notifies dean and records ledger entry when candidate GPA exceeds 3.85".to_string(),
+                description:
+                    "Notifies dean and records ledger entry when candidate GPA exceeds 3.85"
+                        .to_string(),
                 enabled: true,
-                trigger: TriggerEvent::StatusChanged { to_status: "Approved".to_string() },
+                trigger: TriggerEvent::StatusChanged {
+                    to_status: "Approved".to_string(),
+                },
                 predicates: vec![FieldPredicate {
                     field_name: "gpa".to_string(),
                     operator: ConditionOperator::GreaterThan,
@@ -1253,19 +1546,17 @@ impl ServerState {
         workspaces.insert("ws-physics-optics".to_string(), ws_phys);
         collaborators.insert(
             "ws-physics-optics".to_string(),
-            vec![
-                CollaboratorRecord {
-                    id: "collab-phys-1".to_string(),
-                    workspace_id: "ws-physics-optics".to_string(),
-                    eppn: "einstein@physics.state.edu".to_string(),
-                    name: "Albert Einstein".to_string(),
-                    role: "owner".to_string(),
-                    scoped_affiliation: "student".to_string(),
-                    department: "physics".to_string(),
-                    added_at: now.clone(),
-                    app_slug: String::new(),
-                },
-            ],
+            vec![CollaboratorRecord {
+                id: "collab-phys-1".to_string(),
+                workspace_id: "ws-physics-optics".to_string(),
+                eppn: "einstein@physics.state.edu".to_string(),
+                name: "Albert Einstein".to_string(),
+                role: "owner".to_string(),
+                scoped_affiliation: "student".to_string(),
+                department: "physics".to_string(),
+                added_at: now.clone(),
+                app_slug: String::new(),
+            }],
         );
 
         // 3. Campus Compliance & Privacy (Departmental)
@@ -1332,30 +1623,60 @@ impl ServerState {
         workspaces.insert("ws-cs-research".to_string(), ws_cs);
         collaborators.insert(
             "ws-cs-research".to_string(),
-            vec![
-                CollaboratorRecord {
-                    id: "collab-cs-1".to_string(),
-                    workspace_id: "ws-cs-research".to_string(),
-                    eppn: "sarah.connor@state.edu".to_string(),
-                    name: "Dr. Sarah Connor".to_string(),
-                    role: "owner".to_string(),
-                    scoped_affiliation: "faculty".to_string(),
-                    department: "Computer Science".to_string(),
-                    added_at: now.clone(),
-                    app_slug: String::new(),
-                },
-            ],
+            vec![CollaboratorRecord {
+                id: "collab-cs-1".to_string(),
+                workspace_id: "ws-cs-research".to_string(),
+                eppn: "sarah.connor@state.edu".to_string(),
+                name: "Dr. Sarah Connor".to_string(),
+                role: "owner".to_string(),
+                scoped_affiliation: "faculty".to_string(),
+                department: "Computer Science".to_string(),
+                added_at: now.clone(),
+                app_slug: String::new(),
+            }],
         );
-
-
 
         // The demo set is compiled in. Each row is written only when its id is absent, and then it
         // is the institution's data. A later boot never writes it over an edit.
-        let stored_workspaces: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_workspaces().unwrap_or_default().into_iter().map(|w| w.id).collect() };
-        let stored_datasets: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_published_datasets().unwrap_or_default().into_iter().map(|d| d.id).collect() };
-        let stored_relationships: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_dataset_relationships().unwrap_or_default().into_iter().map(|r| r.id).collect() };
-        let stored_rules: std::collections::HashSet<String> = { let repo = &self.repository; repo.list_workflow_automations(None).unwrap_or_default().into_iter().map(|r| r.id).collect() };
-        let manifest_stored = { let repo = &self.repository; repo.get_app_manifest(&demo_app.slug).ok().flatten().is_some() };
+        let stored_workspaces: std::collections::HashSet<String> = {
+            let repo = &self.repository;
+            repo.list_workspaces()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|w| w.id)
+                .collect()
+        };
+        let stored_datasets: std::collections::HashSet<String> = {
+            let repo = &self.repository;
+            repo.list_published_datasets()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|d| d.id)
+                .collect()
+        };
+        let stored_relationships: std::collections::HashSet<String> = {
+            let repo = &self.repository;
+            repo.list_dataset_relationships()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.id)
+                .collect()
+        };
+        let stored_rules: std::collections::HashSet<String> = {
+            let repo = &self.repository;
+            repo.list_workflow_automations(None)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.id)
+                .collect()
+        };
+        let manifest_stored = {
+            let repo = &self.repository;
+            repo.get_app_manifest(&demo_app.slug)
+                .ok()
+                .flatten()
+                .is_some()
+        };
 
         // A workspace that is stored stays as stored, collaborators included.
         workspaces.retain(|id, _| !stored_workspaces.contains(id));
@@ -1368,7 +1689,7 @@ impl ServerState {
         automations.retain(|_, rules| !rules.is_empty());
 
         {
-        let repo = &self.repository;
+            let repo = &self.repository;
             for ws in workspaces.values() {
                 repo.upsert_workspace(ws)?;
             }
@@ -1414,11 +1735,15 @@ impl ServerState {
     }
     /// Every token the user holds, of every kind and state, newest first.
     pub fn list_all_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
-        self.repository.list_all_api_tokens_for_eppn(eppn).unwrap_or_default()
+        self.repository
+            .list_all_api_tokens_for_eppn(eppn)
+            .unwrap_or_default()
     }
 
     pub fn list_api_tokens(&self, eppn: &str) -> Vec<ApiToken> {
-        self.repository.list_api_tokens_for_eppn(eppn).unwrap_or_default()
+        self.repository
+            .list_api_tokens_for_eppn(eppn)
+            .unwrap_or_default()
     }
 }
 
@@ -1426,8 +1751,14 @@ impl ServerState {
 /// later release never changes what an organization has.
 fn add_sensitivity_defaults(settings: &mut HashMap<String, serde_json::Value>) {
     let (categories, detectors) = scaffoldry_engine::sensitivity::default_settings();
-    settings.insert("sensitivity.categories".to_string(), serde_json::json!(categories));
-    settings.insert("sensitivity.detectors".to_string(), serde_json::json!(detectors));
+    settings.insert(
+        "sensitivity.categories".to_string(),
+        serde_json::json!(categories),
+    );
+    settings.insert(
+        "sensitivity.detectors".to_string(),
+        serde_json::json!(detectors),
+    );
 }
 
 impl ServerState {
@@ -1445,5 +1776,8 @@ impl ServerState {
 pub type SharedState = Arc<ServerState>;
 
 pub fn lock_err() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
-    crate::service::ServiceError::internal("Failed to acquire lock: state lock poisoned or unavailable").into_pair()
+    crate::service::ServiceError::internal(
+        "Failed to acquire lock: state lock poisoned or unavailable",
+    )
+    .into_pair()
 }

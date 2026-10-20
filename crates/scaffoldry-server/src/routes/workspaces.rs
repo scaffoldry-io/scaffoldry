@@ -92,17 +92,42 @@ async fn create_workspace(
     let input = CreateWorkspacePayload {
         name,
         code,
-        organization: payload.get("organization").and_then(|v| v.as_str()).map(str::to_string),
-        department: payload.get("department").and_then(|v| v.as_str()).map(str::to_string),
-        description: payload.get("description").and_then(|v| v.as_str()).map(str::to_string),
-        icon: payload.get("icon").and_then(|v| v.as_str()).map(str::to_string),
-        visibility: payload.get("visibility").and_then(|v| v.as_str()).map(str::to_string),
+        organization: payload
+            .get("organization")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        department: payload
+            .get("department")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        description: payload
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        icon: payload
+            .get("icon")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        visibility: payload
+            .get("visibility")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         allowed_affiliations: payload
             .get("allowed_affiliations")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()),
-        data_classification: payload.get("data_classification").and_then(|v| v.as_str()).map(str::to_string),
-        organization_id: payload.get("organization_id").and_then(|v| v.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok()),
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            }),
+        data_classification: payload
+            .get("data_classification")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        organization_id: payload
+            .get("organization_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok()),
     };
 
     let ws = workspace_service::create_workspace(&caller, input, &state)?;
@@ -140,7 +165,12 @@ async fn list_collaborators(
 ) -> Result<Json<Vec<serde_json::Value>>, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
     let collabs = workspace_service::list_collaborators(&caller, &id, &state)?;
-    Ok(Json(collabs.iter().map(|c| crate::service::members::describe(c, &state)).collect()))
+    Ok(Json(
+        collabs
+            .iter()
+            .map(|c| crate::service::members::describe(c, &state))
+            .collect(),
+    ))
 }
 
 async fn add_collaborator(
@@ -163,7 +193,8 @@ async fn update_collaborator(
     Json(payload): Json<UpdateRolePayload>,
 ) -> Result<Json<CollaboratorRecord>, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
-    let member = workspace_service::update_collaborator_role(&caller, &id, &eppn, &payload.role, &state)?;
+    let member =
+        workspace_service::update_collaborator_role(&caller, &id, &eppn, &payload.role, &state)?;
     Ok(Json(member))
 }
 
@@ -180,17 +211,20 @@ async fn remove_collaborator(
     Ok(StatusCode::NO_CONTENT)
 }
 
-
 // ---------------------------------------------------------------------------------------------
 // Workspace Guards Endpoints & Helpers
 // ---------------------------------------------------------------------------------------------
 
-use sha2::{Digest, Sha256};
 use scaffoldry_core::guards::{compile_rules, GuardRule, WorkspaceGuardRecord, MAX_GUARD_RULES};
 use scaffoldry_policy::entities::{RecordCtx, Resource};
+use sha2::{Digest, Sha256};
 
-fn check_can_manage_guards(caller: &AuthUser, ws: &WorkspaceRecord, state: &SharedState) -> Result<(), ServiceError> {
-    if caller.affiliation == "central_admin"  {
+fn check_can_manage_guards(
+    caller: &AuthUser,
+    ws: &WorkspaceRecord,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
+    if caller.affiliation == "central_admin" {
         return Ok(());
     }
 
@@ -202,13 +236,13 @@ fn check_can_manage_guards(caller: &AuthUser, ws: &WorkspaceRecord, state: &Shar
     }
 
     if let Some(org_id) = ws.organization_id {
-        let orgs: Vec<crate::state::OrganizationNode> = state.organizations.read().map(|g| g.values().cloned().collect()).unwrap_or_default();
+        let tree = state.tree.read().unwrap();
         let roles = state.roles_of(&caller.eppn);
         let org_caller = crate::service::organizations::OrgCaller {
             eppn: caller.eppn.clone(),
             affiliation: caller.affiliation.clone(),
         };
-        if crate::service::organizations::unit_in_scope(&org_caller, org_id, &orgs, &roles) {
+        if crate::service::organizations::unit_in_reach(&org_caller, org_id, &tree, &roles) {
             return Ok(());
         }
     }
@@ -228,24 +262,33 @@ fn build_proposed_policy_set(
     state: &SharedState,
 ) -> Result<scaffoldry_policy::PolicySet, ServiceError> {
     let mut ps = state.policy_engine.policies().clone();
-    let org_names = state.organizations.read().map(|orgs| {
-        orgs.iter().map(|(id, node)| (id.to_string(), node.name.clone())).collect()
-    }).unwrap_or_default();
+    let org_names = state
+        .organizations
+        .read()
+        .map(|orgs| {
+            orgs.iter()
+                .map(|(id, node)| (id.to_string(), node.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     if let Some(rule_list) = rules {
         for (i, rule) in rule_list.iter().enumerate() {
-            let text = rule.compile_policy_text(workspace_id, i + 1, &org_names)
+            let text = rule
+                .compile_policy_text(workspace_id, i + 1, &org_names)
                 .map_err(ServiceError::bad_request)?;
             let policy_id = format!("guard-{workspace_id}-{}", i + 1);
             let policy = scaffoldry_policy::parse_guard_policy(&policy_id, &text)
                 .map_err(|e| ServiceError::bad_request(e.to_string()))?;
-            ps.add(policy).map_err(|e| ServiceError::bad_request(e.to_string()))?;
+            ps.add(policy)
+                .map_err(|e| ServiceError::bad_request(e.to_string()))?;
         }
     } else if let Some(src) = source {
         let raw_set = scaffoldry_policy::validate_raw_source(src)
             .map_err(|e| ServiceError::bad_request(e.to_string()))?;
         for p in raw_set.policies() {
-            ps.add(p.clone()).map_err(|e| ServiceError::bad_request(e.to_string()))?;
+            ps.add(p.clone())
+                .map_err(|e| ServiceError::bad_request(e.to_string()))?;
         }
     }
     Ok(ps)
@@ -261,21 +304,31 @@ async fn get_workspace_guards(
     // Check read access on workspace
     let _ = workspace_service::get_workspace(&caller, &id, &state)?;
 
-    let org_names = state.organizations.read().map(|orgs| {
-        orgs.iter().map(|(id, node)| (id.to_string(), node.name.clone())).collect()
-    }).unwrap_or_default();
+    let org_names = state
+        .organizations
+        .read()
+        .map(|orgs| {
+            orgs.iter()
+                .map(|(id, node)| (id.to_string(), node.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     let history: Vec<WorkspaceGuardRecord> = {
-        let g_guard = state.guards.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
+        let g_guard = state
+            .guards
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
         g_guard.get(&id).cloned().unwrap_or_default()
     };
 
     let current = history.last().map(|rec| {
-        let sentences: Vec<String> = if let Ok(rules) = serde_json::from_value::<Vec<GuardRule>>(rec.rules.clone()) {
-            rules.iter().map(|r| r.sentence(&org_names)).collect()
-        } else {
-            Vec::new()
-        };
+        let sentences: Vec<String> =
+            if let Ok(rules) = serde_json::from_value::<Vec<GuardRule>>(rec.rules.clone()) {
+                rules.iter().map(|r| r.sentence(&org_names)).collect()
+            } else {
+                Vec::new()
+            };
         serde_json::json!({
             "workspace_id": rec.workspace_id,
             "version": rec.version,
@@ -303,74 +356,118 @@ async fn put_workspace_guards(
 ) -> Result<Json<Value>, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
     let ws = {
-        let ws_guard = state.workspaces.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        ws_guard.get(&id).cloned().ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
+        let ws_guard = state
+            .workspaces
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        ws_guard
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
     };
 
     check_can_manage_guards(&caller, &ws, &state)?;
 
-    let reason = payload.get("reason")
+    let reason = payload
+        .get("reason")
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| ServiceError::bad_request("reason is required and cannot be empty"))?
         .to_string();
 
-    let org_names = state.organizations.read().map(|orgs| {
-        orgs.iter().map(|(id, node)| (id.to_string(), node.name.clone())).collect()
-    }).unwrap_or_default();
+    let org_names = state
+        .organizations
+        .read()
+        .map(|orgs| {
+            orgs.iter()
+                .map(|(id, node)| (id.to_string(), node.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
 
-    let (compiled_text, rules_val, sentences) = if let Some(source) = payload.get("source").and_then(|v| v.as_str()) {
-        if caller.affiliation != "central_admin" && false {
-            return Err(ServiceError::forbidden("Raw Cedar source requires platform admin"));
-        }
-        let _ = scaffoldry_policy::validate_raw_source(source)
-            .map_err(|e| ServiceError::bad_request(e.to_string()))?;
-        (source.to_string(), Value::Null, Vec::new())
-    } else if let Some(rules_arr) = payload.get("rules") {
-        let rules: Vec<GuardRule> = serde_json::from_value(rules_arr.clone())
-            .map_err(|e| ServiceError::bad_request(format!("Invalid rules format: {e}")))?;
+    let (compiled_text, rules_val, sentences) =
+        if let Some(source) = payload.get("source").and_then(|v| v.as_str()) {
+            if caller.affiliation != "central_admin" && false {
+                return Err(ServiceError::forbidden(
+                    "Raw Cedar source requires platform admin",
+                ));
+            }
+            let _ = scaffoldry_policy::validate_raw_source(source)
+                .map_err(|e| ServiceError::bad_request(e.to_string()))?;
+            (source.to_string(), Value::Null, Vec::new())
+        } else if let Some(rules_arr) = payload.get("rules") {
+            let rules: Vec<GuardRule> = serde_json::from_value(rules_arr.clone())
+                .map_err(|e| ServiceError::bad_request(format!("Invalid rules format: {e}")))?;
 
-        if rules.len() > MAX_GUARD_RULES {
-            return Err(ServiceError::bad_request(format!("Rules count {} exceeds maximum allowed of {}", rules.len(), MAX_GUARD_RULES)));
-        }
+            if rules.len() > MAX_GUARD_RULES {
+                return Err(ServiceError::bad_request(format!(
+                    "Rules count {} exceeds maximum allowed of {}",
+                    rules.len(),
+                    MAX_GUARD_RULES
+                )));
+            }
 
-        // Validate unit_ids exist in organizations:
-        {
-            let orgs = state.organizations.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-            for rule in &rules {
-                for uid in &rule.unit_ids {
-                    let parsed = uuid::Uuid::parse_str(uid);
-                    if parsed.is_err() || !orgs.contains_key(&parsed.unwrap()) {
-                        return Err(ServiceError::bad_request(format!("Unit id '{uid}' does not exist")));
+            // Validate unit_ids exist in organizations:
+            {
+                let orgs = state
+                    .organizations
+                    .read()
+                    .map_err(|e| ServiceError::Internal(e.to_string()))?;
+                for rule in &rules {
+                    for uid in &rule.unit_ids {
+                        let parsed = uuid::Uuid::parse_str(uid);
+                        if parsed.is_err() || !orgs.contains_key(&parsed.unwrap()) {
+                            return Err(ServiceError::bad_request(format!(
+                                "Unit id '{uid}' does not exist"
+                            )));
+                        }
                     }
                 }
             }
-        }
 
-        let (text, sentences) = compile_rules(&id, &rules, &org_names)
-            .map_err(ServiceError::bad_request)?;
+            let (text, sentences) =
+                compile_rules(&id, &rules, &org_names).map_err(ServiceError::bad_request)?;
 
-        // Verify that every compiled policy parses and is forbid:
-        for (i, rule) in rules.iter().enumerate() {
-            let p_text = rule.compile_policy_text(&id, i + 1, &org_names).map_err(ServiceError::bad_request)?;
-            let p_id = format!("guard-{id}-{}", i + 1);
-            scaffoldry_policy::parse_guard_policy(&p_id, &p_text).map_err(|e| ServiceError::bad_request(e.to_string()))?;
-        }
+            // Verify that every compiled policy parses and is forbid:
+            for (i, rule) in rules.iter().enumerate() {
+                let p_text = rule
+                    .compile_policy_text(&id, i + 1, &org_names)
+                    .map_err(ServiceError::bad_request)?;
+                let p_id = format!("guard-{id}-{}", i + 1);
+                scaffoldry_policy::parse_guard_policy(&p_id, &p_text)
+                    .map_err(|e| ServiceError::bad_request(e.to_string()))?;
+            }
 
-        (text, serde_json::to_value(&rules).unwrap_or(Value::Null), sentences)
-    } else {
-        return Err(ServiceError::bad_request("Either rules or source is required"));
-    };
+            (
+                text,
+                serde_json::to_value(&rules).unwrap_or(Value::Null),
+                sentences,
+            )
+        } else {
+            return Err(ServiceError::bad_request(
+                "Either rules or source is required",
+            ));
+        };
 
     let current_version = {
-        let g_guard = state.guards.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        g_guard.get(&id).and_then(|h| h.last().map(|r| r.version)).unwrap_or(0)
+        let g_guard = state
+            .guards
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        g_guard
+            .get(&id)
+            .and_then(|h| h.last().map(|r| r.version))
+            .unwrap_or(0)
     };
     let new_version = current_version + 1;
 
     let mut hasher = Sha256::new();
     hasher.update(compiled_text.as_bytes());
-    let compiled_sha256 = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+    let compiled_sha256 = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
 
     let ledger_payload = serde_json::json!({
         "workspace_id": id,
@@ -378,15 +475,17 @@ async fn put_workspace_guards(
         "sha256": compiled_sha256,
     });
 
-    state.append_ledger_entry(crate::state::RecordDecisionInput {
-        principal: caller.eppn.clone(),
-        organization_code: "INST".to_string(),
-        app_slug: None,
-        decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
-        oscal_control_id: "AC-03".to_string(),
-        rationale: reason.clone(),
-        payload: &ledger_payload,
-    }).map_err(|e| ServiceError::internal(format!("Ledger append failed: {e}")))?;
+    state
+        .append_ledger_entry(crate::state::RecordDecisionInput {
+            principal: caller.eppn.clone(),
+            organization_code: "INST".to_string(),
+            app_slug: None,
+            decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
+            oscal_control_id: "AC-03".to_string(),
+            rationale: reason.clone(),
+            payload: &ledger_payload,
+        })
+        .map_err(|e| ServiceError::internal(format!("Ledger append failed: {e}")))?;
 
     let record = WorkspaceGuardRecord {
         workspace_id: id.clone(),
@@ -400,7 +499,8 @@ async fn put_workspace_guards(
 
     {
         let repo = &state.repository;
-        repo.insert_workspace_guard(&record).map_err(|e| ServiceError::internal(e.to_string()))?;
+        repo.insert_workspace_guard(&record)
+            .map_err(|e| ServiceError::internal(e.to_string()))?;
     }
 
     // The guard is stored and `guards` is bumped. Reading it back clears the compiled sets, on this instance now and
@@ -430,33 +530,53 @@ async fn impact_workspace_guards(
 ) -> Result<Json<Value>, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
     let ws = {
-        let ws_guard = state.workspaces.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        ws_guard.get(&id).cloned().ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
+        let ws_guard = state
+            .workspaces
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        ws_guard
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
     };
 
     check_can_manage_guards(&caller, &ws, &state)?;
 
-    let rules: Option<Vec<GuardRule>> = payload.get("rules").and_then(|v| serde_json::from_value(v.clone()).ok());
+    let rules: Option<Vec<GuardRule>> = payload
+        .get("rules")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
     let source: Option<&str> = payload.get("source").and_then(|v| v.as_str());
 
     let proposed_policy_set = build_proposed_policy_set(&id, rules.as_deref(), source, &state)?;
 
     let collabs = crate::service::members::people_records(&id, &state);
 
-    let actions = ["access_workspace", "read_app", "write_record", "export", "approve"];
+    let actions = [
+        "access_workspace",
+        "read_app",
+        "write_record",
+        "export",
+        "approve",
+    ];
     let sensitivities = [false, true];
 
     let mut changes = Vec::new();
 
     for collab in &collabs {
-        let collab_user = crate::service::identity::resolve_user(&collab.eppn, &state).unwrap_or_else(|| AuthUser {
-            eppn: collab.eppn.clone(),
-            name: collab.name.clone(),
-            role_title: collab.role.clone(),
-            affiliation: collab.scoped_affiliation.split('@').next().unwrap_or("member").to_string(),
-            department: collab.department.clone(),
-        view_as_by: None,
-        });
+        let collab_user = crate::service::identity::resolve_user(&collab.eppn, &state)
+            .unwrap_or_else(|| AuthUser {
+                eppn: collab.eppn.clone(),
+                name: collab.name.clone(),
+                role_title: collab.role.clone(),
+                affiliation: collab
+                    .scoped_affiliation
+                    .split('@')
+                    .next()
+                    .unwrap_or("member")
+                    .to_string(),
+                department: collab.department.clone(),
+                view_as_by: None,
+            });
         let princ = crate::service::access::principal_of(&state, &collab_user);
 
         for action in actions {
@@ -464,9 +584,16 @@ async fn impact_workspace_guards(
                 // The same resources production asks about: the workspace for the app actions, with the app's sensitivity.
                 let role = collab.role.to_lowercase();
                 let resource = match action {
-                    "access_workspace" => Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, Some(&role), None)),
+                    "access_workspace" => Resource::Workspace(
+                        crate::service::access::workspace_ctx(&state, &ws, Some(&role), None),
+                    ),
                     "read_app" | "write_record" => {
-                        Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, Some(&role), Some((sensitive, Default::default()))))
+                        Resource::Workspace(crate::service::access::workspace_ctx(
+                            &state,
+                            &ws,
+                            Some(&role),
+                            Some((sensitive, Default::default())),
+                        ))
                     }
                     _ => Resource::Record(RecordCtx {
                         app_slug: "app".to_string(),
@@ -477,14 +604,17 @@ async fn impact_workspace_guards(
                     }),
                 };
 
-                let dec_now = crate::service::access::decide(&state, &collab_user, action, &resource);
+                let dec_now =
+                    crate::service::access::decide(&state, &collab_user, action, &resource);
                 let dec_prop = scaffoldry_policy::entities::authorize_with_policy_set(
                     &state.policy_engine,
                     &proposed_policy_set,
                     &princ,
                     action,
                     &resource,
-                ).map(|r| r.decision == scaffoldry_policy::PolicyDecision::Allow).unwrap_or(false);
+                )
+                .map(|r| r.decision == scaffoldry_policy::PolicyDecision::Allow)
+                .unwrap_or(false);
 
                 if dec_now.allowed != dec_prop {
                     changes.push(serde_json::json!({
@@ -511,48 +641,67 @@ async fn test_workspace_guards(
 ) -> Result<Json<Value>, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
     let ws = {
-        let ws_guard = state.workspaces.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
-        ws_guard.get(&id).cloned().ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
+        let ws_guard = state
+            .workspaces
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        ws_guard
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ServiceError::NotFound(format!("Workspace '{id}' not found")))?
     };
 
     check_can_manage_guards(&caller, &ws, &state)?;
 
-    let target_eppn = payload.get("user")
+    let target_eppn = payload
+        .get("user")
         .or_else(|| payload.get("user_eppn"))
         .or_else(|| payload.get("eppn"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| ServiceError::bad_request("user is required"))?;
 
-    let action = payload.get("action")
+    let action = payload
+        .get("action")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ServiceError::bad_request("action is required"))?;
 
-    let is_sensitive = payload.get("is_ferpa_sensitive")
+    let is_sensitive = payload
+        .get("is_ferpa_sensitive")
         .or_else(|| payload.get("sensitive"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let rules: Option<Vec<GuardRule>> = payload.get("rules").and_then(|v| serde_json::from_value(v.clone()).ok());
+    let rules: Option<Vec<GuardRule>> = payload
+        .get("rules")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
     let source: Option<&str> = payload.get("source").and_then(|v| v.as_str());
 
     let proposed_policy_set = build_proposed_policy_set(&id, rules.as_deref(), source, &state)?;
 
-    let target_user = crate::service::identity::resolve_user(target_eppn, &state).unwrap_or_else(|| AuthUser {
-        eppn: target_eppn.to_string(),
-        name: target_eppn.to_string(),
-        role_title: "Member".to_string(),
-        affiliation: "member".to_string(),
-        department: ws.department.clone(),
-        view_as_by: None,
-    });
+    let target_user =
+        crate::service::identity::resolve_user(target_eppn, &state).unwrap_or_else(|| AuthUser {
+            eppn: target_eppn.to_string(),
+            name: target_eppn.to_string(),
+            role_title: "Member".to_string(),
+            affiliation: "member".to_string(),
+            department: ws.department.clone(),
+            view_as_by: None,
+        });
     let princ = crate::service::access::principal_of(&state, &target_user);
 
     let role = crate::service::members::member_role_of(target_eppn, &id, &state);
     let role = role.as_ref().map(|r| r.as_str());
 
     let resource = match action {
-        "access_workspace" => Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, role, None)),
-        "read_app" | "write_record" => Resource::Workspace(crate::service::access::workspace_ctx(&state, &ws, role, Some((is_sensitive, Default::default())))),
+        "access_workspace" => Resource::Workspace(crate::service::access::workspace_ctx(
+            &state, &ws, role, None,
+        )),
+        "read_app" | "write_record" => Resource::Workspace(crate::service::access::workspace_ctx(
+            &state,
+            &ws,
+            role,
+            Some((is_sensitive, Default::default())),
+        )),
         _ => Resource::Record(RecordCtx {
             app_slug: "app".to_string(),
             department: ws.department.clone(),
@@ -572,7 +721,10 @@ async fn test_workspace_guards(
     );
 
     let (prop_allowed, prop_pol) = match dec_prop {
-        Ok(res) => (res.decision == scaffoldry_policy::PolicyDecision::Allow, res.deciding_policy),
+        Ok(res) => (
+            res.decision == scaffoldry_policy::PolicyDecision::Allow,
+            res.deciding_policy,
+        ),
         Err(_) => (false, None),
     };
 

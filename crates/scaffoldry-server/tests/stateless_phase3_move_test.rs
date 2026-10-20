@@ -17,7 +17,14 @@ fn two_opposite_moves_at_once_leave_no_cycle() {
     let root = Uuid::parse_str(ROOT).unwrap();
     for round in 0..8 {
         let unit = |code: String| {
-            let node = OrganizationNode { id: Uuid::new_v4(), parent_id: Some(root), name: code.clone(), code, org_type: "Department".into() };
+            let node = OrganizationNode {
+                id: Uuid::new_v4(),
+                parent_id: Some(root),
+                name: code.clone(),
+                code,
+                org_type: "Department".into(),
+                hierarchy_key: "academic".into(),
+            };
             state.persist_organization(&node).unwrap();
             node
         };
@@ -37,9 +44,19 @@ fn two_opposite_moves_at_once_leave_no_cycle() {
             .into_iter()
             .map(|h| h.join().unwrap())
             .collect();
-        let moved = results.iter().filter(|r| matches!(r, Ok(scaffoldry_server::repository::OrgMove::Moved))).count();
-        let refused = results.iter().filter(|r| matches!(r, Ok(scaffoldry_server::repository::OrgMove::Cycle))).count();
-        assert_eq!((moved, refused), (1, 1), "round {round}: one move wins and one is refused: {results:?}");
+        let moved = results
+            .iter()
+            .filter(|r| matches!(r, Ok(scaffoldry_server::repository::OrgMove::Moved)))
+            .count();
+        let refused = results
+            .iter()
+            .filter(|r| matches!(r, Ok(scaffoldry_server::repository::OrgMove::Cycle)))
+            .count();
+        assert_eq!(
+            (moved, refused),
+            (1, 1),
+            "round {round}: one move wins and one is refused: {results:?}"
+        );
 
         let listed = state.repository.list_organizations().unwrap();
         let parent = |id: Uuid| listed.iter().find(|o| o.id == id).and_then(|o| o.parent_id);

@@ -5,6 +5,10 @@
 //! - Institutional scale performance (1,000+ workspaces and collaborators).
 //! - Dedicated background worker architecture to isolate synchronous postgres driver from Tokio runtimes.
 
+pub use crate::repository_index::{
+    build_aggregate_sql, build_indexed_sql, AggregateFunction, AggregateGroupRow, AggregatePlan,
+    AggregateResultRaw, IndexPhase, IndexedClause, IndexedQuery, IndexedSort, IndexedValue,
+};
 use crate::state::{
     AuthSession, AuthUser, CollaboratorRecord, DatasetRecord, OrganizationNode, RoleRow, ScimGroup,
     ScimUser, WorkspaceRecord,
@@ -17,32 +21,36 @@ use scaffoldry_core::{
 };
 use scaffoldry_engine::AppManifest;
 use serde_json::Value;
-pub use crate::repository_index::{
-    build_aggregate_sql, build_indexed_sql, AggregateFunction,
-    AggregateGroupRow, AggregatePlan, AggregateResultRaw, IndexPhase, IndexedClause, IndexedQuery, IndexedSort,
-    IndexedValue,
-};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, sync_channel, Sender};
 
 const SCHEMA_0001: &str = include_str!("../../scaffoldry-core/migrations/0001_initial_schema.sql");
-const SCHEMA_0002: &str = include_str!("../../scaffoldry-core/migrations/0002_workspaces_and_ledger.sql");
-const SCHEMA_0003: &str = include_str!("../../scaffoldry-core/migrations/0003_persist_apps_and_datasets.sql");
-const SCHEMA_0004: &str = include_str!("../../scaffoldry-core/migrations/0004_organization_scope.sql");
-const SCHEMA_0005: &str = include_str!("../../scaffoldry-core/migrations/0005_process_instances.sql");
+const SCHEMA_0002: &str =
+    include_str!("../../scaffoldry-core/migrations/0002_workspaces_and_ledger.sql");
+const SCHEMA_0003: &str =
+    include_str!("../../scaffoldry-core/migrations/0003_persist_apps_and_datasets.sql");
+const SCHEMA_0004: &str =
+    include_str!("../../scaffoldry-core/migrations/0004_organization_scope.sql");
+const SCHEMA_0005: &str =
+    include_str!("../../scaffoldry-core/migrations/0005_process_instances.sql");
 const SCHEMA_0006: &str = include_str!("../../scaffoldry-core/migrations/0006_role_source.sql");
 const SCHEMA_0007: &str = include_str!("../../scaffoldry-core/migrations/0007_record_version.sql");
-const SCHEMA_0008: &str = include_str!("../../scaffoldry-core/migrations/0008_schema_migrations.sql");
-const SCHEMA_0009: &str = include_str!("../../scaffoldry-core/migrations/0009_ledger_append_only.sql");
+const SCHEMA_0008: &str =
+    include_str!("../../scaffoldry-core/migrations/0008_schema_migrations.sql");
+const SCHEMA_0009: &str =
+    include_str!("../../scaffoldry-core/migrations/0009_ledger_append_only.sql");
 const SCHEMA_0010: &str = include_str!("../../scaffoldry-core/migrations/0010_app_workspace.sql");
 const SCHEMA_0012: &str = include_str!("../../scaffoldry-core/migrations/0012_api_tokens.sql");
-const SCHEMA_0013: &str = include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
+const SCHEMA_0013: &str =
+    include_str!("../../scaffoldry-core/migrations/0013_platform_settings.sql");
 const SCHEMA_0014: &str = include_str!("../../scaffoldry-core/migrations/0014_record_table_id.sql");
 const SCHEMA_0015: &str = include_str!("../../scaffoldry-core/migrations/0015_record_index.sql");
 const SCHEMA_0016: &str = include_str!("../../scaffoldry-core/migrations/0016_record_search.sql");
 const SCHEMA_0021: &str = include_str!("../../scaffoldry-core/migrations/0021_positions.sql");
-const SCHEMA_0022: &str = include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
-const SCHEMA_0023: &str = include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
+const SCHEMA_0022: &str =
+    include_str!("../../scaffoldry-core/migrations/0022_record_created_by.sql");
+const SCHEMA_0023: &str =
+    include_str!("../../scaffoldry-core/migrations/0023_workspace_guards.sql");
 const SCHEMA_0019: &str = include_str!("../../scaffoldry-core/migrations/0019_rule_versions.sql");
 const SCHEMA_0024: &str = include_str!("../../scaffoldry-core/migrations/0024_proposal_rules.sql");
 const SCHEMA_0011: &str = include_str!("../../scaffoldry-core/migrations/0011_app_proposals.sql");
@@ -57,11 +65,14 @@ const SCHEMA_0051: &str = include_str!("../../scaffoldry-core/migrations/0051_fi
 const SCHEMA_0052: &str = include_str!("../../scaffoldry-core/migrations/0052_file_scans.sql");
 const SCHEMA_0053: &str = include_str!("../../scaffoldry-core/migrations/0053_cache_versions.sql");
 const SCHEMA_0054: &str = include_str!("../../scaffoldry-core/migrations/0054_people_indexes.sql");
-const SCHEMA_0055: &str = include_str!("../../scaffoldry-core/migrations/0055_member_app_scope.sql");
+const SCHEMA_0055: &str =
+    include_str!("../../scaffoldry-core/migrations/0055_member_app_scope.sql");
 const SCHEMA_0056: &str = include_str!("../../scaffoldry-core/migrations/0056_imports.sql");
+const SCHEMA_0057: &str = include_str!("../../scaffoldry-core/migrations/0057_hierarchies.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
-const SCHEMA_0030: &str = include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
+const SCHEMA_0030: &str =
+    include_str!("../../scaffoldry-core/migrations/0030_member_principals.sql");
 const SCHEMA_0031: &str = include_str!("../../scaffoldry-core/migrations/0031_record_links.sql");
 const SCHEMA_0032: &str = include_str!("../../scaffoldry-core/migrations/0032_trash_links.sql");
 const SCHEMA_0042: &str = include_str!("../../scaffoldry-core/migrations/0042_lifecycle.sql");
@@ -231,7 +242,11 @@ pub struct HistoryFilter {
 /// The fields that differ, as `{ field: { old, new } }`. A field missing on one side has no `old`
 /// or no `new`. Keys that start with `_` belong to the platform, and computed fields follow from
 /// the rest, so neither is recorded.
-pub fn diff_fields(old: Option<&Value>, new: Option<&Value>, computed: &[String]) -> serde_json::Map<String, Value> {
+pub fn diff_fields(
+    old: Option<&Value>,
+    new: Option<&Value>,
+    computed: &[String],
+) -> serde_json::Map<String, Value> {
     let empty = serde_json::Map::new();
     let (is_create, is_delete) = (old.is_none(), new.is_none());
     let old = old.and_then(|v| v.as_object()).unwrap_or(&empty);
@@ -271,8 +286,16 @@ pub(crate) struct Touched<'a> {
 
 /// Replaces a record's JSON without raising its version. For derived changes, such as the mirror side
 /// of a link. The caller writes the history row in the same transaction.
-pub(crate) fn set_record_data_in_tx(tx: &mut postgres::Transaction<'_>, app_slug: &str, id: &str, data: &Value) -> Result<(), postgres::Error> {
-    tx.execute("UPDATE dataset_records SET data = $3 WHERE app_slug = $1 AND id = $2", &[&app_slug, &id, data])?;
+pub(crate) fn set_record_data_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    app_slug: &str,
+    id: &str,
+    data: &Value,
+) -> Result<(), postgres::Error> {
+    tx.execute(
+        "UPDATE dataset_records SET data = $3 WHERE app_slug = $1 AND id = $2",
+        &[&app_slug, &id, data],
+    )?;
     Ok(())
 }
 
@@ -299,7 +322,11 @@ pub(crate) fn apply_formula_list(data: &mut Value, formulas: &[(String, String)]
 }
 
 /// A new record, in the caller's transaction. The history row is written with it.
-pub(crate) fn insert_record_in_tx(tx: &mut postgres::Transaction<'_>, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), postgres::Error> {
+pub(crate) fn insert_record_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    rec: &DatasetRecord,
+    ctx: &WriteCtx,
+) -> Result<(), postgres::Error> {
     let mut rec = rec.clone();
     apply_formulas(&mut rec.data, ctx);
     let table = table_id_of(&rec.data);
@@ -308,11 +335,29 @@ pub(crate) fn insert_record_in_tx(tx: &mut postgres::Transaction<'_>, rec: &Data
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
         &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
     )?;
-    crate::repository_index::write_record_index(tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
+    crate::repository_index::write_record_index(
+        tx,
+        &rec.app_slug,
+        &table,
+        &rec.id,
+        &rec.data,
+        &ctx.index_fields,
+    )?;
     crate::repository_links::write_record_links(tx, &rec.app_slug, &rec.id, None, &rec.data, ctx)?;
     let changes = diff_fields(None, Some(&rec.data), &ctx.computed_fields);
     let action = ctx.action.unwrap_or("create");
-    write_history(tx, Touched { app_slug: &rec.app_slug, table_id: &table, record_id: &rec.id, version: 1, action }, &changes, ctx)?;
+    write_history(
+        tx,
+        Touched {
+            app_slug: &rec.app_slug,
+            table_id: &table,
+            record_id: &rec.id,
+            version: 1,
+            action,
+        },
+        &changes,
+        ctx,
+    )?;
     Ok(())
 }
 
@@ -347,10 +392,28 @@ pub(crate) fn update_record_in_tx(
             &[&data, &new_table, &slug, &id],
         )?
         .get(0);
-    crate::repository_index::write_record_index(tx, slug, &new_table, id, &data, &ctx.index_fields)?;
+    crate::repository_index::write_record_index(
+        tx,
+        slug,
+        &new_table,
+        id,
+        &data,
+        &ctx.index_fields,
+    )?;
     crate::repository_links::write_record_links(tx, slug, id, Some(&old), &data, ctx)?;
     let action = ctx.action.unwrap_or("update");
-    write_history(tx, Touched { app_slug: slug, table_id: &new_table, record_id: id, version: next, action }, &changes, ctx)?;
+    write_history(
+        tx,
+        Touched {
+            app_slug: slug,
+            table_id: &new_table,
+            record_id: id,
+            version: next,
+            action,
+        },
+        &changes,
+        ctx,
+    )?;
     Ok(RecordWrite::Saved(next))
 }
 
@@ -384,7 +447,18 @@ pub(crate) fn delete_record_in_tx(
         crate::repository_links::delete_record_links(tx, slug, id, ctx)?;
         let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
         let action = ctx.action.unwrap_or("delete");
-        write_history(tx, Touched { app_slug: slug, table_id: &table, record_id: id, version, action }, &changes, ctx)?;
+        write_history(
+            tx,
+            Touched {
+                app_slug: slug,
+                table_id: &table,
+                record_id: id,
+                version,
+                action,
+            },
+            &changes,
+            ctx,
+        )?;
         return Ok(RecordWrite::Saved(version));
     }
     let current = tx.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL", &[&slug, &id])?;
@@ -408,7 +482,12 @@ pub struct TrashRow {
 /// Brings one record out of trash, in the caller's transaction: the flags clear and the index rows
 /// are written again. Its links come back in a second pass (`restore_links_in_tx`), once every
 /// record of the batch is live again.
-pub(crate) fn restore_record_in_tx(tx: &mut postgres::Transaction<'_>, slug: &str, id: &str, ctx: &WriteCtx) -> Result<bool, postgres::Error> {
+pub(crate) fn restore_record_in_tx(
+    tx: &mut postgres::Transaction<'_>,
+    slug: &str,
+    id: &str,
+    ctx: &WriteCtx,
+) -> Result<bool, postgres::Error> {
     let Some(row) = tx.query_opt(
         "UPDATE dataset_records SET deleted_at = NULL, deleted_by = NULL, delete_batch = NULL \
          WHERE app_slug = $1 AND id = $2 AND deleted_at IS NOT NULL RETURNING data, version, table_id",
@@ -419,7 +498,18 @@ pub(crate) fn restore_record_in_tx(tx: &mut postgres::Transaction<'_>, slug: &st
     let (data, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
     crate::repository_index::write_record_index(tx, slug, &table, id, &data, &ctx.index_fields)?;
     let action = ctx.action.unwrap_or("restore");
-    write_history(tx, Touched { app_slug: slug, table_id: &table, record_id: id, version, action }, &serde_json::Map::new(), ctx)?;
+    write_history(
+        tx,
+        Touched {
+            app_slug: slug,
+            table_id: &table,
+            record_id: id,
+            version,
+            action,
+        },
+        &serde_json::Map::new(),
+        ctx,
+    )?;
     Ok(true)
 }
 
@@ -496,9 +586,22 @@ pub struct ScopePlan {
 impl ScopePlan {
     /// The `AND` fragment for a statement that names the record id as `id_expr`, with placeholders
     /// from `first_param`, and the parameters it needs. A scope the engine cannot compile reads nothing.
-    pub fn clause_at(&self, id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
+    pub fn clause_at(
+        &self,
+        id_expr: &str,
+        app_slug: &str,
+        table_id: &str,
+        first_param: usize,
+    ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::{to_sql, Param};
-        match to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
+        match to_sql(
+            &self.pred,
+            &self.indexed,
+            id_expr,
+            app_slug,
+            table_id,
+            first_param,
+        ) {
             Ok((sql, added)) => {
                 let params = added
                     .into_iter()
@@ -516,7 +619,13 @@ impl ScopePlan {
     }
 
     /// The same, appended to a statement's parameters.
-    pub fn clause(&self, id_expr: &str, app_slug: &str, table_id: &str, params: &mut Vec<SqlParam>) -> String {
+    pub fn clause(
+        &self,
+        id_expr: &str,
+        app_slug: &str,
+        table_id: &str,
+        params: &mut Vec<SqlParam>,
+    ) -> String {
         let (sql, added) = self.clause_at(id_expr, app_slug, table_id, params.len() + 1);
         params.extend(added);
         sql
@@ -546,7 +655,10 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
         params.push(p);
         params.len()
     }
-    let mut params = vec![SqlParam::Text(app_slug.to_string()), SqlParam::Text(q.table_id.clone())];
+    let mut params = vec![
+        SqlParam::Text(app_slug.to_string()),
+        SqlParam::Text(q.table_id.clone()),
+    ];
     let joined = match &q.expr {
         Some(e) => json_expr(&mut params, e),
         None => {
@@ -556,7 +668,11 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
                     preds.push(pred);
                 }
             }
-            if preds.is_empty() { "TRUE".to_string() } else { preds.join(if q.any { " OR " } else { " AND " }) }
+            if preds.is_empty() {
+                "TRUE".to_string()
+            } else {
+                preds.join(if q.any { " OR " } else { " AND " })
+            }
         }
     };
 
@@ -578,10 +694,15 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
             let cmp = if desc { "<" } else { ">" };
             match &key {
                 Some(k) => {
-                    let v = push(&mut params, SqlParam::Text(c.key.clone().unwrap_or(Value::Null).to_string()));
+                    let v = push(
+                        &mut params,
+                        SqlParam::Text(c.key.clone().unwrap_or(Value::Null).to_string()),
+                    );
                     format!(" AND ({k}, created_at, id) {cmp} (${v}::text::jsonb, ${at}::text::timestamptz, ${id}::text)")
                 }
-                None => format!(" AND (created_at, id) {cmp} (${at}::text::timestamptz, ${id}::text)"),
+                None => {
+                    format!(" AND (created_at, id) {cmp} (${at}::text::timestamptz, ${id}::text)")
+                }
             }
         }
     };
@@ -594,12 +715,21 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
     };
     let scope = match &q.scope {
         Some(plan) => {
-            let (app, table) = (match &params[0] { SqlParam::Text(t) => t.clone(), _ => String::new() }, q.table_id.clone());
+            let (app, table) = (
+                match &params[0] {
+                    SqlParam::Text(t) => t.clone(),
+                    _ => String::new(),
+                },
+                q.table_id.clone(),
+            );
             plan.clause("dataset_records.id", &app, &table, &mut params)
         }
         None => String::new(),
     };
-    let limit = push(&mut params, SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)));
+    let limit = push(
+        &mut params,
+        SqlParam::Int(i64::try_from(q.limit).unwrap_or(i64::MAX)),
+    );
     let sql = format!(
         "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
          FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){search_clause}{after}{scope} \
@@ -607,7 +737,6 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
     );
     (sql, params)
 }
-
 
 fn push_sql(params: &mut Vec<SqlParam>, p: SqlParam) -> usize {
     params.push(p);
@@ -625,8 +754,14 @@ fn json_instant(f: usize) -> String {
 
 /// The condition one clause puts on a record's JSON, or `None` for a clause that has no value and so is no clause.
 /// The newer operators need the column of the field to know whether the cell is a number or a date.
-fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::FilterOperator, value: &str, column: Option<scaffoldry_engine::IndexColumn>) -> Option<String> {
-    use scaffoldry_engine::{list_of, parse_instant, range_of, IndexColumn, FilterOperator as Op};
+fn json_clause(
+    params: &mut Vec<SqlParam>,
+    field: &str,
+    op: scaffoldry_engine::FilterOperator,
+    value: &str,
+    column: Option<scaffoldry_engine::IndexColumn>,
+) -> Option<String> {
+    use scaffoldry_engine::{list_of, parse_instant, range_of, FilterOperator as Op, IndexColumn};
     // The older evaluator treats a clause with no value as no clause. So does this.
     if value.trim().is_empty() && !matches!(op, Op::IsEmpty | Op::IsNotEmpty) {
         return None;
@@ -635,7 +770,11 @@ fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::F
         Op::IsEmpty | Op::IsNotEmpty => {
             let f = push_sql(params, SqlParam::Text(field.to_string()));
             let empty = format!("((data -> ${f}::text) IS NULL OR (data -> ${f}::text) = 'null'::jsonb OR data ->> ${f}::text = '')");
-            if matches!(op, Op::IsEmpty) { empty } else { format!("NOT {empty}") }
+            if matches!(op, Op::IsEmpty) {
+                empty
+            } else {
+                format!("NOT {empty}")
+            }
         }
         Op::Equals | Op::NotEquals | Op::Contains | Op::NotContains => {
             let f = push_sql(params, SqlParam::Text(field.to_string()));
@@ -653,13 +792,20 @@ fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::F
             Ok(n) if n.is_finite() => {
                 let f = push_sql(params, SqlParam::Text(field.to_string()));
                 let v = push_sql(params, SqlParam::Float(n));
-                let sign = if matches!(op, Op::GreaterThan) { ">" } else { "<" };
+                let sign = if matches!(op, Op::GreaterThan) {
+                    ">"
+                } else {
+                    "<"
+                };
                 format!("CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 {sign} ${v}::float8 ELSE FALSE END")
             }
             _ => "FALSE".to_string(),
         },
         Op::In => {
-            let list: Vec<String> = list_of(value).into_iter().map(|v| v.to_lowercase()).collect();
+            let list: Vec<String> = list_of(value)
+                .into_iter()
+                .map(|v| v.to_lowercase())
+                .collect();
             if list.is_empty() {
                 return Some("FALSE".to_string());
             }
@@ -671,22 +817,32 @@ fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::F
             )
         }
         Op::Between => match (column, range_of(value)) {
-            (Some(IndexColumn::Num), Some((low, high))) => match (low.parse::<f64>(), high.parse::<f64>()) {
-                (Ok(a), Ok(b)) if a.is_finite() && b.is_finite() => {
-                    let f = push_sql(params, SqlParam::Text(field.to_string()));
-                    let (a, b) = (push_sql(params, SqlParam::Float(a)), push_sql(params, SqlParam::Float(b)));
-                    format!("CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 BETWEEN ${a}::float8 AND ${b}::float8 ELSE FALSE END")
+            (Some(IndexColumn::Num), Some((low, high))) => {
+                match (low.parse::<f64>(), high.parse::<f64>()) {
+                    (Ok(a), Ok(b)) if a.is_finite() && b.is_finite() => {
+                        let f = push_sql(params, SqlParam::Text(field.to_string()));
+                        let (a, b) = (
+                            push_sql(params, SqlParam::Float(a)),
+                            push_sql(params, SqlParam::Float(b)),
+                        );
+                        format!("CASE WHEN jsonb_typeof(data -> ${f}::text) = 'number' THEN (data ->> ${f}::text)::float8 BETWEEN ${a}::float8 AND ${b}::float8 ELSE FALSE END")
+                    }
+                    _ => "FALSE".to_string(),
                 }
-                _ => "FALSE".to_string(),
-            },
-            (Some(IndexColumn::Ts), Some((low, high))) => match (parse_instant(low), parse_instant(high)) {
-                (Some(a), Some(b)) => {
-                    let f = push_sql(params, SqlParam::Text(field.to_string()));
-                    let (a, b) = (push_sql(params, SqlParam::Text(a)), push_sql(params, SqlParam::Text(b)));
-                    format!("COALESCE({} BETWEEN ${a}::text::timestamptz AND ${b}::text::timestamptz, FALSE)", json_instant(f))
+            }
+            (Some(IndexColumn::Ts), Some((low, high))) => {
+                match (parse_instant(low), parse_instant(high)) {
+                    (Some(a), Some(b)) => {
+                        let f = push_sql(params, SqlParam::Text(field.to_string()));
+                        let (a, b) = (
+                            push_sql(params, SqlParam::Text(a)),
+                            push_sql(params, SqlParam::Text(b)),
+                        );
+                        format!("COALESCE({} BETWEEN ${a}::text::timestamptz AND ${b}::text::timestamptz, FALSE)", json_instant(f))
+                    }
+                    _ => "FALSE".to_string(),
                 }
-                _ => "FALSE".to_string(),
-            },
+            }
             _ => "FALSE".to_string(),
         },
         Op::Before | Op::After => match (column, parse_instant(value.trim())) {
@@ -694,7 +850,10 @@ fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::F
                 let f = push_sql(params, SqlParam::Text(field.to_string()));
                 let v = push_sql(params, SqlParam::Text(t));
                 let sign = if matches!(op, Op::Before) { "<" } else { ">" };
-                format!("COALESCE({} {sign} ${v}::text::timestamptz, FALSE)", json_instant(f))
+                format!(
+                    "COALESCE({} {sign} ${v}::text::timestamptz, FALSE)",
+                    json_instant(f)
+                )
             }
             _ => "FALSE".to_string(),
         },
@@ -705,17 +864,33 @@ fn json_clause(params: &mut Vec<SqlParam>, field: &str, op: scaffoldry_engine::F
 fn json_expr(params: &mut Vec<SqlParam>, e: &crate::repository_index::Expr) -> String {
     use crate::repository_index::Expr;
     match e {
-        Expr::Leaf(c) => json_clause(params, &c.field, c.op, &c.value, Some(c.column)).unwrap_or_else(|| "TRUE".to_string()),
+        Expr::Leaf(c) => json_clause(params, &c.field, c.op, &c.value, Some(c.column))
+            .unwrap_or_else(|| "TRUE".to_string()),
         Expr::And(v) if v.is_empty() => "TRUE".to_string(),
         Expr::Or(v) if v.is_empty() => "FALSE".to_string(),
-        Expr::And(v) => format!("({})", v.iter().map(|x| json_expr(params, x)).collect::<Vec<_>>().join(" AND ")),
-        Expr::Or(v) => format!("({})", v.iter().map(|x| json_expr(params, x)).collect::<Vec<_>>().join(" OR ")),
+        Expr::And(v) => format!(
+            "({})",
+            v.iter()
+                .map(|x| json_expr(params, x))
+                .collect::<Vec<_>>()
+                .join(" AND ")
+        ),
+        Expr::Or(v) => format!(
+            "({})",
+            v.iter()
+                .map(|x| json_expr(params, x))
+                .collect::<Vec<_>>()
+                .join(" OR ")
+        ),
     }
 }
 
 /// The table a record belongs to, as the column holds it. The key also stays in the JSON.
 fn table_id_of(data: &Value) -> String {
-    data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string()
+    data.get("_table_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// The result of a conditional write.
@@ -749,6 +924,8 @@ pub enum OrgMove {
     Cycle,
     /// The unit, or its new parent, is not in the table. Nothing changed.
     Missing,
+    /// The unit and its new parent belong to different hierarchies. Nothing changed.
+    BadHierarchy,
 }
 
 #[derive(Clone)]
@@ -772,7 +949,9 @@ impl std::fmt::Debug for PostgresRepository {
 
 impl PostgresRepository {
     pub fn connect(url: Option<&str>) -> Result<Self, RepositoryError> {
-        let db_url = url.map(str::to_string).unwrap_or_else(crate::testing::database_url);
+        let db_url = url
+            .map(str::to_string)
+            .unwrap_or_else(crate::testing::database_url);
 
         let num_workers: usize = std::env::var("SCAFFOLDRY_DB_WORKERS")
             .ok()
@@ -811,7 +990,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 41] = [
+                        let migrations: [(&str, &str); 42] = [
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -849,6 +1028,7 @@ impl PostgresRepository {
                             ("0054_people_indexes.sql", SCHEMA_0054),
                             ("0055_member_app_scope.sql", SCHEMA_0055),
                             ("0056_imports.sql", SCHEMA_0056),
+                            ("0057_hierarchies.sql", SCHEMA_0057),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -947,7 +1127,11 @@ impl PostgresRepository {
                         note_if_lost(&client, &lost_w);
                     }
                 })
-                .map_err(|e| RepositoryError::NotFound(format!("Failed to spawn db worker thread {w_idx}: {e}")))?;
+                .map_err(|e| {
+                    RepositoryError::NotFound(format!(
+                        "Failed to spawn db worker thread {w_idx}: {e}"
+                    ))
+                })?;
         }
 
         let repo = Self {
@@ -978,7 +1162,12 @@ impl PostgresRepository {
 
     /// Every cache counter, in one statement.
     pub fn cache_versions(&self) -> Result<Vec<(String, i64)>, RepositoryError> {
-        self.with_client(|c| Ok(c.query("SELECT name, version FROM cache_versions", &[])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
+        self.with_client(|c| {
+            Ok(c.query("SELECT name, version FROM cache_versions", &[])?
+                .iter()
+                .map(|r| (r.get(0), r.get(1)))
+                .collect())
+        })
     }
 
     pub fn worker_count(&self) -> usize {
@@ -987,7 +1176,10 @@ impl PostgresRepository {
 
     pub fn get_applied_migrations(&self) -> Result<Vec<String>, RepositoryError> {
         self.with_client(|client| {
-            let rows = client.query("SELECT filename FROM schema_migrations ORDER BY filename ASC", &[])?;
+            let rows = client.query(
+                "SELECT filename FROM schema_migrations ORDER BY filename ASC",
+                &[],
+            )?;
             Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
         })
     }
@@ -1002,7 +1194,8 @@ impl PostgresRepository {
         &self,
         f: impl FnOnce(&mut Client) -> Result<R, RepositoryError> + Send + 'static,
     ) -> Result<R, RepositoryError> {
-        self.statements.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.statements
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (tx, rx) = sync_channel(1);
         self.worker_tx
             .send(Box::new(move |client| {
@@ -1148,16 +1341,29 @@ impl PostgresRepository {
             app_slug: Some("compliance-ferpa-requests".to_string()),
             decision_type: DecisionType::StatutoryAttestation,
             oscal_control_id: "AU-02".to_string(),
-            rationale: "Institutional statutory compliance attestation for 34 CFR Part 99".to_string(),
+            rationale: "Institutional statutory compliance attestation for 34 CFR Part 99"
+                .to_string(),
             payload: &serde_json::json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
         });
 
         let entries = vec![
             (genesis, serde_json::json!({"status": "genesis"})),
-            (entry_1, serde_json::json!({"status": "Published", "domain": "inventory.biology.state.edu"})),
-            (entry_2, serde_json::json!({"domain": "inventory.biology.state.edu", "verified": true})),
-            (entry_3, serde_json::json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"})),
-            (entry_4, serde_json::json!({"framework": "FERPA", "standard": "34 CFR Part 99"})),
+            (
+                entry_1,
+                serde_json::json!({"status": "Published", "domain": "inventory.biology.state.edu"}),
+            ),
+            (
+                entry_2,
+                serde_json::json!({"domain": "inventory.biology.state.edu", "verified": true}),
+            ),
+            (
+                entry_3,
+                serde_json::json!({"rule": "auto-physics-honors-admit", "policy": "policy-ferpa-34cfr99"}),
+            ),
+            (
+                entry_4,
+                serde_json::json!({"framework": "FERPA", "standard": "34 CFR Part 99"}),
+            ),
         ];
 
         for (e, payload) in entries {
@@ -1185,9 +1391,7 @@ impl PostgresRepository {
     }
 
     pub fn seed_genesis_ledger(&self) -> Result<(), RepositoryError> {
-        self.with_client(|client| {
-            Self::seed_client_genesis_ledger(client)
-        })
+        self.with_client(Self::seed_client_genesis_ledger)
     }
     // -------------------------------------------------------------------------
     // WORKSPACES
@@ -1206,7 +1410,8 @@ impl PostgresRepository {
             let mut workspaces = Vec::new();
             for r in rows {
                 let allowed_affiliations: Value = r.get(9);
-                let affs: Vec<String> = serde_json::from_value(allowed_affiliations).unwrap_or_default();
+                let affs: Vec<String> =
+                    serde_json::from_value(allowed_affiliations).unwrap_or_default();
                 workspaces.push(WorkspaceRecord {
                     id: r.get(0),
                     name: r.get(1),
@@ -1240,7 +1445,8 @@ impl PostgresRepository {
 
             Ok(row.map(|r| {
                 let allowed_affiliations: Value = r.get(9);
-                let affs: Vec<String> = serde_json::from_value(allowed_affiliations).unwrap_or_default();
+                let affs: Vec<String> =
+                    serde_json::from_value(allowed_affiliations).unwrap_or_default();
                 WorkspaceRecord {
                     id: r.get(0),
                     name: r.get(1),
@@ -1302,7 +1508,10 @@ impl PostgresRepository {
         })
     }
 
-    pub fn persist_workspaces_batch(&self, batch: &[WorkspaceRecord]) -> Result<(), RepositoryError> {
+    pub fn persist_workspaces_batch(
+        &self,
+        batch: &[WorkspaceRecord],
+    ) -> Result<(), RepositoryError> {
         let batch = batch.to_vec();
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -1358,7 +1567,10 @@ impl PostgresRepository {
     // COLLABORATORS
     // -------------------------------------------------------------------------
 
-    pub fn get_collaborators(&self, workspace_id: &str) -> Result<Vec<CollaboratorRecord>, RepositoryError> {
+    pub fn get_collaborators(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<CollaboratorRecord>, RepositoryError> {
         let ws_id = workspace_id.to_string();
         self.with_client(move |client| {
             let rows = client.query(
@@ -1406,7 +1618,12 @@ impl PostgresRepository {
     }
 
     /// Removes one membership: the workspace-wide one when `app` is empty, else the one limited to that app.
-    pub fn remove_collaborator(&self, workspace_id: &str, eppn: &str, app: &str) -> Result<(), RepositoryError> {
+    pub fn remove_collaborator(
+        &self,
+        workspace_id: &str,
+        eppn: &str,
+        app: &str,
+    ) -> Result<(), RepositoryError> {
         let ws_id = workspace_id.to_string();
         let eppn_str = eppn.to_string();
         let app = app.to_string();
@@ -1452,7 +1669,9 @@ impl PostgresRepository {
         self.with_client(move |client| {
             count_page_statement();
             let rows = match cursor {
-                Some((created_at, id)) => client.query(PAGE_SQL, &[&slug, &table, &created_at, &id, &limit])?,
+                Some((created_at, id)) => {
+                    client.query(PAGE_SQL, &[&slug, &table, &created_at, &id, &limit])?
+                }
                 None => client.query(FIRST_PAGE_SQL, &[&slug, &table, &limit])?,
             };
             Ok(rows.iter().map(record_from_row).collect())
@@ -1460,12 +1679,16 @@ impl PostgresRepository {
     }
 
     /// One page that filters or sorts. Use `list_records_page` when there is neither.
-    pub fn aggregate_records(&self, plan: &AggregatePlan) -> Result<AggregateResultRaw, RepositoryError> {
+    pub fn aggregate_records(
+        &self,
+        plan: &AggregatePlan,
+    ) -> Result<AggregateResultRaw, RepositoryError> {
         let (sql, params) = build_aggregate_sql(plan);
         let is_group_by = plan.group_by.is_some();
         self.with_client(move |client| {
             let boxed = to_sql_params(params);
-            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+                boxed.iter().map(|b| b.as_ref()).collect();
             if is_group_by {
                 let rows = client.query(&sql, &refs)?;
                 let mut groups = Vec::new();
@@ -1498,19 +1721,29 @@ impl PostgresRepository {
         })
     }
 
-    pub fn query_records(&self, app_slug: &str, query: &RecordQuery) -> Result<Vec<DatasetRecord>, RepositoryError> {
+    pub fn query_records(
+        &self,
+        app_slug: &str,
+        query: &RecordQuery,
+    ) -> Result<Vec<DatasetRecord>, RepositoryError> {
         let (sql, params) = build_record_query(app_slug, query);
         self.with_client(move |client| {
             count_page_statement();
             let boxed = to_sql_params(params);
-            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+                boxed.iter().map(|b| b.as_ref()).collect();
             let rows = client.query(&sql, &refs)?;
             Ok(rows.iter().map(record_from_row).collect())
         })
     }
 
     /// True when the table holds more than `limit` rows. It reads at most `limit + 1` index entries.
-    pub fn table_has_more_than(&self, app_slug: &str, table_id: &str, limit: i64) -> Result<bool, RepositoryError> {
+    pub fn table_has_more_than(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        limit: i64,
+    ) -> Result<bool, RepositoryError> {
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         self.with_client(move |client| {
             let n: i64 = client
@@ -1523,7 +1756,12 @@ impl PostgresRepository {
         })
     }
 
-    pub fn count_scoped_records(&self, app_slug: &str, table_id: &str, scope: Option<&ScopePlan>) -> Result<u64, RepositoryError> {
+    pub fn count_scoped_records(
+        &self,
+        app_slug: &str,
+        table_id: &str,
+        scope: Option<&ScopePlan>,
+    ) -> Result<u64, RepositoryError> {
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         let mut params = vec![SqlParam::Text(slug), SqlParam::Text(table)];
         let scope_clause = match scope {
@@ -1535,14 +1773,19 @@ impl PostgresRepository {
         );
         self.with_client(move |client| {
             let boxed = to_sql_params(params);
-            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> = boxed.iter().map(|b| b.as_ref()).collect();
+            let refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
+                boxed.iter().map(|b| b.as_ref()).collect();
             let row = client.query_one(&sql, &refs)?;
             let count: i64 = row.get(0);
             Ok(count as u64)
         })
     }
 
-    pub fn get_record(&self, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, RepositoryError> {
+    pub fn get_record(
+        &self,
+        app_slug: &str,
+        id: &str,
+    ) -> Result<Option<DatasetRecord>, RepositoryError> {
         let (slug, id) = (app_slug.to_string(), id.to_string());
         self.with_client(move |client| {
             let row = client.query_opt(
@@ -1555,71 +1798,82 @@ impl PostgresRepository {
     }
 
     /// A new record. The version starts at 1. The history row commits with it.
-pub fn advisory_hash(app_slug: &str, table_id: &str, field: &str, value: &str) -> i64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (app_slug, table_id, field, value).hash(&mut hasher);
-    hasher.finish() as i64
-}
+    pub fn advisory_hash(app_slug: &str, table_id: &str, field: &str, value: &str) -> i64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (app_slug, table_id, field, value).hash(&mut hasher);
+        hasher.finish() as i64
+    }
 
-pub fn check_unique_constraints(
-    tx: &mut postgres::Transaction<'_>,
-    app_slug: &str,
-    table: &str,
-    record_id: &str,
-    data: &Value,
-    fields: &[scaffoldry_engine::FieldSpec],
-) -> Result<(), RepositoryError> {
-    for f in fields {
-        if f.constraints.as_ref().is_some_and(|c| c.unique) {
-            if let Some(val) = data.get(&f.name) {
-                if !val.is_null() {
-                    let val_str = match val {
-                        Value::String(s) => s.to_lowercase(),
-                        Value::Number(n) => n.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        _ => val.to_string(),
-                    };
-                    let lock_key = Self::advisory_hash(app_slug, table, &f.name, &val_str);
-                    tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&lock_key])?;
+    pub fn check_unique_constraints(
+        tx: &mut postgres::Transaction<'_>,
+        app_slug: &str,
+        table: &str,
+        record_id: &str,
+        data: &Value,
+        fields: &[scaffoldry_engine::FieldSpec],
+    ) -> Result<(), RepositoryError> {
+        for f in fields {
+            if f.constraints.as_ref().is_some_and(|c| c.unique) {
+                if let Some(val) = data.get(&f.name) {
+                    if !val.is_null() {
+                        let val_str = match val {
+                            Value::String(s) => s.to_lowercase(),
+                            Value::Number(n) => n.to_string(),
+                            Value::Bool(b) => b.to_string(),
+                            _ => val.to_string(),
+                        };
+                        let lock_key = Self::advisory_hash(app_slug, table, &f.name, &val_str);
+                        tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&lock_key])?;
 
-                    let clash: Option<String> = match val {
-                        Value::Number(n) => {
-                            let num = n.as_f64().unwrap_or(0.0);
-                            tx.query_opt(
+                        let clash: Option<String> = match val {
+                            Value::Number(n) => {
+                                let num = n.as_f64().unwrap_or(0.0);
+                                tx.query_opt(
                                 "SELECT record_id FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND num = $4 AND record_id != $5 LIMIT 1",
                                 &[&app_slug, &table, &f.name, &num, &record_id],
                             )?.map(|r| r.get(0))
-                        }
-                        Value::String(s) => {
-                            let s_lower = s.to_lowercase();
-                            tx.query_opt(
+                            }
+                            Value::String(s) => {
+                                let s_lower = s.to_lowercase();
+                                tx.query_opt(
                                 "SELECT record_id FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND txt = $4 AND record_id != $5 LIMIT 1",
                                 &[&app_slug, &table, &f.name, &s_lower, &record_id],
                             )?.map(|r| r.get(0))
+                            }
+                            _ => None,
+                        };
+                        if clash.is_some() {
+                            return Err(RepositoryError::ConstraintViolation {
+                                message: format!("field '{}' violates unique constraint", f.name),
+                                field: f.name.clone(),
+                                constraint: "unique".to_string(),
+                            });
                         }
-                        _ => None,
-                    };
-                    if clash.is_some() {
-                        return Err(RepositoryError::ConstraintViolation {
-                            message: format!("field '{}' violates unique constraint", f.name),
-                            field: f.name.clone(),
-                            constraint: "unique".to_string(),
-                        });
                     }
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
-}
 
-    pub fn insert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
+    pub fn insert_record(
+        &self,
+        rec: &DatasetRecord,
+        ctx: &WriteCtx,
+    ) -> Result<(), RepositoryError> {
         let (rec, ctx) = (rec.clone(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let table = table_id_of(&rec.data);
-            Self::check_unique_constraints(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
+            Self::check_unique_constraints(
+                &mut tx,
+                &rec.app_slug,
+                &table,
+                &rec.id,
+                &rec.data,
+                &ctx.index_fields,
+            )?;
             insert_record_in_tx(&mut tx, &rec, &ctx)?;
             tx.commit()?;
             Ok(())
@@ -1636,12 +1890,18 @@ pub fn check_unique_constraints(
         expected_version: i32,
         ctx: &WriteCtx,
     ) -> Result<RecordWrite, RepositoryError> {
-        let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
+        let (slug, id, data, ctx) = (
+            app_slug.to_string(),
+            id.to_string(),
+            data.clone(),
+            ctx.clone(),
+        );
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let table = table_id_of(&data);
             Self::check_unique_constraints(&mut tx, &slug, &table, &id, &data, &ctx.index_fields)?;
-            let outcome = update_record_in_tx(&mut tx, &slug, &id, &data, Some(expected_version), &ctx)?;
+            let outcome =
+                update_record_in_tx(&mut tx, &slug, &id, &data, Some(expected_version), &ctx)?;
             tx.commit()?;
             Ok(outcome)
         })
@@ -1649,8 +1909,19 @@ pub fn check_unique_constraints(
 
     /// A write by the system, such as an automation. It always applies and still bumps the version,
     /// unless it changes nothing.
-    pub fn overwrite_record_data(&self, app_slug: &str, id: &str, data: &Value, ctx: &WriteCtx) -> Result<Option<i32>, RepositoryError> {
-        let (slug, id, data, ctx) = (app_slug.to_string(), id.to_string(), data.clone(), ctx.clone());
+    pub fn overwrite_record_data(
+        &self,
+        app_slug: &str,
+        id: &str,
+        data: &Value,
+        ctx: &WriteCtx,
+    ) -> Result<Option<i32>, RepositoryError> {
+        let (slug, id, data, ctx) = (
+            app_slug.to_string(),
+            id.to_string(),
+            data.clone(),
+            ctx.clone(),
+        );
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let outcome = update_record_in_tx(&mut tx, &slug, &id, &data, None, &ctx)?;
@@ -1662,7 +1933,12 @@ pub fn check_unique_constraints(
         })
     }
 
-    pub fn delete_record(&self, app_slug: &str, id: &str, ctx: &WriteCtx) -> Result<bool, RepositoryError> {
+    pub fn delete_record(
+        &self,
+        app_slug: &str,
+        id: &str,
+        ctx: &WriteCtx,
+    ) -> Result<bool, RepositoryError> {
         let (slug, id, ctx) = (app_slug.to_string(), id.to_string(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -1673,7 +1949,13 @@ pub fn check_unique_constraints(
     }
 
     /// Deletes a record only if it is still at `expected_version`.
-    pub fn delete_record_checked(&self, app_slug: &str, id: &str, expected_version: i32, ctx: &WriteCtx) -> Result<RecordWrite, RepositoryError> {
+    pub fn delete_record_checked(
+        &self,
+        app_slug: &str,
+        id: &str,
+        expected_version: i32,
+        ctx: &WriteCtx,
+    ) -> Result<RecordWrite, RepositoryError> {
         let (slug, id, ctx) = (app_slug.to_string(), id.to_string(), ctx.clone());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -1694,7 +1976,12 @@ pub fn check_unique_constraints(
         after: Option<&(String, String)>,
         limit: i64,
     ) -> Result<FlagBatch, RepositoryError> {
-        let (slug, table, names, from) = (app_slug.to_string(), table_id.to_string(), fields.to_vec(), after.cloned());
+        let (slug, table, names, from) = (
+            app_slug.to_string(),
+            table_id.to_string(),
+            fields.to_vec(),
+            after.cloned(),
+        );
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let rows = match &from {
@@ -1723,7 +2010,11 @@ pub fn check_unique_constraints(
     }
 
     /// Inserts the record, or replaces the stored one and bumps its version. For fixtures.
-    pub fn upsert_record(&self, rec: &DatasetRecord, ctx: &WriteCtx) -> Result<(), RepositoryError> {
+    pub fn upsert_record(
+        &self,
+        rec: &DatasetRecord,
+        ctx: &WriteCtx,
+    ) -> Result<(), RepositoryError> {
         let (mut rec, ctx) = (rec.clone(), ctx.clone());
         apply_formulas(&mut rec.data, &ctx);
         self.with_client(move |client| {
@@ -1805,7 +2096,10 @@ pub fn check_unique_constraints(
         })
     }
 
-    pub fn count_records_by_app_slugs(&self, app_slugs: &[String]) -> Result<HashMap<String, usize>, RepositoryError> {
+    pub fn count_records_by_app_slugs(
+        &self,
+        app_slugs: &[String],
+    ) -> Result<HashMap<String, usize>, RepositoryError> {
         if app_slugs.is_empty() {
             return Ok(HashMap::new());
         }
@@ -2020,13 +2314,20 @@ pub fn check_unique_constraints(
     pub fn app_manifest_version(&self, slug: &str) -> Result<Option<i32>, RepositoryError> {
         let slug = slug.to_string();
         self.with_client(move |client| {
-            let row = client.query_opt("SELECT version FROM app_manifests WHERE slug = $1", &[&slug])?;
+            let row = client.query_opt(
+                "SELECT version FROM app_manifests WHERE slug = $1",
+                &[&slug],
+            )?;
             Ok(row.map(|r| r.get(0)))
         })
     }
 
     /// Saves a manifest only when the stored version is the one the caller read.
-    pub fn update_app_manifest_checked(&self, m: &AppManifest, expected_version: i32) -> Result<RecordWrite, RepositoryError> {
+    pub fn update_app_manifest_checked(
+        &self,
+        m: &AppManifest,
+        expected_version: i32,
+    ) -> Result<RecordWrite, RepositoryError> {
         let m = m.clone();
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -2164,10 +2465,7 @@ pub fn check_unique_constraints(
 
     pub fn list_dataset_relationships(&self) -> Result<Vec<DatasetRelationship>, RepositoryError> {
         self.with_client(|client| {
-            let rows = client.query(
-                "SELECT payload FROM dataset_relationships",
-                &[],
-            )?;
+            let rows = client.query("SELECT payload FROM dataset_relationships", &[])?;
             let mut rels = Vec::new();
             for r in rows {
                 let val: Value = r.get(0);
@@ -2178,7 +2476,10 @@ pub fn check_unique_constraints(
         })
     }
 
-    pub fn upsert_dataset_relationship(&self, rel: &DatasetRelationship) -> Result<(), RepositoryError> {
+    pub fn upsert_dataset_relationship(
+        &self,
+        rel: &DatasetRelationship,
+    ) -> Result<(), RepositoryError> {
         let rel = rel.clone();
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -2219,7 +2520,10 @@ pub fn check_unique_constraints(
     // WORKFLOW AUTOMATIONS
     // -------------------------------------------------------------------------
 
-    pub fn list_workflow_automations(&self, app_slug: Option<&str>) -> Result<Vec<AutomationRule>, RepositoryError> {
+    pub fn list_workflow_automations(
+        &self,
+        app_slug: Option<&str>,
+    ) -> Result<Vec<AutomationRule>, RepositoryError> {
         let slug_opt = app_slug.map(str::to_string);
         self.with_client(move |client| {
             let rows = match slug_opt {
@@ -2451,12 +2755,7 @@ pub fn check_unique_constraints(
                     active = EXCLUDED.active, \
                     payload = EXCLUDED.payload, \
                     updated_at = NOW()",
-                &[
-                    &user.id,
-                    &user.user_name,
-                    &user.active,
-                    &payload_json,
-                ],
+                &[&user.id, &user.user_name, &user.active, &payload_json],
             )?;
             Ok(())
         })
@@ -2470,10 +2769,80 @@ pub fn check_unique_constraints(
         })
     }
 
+    pub fn list_hierarchies(&self) -> Result<Vec<crate::state::HierarchyRecord>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT key, name, kind, source, status, created_by, created_at::text, retired_at::text \
+                 FROM hierarchies ORDER BY key ASC",
+                &[],
+            )?;
+            let mut list = Vec::new();
+            for r in rows {
+                list.push(crate::state::HierarchyRecord {
+                    key: r.get(0),
+                    name: r.get(1),
+                    kind: r.get(2),
+                    source: r.get(3),
+                    status: r.get(4),
+                    created_by: r.get(5),
+                    created_at: r.get(6),
+                    retired_at: r.get(7),
+                });
+            }
+            Ok(list)
+        })
+    }
+
+    pub fn get_hierarchy(
+        &self,
+        key: &str,
+    ) -> Result<Option<crate::state::HierarchyRecord>, RepositoryError> {
+        let key_str = key.to_string();
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "SELECT key, name, kind, source, status, created_by, created_at::text, retired_at::text \
+                 FROM hierarchies WHERE key = $1",
+                &[&key_str],
+            )?;
+            Ok(row.map(|r| crate::state::HierarchyRecord {
+                key: r.get(0),
+                name: r.get(1),
+                kind: r.get(2),
+                source: r.get(3),
+                status: r.get(4),
+                created_by: r.get(5),
+                created_at: r.get(6),
+                retired_at: r.get(7),
+            }))
+        })
+    }
+
+    pub fn list_org_closure(
+        &self,
+    ) -> Result<Vec<scaffoldry_core::tree::OrgClosureRow>, RepositoryError> {
+        self.with_client(|client| {
+            let rows = client.query(
+                "SELECT hierarchy_key, ancestor, descendant, depth \
+                 FROM org_closure ORDER BY depth ASC",
+                &[],
+            )?;
+            let mut list = Vec::new();
+            for r in rows {
+                list.push(scaffoldry_core::tree::OrgClosureRow {
+                    hierarchy_key: r.get(0),
+                    ancestor: r.get(1),
+                    descendant: r.get(2),
+                    depth: r.get(3),
+                });
+            }
+            Ok(list)
+        })
+    }
+
     pub fn list_organizations(&self) -> Result<Vec<OrganizationNode>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query(
-                "SELECT id, parent_id, name, code, org_type FROM organizations ORDER BY name ASC",
+                "SELECT id, parent_id, name, code, org_type, hierarchy_key FROM organizations ORDER BY name ASC",
                 &[],
             )?;
             let mut orgs = Vec::new();
@@ -2484,6 +2853,7 @@ pub fn check_unique_constraints(
                     name: r.get(2),
                     code: r.get(3),
                     org_type: r.get(4),
+                    hierarchy_key: r.get(5),
                 });
             }
             Ok(orgs)
@@ -2491,18 +2861,54 @@ pub fn check_unique_constraints(
     }
 
     pub fn upsert_organization(&self, org: &OrganizationNode) -> Result<(), RepositoryError> {
+        const TREE_LOCK: i64 = 0x5343_4f52_4754_5245; // "SCORGTRE"
         let org = org.clone();
+        let hierarchy_key = if org.hierarchy_key.is_empty() {
+            "academic".to_string()
+        } else {
+            org.hierarchy_key
+        };
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
+            tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&TREE_LOCK])?;
             tx.execute(
-                "INSERT INTO organizations (id, parent_id, name, code, org_type) \
-                 VALUES ($1, $2, $3, $4, $5) \
+                "INSERT INTO organizations (id, parent_id, name, code, org_type, hierarchy_key) \
+                 VALUES ($1, $2, $3, $4, $5, $6) \
                  ON CONFLICT (code) DO UPDATE SET \
                     parent_id = EXCLUDED.parent_id, \
                     name = EXCLUDED.name, \
-                    org_type = EXCLUDED.org_type",
-                &[&org.id, &org.parent_id, &org.name, &org.code, &org.org_type],
+                    org_type = EXCLUDED.org_type, \
+                    hierarchy_key = EXCLUDED.hierarchy_key",
+                &[
+                    &org.id,
+                    &org.parent_id,
+                    &org.name,
+                    &org.code,
+                    &org.org_type,
+                    &hierarchy_key,
+                ],
             )?;
+
+            // Self-row at depth 0
+            tx.execute(
+                "INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) \
+                 VALUES ($1, $2, $2, 0) \
+                 ON CONFLICT (ancestor, descendant) DO NOTHING",
+                &[&hierarchy_key, &org.id],
+            )?;
+
+            // If parent_id is set, copy parent's ancestors
+            if let Some(parent_id) = org.parent_id {
+                tx.execute(
+                    "INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) \
+                     SELECT $1, ancestor, $2, (depth + 1)::smallint \
+                     FROM org_closure \
+                     WHERE descendant = $3 \
+                     ON CONFLICT (ancestor, descendant) DO NOTHING",
+                    &[&hierarchy_key, &org.id, &parent_id],
+                )?;
+            }
+
             crate::cache::bump(&mut tx, "organizations")?;
             tx.commit()?;
             Ok(())
@@ -2520,30 +2926,86 @@ pub fn check_unique_constraints(
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&TREE_LOCK])?;
-            if tx.query_opt("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", &[&org.id])?.is_none() {
-                return Ok(OrgMove::Missing);
+
+            let unit_row = match tx.query_opt(
+                "SELECT hierarchy_key, parent_id FROM organizations WHERE id = $1 FOR UPDATE",
+                &[&org.id],
+            )? {
+                Some(r) => r,
+                None => return Ok(OrgMove::Missing),
+            };
+            let unit_hierarchy: String = unit_row.get(0);
+            let old_parent: Option<uuid::Uuid> = unit_row.get(1);
+
+            if org.parent_id == old_parent {
+                // Name or org_type change only
+                tx.execute(
+                    "UPDATE organizations SET name = $2, org_type = $3 WHERE id = $1",
+                    &[&org.id, &org.name, &org.org_type],
+                )?;
+                crate::cache::bump(&mut tx, "organizations")?;
+                tx.commit()?;
+                return Ok(OrgMove::Moved);
             }
-            // Walk up from the new parent. Reaching the unit itself means the move would make a cycle. A step limit
-            // stops a cycle that is already in bad data.
-            let mut current = org.parent_id;
-            let mut steps = 0;
-            while let Some(id) = current {
-                if id == org.id {
+
+            if let Some(new_parent_id) = org.parent_id {
+                if new_parent_id == org.id {
                     return Ok(OrgMove::Cycle);
                 }
-                steps += 1;
-                if steps > 64 {
-                    return Ok(OrgMove::Cycle);
-                }
-                match tx.query_opt("SELECT parent_id FROM organizations WHERE id = $1", &[&id])? {
-                    Some(row) => current = row.get::<_, Option<uuid::Uuid>>(0),
+                let parent_row = match tx.query_opt(
+                    "SELECT hierarchy_key FROM organizations WHERE id = $1",
+                    &[&new_parent_id],
+                )? {
+                    Some(r) => r,
                     None => return Ok(OrgMove::Missing),
+                };
+                let parent_hierarchy: String = parent_row.get(0);
+                if parent_hierarchy != unit_hierarchy {
+                    return Ok(OrgMove::BadHierarchy);
+                }
+
+                // Check cycle using org_closure: is new_parent a descendant of org.id?
+                let is_descendant = tx
+                    .query_opt(
+                        "SELECT 1 FROM org_closure WHERE ancestor = $1 AND descendant = $2",
+                        &[&org.id, &new_parent_id],
+                    )?
+                    .is_some();
+                if is_descendant {
+                    return Ok(OrgMove::Cycle);
                 }
             }
+
             tx.execute(
                 "UPDATE organizations SET parent_id = $2, name = $3, org_type = $4 WHERE id = $1",
                 &[&org.id, &org.parent_id, &org.name, &org.org_type],
             )?;
+
+            // 1. Delete closure rows connecting ancestors strictly above org.id to any node in org.id's subtree
+            tx.execute(
+                "DELETE FROM org_closure \
+                 WHERE descendant IN (SELECT descendant FROM org_closure WHERE ancestor = $1) \
+                   AND ancestor NOT IN (SELECT descendant FROM org_closure WHERE ancestor = $1)",
+                &[&org.id],
+            )?;
+
+            // 2. If moving under a new parent, connect ancestors of new_parent to descendants of org.id
+            if let Some(new_parent_id) = org.parent_id {
+                tx.execute(
+                    "INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) \
+                     SELECT \
+                         p_anc.hierarchy_key, \
+                         p_anc.ancestor, \
+                         sub_desc.descendant, \
+                         (p_anc.depth + 1 + sub_desc.depth)::smallint \
+                     FROM org_closure p_anc \
+                     CROSS JOIN org_closure sub_desc \
+                     WHERE p_anc.descendant = $1 AND sub_desc.ancestor = $2 \
+                     ON CONFLICT (ancestor, descendant) DO NOTHING",
+                    &[&new_parent_id, &org.id],
+                )?;
+            }
+
             crate::cache::bump(&mut tx, "organizations")?;
             tx.commit()?;
             Ok(OrgMove::Moved)
@@ -2605,7 +3067,10 @@ pub fn check_unique_constraints(
         })
     }
 
-    pub fn upsert_position_type(&self, pt: &crate::state::PositionType) -> Result<(), RepositoryError> {
+    pub fn upsert_position_type(
+        &self,
+        pt: &crate::state::PositionType,
+    ) -> Result<(), RepositoryError> {
         let pt = pt.clone();
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -2638,7 +3103,11 @@ pub fn check_unique_constraints(
     /// Removes the roles SCIM holds for a person, before a sync writes the ones it now reports. A `platform_admin` or
     /// `unit_admin` row that SCIM wrote before SCIM stopped granting them is kept when `keep_admin_rows` is set. A
     /// Platform Admin re-appoints or removes it. A person who is deactivated or deleted loses it with the rest.
-    pub fn delete_scim_roles_for_user(&self, eppn: &str, keep_admin_rows: bool) -> Result<(), RepositoryError> {
+    pub fn delete_scim_roles_for_user(
+        &self,
+        eppn: &str,
+        keep_admin_rows: bool,
+    ) -> Result<(), RepositoryError> {
         let eppn_str = eppn.to_string();
         self.with_client(move |client| {
             client.execute(
@@ -2678,11 +3147,7 @@ pub fn check_unique_constraints(
                     display_name = EXCLUDED.display_name, \
                     payload = EXCLUDED.payload, \
                     updated_at = NOW()",
-                &[
-                    &group.id,
-                    &group.display_name,
-                    &payload_json,
-                ],
+                &[&group.id, &group.display_name, &payload_json],
             )?;
             Ok(())
         })
@@ -2725,7 +3190,12 @@ impl PostgresRepository {
 /// The settings a locked update wrote, and the ledger entry written with them.
 pub type SettingsUpdate = (Vec<(String, serde_json::Value)>, LedgerEntry);
 
-fn upsert_setting(tx: &mut postgres::Transaction<'_>, key: &str, value: &serde_json::Value, by: &str) -> Result<(), RepositoryError> {
+fn upsert_setting(
+    tx: &mut postgres::Transaction<'_>,
+    key: &str,
+    value: &serde_json::Value,
+    by: &str,
+) -> Result<(), RepositoryError> {
     tx.execute(
         "INSERT INTO platform_settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW()) \
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()",
@@ -2868,7 +3338,8 @@ fn ledger_entry_of(row: &postgres::Row) -> Result<LedgerEntry, RepositoryError> 
 }
 
 fn parse_decision_type(s: &str) -> Result<DecisionType, RepositoryError> {
-    DecisionType::parse(s).ok_or_else(|| RepositoryError::TamperDetected(format!("Unknown decision type: {s}")))
+    DecisionType::parse(s)
+        .ok_or_else(|| RepositoryError::TamperDetected(format!("Unknown decision type: {s}")))
 }
 
 impl PostgresRepository {
@@ -2895,7 +3366,10 @@ impl PostgresRepository {
         })
     }
 
-    pub fn get_api_token(&self, token_hash: &str) -> Result<Option<crate::state::ApiToken>, RepositoryError> {
+    pub fn get_api_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<crate::state::ApiToken>, RepositoryError> {
         let hash = token_hash.to_string();
         self.with_client(move |client| {
             let row_opt = client.query_opt(
@@ -2921,7 +3395,11 @@ impl PostgresRepository {
         })
     }
 
-    pub fn update_token_last_used(&self, token_hash: &str, now: chrono::DateTime<chrono::Utc>) -> Result<(), RepositoryError> {
+    pub fn update_token_last_used(
+        &self,
+        token_hash: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), RepositoryError> {
         let hash = token_hash.to_string();
         self.with_client(move |client| {
             client.execute(
@@ -2932,7 +3410,12 @@ impl PostgresRepository {
         })
     }
 
-    pub fn revoke_api_token(&self, id: uuid::Uuid, caller_eppn: &str, is_platform_admin: bool) -> Result<bool, RepositoryError> {
+    pub fn revoke_api_token(
+        &self,
+        id: uuid::Uuid,
+        caller_eppn: &str,
+        is_platform_admin: bool,
+    ) -> Result<bool, RepositoryError> {
         let caller_eppn = caller_eppn.to_string();
         self.with_client(move |client| {
             let rows_affected = if is_platform_admin {
@@ -2961,7 +3444,10 @@ impl PostgresRepository {
         })
     }
 
-    pub fn list_api_tokens_for_eppn(&self, eppn: &str) -> Result<Vec<crate::state::ApiToken>, RepositoryError> {
+    pub fn list_api_tokens_for_eppn(
+        &self,
+        eppn: &str,
+    ) -> Result<Vec<crate::state::ApiToken>, RepositoryError> {
         let eppn = eppn.to_string();
         self.with_client(move |client| {
             let rows = client.query(
@@ -2998,7 +3484,10 @@ impl PostgresRepository {
         })
     }
 
-    pub fn list_all_api_tokens_for_eppn(&self, eppn: &str) -> Result<Vec<crate::state::ApiToken>, RepositoryError> {
+    pub fn list_all_api_tokens_for_eppn(
+        &self,
+        eppn: &str,
+    ) -> Result<Vec<crate::state::ApiToken>, RepositoryError> {
         let eppn = eppn.to_string();
         self.with_client(move |client| {
             let rows = client.query(
@@ -3053,7 +3542,10 @@ impl PostgresRepository {
         })
     }
 
-    pub fn get_scim_user_by_username(&self, user_name: &str) -> Result<Option<crate::state::ScimUser>, RepositoryError> {
+    pub fn get_scim_user_by_username(
+        &self,
+        user_name: &str,
+    ) -> Result<Option<crate::state::ScimUser>, RepositoryError> {
         let name = user_name.to_string();
         self.with_client(move |client| {
             let row_opt = client.query_opt(
@@ -3072,7 +3564,9 @@ impl PostgresRepository {
         })
     }
 
-    pub fn get_platform_settings(&self) -> Result<std::collections::HashMap<String, serde_json::Value>, RepositoryError> {
+    pub fn get_platform_settings(
+        &self,
+    ) -> Result<std::collections::HashMap<String, serde_json::Value>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query("SELECT key, value FROM platform_settings", &[])?;
             let mut map = std::collections::HashMap::new();
@@ -3112,7 +3606,12 @@ impl PostgresRepository {
         &self,
         updated_by: &str,
         keys: [&'static str; 2],
-        decide: impl FnOnce([serde_json::Value; 2]) -> Result<(Vec<(String, serde_json::Value)>, AppendDecisionParams), E> + Send + 'static,
+        decide: impl FnOnce(
+                [serde_json::Value; 2],
+            )
+                -> Result<(Vec<(String, serde_json::Value)>, AppendDecisionParams), E>
+            + Send
+            + 'static,
     ) -> Result<Result<SettingsUpdate, E>, RepositoryError> {
         let by = updated_by.to_string();
         self.with_client(move |client| {
@@ -3157,7 +3656,9 @@ impl PostgresRepository {
         })
     }
 
-    pub fn list_all_workspace_guards(&self) -> Result<Vec<scaffoldry_core::WorkspaceGuardRecord>, RepositoryError> {
+    pub fn list_all_workspace_guards(
+        &self,
+    ) -> Result<Vec<scaffoldry_core::WorkspaceGuardRecord>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query(
                 "SELECT workspace_id, version, rules, compiled, reason, created_by, created_at::text                  FROM workspace_guards ORDER BY workspace_id ASC, version ASC",
@@ -3179,7 +3680,10 @@ impl PostgresRepository {
         })
     }
 
-    pub fn get_workspace_guards(&self, workspace_id: &str) -> Result<Vec<scaffoldry_core::WorkspaceGuardRecord>, RepositoryError> {
+    pub fn get_workspace_guards(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<scaffoldry_core::WorkspaceGuardRecord>, RepositoryError> {
         let ws_id = workspace_id.to_string();
         self.with_client(move |client| {
             let rows = client.query(
@@ -3202,7 +3706,10 @@ impl PostgresRepository {
         })
     }
 
-    pub fn insert_workspace_guard(&self, guard: &scaffoldry_core::WorkspaceGuardRecord) -> Result<(), RepositoryError> {
+    pub fn insert_workspace_guard(
+        &self,
+        guard: &scaffoldry_core::WorkspaceGuardRecord,
+    ) -> Result<(), RepositoryError> {
         let g = guard.clone();
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -3219,7 +3726,9 @@ impl PostgresRepository {
 
 /// A token row read with its times as text: `token_hash, id, kind, eppn, label, original_admin, created_at, expires_at,
 /// last_used_at, revoked_at, app_slug`.
-pub(crate) fn api_token_of_text_row(r: &postgres::Row) -> Result<crate::state::ApiToken, RepositoryError> {
+pub(crate) fn api_token_of_text_row(
+    r: &postgres::Row,
+) -> Result<crate::state::ApiToken, RepositoryError> {
     let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::parse_from_rfc3339(s)
             .or_else(|_| chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%#z"))
@@ -3247,7 +3756,10 @@ pub(crate) fn api_token_of_text_row(r: &postgres::Row) -> Result<crate::state::A
 
 /// Writes one appointment or holding, and the person it belongs to when the platform has not met them. It runs on
 /// a connection or inside a transaction.
-pub(crate) fn upsert_role_in(client: &mut impl postgres::GenericClient, role: &RoleRow) -> Result<(), RepositoryError> {
+pub(crate) fn upsert_role_in(
+    client: &mut impl postgres::GenericClient,
+    role: &RoleRow,
+) -> Result<(), RepositoryError> {
     let person_rows = client.query("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?;
     let person_id = if let Some(row) = person_rows.first() {
         row.get::<_, uuid::Uuid>(0)
@@ -3261,7 +3773,9 @@ pub(crate) fn upsert_role_in(client: &mut impl postgres::GenericClient, role: &R
             &[&new_pid, &email, &role.eppn],
         )?;
         // Another server may have added the person a moment ago, under another id.
-        client.query_one("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?.get::<_, uuid::Uuid>(0)
+        client
+            .query_one("SELECT id FROM persons WHERE eppn = $1", &[&role.eppn])?
+            .get::<_, uuid::Uuid>(0)
     };
 
     client.execute(

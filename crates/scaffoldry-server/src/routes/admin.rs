@@ -18,9 +18,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::jobs::{self, AdminJobRow};
 use crate::service::admin::{admin_write, decode_cursor, encode_cursor, require_platform_admin};
+use axum::routing::post;
 use scaffoldry_core::ledger::DecisionType;
 use uuid::Uuid;
-use axum::routing::post;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -29,12 +29,11 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/jobs/{id}", get(get_job_by_id))
         .route("/admin/jobs/{id}/cancel", post(cancel_job_by_id))
         .route("/admin/jobs/{id}/retry", post(retry_job_by_id))
+        .route("/admin/hierarchies", get(get_hierarchies))
+        .route("/admin/hierarchies/{key}/tree", get(get_hierarchy_tree))
 }
 
-async fn get_overview(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+async fn get_overview(State(state): State<SharedState>, headers: HeaderMap) -> impl IntoResponse {
     let Some(caller) = session_user(&state, &headers) else {
         return ServiceError::unauthorized("Unauthorized").into_response();
     };
@@ -45,17 +44,24 @@ async fn get_overview(
 
     // 1. Server
     let version = env!("CARGO_PKG_VERSION");
-    let (applied_migrations, worker_count) = { let repo = &state.repository;
+    let (applied_migrations, worker_count) = {
+        let repo = &state.repository;
         let migs = repo.get_applied_migrations().unwrap_or_default();
         let workers = repo.worker_count();
         (migs, workers)
     };
 
     // 2. People
-    let (active_users, hold_users, inactive_users) = state.repository.people_counts().unwrap_or((0, 0, 0));
+    let (active_users, hold_users, inactive_users) =
+        state.repository.people_counts().unwrap_or((0, 0, 0));
 
     let platform_admins_count = {
-        let mut admin_eppns: HashSet<String> = state.repository.platform_admin_names().unwrap_or_default().into_iter().collect();
+        let mut admin_eppns: HashSet<String> = state
+            .repository
+            .platform_admin_names()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         // Central admin callers
         if caller.affiliation == "central_admin" {
             admin_eppns.insert(caller.eppn.clone());
@@ -63,8 +69,13 @@ async fn get_overview(
         admin_eppns.len()
     };
 
-    let active_tokens_by_kind: HashMap<String, usize> =
-        state.repository.active_token_counts().unwrap_or_default().into_iter().map(|(k, n)| (k, n as usize)).collect();
+    let active_tokens_by_kind: HashMap<String, usize> = state
+        .repository
+        .active_token_counts()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, n)| (k, n as usize))
+        .collect();
 
     // 3. Organization
     let unit_count = state.organizations.read().unwrap().len();
@@ -83,7 +94,8 @@ async fn get_overview(
     };
 
     // 7. Jobs
-    let jobs_overview = { let repo = &state.repository;
+    let jobs_overview = {
+        let repo = &state.repository;
         jobs::get_jobs_overview(repo).unwrap_or_default()
     };
 
@@ -141,7 +153,6 @@ async fn get_overview(
         .into_response()
 }
 
-
 #[derive(serde::Deserialize)]
 struct AdminJobsQuery {
     state: Option<String>,
@@ -161,8 +172,8 @@ async fn get_jobs(
     headers: HeaderMap,
     axum::extract::Query(query): axum::extract::Query<AdminJobsQuery>,
 ) -> Result<impl IntoResponse, ServiceError> {
-    let caller = session_user(&state, &headers)
-        .ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
+    let caller =
+        session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
     require_platform_admin(&caller, &state)?;
     let repo = &*state.repository;
 
@@ -206,8 +217,8 @@ async fn get_job_by_id(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, ServiceError> {
-    let caller = session_user(&state, &headers)
-        .ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
+    let caller =
+        session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
     require_platform_admin(&caller, &state)?;
     let uuid = Uuid::parse_str(&id).map_err(|_| ServiceError::not_found("Job not found"))?;
     let repo = &*state.repository;
@@ -223,8 +234,8 @@ async fn cancel_job_by_id(
     axum::extract::Path(id): axum::extract::Path<String>,
     body: Option<Json<AdminReasonPayload>>,
 ) -> Result<impl IntoResponse, ServiceError> {
-    let caller = session_user(&state, &headers)
-        .ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
+    let caller =
+        session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
     require_platform_admin(&caller, &state)?;
     let Json(payload) = body.ok_or_else(|| ServiceError::bad_request("A reason is required"))?;
     let uuid = Uuid::parse_str(&id).map_err(|_| ServiceError::not_found("Job not found"))?;
@@ -251,8 +262,8 @@ async fn retry_job_by_id(
     axum::extract::Path(id): axum::extract::Path<String>,
     body: Option<Json<AdminReasonPayload>>,
 ) -> Result<impl IntoResponse, ServiceError> {
-    let caller = session_user(&state, &headers)
-        .ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
+    let caller =
+        session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
     require_platform_admin(&caller, &state)?;
     let Json(payload) = body.ok_or_else(|| ServiceError::bad_request("A reason is required"))?;
     let trimmed = payload.reason.trim();
@@ -269,4 +280,42 @@ async fn retry_job_by_id(
         other => ServiceError::internal(other.to_string()),
     })?;
     Ok((StatusCode::OK, Json(job)))
+}
+
+async fn get_hierarchies(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ServiceError> {
+    let caller =
+        session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
+    require_platform_admin_or_compliance(&caller, &state)?;
+
+    let hierarchies = state
+        .repository
+        .list_hierarchies()
+        .map_err(|e| ServiceError::internal(e.to_string()))?;
+    Ok((StatusCode::OK, Json(hierarchies)))
+}
+
+async fn get_hierarchy_tree(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    axum::extract::Path(key): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, ServiceError> {
+    let caller =
+        session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
+    require_platform_admin_or_compliance(&caller, &state)?;
+
+    let hierarchy = state
+        .repository
+        .get_hierarchy(&key)
+        .map_err(|e| ServiceError::internal(e.to_string()))?;
+    if hierarchy.is_none() {
+        return Err(ServiceError::not_found(format!(
+            "Hierarchy '{key}' not found"
+        )));
+    }
+
+    let tree = crate::service::organizations::build_hierarchy_tree(&state, &key);
+    Ok((StatusCode::OK, Json(tree)))
 }
