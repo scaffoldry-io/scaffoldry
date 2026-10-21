@@ -293,6 +293,12 @@ async fn handle_mcp_request(
                         "mimeType": "application/json"
                     },
                     {
+                        "uri": crate::service::prompts::GUIDE_URI,
+                        "name": "Guide: building apps",
+                        "description": "How to build an app here: describe, propose, wait for approval, field types, selects and links by id, paging, versions, jobs, and what an agent must never do",
+                        "mimeType": "text/markdown"
+                    },
+                    {
                         "uri": "scaffoldry://schema/app-manifest",
                         "name": "App Manifest Schema",
                         "description": "JSON Schema 2020-12 for the app manifest an agent builds against",
@@ -427,6 +433,15 @@ async fn handle_mcp_request(
                             ]
                         })
                     }
+                    crate::service::prompts::GUIDE_URI => json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "text/markdown",
+                                "text": crate::service::prompts::GUIDE
+                            }
+                        ]
+                    }),
                     "scaffoldry://schema/app-manifest" => json!({
                         "contents": [
                             {
@@ -451,25 +466,25 @@ async fn handle_mcp_request(
         }
 
         "prompts/list" => {
-            let prompts = json!({
-                "prompts": [
-                    {
-                        "name": "governed_app_builder",
-                        "description": "Guide an AI assistant to formulate a compliant application schema adhering to CEDS v11 and Cedar access controls.",
-                        "arguments": [
-                            { "name": "app_purpose", "description": "The business goal or departmental workflow", "required": true },
-                            { "name": "department", "description": "Department or faculty unit", "required": true }
-                        ]
-                    },
-                    {
-                        "name": "ferpa_risk_assessment",
-                        "description": "Audit an application or dataset schema for FERPA (34 CFR § 99.30) privacy compliance.",
-                        "arguments": [
-                            { "name": "schema_json", "description": "JSON representation of the schema", "required": true }
-                        ]
-                    }
-                ]
-            });
+            let mut all = vec![
+                json!({
+                    "name": "governed_app_builder",
+                    "description": "Guide an AI assistant to formulate a compliant application schema adhering to CEDS v11 and Cedar access controls.",
+                    "arguments": [
+                        { "name": "app_purpose", "description": "The business goal or departmental workflow", "required": true },
+                        { "name": "department", "description": "Department or faculty unit", "required": true }
+                    ]
+                }),
+                json!({
+                    "name": "ferpa_risk_assessment",
+                    "description": "Audit an application or dataset schema for FERPA (34 CFR § 99.30) privacy compliance.",
+                    "arguments": [
+                        { "name": "schema_json", "description": "JSON representation of the schema", "required": true }
+                    ]
+                }),
+            ];
+            all.extend(crate::service::prompts::listed());
+            let prompts = json!({ "prompts": all });
             rpc(JsonRpcResponse {
                 jsonrpc: "2.0",
                 id: req_id,
@@ -519,7 +534,7 @@ async fn handle_mcp_request(
                         ]
                     })
                 }
-                _ => json!({ "messages": [] }),
+                other => crate::service::prompts::render(other, &args).unwrap_or_else(|| json!({ "messages": [] })),
             };
 
             rpc(JsonRpcResponse {
