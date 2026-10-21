@@ -62,17 +62,17 @@ fn tool_error(message: impl Into<String>) -> Value {
 }
 
 /// A tool error that carries the error's `code` for an agent to branch on, and the same text.
-fn coded_tool_error(code: &str, message: &str) -> Value {
+fn coded_tool_error(code: &str, message: &str, hint: &str) -> Value {
     json!({
         "isError": true,
-        "content": [{ "type": "text", "text": message }],
-        "structuredContent": { "code": code, "message": message }
+        "content": [{ "type": "text", "text": format!("{message} {hint}") }],
+        "structuredContent": { "code": code, "message": message, "hint": hint }
     })
 }
 
 /// The same for a `ServiceError`, with the `reason` and `remedy` of a denial when it has them.
 fn service_tool_error(err: &crate::service::ServiceError) -> Value {
-    let mut value = coded_tool_error(err.code(), err.message());
+    let mut value = coded_tool_error(err.code(), err.message(), &crate::service::hints::hint_for(err));
     let body = err.body();
     for key in ["reason", "remedy", "fields"] {
         if let Some(v) = body.get(key) {
