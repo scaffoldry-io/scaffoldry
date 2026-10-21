@@ -232,6 +232,41 @@ fn validate_record_constraints(
     Ok(())
 }
 
+/// A write names fields the table has, and each value fits what the field stores. Computed fields are not written, so
+/// their values are not checked. `null` clears a field. A number may arrive as digits and a boolean as `true` or `false`.
+fn validate_known_fields_and_types(app_slug: &str, table_id: &str, data: &Value, state: &SharedState) -> Result<(), ServiceError> {
+    let (fields, table_name) = table_fields_lenient(app_slug, table_id, state);
+    let Some(map) = data.as_object() else { return Ok(()) };
+    if fields.is_empty() {
+        return Ok(());
+    }
+    for (key, value) in map {
+        if key.starts_with('_') {
+            continue;
+        }
+        let Some(field) = fields.iter().find(|f| f.name == *key) else {
+            return Err(ServiceError::BadRequest(format!("Field '{key}' is not a field of table '{table_name}'")));
+        };
+        if value.is_null() || field.field_type.is_computed() {
+            continue;
+        }
+        let digits = |v: &Value| v.as_str().is_some_and(|s| s.trim().parse::<f64>().is_ok());
+        let (fits, stores) = match field.field_type {
+            FieldType::Text | FieldType::LongText | FieldType::Email | FieldType::Phone | FieldType::Url | FieldType::Select | FieldType::Date | FieldType::DateTime | FieldType::Unit => {
+                (value.is_string(), "text")
+            }
+            FieldType::Number | FieldType::Currency | FieldType::Percent | FieldType::Rating => (value.is_number() || digits(value), "a number"),
+            FieldType::Boolean | FieldType::Checkbox => (value.is_boolean() || matches!(value.as_str(), Some("true" | "false")), "true or false"),
+            FieldType::MultiSelect => (value.is_array(), "a list of option ids"),
+            _ => (true, ""),
+        };
+        if !fits {
+            return Err(ServiceError::BadRequest(format!("Field '{}' stores {stores}, so that value does not fit", field.name)));
+        }
+    }
+    Ok(())
+}
+
 fn validate_select_options(
     app_slug: &str,
     table_id: &str,
@@ -649,6 +684,7 @@ pub fn create_record(
     let mut cleaned = strip_lookups(app_slug, data_payload, state);
     let table = cleaned.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     apply_defaults_and_set_on_create(app_slug, &table, &mut cleaned, state);
+    validate_known_fields_and_types(app_slug, &table, &cleaned, state)?;
     validate_record_constraints(app_slug, &table, &cleaned, state)?;
     let data_payload = &cleaned;
     validate_links(app_slug, None, None, data_payload, state)?;
@@ -866,6 +902,7 @@ pub fn update_record(
     }
 
     apply_set_on_change(app_slug, &table, &current.data, &mut new_data, state);
+    validate_known_fields_and_types(app_slug, &table, &new_data, state)?;
     validate_record_constraints(app_slug, &table, &new_data, state)?;
     validate_select_options(app_slug, &table, &new_data, state)?;
     validate_collaborators(app_slug, &table, &new_data, state)?;
