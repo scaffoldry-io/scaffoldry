@@ -197,12 +197,17 @@ async fn handle_mcp_request(
             let listed: Vec<Value> = tools::TOOLS
                 .iter()
                 .map(|t| {
-                    json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "inputSchema": (t.input_schema)(),
-                        "annotations": { "readOnlyHint": t.read_only }
-                    })
+                    // The schema is closed (`validate_args` refuses an unknown argument) and carries one valid call.
+                    let mut schema = (t.input_schema)();
+                    schema["additionalProperties"] = json!(false);
+                    schema["examples"] = json!([crate::service::tool_meta::example(t.name)]);
+                    let annotations = if t.read_only {
+                        json!({ "readOnlyHint": true })
+                    } else {
+                        let (destructive, idempotent) = crate::service::tool_meta::hints(t.name);
+                        json!({ "readOnlyHint": false, "destructiveHint": destructive, "idempotentHint": idempotent })
+                    };
+                    json!({ "name": t.name, "description": t.description, "inputSchema": schema, "annotations": annotations })
                 })
                 .collect();
             rpc(JsonRpcResponse {

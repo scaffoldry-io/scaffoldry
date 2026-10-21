@@ -23,6 +23,7 @@ pub mod people;
 pub mod positions;
 pub mod processes;
 pub mod proposals;
+pub mod tool_meta;
 pub mod tools;
 pub mod calc;
 pub mod view_as;
