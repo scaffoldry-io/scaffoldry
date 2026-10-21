@@ -74,3 +74,44 @@ fn listing_workspaces_does_not_deadlock_against_a_writer() {
         h.join().unwrap();
     }
 }
+
+/// The roles in a list come from one read of the person's roles, groups and grants, not one read per workspace.
+#[test]
+fn the_database_reads_for_a_workspace_list_do_not_grow_with_the_number_of_workspaces() {
+    use scaffoldry_server::state::WorkspaceRecord;
+    let db = TestDb::new();
+    let state = db.state();
+    state.seed_demo().expect("seed");
+    let me = caller();
+    let measure = |state: &scaffoldry_server::state::SharedState| {
+        let before = state.repository.statements();
+        scaffoldry_server::service::workspaces::list_workspaces(&me, state).expect("a list");
+        state.repository.statements() - before
+    };
+    let few = measure(&state);
+
+    let now = chrono::Utc::now().to_rfc3339();
+    for i in 0..40 {
+        let id = format!("ws-bulk-{i}");
+        let ws = WorkspaceRecord {
+            id: id.clone(),
+            name: id.clone(),
+            code: id.to_uppercase(),
+            organization: "INST".to_string(),
+            department: "physics".to_string(),
+            description: String::new(),
+            icon: "x".to_string(),
+            lead: "Lead".to_string(),
+            visibility: "restricted".to_string(),
+            coordinates: Default::default(),
+            data_classification: "restricted".to_string(),
+            created_at: now.clone(),
+            organization_id: None,
+        };
+        state.workspaces.write().unwrap().insert(id.clone(), ws);
+        state.collaborators.write().unwrap().insert(id, Vec::new());
+    }
+    let many = measure(&state);
+    eprintln!("statements for a list: {few} with the demo workspaces, {many} with 40 more");
+    assert!(many <= few + 2, "the reads grow with the workspaces: {few} then {many}");
+}

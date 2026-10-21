@@ -93,11 +93,12 @@ pub fn list_workspaces(
         affiliation: caller.affiliation.clone(),
     };
     let roles = state.roles_of(&caller.eppn);
+    let ids: Vec<String> = snapshot.iter().map(|(ws, _)| ws.id.clone()).collect();
+    let member_roles = crate::service::members::member_roles(&caller.eppn, &ids, state);
 
     let mut response_list = Vec::new();
 
-    for (ws, collabs) in &snapshot {
-        let role = crate::service::members::member_role(caller, &ws.id, state);
+    for ((ws, collabs), role) in snapshot.iter().zip(member_roles) {
         let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
 
         let in_org_scope = match ws.organization_id {

@@ -232,35 +232,50 @@ fn holder_pairs(h: &HolderSet) -> Vec<(String, String)> {
 
 /// `role_at` for a workspace, or for one app in it.
 fn role_for(eppn: &str, workspace: &str, app: Option<&str>, state: &SharedState) -> Option<Role> {
+    roles_for(eppn, &[(workspace, app)], state).into_iter().next().flatten()
+}
+
+/// The role of one person in each of these workspaces, in order. Their appointments, groups and grants are read once
+/// for the whole list, so the database work does not grow with the number of workspaces.
+pub fn member_roles(eppn: &str, workspaces: &[String], state: &SharedState) -> Vec<Option<Role>> {
+    let targets: Vec<(&str, Option<&str>)> = workspaces.iter().map(|w| (w.as_str(), None)).collect();
+    roles_for(eppn, &targets, state)
+}
+
+/// `role_at` for each `(workspace, app)` target. No lock is held while the database is read.
+fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) -> Vec<Option<Role>> {
+    let none = || vec![None; targets.len()];
     let now = chrono::Utc::now().timestamp();
     let rows = state.repository.holdings_of(eppn).unwrap_or_default();
     let holdings: Vec<Holding> = rows.iter().map(|(h, _)| h.clone()).collect();
     let groups = state.group_ids_of(eppn);
 
-    let memberships: Vec<CollaboratorRecord> = state
-        .collaborators
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(workspace)
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|c| c.app_slug.is_empty() || Some(c.app_slug.as_str()) == app)
-        .collect();
-    let mut grants: Vec<Grant> = memberships.iter().enumerate().filter_map(|(i, c)| membership_grant(c, i)).collect();
-
-    let ws = state.workspaces.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned();
-    let manifest = app.and_then(|slug| {
+    // A copy of what the targets need, taken under short locks.
+    let (workspaces, memberships) = {
+        let ws = state.workspaces.read().unwrap_or_else(|p| p.into_inner());
+        let collabs = state.collaborators.read().unwrap_or_else(|p| p.into_inner());
+        let mut w = std::collections::HashMap::new();
+        let mut m = std::collections::HashMap::new();
+        for (workspace, _) in targets {
+            if let Some(rec) = ws.get(*workspace) {
+                w.insert(workspace.to_string(), rec.clone());
+            }
+            m.insert(workspace.to_string(), collabs.get(*workspace).cloned().unwrap_or_default());
+        }
+        (w, m)
+    };
+    let manifests: std::collections::HashMap<String, scaffoldry_engine::AppManifest> = {
         use scaffoldry_engine::HostRouter;
-        state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(slug).cloned()
-    });
-    let mut containers = vec![format!("workspace:{workspace}")];
-    containers.extend(app.map(|a| format!("app:{a}")));
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        targets.iter().filter_map(|(_, app)| *app).filter_map(|slug| engine.resolve_by_slug(slug).map(|m| (slug.to_string(), m.clone()))).collect()
+    };
 
     // A unit_admin appointment is a grant: the person is admin of the unit's whole subtree. It is derived here, never stored.
-    for (i, (h, affiliation)) in rows.iter().enumerate().filter(|(_, (_, a))| a == "unit_admin") {
-        let _ = affiliation;
-        grants.push(Grant {
+    let mut shared: Vec<Grant> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, affiliation))| affiliation == "unit_admin")
+        .map(|(i, (h, _))| Grant {
             id: -1_000_000 - i as i64,
             holder_kind: HolderKind::Person,
             holder_id: eppn.to_string(),
@@ -273,23 +288,38 @@ fn role_for(eppn: &str, workspace: &str, app: Option<&str>, state: &SharedState)
             valid_from: h.effective.unwrap_or(0),
             valid_until: h.end,
             revoked: false,
-        });
-    }
+        })
+        .collect();
 
-    crate::service::coordinates::with_world(state, |places, tree| {
-        for g in grants.iter_mut().filter(|g| g.anchor_kind == AnchorKind::Unit && g.hierarchy.is_none()) {
+    // Who the person is, from the unit tree. Then their stored grants, read with no lock held.
+    let Ok(holders) = crate::service::coordinates::with_world(state, |_, tree| {
+        for g in shared.iter_mut() {
             g.hierarchy = g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok()).and_then(|u| tree.hierarchy_of(u)).map(str::to_string);
         }
-        let holders = holder_set(eppn, &holdings, tree, groups, now);
-        grants.extend(state.repository.grants_held_by(&holder_pairs(&holders)).unwrap_or_default());
-        let (units, domain) = match &ws {
-            Some(ws) => crate::service::coordinates::object_place(places, tree, ws, manifest.as_ref()),
-            None => (Default::default(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()),
-        };
-        role_at(&holders, &grants, &Object { containers, units, domain }, tree, places, now).map(|(role, _)| role)
+        holder_set(eppn, &holdings, tree, groups, now)
+    }) else {
+        return none();
+    };
+    shared.extend(state.repository.grants_held_by(&holder_pairs(&holders)).unwrap_or_default());
+
+    crate::service::coordinates::with_world(state, |places, tree| {
+        targets
+            .iter()
+            .map(|(workspace, app)| {
+                let mut grants = shared.clone();
+                let members = memberships.get(*workspace).map(Vec::as_slice).unwrap_or_default();
+                grants.extend(members.iter().filter(|c| c.app_slug.is_empty() || Some(c.app_slug.as_str()) == *app).enumerate().filter_map(|(i, c)| membership_grant(c, i)));
+                let mut containers = vec![format!("workspace:{workspace}")];
+                containers.extend(app.map(|a| format!("app:{a}")));
+                let (units, domain) = match workspaces.get(*workspace) {
+                    Some(ws) => crate::service::coordinates::object_place(places, tree, ws, app.and_then(|a| manifests.get(a))),
+                    None => (Default::default(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()),
+                };
+                role_at(&holders, &grants, &Object { containers, units, domain }, tree, places, now).map(|(role, _)| role)
+            })
+            .collect()
     })
-    .ok()
-    .flatten()
+    .unwrap_or_else(|_| none())
 }
 
 /// Everyone with a role in the workspace and their highest role, by address.
