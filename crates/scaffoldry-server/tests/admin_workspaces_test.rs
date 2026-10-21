@@ -141,6 +141,7 @@ async fn test_workspace_fixture_counts_and_single_statement_for_page() {
         data_classification: "Internal".to_string(),
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
+        synthetic: false,
     };
 
     {
@@ -282,6 +283,7 @@ async fn test_patch_moving_workspace_to_another_unit() {
         code: "OSD".to_string(),
         org_type: "Division".to_string(),
         hierarchy_key: "academic".to_string(),
+        synthetic: false,
     };
     let new_unit = OrganizationNode {
         id: new_unit_id,
@@ -290,6 +292,7 @@ async fn test_patch_moving_workspace_to_another_unit() {
         code: "NED".to_string(),
         org_type: "Division".to_string(),
         hierarchy_key: "academic".to_string(),
+        synthetic: false,
     };
     {
         let repo = &c.state.repository;
@@ -322,6 +325,7 @@ async fn test_patch_moving_workspace_to_another_unit() {
         data_classification: "Internal".to_string(),
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: Some(old_unit_id),
+        synthetic: false,
     };
     {
         let repo = &c.state.repository;
@@ -412,6 +416,7 @@ async fn test_bad_classification_and_visibility_is_400() {
         data_classification: "Internal".to_string(),
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
+        synthetic: false,
     };
     c.state
         .workspaces
@@ -498,6 +503,7 @@ async fn test_transfer_ownership_to_new_user_and_held_user_rejection() {
         data_classification: "Restricted".to_string(),
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
+        synthetic: false,
     };
     let initial_owner = CollaboratorRecord {
         id: Uuid::new_v4().to_string(),
@@ -597,6 +603,7 @@ async fn test_apps_inventory_list_and_filters() {
         data_classification: "Public".to_string(),
         created_at: "2026-10-10T00:00:00Z".to_string(),
         organization_id: None,
+        synthetic: false,
     };
     {
         let repo = &c.state.repository;

@@ -112,6 +112,7 @@ pub fn upsert_user(
             (u, false)
         }
         None => {
+            let is_synthetic = fields.user_name.to_lowercase().ends_with("@synthetic.invalid");
             let u = ScimUser {
                 id: Uuid::new_v4().to_string(),
                 user_name: fields.user_name,
@@ -122,6 +123,7 @@ pub fn upsert_user(
                 roles: fields.roles.unwrap_or_default(),
                 enterprise_extension: fields.enterprise,
                 title: fields.title,
+                synthetic: is_synthetic,
             };
             (u, true)
         }

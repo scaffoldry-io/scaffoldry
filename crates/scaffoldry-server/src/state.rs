@@ -51,6 +51,8 @@ pub struct ScimUser {
     pub enterprise_extension: Option<Value>,
     #[serde(default)]
     pub title: Option<String>,
+    #[serde(default)]
+    pub synthetic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +101,8 @@ pub struct WorkspaceRecord {
     /// each other hierarchy, a domain, and a sensitivity. A value left out is the root of the axis, and `Internal`.
     #[serde(default, skip_serializing_if = "scaffoldry_core::coordinates::Coordinates::is_empty")]
     pub coordinates: scaffoldry_core::coordinates::Coordinates,
+    #[serde(default)]
+    pub synthetic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +114,8 @@ pub struct OrganizationNode {
     pub org_type: String,
     #[serde(default = "default_hierarchy_key")]
     pub hierarchy_key: String,
+    #[serde(default)]
+    pub synthetic: bool,
 }
 
 pub fn default_hierarchy_key() -> String {
@@ -427,6 +433,7 @@ impl ServerState {
             code: "INST".to_string(),
             org_type: "Institution".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         };
         let mut organizations = HashMap::new();
         organizations.insert(default_root_id, default_root_org);
@@ -1492,6 +1499,7 @@ impl ServerState {
             data_classification: "Restricted".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
+            synthetic: false,
         };
         workspaces.insert("ws-bio-lab".to_string(), ws_bio);
         collaborators.insert(
@@ -1548,6 +1556,7 @@ impl ServerState {
             data_classification: "Internal".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
+            synthetic: false,
         };
         workspaces.insert("ws-physics-optics".to_string(), ws_phys);
         collaborators.insert(
@@ -1580,6 +1589,7 @@ impl ServerState {
             data_classification: "FERPA Sensitive".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
+            synthetic: false,
         };
         workspaces.insert("ws-campus-compliance".to_string(), ws_comp);
         collaborators.insert(
@@ -1625,6 +1635,7 @@ impl ServerState {
             data_classification: "Internal".to_string(),
             created_at: now.clone(),
             organization_id: Some(default_root_id),
+            synthetic: false,
         };
         workspaces.insert("ws-cs-research".to_string(), ws_cs);
         collaborators.insert(

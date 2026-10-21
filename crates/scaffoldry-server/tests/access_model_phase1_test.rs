@@ -214,6 +214,7 @@ fn unit(state: &ServerState, name: &str, parent: Option<Uuid>) -> Uuid {
         code: name.to_uppercase(),
         org_type: "Unit".to_string(),
         hierarchy_key: "academic".to_string(),
+        synthetic: false,
     };
     state
         .organizations
@@ -257,6 +258,7 @@ fn workspace(state: &ServerState, id: &str, unit: Option<Uuid>, members: &[(&str
         data_classification: "restricted".to_string(),
         created_at: now.clone(),
         organization_id: unit,
+        synthetic: false,
     };
     state
         .workspaces

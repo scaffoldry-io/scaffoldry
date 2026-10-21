@@ -93,6 +93,7 @@ fn seed_workspace(state: &ServerState, id: &str) {
         data_classification: "restricted".to_string(),
         created_at: now.clone(),
         organization_id: None,
+        synthetic: false,
     };
     state
         .workspaces
@@ -386,6 +387,7 @@ async fn test_05_deny_access_outside_units() {
             code: code.to_string(),
             org_type: org_type.to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         };
     for node in [
         unit(

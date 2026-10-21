@@ -7,6 +7,7 @@ pub mod dataset;
 pub mod guards;
 pub mod ledger;
 pub mod reach;
+pub mod reach_reference;
 pub mod standards;
 pub mod tree;
 pub mod workflow;

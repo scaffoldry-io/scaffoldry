@@ -188,6 +188,7 @@ fn two_tests_may_create_the_same_organization_code_at_once() {
                 name: "Physics".to_string(),
                 org_type: "department".to_string(),
                 hierarchy_key: "academic".to_string(),
+                synthetic: false,
             };
             state
                 .persist_organization(&org)

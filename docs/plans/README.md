@@ -99,7 +99,7 @@ Nothing in Wave 2 or later may add state to the server's memory. The six statele
 | 67 | [access-model.md](access-model.md) | 2 | Hierarchies are data. One closure table replaces four tree walks. Cedar and policies use the unit tree, not a department string | **COMPLETED** |
 | 68 | [access-model.md](access-model.md) | 3 | Every workspace, app, table and field has a unit, a domain and a sensitivity, and a child can only narrow them | **COMPLETED** |
 | 69 | [access-model.md](access-model.md) | 4 | One grant shape and one function, role_at. A position grant on the holder's own unit serves every department | **COMPLETED** |
-| 70 | [access-model.md](access-model.md) | 5 | A synthetic institution from a seed, and a reference evaluator that the real one is tested against | |
+| 70 | [access-model.md](access-model.md) | 5 | A synthetic institution from a seed, and a reference evaluator that the real one is tested against | **COMPLETED** |
 | 71 | [access-model.md](access-model.md) | 6 | Row and field access by reach at a million rows, with three hierarchies, against stated limits | |
 
 ### Wave 1c — make the desk real

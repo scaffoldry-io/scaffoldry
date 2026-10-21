@@ -159,7 +159,43 @@ fn parse_new_grant(state: &SharedState, body: &Value) -> Result<NewGrant, Servic
     }
     check_anchor(state, &g)?;
     check_holder(state, &g)?;
+    check_synthetic_grant(state, &g)?;
     Ok(g)
+}
+
+fn check_synthetic_grant(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
+    let is_synth_person = g.holder_kind == HolderKind::Person && g.holder_id.to_lowercase().ends_with("@synthetic.invalid");
+    if is_synth_person {
+        match g.anchor_kind {
+            AnchorKind::Unit => {
+                let anchor = g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok());
+                if let Some(anchor_id) = anchor {
+                    let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+                    if let Some(org) = orgs.get(&anchor_id) {
+                        if !org.synthetic {
+                            return Err(bad("A grant held by a synthetic person may only anchor inside the synthetic subtree"));
+                        }
+                    }
+                }
+            }
+            AnchorKind::Container => {
+                if let Some(anchor) = g.anchor_id.as_deref() {
+                    if let Some(ws_id) = workspace_of_anchor(state, anchor) {
+                        let ws_map = state.workspaces.read().unwrap_or_else(|p| p.into_inner());
+                        if let Some(ws) = ws_map.get(&ws_id) {
+                            if !ws.synthetic {
+                                return Err(bad("A grant held by a synthetic person may only anchor inside the synthetic subtree"));
+                            }
+                        }
+                    }
+                }
+            }
+            AnchorKind::HolderUnit => {
+                return Err(bad("A grant held by a synthetic person may only anchor inside the synthetic subtree"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_anchor(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {

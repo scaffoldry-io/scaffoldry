@@ -20,6 +20,7 @@ fn test_organization_scope_rules() {
             code: "INST".to_string(),
             org_type: "Institution".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
         OrganizationNode {
             id: college_id,
@@ -28,6 +29,7 @@ fn test_organization_scope_rules() {
             code: "SCI".to_string(),
             org_type: "College".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
         OrganizationNode {
             id: dept_physics_id,
@@ -36,6 +38,7 @@ fn test_organization_scope_rules() {
             code: "PHYS".to_string(),
             org_type: "Department".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
         OrganizationNode {
             id: dept_biology_id,
@@ -44,6 +47,7 @@ fn test_organization_scope_rules() {
             code: "BIO".to_string(),
             org_type: "Department".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
     ];
 
@@ -138,6 +142,7 @@ fn test_organization_scope_rules() {
             code: "CYC-A".to_string(),
             org_type: "Department".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
         OrganizationNode {
             id: cycle_b_id,
@@ -146,6 +151,7 @@ fn test_organization_scope_rules() {
             code: "CYC-B".to_string(),
             org_type: "Department".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
     ];
 

@@ -32,6 +32,7 @@ pub mod grants;
 pub mod members;
 pub mod my_apps;
 pub mod scope;
+pub mod synthesize;
 pub mod trash;
 pub mod undo;
 

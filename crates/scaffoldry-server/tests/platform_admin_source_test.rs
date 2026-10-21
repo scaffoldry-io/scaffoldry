@@ -60,6 +60,7 @@ fn scim_user(name: &str, title: &str, affiliation: &str) -> ScimUser {
         ],
         enterprise_extension: None,
         title: Some(title.to_string()),
+        synthetic: false,
     }
 }
 

@@ -299,6 +299,7 @@ fn a_write_that_fails_leaves_memory_unchanged() {
         code: "ORPHAN".into(),
         org_type: "Department".into(),
         hierarchy_key: "academic".into(),
+        synthetic: false,
     };
     let before = state.organizations.read().unwrap().len();
     let result = state.persist_organization(&orphan);

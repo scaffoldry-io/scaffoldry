@@ -261,6 +261,7 @@ pub fn create_workspace(
         organization_id: payload
             .organization_id
             .or_else(|| uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").ok()),
+        synthetic: false,
     };
 
     state

@@ -71,6 +71,7 @@ const SCHEMA_0056: &str = include_str!("../../scaffoldry-core/migrations/0056_im
 const SCHEMA_0057: &str = include_str!("../../scaffoldry-core/migrations/0057_hierarchies.sql");
 const SCHEMA_0058: &str = include_str!("../../scaffoldry-core/migrations/0058_coordinates.sql");
 const SCHEMA_0059: &str = include_str!("../../scaffoldry-core/migrations/0059_access_grants.sql");
+const SCHEMA_0060: &str = include_str!("../../scaffoldry-core/migrations/0060_synthetic.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str =
@@ -992,7 +993,7 @@ impl PostgresRepository {
                         let applied: std::collections::HashSet<String> =
                             rows.into_iter().map(|r| r.get(0)).collect();
 
-                        let migrations: [(&str, &str); 44] = [
+                        let migrations: &[(&str, &str)] = &[
                             ("0001_initial_schema.sql", SCHEMA_0001),
                             ("0002_workspaces_and_ledger.sql", SCHEMA_0002),
                             ("0003_persist_apps_and_datasets.sql", SCHEMA_0003),
@@ -1033,6 +1034,7 @@ impl PostgresRepository {
                             ("0057_hierarchies.sql", SCHEMA_0057),
                             ("0058_coordinates.sql", SCHEMA_0058),
                             ("0059_access_grants.sql", SCHEMA_0059),
+                            ("0060_synthetic.sql", SCHEMA_0060),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),
@@ -1040,7 +1042,7 @@ impl PostgresRepository {
                         ];
 
                         let mut fresh_install = false;
-                        for (filename, sql) in migrations {
+                        for &(filename, sql) in migrations {
                             if applied.contains(filename) {
                                 continue;
                             }
@@ -1406,7 +1408,7 @@ impl PostgresRepository {
             let rows = client.query(
                 "SELECT id, name, code, organization, department, description, icon, lead, \
                         visibility, data_classification, \
-                        created_at::text, organization_id \
+                        created_at::text, organization_id, synthetic \
                  FROM workspaces ORDER BY created_at ASC",
                 &[],
             )?;
@@ -1429,6 +1431,7 @@ impl PostgresRepository {
                     data_classification: r.get(9),
                     created_at: r.get(10),
                     organization_id: r.get(11),
+                    synthetic: r.get(12),
                 });
             }
             Ok(workspaces)
@@ -1441,7 +1444,7 @@ impl PostgresRepository {
             let row = client.query_opt(
                 "SELECT id, name, code, organization, department, description, icon, lead, \
                         visibility, data_classification, \
-                        created_at::text, organization_id \
+                        created_at::text, organization_id, synthetic \
                  FROM workspaces WHERE id = $1",
                 &[&id_str],
             )?;
@@ -1463,6 +1466,7 @@ impl PostgresRepository {
                     data_classification: r.get(9),
                     created_at: r.get(10),
                     organization_id: r.get(11),
+                    synthetic: r.get(12),
                 }
             }))
         })
@@ -1474,8 +1478,8 @@ impl PostgresRepository {
             let mut tx = client.transaction()?;
             tx.execute(
                 "INSERT INTO workspaces (id, name, code, organization, department, description, \
-                        icon, lead, visibility, data_classification, organization_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+                        icon, lead, visibility, data_classification, organization_id, synthetic) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
                  ON CONFLICT (id) DO UPDATE SET \
                     name = EXCLUDED.name, \
                     code = EXCLUDED.code, \
@@ -1486,7 +1490,8 @@ impl PostgresRepository {
                     lead = EXCLUDED.lead, \
                     visibility = EXCLUDED.visibility, \
                     data_classification = EXCLUDED.data_classification, \
-                    organization_id = EXCLUDED.organization_id",
+                    organization_id = EXCLUDED.organization_id, \
+                    synthetic = EXCLUDED.synthetic",
                 &[
                     &ws.id,
                     &ws.name,
@@ -1499,6 +1504,7 @@ impl PostgresRepository {
                     &ws.visibility,
                     &ws.data_classification,
                     &ws.organization_id,
+                    &ws.synthetic,
                 ],
             )?;
             write_workspace_coordinates(&mut tx, &ws.id, &ws.coordinates)?;
@@ -2810,13 +2816,14 @@ impl PostgresRepository {
     pub fn list_scim_users(&self) -> Result<Vec<ScimUser>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query(
-                "SELECT payload FROM scim_users ORDER BY updated_at ASC",
+                "SELECT payload, synthetic FROM scim_users ORDER BY updated_at ASC",
                 &[],
             )?;
             let mut users = Vec::new();
             for r in rows {
                 let val: Value = r.get(0);
-                let u: ScimUser = serde_json::from_value(val)?;
+                let mut u: ScimUser = serde_json::from_value(val)?;
+                u.synthetic = r.get(1);
                 users.push(u);
             }
             Ok(users)
@@ -2828,14 +2835,15 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let payload_json = serde_json::to_value(&user)?;
             client.execute(
-                "INSERT INTO scim_users (id, user_name, active, payload, updated_at) \
-                 VALUES ($1, $2, $3, $4, NOW()) \
+                "INSERT INTO scim_users (id, user_name, active, payload, synthetic, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, NOW()) \
                  ON CONFLICT (id) DO UPDATE SET \
                     user_name = EXCLUDED.user_name, \
                     active = EXCLUDED.active, \
                     payload = EXCLUDED.payload, \
+                    synthetic = EXCLUDED.synthetic, \
                     updated_at = NOW()",
-                &[&user.id, &user.user_name, &user.active, &payload_json],
+                &[&user.id, &user.user_name, &user.active, &payload_json, &user.synthetic],
             )?;
             Ok(())
         })
@@ -2926,7 +2934,7 @@ impl PostgresRepository {
     pub fn list_organizations(&self) -> Result<Vec<OrganizationNode>, RepositoryError> {
         self.with_client(|client| {
             let rows = client.query(
-                "SELECT id, parent_id, name, code, org_type, hierarchy_key FROM organizations ORDER BY name ASC",
+                "SELECT id, parent_id, name, code, org_type, hierarchy_key, synthetic FROM organizations ORDER BY name ASC",
                 &[],
             )?;
             let mut orgs = Vec::new();
@@ -2938,6 +2946,7 @@ impl PostgresRepository {
                     code: r.get(3),
                     org_type: r.get(4),
                     hierarchy_key: r.get(5),
+                    synthetic: r.get(6),
                 });
             }
             Ok(orgs)
@@ -2956,13 +2965,14 @@ impl PostgresRepository {
             let mut tx = client.transaction()?;
             tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&TREE_LOCK])?;
             tx.execute(
-                "INSERT INTO organizations (id, parent_id, name, code, org_type, hierarchy_key) \
-                 VALUES ($1, $2, $3, $4, $5, $6) \
+                "INSERT INTO organizations (id, parent_id, name, code, org_type, hierarchy_key, synthetic) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) \
                  ON CONFLICT (code) DO UPDATE SET \
                     parent_id = EXCLUDED.parent_id, \
                     name = EXCLUDED.name, \
                     org_type = EXCLUDED.org_type, \
-                    hierarchy_key = EXCLUDED.hierarchy_key",
+                    hierarchy_key = EXCLUDED.hierarchy_key, \
+                    synthetic = EXCLUDED.synthetic",
                 &[
                     &org.id,
                     &org.parent_id,
@@ -2970,6 +2980,7 @@ impl PostgresRepository {
                     &org.code,
                     &org.org_type,
                     &hierarchy_key,
+                    &org.synthetic,
                 ],
             )?;
 
