@@ -1304,6 +1304,9 @@ fn run_export_records(
     let app_slug = args.app_slug;
     let table_id = args.table_id;
     let format_str = args.format.unwrap_or_else(|| "csv".to_string()).to_lowercase();
+    if !["csv", "xlsx", "json", "jsonl"].contains(&format_str.as_str()) {
+        return Err(ServiceError::BadRequest(format!("Export format '{format_str}' does not exist. Use csv, xlsx, json, or jsonl")));
+    }
 
     let manifest = state
         .engine
