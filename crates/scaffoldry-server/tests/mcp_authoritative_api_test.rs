@@ -418,8 +418,10 @@ async fn initialize_gives_the_agent_instructions_for_this_caller() {
 }
 
 /// A client loads the whole tool list into its context on every session. About four bytes make a token,
-/// so this limit is about 4,500 tokens. A change that needs more raises the limit here, in the open.
-const TOOL_LIST_BYTE_BUDGET: usize = 18_000;
+/// so this limit is about 6,000 tokens. A change that needs more raises the limit here, in the open.
+/// Raised from 18,000 to the 24,000 that `agent-coverage.md` phase 2 sets: every tool now lists a closed schema and one
+/// example call, and the destructive and idempotent hints. `mcp_conformance.rs` holds the same budget and the tool count.
+const TOOL_LIST_BYTE_BUDGET: usize = 24_000;
 
 #[tokio::test]
 async fn the_tool_list_stays_inside_its_budget() {
@@ -450,7 +452,11 @@ async fn tools_list_returns_exactly_the_registry_with_read_only_hints() {
     for tool in TOOLS {
         let entry = listed.iter().find(|t| t["name"] == tool.name).unwrap();
         assert_eq!(entry["annotations"]["readOnlyHint"], tool.read_only, "{}", tool.name);
-        assert_eq!(entry["inputSchema"], (tool.input_schema)(), "{}", tool.name);
+        // The list adds the closed-schema flag and one example call (agent-coverage phase 2). The rest is the registry's.
+        let mut shown = entry["inputSchema"].clone();
+        shown.as_object_mut().unwrap().remove("additionalProperties");
+        shown.as_object_mut().unwrap().remove("examples");
+        assert_eq!(shown, (tool.input_schema)(), "{}", tool.name);
     }
 
     // The fake tools are gone.
