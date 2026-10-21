@@ -71,31 +71,38 @@ pub fn list_workspaces(
     caller: &AuthUser,
     state: &SharedState,
 ) -> Result<Vec<WorkspaceResponse>, ServiceError> {
-    let ws_guard = state
-        .workspaces
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    let collabs_guard = state
-        .collaborators
-        .read()
-        .map_err(|e| ServiceError::Internal(e.to_string()))?;
+    // Copy what the loop needs and let the locks go. The loop asks for a role, and a role reads these same locks. A
+    // thread that holds a read lock and asks again while a writer waits is stuck, and so is the writer.
+    let snapshot: Vec<(WorkspaceRecord, Vec<CollaboratorRecord>)> = {
+        let ws_guard = state
+            .workspaces
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        let collabs_guard = state
+            .collaborators
+            .read()
+            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        ws_guard
+            .values()
+            .map(|ws| (ws.clone(), collabs_guard.get(&ws.id).cloned().unwrap_or_default()))
+            .collect()
+    };
 
     let org_caller = crate::service::organizations::OrgCaller {
         eppn: caller.eppn.clone(),
         affiliation: caller.affiliation.clone(),
     };
-    let tree = state.tree.read().unwrap();
     let roles = state.roles_of(&caller.eppn);
 
     let mut response_list = Vec::new();
 
-    for ws in ws_guard.values() {
-        let collabs = collabs_guard.get(&ws.id).cloned().unwrap_or_default();
+    for (ws, collabs) in &snapshot {
         let role = crate::service::members::member_role(caller, &ws.id, state);
         let (is_member, member_role) = (role.is_some(), role.map(|r| r.as_str().to_string()));
 
         let in_org_scope = match ws.organization_id {
             Some(org_id) => {
+                let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
                 crate::service::organizations::unit_in_reach(&org_caller, org_id, &tree, &roles)
             }
             None => caller.affiliation == "central_admin",
@@ -108,7 +115,7 @@ pub fn list_workspaces(
         if in_org_scope && !is_member {
             response_list.push(WorkspaceResponse {
                 workspace: ws.clone(),
-                collaborators: collabs,
+                collaborators: collabs.clone(),
                 user_role: Some("admin".to_string()),
                 guards: Vec::new(),
             });
@@ -118,7 +125,7 @@ pub fn list_workspaces(
         if crate::service::access::workspace_allowed(caller, ws, "access_workspace", state)? {
             response_list.push(WorkspaceResponse {
                 workspace: ws.clone(),
-                collaborators: collabs,
+                collaborators: collabs.clone(),
                 user_role: member_role,
                 guards: Vec::new(),
             });
