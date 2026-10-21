@@ -135,8 +135,9 @@ async fn twenty_five_common_mistakes_each_get_a_code_and_a_hint_that_names_a_rea
         if !hint.ends_with('.') || hint.contains('\n') || hint.chars().count() > 200 {
             problems.push(format!("{what}: the hint is not one short sentence: {hint}"));
         }
-        let text = r["content"][0]["text"].as_str().unwrap_or("");
-        if !text.contains(hint) {
+        // A client that shows only the content sees the message, then the hint.
+        let shown: Vec<&str> = r["content"].as_array().into_iter().flatten().filter_map(|c| c["text"].as_str()).collect();
+        if shown.len() != 2 || shown[0] != s["message"].as_str().unwrap_or("") || shown[1] != hint {
             problems.push(format!("{what}: the hint is in the structured part only, so a client that shows text misses it"));
         }
         distinct.insert(hint.to_string());

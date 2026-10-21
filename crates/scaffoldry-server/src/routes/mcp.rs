@@ -65,7 +65,7 @@ fn tool_error(message: impl Into<String>) -> Value {
 fn coded_tool_error(code: &str, message: &str, hint: &str) -> Value {
     json!({
         "isError": true,
-        "content": [{ "type": "text", "text": format!("{message} {hint}") }],
+        "content": [{ "type": "text", "text": message }, { "type": "text", "text": hint }],
         "structuredContent": { "code": code, "message": message, "hint": hint }
     })
 }
