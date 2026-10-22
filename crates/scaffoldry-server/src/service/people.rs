@@ -407,13 +407,12 @@ pub fn user_detail(state: &SharedState, id: &str) -> Result<Value, ServiceError>
         })
         .collect();
 
+    // One read of the person's appointments, groups and grants serves every workspace.
     let workspace_ids: Vec<String> = crate::service::members::workspace_ids(state);
     let memberships: Vec<Value> = workspace_ids
         .iter()
-        .filter_map(|ws| {
-            crate::service::members::member_role_of(&u.user_name, ws, state)
-                .map(|r| json!({ "workspace_id": ws, "role": r.as_str() }))
-        })
+        .zip(crate::service::members::member_roles(&u.user_name, &workspace_ids, state))
+        .filter_map(|(ws, role)| role.map(|r| json!({ "workspace_id": ws, "role": r.as_str() })))
         .collect();
 
     let token_rows: Vec<Value> = tokens

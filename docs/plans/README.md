@@ -146,7 +146,7 @@ Faculty want quick, custom web apps with interfaces of their own. These rows let
 | 74 | [proposal-preview.md](proposal-preview.md) | 1 | An approval names the digest of what was reviewed, and only that content can go live | |
 | 75 | [proposal-preview.md](proposal-preview.md) | 2 | The proposer and the people who may decide open the proposed app, read-only, under the stricter of the live and proposed rules | |
 | 76 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
-| 77 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests. Started: ping, parse errors, invalid requests, object `structuredContent`, a wire check, and a real-client check pass (`docs/mcp-client.md`). A tool-list budget and error hints are not done |
+| 77 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests. The `openapi` resource waits for row 78 | **COMPLETED** |
 | 78 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
 | 79 | [agent-coverage.md](agent-coverage.md) | 4 | An AI tool is set up in one step: an AGENTS.md section, a skill, and docs that match the server's version | |
 | 80 | [external-apps.md](external-apps.md) | 1 | An outside app is a registered client with a ceiling a person approved. A ceiling never names a sensitive field | |

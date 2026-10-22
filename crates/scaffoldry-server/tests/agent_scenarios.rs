@@ -355,6 +355,27 @@ fn load_scenarios() -> Vec<Scenario> {
         .collect()
 }
 
+/// The `scenario` code blocks of the building guide the server serves. The guide cannot drift from the server, because
+/// each of its examples is run here.
+fn load_guide_scenarios() -> Vec<Scenario> {
+    let guide = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("guides/building-apps.md")).unwrap();
+    let mut out = Vec::new();
+    let mut rest = guide.as_str();
+    while let Some(start) = rest.find("```scenario\n") {
+        let after = &rest[start + "```scenario\n".len()..];
+        let end = after.find("\n```").expect("a scenario block is closed");
+        let raw: Value = serde_json::from_str(&after[..end]).unwrap_or_else(|e| panic!("a guide scenario is not JSON: {e}\n{}", &after[..end]));
+        out.push(Scenario {
+            id: raw["id"].as_str().expect("a guide scenario has an id").to_string(),
+            ask: raw["ask"].as_str().expect("a guide scenario has an ask").to_string(),
+            persona: raw["persona"].as_str().unwrap_or("faculty-owner").to_string(),
+            raw,
+        });
+        rest = &after[end..];
+    }
+    out
+}
+
 async fn run_scenario(h: &Harness, s: &Scenario) -> Outcome {
     if s.raw["status"] == "unsupported" {
         let why = s.raw["unsupported_reason"].as_str().unwrap_or("").to_string();
@@ -513,6 +534,25 @@ async fn the_scenarios_all_pass() {
     println!("gap register: {}", gaps.display());
     let failed = failures(&rows);
     assert!(failed.is_empty(), "scenarios failed:\n{}", failed.join("\n\n"));
+}
+
+// The building guide's code blocks run as scenarios (agent-coverage phase 2).
+#[tokio::test]
+async fn every_code_block_in_the_building_guide_runs_as_a_scenario() {
+    let _db = common::TestDb::new();
+    let h = harness().await;
+    let blocks = load_guide_scenarios();
+    assert!(blocks.len() >= 5, "the guide has its examples: found {}", blocks.len());
+    let mut rows = Vec::new();
+    for s in blocks {
+        let outcome = run_scenario(&h, &s).await;
+        rows.push((s, outcome));
+    }
+    for (s, o) in &rows {
+        assert!(!matches!(o, Outcome::Unsupported(_)), "a guide example is never unsupported: {}", s.id);
+    }
+    let failed = failures(&rows);
+    assert!(failed.is_empty(), "guide examples failed:\n{}", failed.join("\n\n"));
 }
 
 // 2. A wrong expectation fails with a diff of expected and actual.

@@ -270,7 +270,18 @@ pub fn require(
     resource: &Resource,
     denied: &str,
 ) -> Result<(), ServiceError> {
-    let decision = decide(state, caller, action, resource);
+    require_for(state, &principal_of(state, caller), action, resource, denied)
+}
+
+/// `require` for a principal that is already built, such as one built once for a list.
+pub fn require_for(
+    state: &SharedState,
+    principal: &PrincipalCtx,
+    action: &str,
+    resource: &Resource,
+    denied: &str,
+) -> Result<(), ServiceError> {
+    let decision = decide_for(state, principal, action, resource);
     if let Some(e) = decision.error {
         return Err(ServiceError::Internal(e));
     }
@@ -338,6 +349,16 @@ pub fn workspace_resource(
         Some(slug) => crate::service::members::member_role_in_app(caller, &ws.id, slug, state),
         None => crate::service::members::member_role(caller, &ws.id, state),
     };
+    workspace_resource_with_role(state, ws, role, sensitivity)
+}
+
+/// The same when the caller's role is already known, such as from one read for a whole list.
+pub fn workspace_resource_with_role(
+    state: &SharedState,
+    ws: &WorkspaceRecord,
+    role: Option<crate::service::members::Role>,
+    sensitivity: Option<(bool, BTreeSet<String>)>,
+) -> Resource {
     Resource::Workspace(workspace_ctx(
         state,
         ws,
@@ -436,6 +457,24 @@ pub fn authorize_app(
     action: AppAction,
     state: &SharedState,
 ) -> Result<(), ServiceError> {
+    authorize_app_with_role(caller, slug, action, None, state)
+}
+
+/// What a list already knows about the caller: their role in the app (`None` for a non-member) and their principal.
+pub struct KnownCaller<'a> {
+    pub role: Option<crate::service::members::Role>,
+    pub principal: &'a PrincipalCtx,
+}
+
+/// `authorize_app` for a caller whose role and principal are already known. A list of apps reads them once and asks for
+/// each app with this.
+pub fn authorize_app_with_role(
+    caller: &AuthUser,
+    slug: &str,
+    action: AppAction,
+    known: Option<KnownCaller<'_>>,
+    state: &SharedState,
+) -> Result<(), ServiceError> {
     let app = {
         let engine = state
             .engine
@@ -483,23 +522,19 @@ pub fn authorize_app(
         AppAction::Manage => "manage_app",
     };
 
-    let mut resource = workspace_resource(
-        state,
-        caller,
-        &ws,
-        Some(slug),
-        Some(app_sensitivity(&app, state)),
-    );
+    let sensitivity = Some(app_sensitivity(&app, state));
+    let mut resource = match &known {
+        Some(k) => workspace_resource_with_role(state, &ws, k.role, sensitivity),
+        None => workspace_resource(state, caller, &ws, Some(slug), sensitivity),
+    };
     // The question is about this app, so the place Cedar sees is the app's.
     if let Resource::Workspace(ctx) = &mut resource {
         (ctx.domain_path, ctx.sensitivity_rank) = crate::service::coordinates::cedar_place(state, &ws, Some(&app));
     }
     // A forbid from a guard is final. A unit administrator is let in by a Cedar permit, never by a fallback after a deny.
-    require(
-        state,
-        caller,
-        action_name,
-        &resource,
-        "403 Forbidden: Cedar Policy restricts access to this app",
-    )
+    let denied = "403 Forbidden: Cedar Policy restricts access to this app";
+    match &known {
+        Some(k) => require_for(state, k.principal, action_name, &resource, denied),
+        None => require(state, caller, action_name, &resource, denied),
+    }
 }

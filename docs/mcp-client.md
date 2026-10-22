@@ -1,6 +1,6 @@
 # Using Scaffoldry from an MCP client
 
-Scaffoldry is MCP-first. The server speaks MCP over HTTP at `/api/v1/mcp` and exposes 31 tools. This page is how to attach a client, and how the endpoint is tested.
+Scaffoldry is MCP-first. The server speaks MCP over HTTP at `/api/v1/mcp` and exposes 32 tools. This page is how to attach a client, and how the endpoint is tested.
 
 ## Attach a client
 
@@ -30,7 +30,7 @@ The real client check found a fault the others missed on its first run. The serv
 
 ## Numbers worth knowing
 
-- 31 tools. The tool list costs a client about 3,800 tokens of context, on every session that loads it.
+- 32 tools. The tool list costs a client about 5,000 tokens of context, on every session that loads it. `mcp_conformance.rs` holds it under 24 KB and 45 tools.
 - Read tools carry `readOnlyHint`. Write tools do not.
 
 ## Fixtures
@@ -42,8 +42,13 @@ The write checks are also the fixtures. `scripts/mcp/fixtures.mjs` makes an app 
 - A stale version through MCP comes back with the code `version_conflict`, the same as over HTTP. The message names the current version.
 - A proposal made through MCP is held as a proposal. An administrator can approve their own when every check passes, which the fixtures rely on. A change that fails a check would need a second person.
 
+## Teaching the agent
+
+- Every tool error has a `hint`: one sentence that names a tool to call next (`mcp_hints_test.rs` checks 30 common mistakes).
+- Resource `scaffoldry://guide/building-apps` says how to build an app. Its `scenario` code blocks are run as tests by `agent_scenarios.rs`.
+- Prompts `build_app_from_description`, `import_spreadsheet`, `design_approval_process` and `explain_denial` list the tools to call in order.
+
 ## Not done
 
-- Error hints (README row 131). The tool-list budget is a test: `the_tool_list_stays_inside_its_budget` fails when the list passes 18,000 bytes (about 4,500 tokens). It is 15,343 bytes now.
 - Update and delete through a real client. The real client writes with `create_record`. Update and delete are covered over the wire, not by a model.
 - A session id, a server-sent stream, and `outputSchema` on tools. None is required.
