@@ -650,7 +650,6 @@ pub fn persist_world(state: &crate::state::SharedState, world: &SyntheticWorld) 
 
     // 1. Units
     for u in &world.units {
-        state.organizations.write().unwrap().insert(u.id, u.clone());
         state.repository.upsert_organization(u)?;
     }
 
@@ -688,7 +687,6 @@ pub fn persist_world(state: &crate::state::SharedState, world: &SyntheticWorld) 
 
     // 4. Workspaces
     for ws in &world.workspaces {
-        state.workspaces.write().unwrap().insert(ws.id.clone(), ws.clone());
         state.repository.upsert_workspace(ws)?;
     }
 
@@ -789,6 +787,8 @@ pub fn persist_world(state: &crate::state::SharedState, world: &SyntheticWorld) 
         Ok(())
     })?;
 
+    // The caches are read back from the database. Nothing here writes them.
+    state.refresh()?;
     Ok(())
 }
 
