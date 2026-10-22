@@ -225,3 +225,119 @@ async fn test_3_synthetic_person_grant_anchored_in_real_unit_is_refused() {
         "Error should state synthetic unit rule: {err}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The persisted institution: the same seed writes the same rows, and the server reads them as the pure rules do.
+// ---------------------------------------------------------------------------------------------
+
+/// A digest of every synthetic row the database holds, in an order that does not depend on how rows were numbered.
+fn digest_of_rows(db: &TestDb) -> String {
+    db.run(|c| {
+        c.query_one(
+            "SELECT md5(string_agg(x, '|' ORDER BY x)) FROM ( \
+               SELECT 'unit:' || id || ':' || COALESCE(parent_id::text, '') || ':' || hierarchy_key || ':' || code FROM organizations WHERE synthetic \
+               UNION ALL SELECT 'person:' || id || ':' || eppn FROM persons WHERE synthetic \
+               UNION ALL SELECT 'role:' || r.id || ':' || r.organization_id || ':' || COALESCE(r.position_key, '') FROM roles r JOIN persons p ON p.id = r.person_id WHERE p.synthetic \
+               UNION ALL SELECT 'workspace:' || id || ':' || COALESCE(organization_id::text, '') FROM workspaces WHERE synthetic \
+               UNION ALL SELECT 'record:' || id || ':' || data::text FROM dataset_records WHERE created_by = 'synthetic@synthetic.invalid' \
+               UNION ALL SELECT 'grant:' || holder_kind || holder_id || role || anchor_kind || COALESCE(anchor_id, '') || COALESCE(depth::text, '') || COALESCE(domain, '') || (revoked_at IS NOT NULL)::text \
+                 || COALESCE(floor(extract(epoch from valid_from))::text, '') || COALESCE(floor(extract(epoch from valid_until))::text, '') FROM access_grants WHERE reason LIKE 'synthetic grant %' \
+             ) t(x)",
+            &[],
+        )
+        .unwrap()
+        .get::<_, String>(0)
+    })
+}
+
+fn small_options(seed: u64) -> SynthesizeOptions {
+    SynthesizeOptions { seed, people: 300, units: 60, hierarchies: vec!["academic".to_string(), "supervisory".to_string()], apps: 6, records: 40 }
+}
+
+fn synthesized_digest(seed: u64) -> (String, usize, i64) {
+    let db = TestDb::new();
+    let state = db.state();
+    let opts = small_options(seed);
+    scaffoldry_server::service::synthesize::synthesize(&state, &opts).expect("synthesize");
+    let digest = digest_of_rows(&db);
+    let records: i64 = db.run(|c| c.query_one("SELECT count(*) FROM dataset_records WHERE created_by = 'synthetic@synthetic.invalid'", &[]).unwrap().get(0));
+    (digest, generate_world(&opts).grants.len(), records)
+}
+
+#[test]
+fn test_1b_the_same_seed_writes_the_same_database_rows() {
+    // Each run has a database of its own, because a test's database is named for its thread.
+    let first = std::thread::spawn(|| synthesized_digest(77)).join().expect("first run");
+    let second = std::thread::spawn(|| synthesized_digest(77)).join().expect("second run");
+    let other = std::thread::spawn(|| synthesized_digest(78)).join().expect("other seed");
+    assert_eq!(first, second, "one seed writes one set of rows");
+    assert_ne!(first.0, other.0, "another seed writes other rows");
+    assert_eq!(first.2, 40, "every record was written");
+}
+
+#[test]
+fn a_second_run_adds_no_grants_and_a_real_grant_made_after_a_run_does_not_collide() {
+    let db = TestDb::new();
+    let state = db.state();
+    let opts = small_options(5);
+    let grants = generate_world(&opts).grants.len() as i64;
+    scaffoldry_server::service::synthesize::synthesize(&state, &opts).expect("first run");
+    scaffoldry_server::service::synthesize::synthesize(&state, &opts).expect("second run");
+    let count = |sql: &'static str| -> i64 { db.run(move |c| c.query_one(sql, &[]).unwrap().get(0)) };
+    assert_eq!(count("SELECT count(*) FROM access_grants WHERE reason LIKE 'synthetic grant %'"), grants, "a grant is written once");
+    assert_eq!(count("SELECT count(*) FROM dataset_records WHERE created_by = 'synthetic@synthetic.invalid'"), 40, "a record is written once");
+    // A grant made the ordinary way gets a fresh id.
+    db.run(|c| {
+        c.execute(
+            "INSERT INTO access_grants (holder_kind, holder_id, role, anchor_kind, anchor_id, source, reason, created_by) VALUES ('person', 'real@state.edu', 'viewer', 'container', 'workspace:ws-x', 'request', 'real', 'admin')",
+            &[],
+        )
+        .unwrap();
+    });
+    assert_eq!(count("SELECT count(*) FROM access_grants WHERE reason = 'real'"), 1);
+}
+
+#[test]
+fn the_server_reads_the_persisted_grants_as_the_pure_rules_do() {
+    use scaffoldry_core::reach::{holder_set, role_at, Holding};
+    use scaffoldry_core::reach_reference::ReferencePlaces;
+    use scaffoldry_core::tree::{OrgClosureRow, OrgTree};
+
+    let db = TestDb::new();
+    let state = db.state();
+    let opts = small_options(31);
+    let world = generate_world(&opts);
+    scaffoldry_server::service::synthesize::synthesize(&state, &opts).expect("synthesize");
+
+    // The pure side: a closure of the world's units, the world's domains, and the world's groups.
+    let mut rows = Vec::new();
+    for u in &world.units {
+        let (mut cur, mut depth) = (Some(u.id), 0i16);
+        while let Some(a) = cur {
+            rows.push(OrgClosureRow { hierarchy_key: u.hierarchy_key.clone(), ancestor: a, descendant: u.id, depth });
+            cur = world.units.iter().find(|n| n.id == a).and_then(|n| n.parent_id);
+            depth += 1;
+        }
+    }
+    let tree = OrgTree::new(rows);
+    let ref_units = world.to_reference_units();
+    let places = ReferencePlaces { units: &ref_units, domains: &world.domains, hierarchies: opts.hierarchies.clone() };
+    let groups = world.groups_by_person();
+    let now = chrono::Utc::now().timestamp();
+    let workspace_objects = &world.objects[..world.workspaces.len()];
+    let ids: Vec<String> = world.workspaces.iter().map(|w| w.id.clone()).collect();
+
+    let (mut reached, mut checked) = (0, 0);
+    for person in world.people.iter().step_by(6) {
+        let holdings: Vec<Holding> = world.roles.iter().filter(|r| r.eppn == person.eppn).map(|r| Holding { unit: r.organization_id, position_key: r.position_key.clone(), effective: None, end: None }).collect();
+        let holders = holder_set(&person.eppn, &holdings, &tree, groups.get(&person.eppn).cloned().unwrap_or_default(), now);
+        let server = scaffoldry_server::service::members::member_roles(&person.eppn, &ids, &state);
+        for (i, obj) in workspace_objects.iter().enumerate() {
+            let pure = role_at(&holders, &world.grants, obj, &tree, &places, now).map(|(r, _)| r);
+            assert_eq!(server[i], pure, "{} in {}: the server read {:?} from the database, the pure rules say {:?}", person.eppn, ids[i], server[i], pure);
+            checked += 1;
+            reached += pure.is_some() as usize;
+        }
+    }
+    assert!(checked >= 100 && reached > 0 && reached < checked, "the check is not vacuous: {reached} of {checked} reached");
+}

@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
         }
-        let state = ServerState::new()?;
+        let state = Arc::new(ServerState::new()?);
         let hash = service::synthesize::synthesize(&state, &opts)?;
         println!("Synthetic institution created with seed {}. World hash: {}", opts.seed, hash);
         return Ok(());

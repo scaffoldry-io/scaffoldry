@@ -5,7 +5,7 @@
 //! No external random-number crates are used.
 
 use crate::repository::RepositoryError;
-use crate::state::{OrganizationNode, RoleRow, ServerState, WorkspaceRecord};
+use crate::state::{OrganizationNode, RoleRow, WorkspaceRecord};
 use scaffoldry_core::coordinates::ROOT_DOMAIN;
 use scaffoldry_core::reach::{AnchorKind, Grant, HolderKind, Object, Role};
 use scaffoldry_core::reach_reference::{ReferenceDomain, ReferenceUnit};
@@ -181,29 +181,21 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
     let mut prng = DeterministicPrng::new(opts.seed);
     let mut units = Vec::new();
 
-    // Standard domains
-    let domains = vec![
-        ReferenceDomain {
-            key: ROOT_DOMAIN.to_string(),
-            parent_key: None,
-        },
-        ReferenceDomain {
-            key: "academic".to_string(),
-            parent_key: Some(ROOT_DOMAIN.to_string()),
-        },
-        ReferenceDomain {
-            key: "research".to_string(),
-            parent_key: Some("academic".to_string()),
-        },
-        ReferenceDomain {
-            key: "finance".to_string(),
-            parent_key: Some(ROOT_DOMAIN.to_string()),
-        },
-        ReferenceDomain {
-            key: "student-records".to_string(),
-            parent_key: Some("academic".to_string()),
-        },
-    ];
+    // The domains the platform seeds (migration 0058), so a persisted world behaves as the in-memory one does.
+    let domains: Vec<ReferenceDomain> = [
+        (ROOT_DOMAIN, None),
+        ("learning-and-teaching", Some(ROOT_DOMAIN)),
+        ("research", Some(ROOT_DOMAIN)),
+        ("engagement", Some(ROOT_DOMAIN)),
+        ("strategy-and-governance", Some(ROOT_DOMAIN)),
+        ("enabling-capabilities", Some(ROOT_DOMAIN)),
+        ("herm:1.2.3", Some("learning-and-teaching")),
+        ("herm:2.2.3", Some("research")),
+        ("herm:5.3.1", Some("enabling-capabilities")),
+    ]
+    .into_iter()
+    .map(|(key, parent)| ReferenceDomain { key: key.to_string(), parent_key: parent.map(str::to_string) })
+    .collect();
 
     let academic_root_id = Uuid::parse_str(DEFAULT_ACADEMIC_ROOT).unwrap();
     let num_hierarchies = opts.hierarchies.len().max(1);
@@ -347,11 +339,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
 
     for w in 1..=num_workspaces {
         let ws_id = format!("ws-synth-{w}");
-        let domain = match prng.gen_range(0, 3) {
-            0 => "research",
-            1 => "finance",
-            _ => "academic",
-        };
+        let domain = ["research", "learning-and-teaching", "enabling-capabilities", "herm:2.2.3"][prng.gen_range(0, 4)];
         let mut coords = scaffoldry_core::coordinates::Coordinates::default();
         coords.domain = Some(domain.to_string());
         for h in &opts.hierarchies {
@@ -640,7 +628,7 @@ pub fn compute_world_hash(world: &SyntheticWorld) -> String {
 }
 
 /// Persists the generated synthetic institution to the database.
-pub fn persist_world(state: &ServerState, world: &SyntheticWorld) -> Result<(), RepositoryError> {
+pub fn persist_world(state: &crate::state::SharedState, world: &SyntheticWorld) -> Result<(), RepositoryError> {
     state.repository.with_client(|c| {
         c.execute(
             "INSERT INTO hierarchies (key, name, kind, source, created_by) \
@@ -705,17 +693,85 @@ pub fn persist_world(state: &ServerState, world: &SyntheticWorld) -> Result<(), 
         state.repository.upsert_workspace(ws)?;
     }
 
-    // 5. Grants
+    // 5. Groups. A member is named by the person's id, as a SCIM group names it.
+    let ids: BTreeMap<&str, String> = world.people.iter().map(|p| (p.eppn.as_str(), p.id.to_string())).collect();
+    for g in &world.groups {
+        let members: Vec<serde_json::Value> = g.members.iter().filter_map(|m| ids.get(m.as_str())).map(|id| serde_json::json!({ "value": id })).collect();
+        state.repository.upsert_scim_group(&crate::state::ScimGroup { id: g.id.clone(), display_name: g.id.clone(), members })?;
+    }
+
+    // 6. Apps: one table whose rows are placed by a `Unit` field in the first hierarchy.
+    let first = world.units.first().map(|u| u.hierarchy_key.clone()).unwrap_or_else(|| "academic".to_string());
+    for app in &world.apps {
+        let manifest: scaffoldry_engine::AppManifest = serde_json::from_value(serde_json::json!({
+            "slug": app.slug, "title": app.name, "description": "Synthetic app", "organization_code": "SYNTH", "department": "synthetic",
+            "workspace_id": app.workspace_id, "views": [], "pages": [],
+            "tables": [{
+                "id": "records", "name": "Records", "slug": "records",
+                "fields": [
+                    { "name": "title", "label": "Title", "field_type": "Text", "required": false, "ferpa_sensitive": false },
+                    { "name": "unit", "label": "Unit", "field_type": "Unit", "hierarchy": first, "required": false, "ferpa_sensitive": false, "indexed": true }
+                ],
+                "row_place": { first.clone(): "unit" }
+            }]
+        }))
+        .map_err(RepositoryError::Json)?;
+        state.persist_app_manifest(manifest).map_err(|e| RepositoryError::Conflict(format!("the synthetic app could not be stored: {e}")))?;
+    }
+
+    // 7. Records, a thousand to a transaction, with their index rows.
+    for app in &world.apps {
+        let mine: Vec<&SyntheticRecord> = world.records.iter().filter(|r| r.app_slug == app.slug).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let probe = serde_json::json!({ "_table_id": "records" });
+        let ctx = crate::service::history::ctx_for("synthetic@synthetic.invalid", crate::repository::ActorKind::System, &app.slug, &probe, state);
+        for chunk in mine.chunks(1000) {
+            let rows: Vec<crate::state::DatasetRecord> = chunk
+                .iter()
+                .map(|r| crate::state::DatasetRecord {
+                    id: r.id.to_string(),
+                    app_slug: r.app_slug.clone(),
+                    data: serde_json::json!({ "_table_id": "records", "title": r.title, "unit": r.unit_id.to_string() }),
+                    ceds_mapping: serde_json::json!({}),
+                    is_ferpa_sensitive: false,
+                    created_at: String::new(),
+                    created_by: Some("synthetic@synthetic.invalid".to_string()),
+                    version: 1,
+                })
+                .collect();
+            let ctx = ctx.clone();
+            state.repository.with_client(move |c| {
+                let mut tx = c.transaction()?;
+                for rec in &rows {
+                    // A record is written once: a second run finds it by id and moves on.
+                    if tx.query_opt("SELECT 1 FROM dataset_records WHERE id = $1", &[&rec.id])?.is_some() {
+                        continue;
+                    }
+                    crate::repository::insert_record_in_tx(&mut tx, rec, &ctx)?;
+                }
+                tx.commit()?;
+                Ok(())
+            })?;
+        }
+    }
+
+    // 8. Grants. The database assigns the ids, so a real grant made later never collides. A grant is written once: its
+    // reason names the seed and the generator's id, and a second run finds it there.
     let grants = world.grants.clone();
+    let seed_tag = world_tag(world);
     state.repository.with_client(move |c| {
         for g in &grants {
+            let reason = format!("synthetic grant {seed_tag}:{}", g.id);
             c.execute(
-                "INSERT INTO access_grants (id, holder_kind, holder_id, role, hierarchy_key, \
-                                           anchor_kind, anchor_id, depth, domain, source, reason, created_by) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'rule', 'synthetic grant', 'system') \
-                 ON CONFLICT (id) DO NOTHING",
+                "INSERT INTO access_grants (holder_kind, holder_id, role, hierarchy_key, anchor_kind, anchor_id, depth, domain, \
+                                           valid_from, valid_until, revoked_at, revoked_by, source, reason, created_by) \
+                 SELECT $1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::double precision), \
+                        CASE WHEN $10::double precision IS NULL THEN NULL ELSE to_timestamp($10::double precision) END, \
+                        CASE WHEN $11 THEN NOW() END, CASE WHEN $11 THEN 'system' END, 'rule', $12, 'system' \
+                 WHERE NOT EXISTS (SELECT 1 FROM access_grants WHERE reason = $12)",
                 &[
-                    &g.id,
                     &g.holder_kind.as_str(),
                     &g.holder_id,
                     &g.role.as_str(),
@@ -724,6 +780,10 @@ pub fn persist_world(state: &ServerState, world: &SyntheticWorld) -> Result<(), 
                     &g.anchor_id,
                     &g.depth,
                     &g.domain,
+                    &(g.valid_from as f64),
+                    &g.valid_until.map(|u| u as f64),
+                    &g.revoked,
+                    &reason,
                 ],
             )?;
         }
@@ -733,8 +793,14 @@ pub fn persist_world(state: &ServerState, world: &SyntheticWorld) -> Result<(), 
     Ok(())
 }
 
+/// A short tag for a world, from its first unit and grant count, that is the same for the same seed.
+fn world_tag(world: &SyntheticWorld) -> String {
+    let first = world.units.first().map(|u| u.id.simple().to_string()).unwrap_or_default();
+    format!("{}-{}", &first[..first.len().min(8)], world.grants.len())
+}
+
 /// Executes synthesize generation and persistence, returning the world hash.
-pub fn synthesize(state: &ServerState, opts: &SynthesizeOptions) -> Result<String, RepositoryError> {
+pub fn synthesize(state: &crate::state::SharedState, opts: &SynthesizeOptions) -> Result<String, RepositoryError> {
     let world = generate_world(opts);
     let hash = compute_world_hash(&world);
     persist_world(state, &world)?;
