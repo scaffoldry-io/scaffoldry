@@ -116,14 +116,22 @@ pub struct SyntheticApp {
     pub unit_id: Uuid,
 }
 
-/// One synthetic dataset record.
+/// One synthetic dataset record. `unit_id` is its unit in the first hierarchy. `units` holds its unit in every hierarchy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyntheticRecord {
     pub id: Uuid,
     pub app_slug: String,
     pub table_name: String,
     pub unit_id: Uuid,
+    pub units: BTreeMap<String, Uuid>,
     pub title: String,
+}
+
+/// One synthetic group and the addresses of its members.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyntheticGroup {
+    pub id: String,
+    pub members: Vec<String>,
 }
 
 /// A complete synthetic institution world generated deterministically from a seed.
@@ -136,11 +144,23 @@ pub struct SyntheticWorld {
     pub apps: Vec<SyntheticApp>,
     pub records: Vec<SyntheticRecord>,
     pub grants: Vec<Grant>,
+    pub groups: Vec<SyntheticGroup>,
     pub domains: Vec<ReferenceDomain>,
     pub objects: Vec<Object>,
 }
 
 impl SyntheticWorld {
+    /// The group ids each person belongs to, by address.
+    pub fn groups_by_person(&self) -> std::collections::HashMap<String, Vec<String>> {
+        let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for g in &self.groups {
+            for m in &g.members {
+                out.entry(m.clone()).or_default().push(g.id.clone());
+            }
+        }
+        out
+    }
+
     /// Converts units to `ReferenceUnit` for use with the reference evaluator.
     pub fn to_reference_units(&self) -> Vec<ReferenceUnit> {
         self.units
@@ -292,27 +312,52 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
         }
     }
 
+    // Units of each hierarchy, so an object is placed only in a hierarchy that holds its unit.
+    let mut hierarchy_units: BTreeMap<String, Vec<Uuid>> = BTreeMap::new();
+    for u in &units {
+        hierarchy_units.entry(u.hierarchy_key.clone()).or_default().push(u.id);
+    }
+    let first_hierarchy = opts.hierarchies.first().cloned().unwrap_or_else(|| "academic".to_string());
+
+    // Groups: a few, each with a skewed membership.
+    let group_count = (opts.people / 100).clamp(3, 40);
+    let mut groups: Vec<SyntheticGroup> = (1..=group_count).map(|n| SyntheticGroup { id: format!("synth-group-{n}"), members: Vec::new() }).collect();
+    for person in &people {
+        let joins = match prng.gen_range(0, 100) {
+            0..=69 => 0,
+            70..=94 => 1,
+            _ => 2,
+        };
+        for _ in 0..joins {
+            let g = prng.gen_skewed_index(groups.len());
+            if !groups[g].members.contains(&person.eppn) {
+                groups[g].members.push(person.eppn.clone());
+            }
+        }
+    }
+
     // 3. Generate workspaces and apps (skewed so a few departments hold most)
+    let pick_unit = |prng: &mut DeterministicPrng, h: &str| -> Uuid {
+        let list = &hierarchy_units[h];
+        list[prng.gen_skewed_index(list.len())]
+    };
     let num_workspaces = (opts.apps / 2).max(1);
     let mut workspaces = Vec::with_capacity(num_workspaces);
     let mut apps = Vec::with_capacity(opts.apps);
 
     for w in 1..=num_workspaces {
         let ws_id = format!("ws-synth-{w}");
-        let unit_idx = prng.gen_skewed_index(all_unit_ids.len());
-        let unit_id = all_unit_ids[unit_idx];
-
         let domain = match prng.gen_range(0, 3) {
             0 => "research",
             1 => "finance",
             _ => "academic",
         };
-
         let mut coords = scaffoldry_core::coordinates::Coordinates::default();
         coords.domain = Some(domain.to_string());
         for h in &opts.hierarchies {
-            coords.units.insert(h.clone(), unit_id.to_string());
+            coords.units.insert(h.clone(), pick_unit(&mut prng, h).to_string());
         }
+        let unit_id = Uuid::parse_str(&coords.units[&first_hierarchy]).unwrap();
 
         workspaces.push(WorkspaceRecord {
             id: ws_id.clone(),
@@ -335,10 +380,8 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
     for a in 1..=opts.apps {
         let ws_idx = prng.gen_skewed_index(workspaces.len());
         let ws = &workspaces[ws_idx];
-        let slug = format!("app-synth-{a}");
-
         apps.push(SyntheticApp {
-            slug,
+            slug: format!("app-synth-{a}"),
             workspace_id: ws.id.clone(),
             name: format!("Synthetic App {a}"),
             domain: ws.coordinates.domain.clone().unwrap_or_else(|| ROOT_DOMAIN.to_string()),
@@ -346,19 +389,21 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
         });
     }
 
-    // 4. Generate records
+    // 4. Generate records, each placed at a unit in every hierarchy
     let mut records = Vec::with_capacity(opts.records);
     for r in 1..=opts.records {
         let app_idx = prng.gen_skewed_index(apps.len());
         let app = &apps[app_idx];
-        let unit_idx = prng.gen_skewed_index(all_unit_ids.len());
-        let unit_id = all_unit_ids[unit_idx];
-
+        let mut at = BTreeMap::new();
+        for h in &opts.hierarchies {
+            at.insert(h.clone(), pick_unit(&mut prng, h));
+        }
         records.push(SyntheticRecord {
             id: prng.gen_uuid(),
             app_slug: app.slug.clone(),
             table_name: "records".to_string(),
-            unit_id,
+            unit_id: at[&first_hierarchy],
+            units: at,
             title: format!("Record {r}"),
         });
     }
@@ -366,47 +411,33 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
     // 5. Generate grants of every anchor kind: Container, Unit, HolderUnit
     let mut grants = Vec::new();
     let mut grant_id = 1i64;
+    // A moment in the far future: a grant that is valid now but ends later, or starts later.
+    const FAR: i64 = 4_000_000_000;
 
     // A. HolderUnit grants
     for h in &opts.hierarchies {
-        grants.push(Grant {
-            id: grant_id,
-            holder_kind: HolderKind::Position,
-            holder_id: "chair@*".to_string(),
-            role: Role::Editor,
-            hierarchy: Some(h.clone()),
-            anchor_kind: AnchorKind::HolderUnit,
-            anchor_id: None,
-            depth: None,
-            domain: None,
-            valid_from: 0,
-            valid_until: None,
-            revoked: false,
-        });
-        grant_id += 1;
-
-        grants.push(Grant {
-            id: grant_id,
-            holder_kind: HolderKind::Position,
-            holder_id: "supervisor@*".to_string(),
-            role: Role::Viewer,
-            hierarchy: Some(h.clone()),
-            anchor_kind: AnchorKind::HolderUnit,
-            anchor_id: None,
-            depth: Some(1),
-            domain: None,
-            valid_from: 0,
-            valid_until: None,
-            revoked: false,
-        });
-        grant_id += 1;
+        for (position, role, depth) in [("chair", Role::Editor, None), ("supervisor", Role::Viewer, Some(1))] {
+            grants.push(Grant {
+                id: grant_id,
+                holder_kind: HolderKind::Position,
+                holder_id: format!("{position}@*"),
+                role,
+                hierarchy: Some(h.clone()),
+                anchor_kind: AnchorKind::HolderUnit,
+                anchor_id: None,
+                depth,
+                domain: None,
+                valid_from: 0,
+                valid_until: None,
+                revoked: false,
+            });
+            grant_id += 1;
+        }
     }
 
-    // B. Unit grants on synthetic units
+    // B. Unit grants on synthetic units, then C. container grants on workspaces and apps
     for (i, unit) in units.iter().enumerate().take(10) {
-        let person_idx = prng.gen_range(0, people.len());
-        let person = &people[person_idx];
-
+        let person = &people[prng.gen_range(0, people.len())];
         grants.push(Grant {
             id: grant_id,
             holder_kind: HolderKind::Person,
@@ -423,12 +454,8 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
         });
         grant_id += 1;
     }
-
-    // C. Container grants on workspaces
     for (i, ws) in workspaces.iter().enumerate().take(5) {
-        let person_idx = prng.gen_range(0, people.len());
-        let person = &people[person_idx];
-
+        let person = &people[prng.gen_range(0, people.len())];
         grants.push(Grant {
             id: grant_id,
             holder_kind: HolderKind::Person,
@@ -446,49 +473,79 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
         grant_id += 1;
     }
 
-    // 6. Build evaluation objects (workspaces, apps, and records)
+    // D. Random grants that exercise every axis: holder kind, depth, domain, and the validity window.
+    let extra = (opts.people / 10).max(20);
+    let domain_keys: Vec<String> = domains.iter().map(|d| d.key.clone()).collect();
+    for _ in 0..extra {
+        let role = match prng.gen_range(0, 100) {
+            0..=44 => Role::Viewer,
+            45..=64 => Role::Commenter,
+            65..=84 => Role::Editor,
+            85..=96 => Role::Admin,
+            _ => Role::Owner,
+        };
+        let h = opts.hierarchies[prng.gen_range(0, opts.hierarchies.len())].clone();
+        let anchor_unit = pick_unit(&mut prng, &h);
+        let (holder_kind, holder_id) = match prng.gen_range(0, 100) {
+            0..=49 => (HolderKind::Person, people[prng.gen_range(0, people.len())].eppn.clone()),
+            50..=64 => (HolderKind::Unit, hierarchy_units[&h][prng.gen_skewed_index(hierarchy_units[&h].len())].to_string()),
+            65..=79 => (HolderKind::Group, groups[prng.gen_range(0, groups.len())].id.clone()),
+            _ => (HolderKind::Position, format!("{}@*", ["chair", "dean", "director", "supervisor"][prng.gen_range(0, 4)])),
+        };
+        let (anchor_kind, hierarchy, anchor_id) = if holder_kind == HolderKind::Position && prng.gen_range(0, 2) == 0 {
+            (AnchorKind::HolderUnit, Some(h.clone()), None)
+        } else if prng.gen_range(0, 100) < 25 {
+            let ws = &workspaces[prng.gen_range(0, workspaces.len())];
+            (AnchorKind::Container, None, Some(format!("workspace:{}", ws.id)))
+        } else {
+            (AnchorKind::Unit, Some(h.clone()), Some(anchor_unit.to_string()))
+        };
+        let depth = if anchor_kind == AnchorKind::Container || prng.gen_range(0, 2) == 0 { None } else { Some(prng.gen_range(0, 4) as i16) };
+        let domain = (prng.gen_range(0, 100) < 35).then(|| domain_keys[prng.gen_range(0, domain_keys.len())].clone());
+        let (valid_from, valid_until, revoked) = match prng.gen_range(0, 100) {
+            0..=4 => (0, Some(500), false),
+            5..=9 => (FAR, None, false),
+            10..=14 => (0, None, true),
+            15..=19 => (0, Some(FAR), false),
+            _ => (0, None, false),
+        };
+        grants.push(Grant { id: grant_id, holder_kind, holder_id, role, hierarchy, anchor_kind, anchor_id, depth, domain, valid_from, valid_until, revoked });
+        grant_id += 1;
+    }
+
+    // 6. Build evaluation objects: every workspace, app and record, each placed at a unit of each hierarchy
+    let ws_units = |ws: &WorkspaceRecord| -> BTreeMap<String, Uuid> {
+        ws.coordinates.units.iter().filter_map(|(h, u)| Uuid::parse_str(u).ok().map(|u| (h.clone(), u))).collect()
+    };
     let mut objects = Vec::new();
     for ws in &workspaces {
-        let mut obj_units = BTreeMap::new();
-        for h in &opts.hierarchies {
-            obj_units.insert(h.clone(), ws.organization_id.unwrap_or(all_unit_ids[0]));
-        }
         objects.push(Object {
             containers: vec![format!("workspace:{}", ws.id)],
-            units: obj_units,
+            units: ws_units(ws),
             domain: ws.coordinates.domain.clone().unwrap_or_else(|| ROOT_DOMAIN.to_string()),
         });
     }
-
     for app in &apps {
-        let mut obj_units = BTreeMap::new();
-        for h in &opts.hierarchies {
-            obj_units.insert(h.clone(), app.unit_id);
-        }
+        let ws = workspaces.iter().find(|w| w.id == app.workspace_id).expect("an app's workspace exists");
         objects.push(Object {
-            containers: vec![
-                format!("workspace:{}", app.workspace_id),
-                format!("app:{}", app.slug),
-            ],
-            units: obj_units,
+            containers: vec![format!("workspace:{}", app.workspace_id), format!("app:{}", app.slug)],
+            units: ws_units(ws),
+            domain: app.domain.clone(),
+        });
+    }
+    for rec in &records {
+        let app = apps.iter().find(|a| a.slug == rec.app_slug).expect("a record's app exists");
+        objects.push(Object {
+            containers: vec![format!("workspace:{}", app.workspace_id), format!("app:{}", app.slug)],
+            units: rec.units.clone(),
             domain: app.domain.clone(),
         });
     }
 
-    SyntheticWorld {
-        units,
-        people,
-        roles,
-        workspaces,
-        apps,
-        records,
-        grants,
-        domains,
-        objects,
-    }
+    SyntheticWorld { units, people, roles, workspaces, apps, records, grants, groups, domains, objects }
 }
 
-/// Computes a deterministic SHA-256 hash of all rows in the synthetic world.
+/// A stable hex digest of every row the generator wrote, so two runs of one seed can be compared.
 pub fn compute_world_hash(world: &SyntheticWorld) -> String {
     let mut hasher = Sha256::new();
 

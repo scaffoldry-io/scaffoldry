@@ -107,6 +107,7 @@ fn the_database_reads_for_a_workspace_list_do_not_grow_with_the_number_of_worksp
             data_classification: "restricted".to_string(),
             created_at: now.clone(),
             organization_id: None,
+            synthetic: false,
         };
         state.workspaces.write().unwrap().insert(id.clone(), ws);
         state.collaborators.write().unwrap().insert(id, Vec::new());
@@ -196,7 +197,7 @@ async fn the_database_reads_for_a_persons_admin_page_do_not_grow_with_the_number
         let ws = scaffoldry_server::state::WorkspaceRecord {
             id: wid.clone(), name: wid.clone(), code: wid.to_uppercase(), organization: "INST".to_string(), department: "physics".to_string(),
             description: String::new(), icon: "x".to_string(), lead: "Lead".to_string(), visibility: "restricted".to_string(),
-            coordinates: Default::default(), data_classification: "restricted".to_string(), created_at: now.clone(), organization_id: None,
+            coordinates: Default::default(), data_classification: "restricted".to_string(), created_at: now.clone(), organization_id: None, synthetic: false,
         };
         state.workspaces.write().unwrap().insert(wid.clone(), ws);
         state.collaborators.write().unwrap().insert(wid, Vec::new());
