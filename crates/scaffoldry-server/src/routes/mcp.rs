@@ -62,17 +62,17 @@ fn tool_error(message: impl Into<String>) -> Value {
 }
 
 /// A tool error that carries the error's `code` for an agent to branch on, and the same text.
-fn coded_tool_error(code: &str, message: &str) -> Value {
+fn coded_tool_error(code: &str, message: &str, hint: &str) -> Value {
     json!({
         "isError": true,
-        "content": [{ "type": "text", "text": message }],
-        "structuredContent": { "code": code, "message": message }
+        "content": [{ "type": "text", "text": message }, { "type": "text", "text": hint }],
+        "structuredContent": { "code": code, "message": message, "hint": hint }
     })
 }
 
 /// The same for a `ServiceError`, with the `reason` and `remedy` of a denial when it has them.
 fn service_tool_error(err: &crate::service::ServiceError) -> Value {
-    let mut value = coded_tool_error(err.code(), err.message());
+    let mut value = coded_tool_error(err.code(), err.message(), &crate::service::hints::hint_for(err));
     let body = err.body();
     for key in ["reason", "remedy", "fields"] {
         if let Some(v) = body.get(key) {
@@ -197,12 +197,17 @@ async fn handle_mcp_request(
             let listed: Vec<Value> = tools::TOOLS
                 .iter()
                 .map(|t| {
-                    json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "inputSchema": (t.input_schema)(),
-                        "annotations": { "readOnlyHint": t.read_only }
-                    })
+                    // The schema is closed (`validate_args` refuses an unknown argument) and carries one valid call.
+                    let mut schema = (t.input_schema)();
+                    schema["additionalProperties"] = json!(false);
+                    schema["examples"] = json!([crate::service::tool_meta::example(t.name)]);
+                    let annotations = if t.read_only {
+                        json!({ "readOnlyHint": true })
+                    } else {
+                        let (destructive, idempotent) = crate::service::tool_meta::hints(t.name);
+                        json!({ "readOnlyHint": false, "destructiveHint": destructive, "idempotentHint": idempotent })
+                    };
+                    json!({ "name": t.name, "description": t.description, "inputSchema": schema, "annotations": annotations })
                 })
                 .collect();
             rpc(JsonRpcResponse {
@@ -286,6 +291,12 @@ async fn handle_mcp_request(
                         "name": "Framework Component Specification",
                         "description": "Self-documenting JSON Schema of governed components, layout slots, and approved org tokens",
                         "mimeType": "application/json"
+                    },
+                    {
+                        "uri": crate::service::prompts::GUIDE_URI,
+                        "name": "Guide: building apps",
+                        "description": "How to build an app here: describe, propose, wait for approval, field types, selects and links by id, paging, versions, jobs, and what an agent must never do",
+                        "mimeType": "text/markdown"
                     },
                     {
                         "uri": "scaffoldry://schema/app-manifest",
@@ -422,6 +433,15 @@ async fn handle_mcp_request(
                             ]
                         })
                     }
+                    crate::service::prompts::GUIDE_URI => json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "text/markdown",
+                                "text": crate::service::prompts::GUIDE
+                            }
+                        ]
+                    }),
                     "scaffoldry://schema/app-manifest" => json!({
                         "contents": [
                             {
@@ -446,25 +466,25 @@ async fn handle_mcp_request(
         }
 
         "prompts/list" => {
-            let prompts = json!({
-                "prompts": [
-                    {
-                        "name": "governed_app_builder",
-                        "description": "Guide an AI assistant to formulate a compliant application schema adhering to CEDS v11 and Cedar access controls.",
-                        "arguments": [
-                            { "name": "app_purpose", "description": "The business goal or departmental workflow", "required": true },
-                            { "name": "department", "description": "Department or faculty unit", "required": true }
-                        ]
-                    },
-                    {
-                        "name": "ferpa_risk_assessment",
-                        "description": "Audit an application or dataset schema for FERPA (34 CFR § 99.30) privacy compliance.",
-                        "arguments": [
-                            { "name": "schema_json", "description": "JSON representation of the schema", "required": true }
-                        ]
-                    }
-                ]
-            });
+            let mut all = vec![
+                json!({
+                    "name": "governed_app_builder",
+                    "description": "Guide an AI assistant to formulate a compliant application schema adhering to CEDS v11 and Cedar access controls.",
+                    "arguments": [
+                        { "name": "app_purpose", "description": "The business goal or departmental workflow", "required": true },
+                        { "name": "department", "description": "Department or faculty unit", "required": true }
+                    ]
+                }),
+                json!({
+                    "name": "ferpa_risk_assessment",
+                    "description": "Audit an application or dataset schema for FERPA (34 CFR § 99.30) privacy compliance.",
+                    "arguments": [
+                        { "name": "schema_json", "description": "JSON representation of the schema", "required": true }
+                    ]
+                }),
+            ];
+            all.extend(crate::service::prompts::listed());
+            let prompts = json!({ "prompts": all });
             rpc(JsonRpcResponse {
                 jsonrpc: "2.0",
                 id: req_id,
@@ -514,7 +534,7 @@ async fn handle_mcp_request(
                         ]
                     })
                 }
-                _ => json!({ "messages": [] }),
+                other => crate::service::prompts::render(other, &args).unwrap_or_else(|| json!({ "messages": [] })),
             };
 
             rpc(JsonRpcResponse {

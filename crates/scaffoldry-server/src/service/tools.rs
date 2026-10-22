@@ -138,7 +138,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "describe_app",
-        description: "The stored manifest of an app and its version.",
+        description: "Read the stored manifest of an app and its version.",
         input_schema: schema_describe_app,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -154,7 +154,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_records",
-        description: "One page of a table's records, up to 200. Pass next_cursor back as cursor for the next page. A filter or sort works on a table of 10,000 rows or fewer.",
+        description: "List one page of a table's records, up to 200. Pass next_cursor back as cursor for the next page. A filter or sort works on a table of 10,000 rows or fewer.",
         input_schema: schema_list_records,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -162,7 +162,7 @@ pub static TOOLS: &[Tool] = &[
     },
         Tool {
         name: "get_view_data",
-        description: "Returns grouped records for a kanban or group-by view with option labels and colors.",
+        description: "Return grouped records for a kanban or group-by view with option labels and colors.",
         input_schema: schema_get_view_data,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -170,7 +170,7 @@ pub static TOOLS: &[Tool] = &[
     },
 Tool {
         name: "get_record",
-        description: "One record, with its version.",
+        description: "Get one record, with its version.",
         input_schema: schema_get_record,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -178,7 +178,7 @@ Tool {
     },
     Tool {
         name: "get_record_history",
-        description: "The changes made to a record, newest first, with who made each one. A field you may not read shows only that it changed.",
+        description: "List the changes made to a record, newest first, with who made each one. A field you may not read shows only that it changed.",
         input_schema: schema_get_record_history,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -194,7 +194,7 @@ Tool {
     },
     Tool {
         name: "delete_record",
-        description: "Moves a record to trash. It can be restored. Send the version you read.",
+        description: "Move a record to trash. It can be restored. Send the version you read.",
         input_schema: schema_delete_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
@@ -210,7 +210,7 @@ Tool {
     },
     Tool {
         name: "list_proposals",
-        description: "The proposals of a workspace, pending first.",
+        description: "List the proposals of a workspace, pending first.",
         input_schema: schema_list_proposals,
         scope: Scope::Workspace("access_workspace"),
         read_only: true,
@@ -218,7 +218,7 @@ Tool {
     },
     Tool {
         name: "get_proposal",
-        description: "One proposal with its checks and its change list.",
+        description: "Get one proposal with its checks and its change list.",
         input_schema: schema_get_proposal,
         scope: Scope::Proposal("access_workspace"),
         read_only: true,
@@ -234,7 +234,7 @@ Tool {
     },
     Tool {
         name: "list_waiting_decisions",
-        description: "The process steps waiting for you to decide, in apps you can read. Up to 200.",
+        description: "List the process steps waiting for you to decide, in apps you can read. Up to 200.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
@@ -290,7 +290,7 @@ Tool {
     },
     Tool {
         name: "export_records",
-        description: "Enqueues an export job for records in an app table or view. Returns a job ID and download URL. Does not return record bytes directly.",
+        description: "Enqueue an export job for records in an app table or view. Returns a job ID and download URL. Does not return record bytes directly.",
         input_schema: schema_export_records,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -1304,6 +1304,9 @@ fn run_export_records(
     let app_slug = args.app_slug;
     let table_id = args.table_id;
     let format_str = args.format.unwrap_or_else(|| "csv".to_string()).to_lowercase();
+    if !["csv", "xlsx", "json", "jsonl"].contains(&format_str.as_str()) {
+        return Err(ServiceError::BadRequest(format!("Export format '{format_str}' does not exist. Use csv, xlsx, json, or jsonl")));
+    }
 
     let manifest = state
         .engine
