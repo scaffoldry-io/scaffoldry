@@ -8,6 +8,7 @@
 //!   - Move safety: after a subtree moves, nobody keeps access through the old ancestor
 //!   - Cache transparency: the answer is the same with and without cached collections
 //!   - View-as bound: what someone sees as another person is in both people's reach
+//!
 //! The differential test passes on 20 worlds of 2,000 people and 200 units each, in under 60 seconds.
 
 use scaffoldry_core::access::RowScope;
@@ -46,7 +47,7 @@ fn closure_rows_of_units(units: &[OrganizationNode]) -> Vec<OrgClosureRow> {
 
 /// The grants the server would fetch for this holder: those held by the person, one of their positions, one of their units,
 /// or one of their groups. `members::holder_pairs` builds the same pairs for the `grants_held_by` query.
-fn grants_held_by<'a>(holders: &scaffoldry_core::reach::HolderSet, grants: &'a [Grant]) -> Vec<Grant> {
+fn grants_held_by(holders: &scaffoldry_core::reach::HolderSet, grants: &[Grant]) -> Vec<Grant> {
     let mut pairs: BTreeSet<(&'static str, String)> = BTreeSet::new();
     pairs.insert(("person", holders.person.clone()));
     for (key, unit) in &holders.positions {

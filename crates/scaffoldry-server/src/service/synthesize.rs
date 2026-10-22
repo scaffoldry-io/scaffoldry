@@ -340,8 +340,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
     for w in 1..=num_workspaces {
         let ws_id = format!("ws-synth-{w}");
         let domain = ["research", "learning-and-teaching", "enabling-capabilities", "herm:2.2.3"][prng.gen_range(0, 4)];
-        let mut coords = scaffoldry_core::coordinates::Coordinates::default();
-        coords.domain = Some(domain.to_string());
+        let mut coords = scaffoldry_core::coordinates::Coordinates { domain: Some(domain.to_string()), ..Default::default() };
         for h in &opts.hierarchies {
             coords.units.insert(h.clone(), pick_unit(&mut prng, h).to_string());
         }
@@ -539,7 +538,7 @@ pub fn compute_world_hash(world: &SyntheticWorld) -> String {
 
     // 1. Units sorted by id
     let mut units = world.units.clone();
-    units.sort_by(|a, b| a.id.cmp(&b.id));
+    units.sort_by_key(|a| a.id);
     for u in &units {
         hasher.update(u.id.as_bytes());
         hasher.update(u.name.as_bytes());
@@ -548,7 +547,7 @@ pub fn compute_world_hash(world: &SyntheticWorld) -> String {
         if let Some(p) = u.parent_id {
             hasher.update(p.as_bytes());
         }
-        hasher.update(&[u.synthetic as u8]);
+        hasher.update([u.synthetic as u8]);
     }
 
     // 2. People sorted by eppn
@@ -557,12 +556,12 @@ pub fn compute_world_hash(world: &SyntheticWorld) -> String {
     for p in &people {
         hasher.update(p.id.as_bytes());
         hasher.update(p.eppn.as_bytes());
-        hasher.update(&[p.synthetic as u8]);
+        hasher.update([p.synthetic as u8]);
     }
 
     // 3. Roles sorted by id
     let mut roles = world.roles.clone();
-    roles.sort_by(|a, b| a.id.cmp(&b.id));
+    roles.sort_by_key(|a| a.id);
     for r in &roles {
         hasher.update(r.id.as_bytes());
         hasher.update(r.person_id.as_bytes());
@@ -581,7 +580,7 @@ pub fn compute_world_hash(world: &SyntheticWorld) -> String {
         hasher.update(w.id.as_bytes());
         hasher.update(w.name.as_bytes());
         hasher.update(w.code.as_bytes());
-        hasher.update(&[w.synthetic as u8]);
+        hasher.update([w.synthetic as u8]);
     }
 
     // 5. Apps sorted by slug
@@ -596,7 +595,7 @@ pub fn compute_world_hash(world: &SyntheticWorld) -> String {
 
     // 6. Records sorted by id
     let mut records = world.records.clone();
-    records.sort_by(|a, b| a.id.cmp(&b.id));
+    records.sort_by_key(|a| a.id);
     for r in &records {
         hasher.update(r.id.as_bytes());
         hasher.update(r.app_slug.as_bytes());
@@ -608,7 +607,7 @@ pub fn compute_world_hash(world: &SyntheticWorld) -> String {
     let mut grants = world.grants.clone();
     grants.sort_by_key(|g| g.id);
     for g in &grants {
-        hasher.update(&g.id.to_le_bytes());
+        hasher.update(g.id.to_le_bytes());
         hasher.update(g.holder_kind.as_str().as_bytes());
         hasher.update(g.holder_id.as_bytes());
         hasher.update(g.role.as_str().as_bytes());
