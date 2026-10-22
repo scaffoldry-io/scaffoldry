@@ -242,6 +242,12 @@ pub fn member_roles(eppn: &str, workspaces: &[String], state: &SharedState) -> V
     roles_for(eppn, &targets, state)
 }
 
+/// The role of one person in each `(workspace, app)` pair, in order, with one read of their roles, groups and grants.
+pub fn member_roles_in_apps(eppn: &str, pairs: &[(String, String)], state: &SharedState) -> Vec<Option<Role>> {
+    let targets: Vec<(&str, Option<&str>)> = pairs.iter().map(|(w, a)| (w.as_str(), Some(a.as_str()))).collect();
+    roles_for(eppn, &targets, state)
+}
+
 /// `role_at` for each `(workspace, app)` target. No lock is held while the database is read.
 fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) -> Vec<Option<Role>> {
     let none = || vec![None; targets.len()];
