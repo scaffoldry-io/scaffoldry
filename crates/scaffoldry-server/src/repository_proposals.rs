@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 /// The checks that need a second person to approve when they fail.
-pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity", "rule_effects", "access_loosened", "coordinates_widened"];
+pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity", "page_dependencies", "rule_effects", "access_loosened", "coordinates_widened"];
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProposalRow {
@@ -108,6 +108,14 @@ impl PostgresRepository {
                 &[&sha, &source, &by],
             )?;
             Ok(())
+        })
+    }
+
+    /// The source stored under a hash.
+    pub fn page_source(&self, sha256: &str) -> Result<Option<String>, RepositoryError> {
+        let sha = sha256.to_lowercase();
+        self.with_client(move |client| {
+            Ok(client.query_opt("SELECT source FROM app_page_sources WHERE sha256 = $1", &[&sha])?.map(|r| r.get::<_, String>(0)))
         })
     }
 

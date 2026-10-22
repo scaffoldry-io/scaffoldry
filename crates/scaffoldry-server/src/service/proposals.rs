@@ -15,6 +15,20 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_SOURCE_BYTES: usize = 256 * 1024;
+/// A bundle carries its own libraries, so it may be larger than a module.
+const MAX_BUNDLE_BYTES: usize = 2 * 1024 * 1024;
+
+/// The licenses a bundled library may carry, as `governance/scripts/audit-licenses.py` lists them. A test keeps the two the same.
+pub const APPROVED_LICENSES: &[&str] = &["apache-2.0", "mit", "bsd-2-clause", "bsd-3-clause", "isc", "postgresql", "cc0-1.0"];
+
+/// True when the license, or one choice of an `A OR B` expression, is approved. An `AND` expression is not read.
+fn license_approved(license: &str) -> bool {
+    let lower = license.to_lowercase();
+    if lower.contains(" and ") {
+        return false;
+    }
+    lower.split(" or ").any(|part| APPROVED_LICENSES.contains(&part.trim().trim_matches(|c| c == '(' || c == ')').trim()))
+}
 
 pub struct ProposeInput {
     pub workspace_id: String,
@@ -345,9 +359,21 @@ fn check_manifest_part(
     // page_source: a failure stores no row.
     let mut source_problems = Vec::new();
     let mut provided: BTreeMap<String, String> = BTreeMap::new();
+    // A bundle may be larger than a module, so the limit depends on the page that names the source.
+    let limits: BTreeMap<String, usize> = manifest
+        .pages
+        .iter()
+        .filter_map(|p| match &p.kind {
+            PageKind::Custom { source_sha256, format, .. } => {
+                Some((source_sha256.to_lowercase(), if *format == scaffoldry_engine::PageFormat::Bundle { MAX_BUNDLE_BYTES } else { MAX_SOURCE_BYTES }))
+            }
+            _ => None,
+        })
+        .collect();
     for source in page_sources {
-        if source.len() > MAX_SOURCE_BYTES {
-            source_problems.push(format!("a page source is {} bytes, the limit is {MAX_SOURCE_BYTES}", source.len()));
+        let limit = limits.get(&sha256_hex(&source)).copied().unwrap_or(MAX_SOURCE_BYTES);
+        if source.len() > limit {
+            source_problems.push(format!("a page source is {} bytes, the limit is {limit}", source.len()));
             continue;
         }
         if source.to_lowercase().contains("</script") {
@@ -505,6 +531,25 @@ fn check_manifest_part(
         }
     }
 
+    // page_dependencies: a new or changed bundle names its libraries, and each license is approved.
+    let mut dependency_problems = Vec::new();
+    for page in &manifest.pages {
+        let changed = live.and_then(|l| l.pages.iter().find(|x| x.id == page.id)).is_none_or(|x| x != page);
+        if !changed {
+            continue;
+        }
+        if let PageKind::Custom { format: scaffoldry_engine::PageFormat::Bundle, dependencies, .. } = &page.kind {
+            if dependencies.is_empty() {
+                dependency_problems.push(format!("page '{}' is a bundle and declares no libraries", page.title));
+            }
+            for d in dependencies {
+                if !license_approved(&d.license) {
+                    dependency_problems.push(format!("page '{}': the library '{}' {} has the license '{}', which is not on the approved list", page.title, d.name, d.version, d.license));
+                }
+            }
+        }
+    }
+
     let mut data_loss = check("data_loss", loss);
     if !previews.is_empty() {
         data_loss["previews"] = Value::Array(previews);
@@ -551,6 +596,7 @@ fn check_manifest_part(
         data_loss,
         check("page_source", vec![]),
         check("page_sensitivity", page_problems),
+        check("page_dependencies", dependency_problems),
         warn("relationships", scaffoldry_engine::manifest_warnings(&manifest)),
         warn("access_rules", access_problems),
         check("access_loosened", loosened),
@@ -892,4 +938,30 @@ pub fn submit_direct(caller: &AuthUser, input: ProposeInput, state: &SharedState
     let id = proposed["proposal_id"].as_str().unwrap_or_default().to_string();
     decide(caller, &id, "approve", "Applied directly by an owner or admin: no check was raised", state)?;
     Ok(Direct::Applied)
+}
+
+#[cfg(test)]
+mod license_tests {
+    use super::*;
+
+    #[test]
+    fn the_license_list_is_the_one_the_audit_script_uses() {
+        let script = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../governance/scripts/audit-licenses.py")).expect("the audit script");
+        let block = script.split("APPROVED_LICENSES = {").nth(1).and_then(|b| b.split('}').next()).expect("the list in the script");
+        let mut in_script: Vec<&str> = block.split('"').skip(1).step_by(2).collect();
+        let mut here: Vec<&str> = APPROVED_LICENSES.to_vec();
+        in_script.sort();
+        here.sort();
+        assert_eq!(in_script, here);
+    }
+
+    #[test]
+    fn a_choice_of_licenses_passes_when_one_is_approved_and_a_conjunction_is_not_read() {
+        assert!(license_approved("MIT"));
+        assert!(license_approved("(MIT OR GPL-3.0)"));
+        assert!(license_approved("Apache-2.0"));
+        assert!(!license_approved("AGPL-3.0"));
+        assert!(!license_approved("MIT AND GPL-3.0"));
+        assert!(!license_approved(""));
+    }
 }

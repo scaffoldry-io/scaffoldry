@@ -530,6 +530,41 @@
                       "items": {
                         "$ref": "#/$defs/grant"
                       }
+                    },
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "module",
+                        "bundle"
+                      ],
+                      "default": "module"
+                    },
+                    "dependencies": {
+                      "type": "array",
+                      "maxItems": 100,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "version",
+                          "license"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "version": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "license": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
                     }
                   }
                 }

@@ -1,7 +1,7 @@
 //! MCP apps phase 3: the manifest has a format. The same fixtures are checked against the JSON
 //! Schema by `governance/scripts/validate-manifest.py` and against `validate_manifest` here.
 
-use scaffoldry_engine::{validate_manifest, AppManifest, AppPage, AppTable, FieldSpec, FieldType, PageGrant, PageKind};
+use scaffoldry_engine::{validate_manifest, AppManifest, AppPage, AppTable, FieldSpec, FieldType, PageDependency, PageFormat, PageGrant, PageKind};
 use std::path::PathBuf;
 
 fn fixtures(kind: &str) -> Vec<(String, AppManifest)> {
@@ -105,7 +105,7 @@ fn a_grant_may_not_write_a_computed_field_or_name_a_field_that_is_missing() {
     let page = |g: PageGrant| AppPage {
         id: "p".to_string(),
         title: "P".to_string(),
-        kind: PageKind::Custom { source_sha256: "b".repeat(64), grants: vec![g] },
+        kind: PageKind::Custom { source_sha256: "b".repeat(64), grants: vec![g], format: PageFormat::Module, dependencies: vec![] },
     };
 
     m.pages = vec![page(grant(&["standing"], &["standing"]))];
@@ -180,4 +180,36 @@ fn a_manifest_over_256_kb_is_refused() {
     let mut m = base();
     m.description = "x".repeat(300 * 1024);
     assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("bytes")));
+}
+
+// MCP apps phase 6: a page may be a bundle that names its libraries.
+#[test]
+fn a_module_page_serializes_as_before_and_a_bundle_keeps_its_format_and_libraries() {
+    let module = base_with_page(PageKind::Custom { source_sha256: "c".repeat(64), grants: vec![], format: PageFormat::Module, dependencies: vec![] });
+    let text = serde_json::to_string(&module.pages[0]).unwrap();
+    assert!(!text.contains("format") && !text.contains("dependencies"), "a module page is stored as it was before bundles: {text}");
+
+    let bundle = PageKind::Custom {
+        source_sha256: "c".repeat(64),
+        grants: vec![],
+        format: PageFormat::Bundle,
+        dependencies: vec![PageDependency { name: "chart.js".into(), version: "4.4.0".into(), license: "MIT".into() }],
+    };
+    let round: PageKind = serde_json::from_str(&serde_json::to_string(&bundle).unwrap()).unwrap();
+    assert_eq!(round, bundle);
+}
+
+#[test]
+fn a_dependency_needs_a_name_a_version_and_a_license() {
+    let dep = |name: &str, version: &str, license: &str| PageDependency { name: name.into(), version: version.into(), license: license.into() };
+    for bad in [dep("", "1", "MIT"), dep("x", "", "MIT"), dep("x", "1", "")] {
+        let m = base_with_page(PageKind::Custom { source_sha256: "c".repeat(64), grants: vec![], format: PageFormat::Bundle, dependencies: vec![bad] });
+        assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("dependency")), "a dependency with an empty part is refused");
+    }
+}
+
+fn base_with_page(kind: PageKind) -> AppManifest {
+    let mut m = base();
+    m.pages = vec![AppPage { id: "p".to_string(), title: "P".to_string(), kind }];
+    m
 }

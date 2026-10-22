@@ -22,6 +22,7 @@ pub mod approvers;
 pub mod people;
 pub mod positions;
 pub mod processes;
+pub mod pages;
 pub mod proposals;
 pub mod hints;
 pub mod prompts;

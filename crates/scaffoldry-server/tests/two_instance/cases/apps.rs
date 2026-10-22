@@ -6,6 +6,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/workspaces/{id}/apps".into(), case!(app_create));
     m.insert("PUT /api/v1/apps/{slug}".into(), case!(app_update));
     m.insert("POST /api/v1/apps/{slug}/publish".into(), case!(app_publish));
+    m.insert("POST /api/v1/apps/{slug}/pages/{id}/call".into(), case!(page_call_route));
     m.insert("POST /api/v1/apps/{slug}/automations".into(), case!(automation_create));
     exempt(m, "POST /api/v1/apps/{slug}/automations/simulate", "runs a rule against a sample and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/access/preview", "asks what a person could see and stores nothing");
@@ -357,4 +358,19 @@ async fn job_cancel(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/jobs/{id}/cancel"), ADMIN, None).await, StatusCode::OK, "cancel")?;
     let state = job_state(&w, &id).await?;
     ensure(state == "cancelled", format!("B sees the job cancelled, not {state}"))
+}
+
+async fn page_call_route(w: World) -> Outcome {
+    let slug = super::tools::make_page_app(&w).await?;
+    let id = make_record(&w, &slug, "Before").await?;
+    status(
+        w.wa("POST", &format!("/api/v1/apps/{slug}/pages/board/call"), OWNER, Some(json!({ "op": "update", "table_id": "apps", "record_id": id, "version": 1, "data": { "name": "By route" } }))).await,
+        StatusCode::OK,
+        "update through a page",
+    )?;
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/pages/board/call"), OWNER, Some(json!({ "op": "settings_set", "key": "k", "value": "route-kept" }))).await, StatusCode::OK, "set")?;
+    let seen = status(w.rb("POST", &format!("/api/v1/apps/{slug}/pages/board/call"), OWNER, Some(json!({ "op": "get", "table_id": "apps", "record_id": id }))).await, StatusCode::OK, "B reads through the page")?;
+    ensure(has(&seen, "By route"), format!("B shows the change: {seen}"))?;
+    let setting = status(w.rb("POST", &format!("/api/v1/apps/{slug}/pages/board/call"), OWNER, Some(json!({ "op": "settings_get", "key": "k" }))).await, StatusCode::OK, "get")?;
+    ensure(has(&setting, "route-kept"), format!("B reads the setting: {setting}"))
 }

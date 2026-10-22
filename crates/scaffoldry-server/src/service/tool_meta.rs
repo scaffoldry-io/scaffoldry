@@ -9,6 +9,8 @@ pub fn hints(name: &str) -> (bool, bool) {
     match name {
         "manage_workspace_member" => (true, false),
         "delete_record" | "delete_view" | "cancel_job" => (true, true),
+        // A page may remove a record when its grant allows it.
+        "page_call" => (true, false),
         "update_workspace" | "update_record" | "save_view" => (false, true),
         _ => (false, false),
     }
@@ -26,10 +28,12 @@ pub fn example(name: &str) -> Value {
         "simulate_cedar_policy" => json!({ "eppn": "ada@example.edu", "action": "read", "ferpa_sensitive": true }),
         "record_governance_decision" => json!({ "organization_code": "PHYS", "decision_type": "PolicyRevision", "oscal_control_id": "CM-03", "rationale": "Reviewed the change with the chair" }),
         "list_apps" | "list_proposals" => json!({ "workspace_id": "ws-physics-optics" }),
-        "describe_app" | "list_views" => json!({ "app_slug": "scholarships" }),
+        "describe_app" | "list_views" | "list_pages" => json!({ "app_slug": "scholarships" }),
         "aggregate_records" => json!({ "app_slug": "scholarships", "table_id": "applications", "function": "sum", "field": "amount" }),
         "list_records" => json!({ "app_slug": "scholarships", "table_id": "applications", "limit": 50 }),
         "get_view_data" => json!({ "app_slug": "scholarships", "view_id": "9d0a7c52-0d3e-4f55-8b53-6d2d6d9a4f10" }),
+        "get_page" => json!({ "app_slug": "scholarships", "page_id": "board" }),
+        "page_call" => json!({ "app_slug": "scholarships", "page_id": "board", "op": "list", "table_id": "applications", "limit": 50 }),
         "get_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123" }),
         "get_record_history" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "limit": 20 }),
         "update_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "version": 3, "data": { "amount": 5000 } }),

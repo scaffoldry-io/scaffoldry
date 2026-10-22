@@ -8,6 +8,7 @@ pub fn add(m: &mut Entries) {
     m.insert("tool:manage_workspace_member".into(), case!(manage_workspace_member));
     m.insert("tool:create_record".into(), case!(create_record));
     m.insert("tool:update_record".into(), case!(update_record));
+    m.insert("tool:page_call".into(), case!(page_call));
     m.insert("tool:delete_record".into(), case!(delete_record));
     m.insert("tool:record_governance_decision".into(), case!(record_governance_decision));
     m.insert("tool:propose_app_change".into(), case!(propose_app_change));
@@ -125,4 +126,32 @@ async fn export_records(w: World) -> Outcome {
     let job = started["job_id"].as_str().ok_or_else(|| format!("a job id: {started}"))?.to_string();
     let state = job_state(&w, &job).await?;
     ensure(!state.is_empty(), format!("B sees the export job: {started}"))
+}
+
+const PAGE_SOURCE: &str = "export default function Page() { return <p>two instances</p>; }";
+
+/// A new app with a custom page `board` that may read and write `name`, published through A.
+pub async fn make_page_app(w: &World) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let slug = unique("p6page");
+    let sha: String = Sha256::digest(PAGE_SOURCE.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    let mut m = manifest(&slug);
+    m["pages"] = json!([{ "id": "board", "title": "Board", "kind": { "Custom": { "source_sha256": sha, "grants": [
+        { "table_id": "apps", "read": ["name"], "write": ["name"], "create": false, "delete": false }
+    ]}}}]);
+    let proposed = w.tool_a(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": m, "summary": "A page", "page_sources": [PAGE_SOURCE] })).await?;
+    let id = proposed["proposal_id"].as_str().ok_or("a proposal id")?.to_string();
+    w.tool_a(OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed" })).await?;
+    Ok(slug)
+}
+
+async fn page_call(w: World) -> Outcome {
+    let slug = make_page_app(&w).await?;
+    let id = make_record(&w, &slug, "Before").await?;
+    w.tool_a(OWNER, "page_call", json!({ "app_slug": slug, "page_id": "board", "op": "update", "table_id": "apps", "record_id": id, "version": 1, "data": { "name": "Through a page" } })).await?;
+    w.tool_a(OWNER, "page_call", json!({ "app_slug": slug, "page_id": "board", "op": "settings_set", "key": "k", "value": "kept" })).await?;
+    let seen = w.tool_b(OWNER, "page_call", json!({ "app_slug": slug, "page_id": "board", "op": "get", "table_id": "apps", "record_id": id })).await?;
+    ensure(has(&seen, "Through a page"), format!("B shows the change made through the page: {seen}"))?;
+    let setting = w.tool_b(OWNER, "page_call", json!({ "app_slug": slug, "page_id": "board", "op": "settings_get", "key": "k" })).await?;
+    ensure(has(&setting, "kept"), format!("B reads the setting A wrote: {setting}"))
 }

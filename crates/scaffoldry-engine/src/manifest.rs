@@ -4,6 +4,8 @@
 use crate::{indexed_fields, validate_formula, AppManifest, AppTable, FieldType, PageKind, MAX_INDEXED_FIELDS};
 use std::collections::HashSet;
 
+const MAX_DEPENDENCIES: usize = 100;
+
 pub const MAX_TABLES: usize = 50;
 pub const MAX_FIELDS_PER_TABLE: usize = 200;
 pub const MAX_VIEWS: usize = 200;
@@ -339,9 +341,17 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                     problems.push(format!("page '{}' shows the view '{view_id}', which does not exist", page.id));
                 }
             }
-            PageKind::Custom { source_sha256, grants } => {
+            PageKind::Custom { source_sha256, grants, dependencies, .. } => {
                 if !is_sha256(source_sha256) {
                     problems.push(format!("page '{}': source_sha256 must be 64 hex characters", page.id));
+                }
+                if dependencies.len() > MAX_DEPENDENCIES {
+                    problems.push(format!("page '{}': a bundle may declare {MAX_DEPENDENCIES} dependencies at most", page.id));
+                }
+                for d in dependencies {
+                    if d.name.trim().is_empty() || d.version.trim().is_empty() || d.license.trim().is_empty() {
+                        problems.push(format!("page '{}': every dependency needs a name, a version, and a license", page.id));
+                    }
                 }
                 for g in grants {
                     let Some(table) = table_of(m, &g.table_id) else {

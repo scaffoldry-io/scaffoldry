@@ -1094,7 +1094,38 @@ pub struct AppPage {
 pub enum PageKind {
     View { view_id: String },
     /// The source is stored apart from the manifest and named by its hash.
-    Custom { source_sha256: String, grants: Vec<PageGrant> },
+    Custom {
+        source_sha256: String,
+        grants: Vec<PageGrant>,
+        /// A module is one JSX component, compiled when the page opens. A bundle is a built script that runs as written.
+        #[serde(default, skip_serializing_if = "PageFormat::is_module")]
+        format: PageFormat,
+        /// The libraries a bundle carries. A reviewer sees this list, and a check refuses a license that is not approved.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        dependencies: Vec<PageDependency>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PageFormat {
+    #[default]
+    Module,
+    Bundle,
+}
+
+impl PageFormat {
+    pub fn is_module(&self) -> bool {
+        *self == PageFormat::Module
+    }
+}
+
+/// One library inside a bundle, as the bundle's author declares it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PageDependency {
+    pub name: String,
+    pub version: String,
+    pub license: String,
 }
 
 /// What a custom page may do to one table. A page has nothing beyond its grants. There is no
