@@ -202,7 +202,7 @@ Tool {
     },
     Tool {
         name: "page_call",
-        description: "What a custom page asks the server to do. op is list, get, create, update, remove, settings_get, or settings_set. The page's grants bound it, and the caller's own rights still apply.",
+        description: "Read or change data as a custom page. op is list, get, create, update, remove, settings_get, or settings_set. The page's grants bound it, and the caller's own rights still apply.",
         input_schema: schema_page_call,
         scope: Scope::App(AppAction::Read),
         read_only: false,
