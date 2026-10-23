@@ -712,6 +712,14 @@ export const listCollaborators = (
   return request(`/apps/${appSlug}/collaborators${query ? `?${query}` : ""}`);
 };
 
+/** The document for a custom page, as one string. It is shown in a sandboxed frame and is never a page of its own. */
+export const getPage = (appSlug: string, pageId: string): Promise<{ html: string }> =>
+  request(`/apps/${encodeURIComponent(appSlug)}/pages/${encodeURIComponent(pageId)}`);
+
+/** One call a custom page makes. The server bounds it by the page's grants and by the caller's own rights. */
+export const callPage = (appSlug: string, pageId: string, args: Record<string, unknown>): Promise<unknown> =>
+  request(`/apps/${encodeURIComponent(appSlug)}/pages/${encodeURIComponent(pageId)}/call`, { method: "POST", body: JSON.stringify(args) });
+
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {
