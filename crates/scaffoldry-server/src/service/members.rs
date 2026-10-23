@@ -4,7 +4,7 @@
 //! but a person, `eppn` holds `{type}:{principal_id}`, so the unique key on `(workspace, eppn)` holds.
 
 use crate::state::{AuthUser, CollaboratorRecord, SharedState};
-use scaffoldry_core::reach::{holder_set, role_at, row_reach, AnchorKind, Grant, HolderKind, HolderSet, Holding, Object, RowReach};
+use scaffoldry_core::reach::{fold_reach, holder_set, role_at, row_contributions, AnchorKind, Contribution, Grant, HolderKind, HolderSet, Holding, Object, RowReach};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -448,6 +448,11 @@ pub fn people_records(workspace: &str, state: &SharedState) -> Vec<CollaboratorR
 /// What one person reaches among the rows of `table_id` in an app that places its rows. `None` when the app, its
 /// workspace, or the person's directory record cannot be read, so a caller treats it as reaching nothing.
 pub fn rows_reach(eppn: &str, workspace: &str, app: &str, table_id: &str, state: &SharedState) -> Option<RowReach> {
+    contributions_to(eppn, workspace, app, table_id, state).map(|c| fold_reach(&c))
+}
+
+/// What each of one person's grants contributes to the rows of a table, with what each clears.
+pub fn contributions_to(eppn: &str, workspace: &str, app: &str, table_id: &str, state: &SharedState) -> Option<Vec<Contribution>> {
     let now = chrono::Utc::now().timestamp();
     let rows = state.repository.holdings_of(eppn).unwrap_or_default();
     let holdings: Vec<Holding> = rows.iter().map(|(h, _)| h.clone()).collect();
@@ -493,7 +498,7 @@ pub fn rows_reach(eppn: &str, workspace: &str, app: &str, table_id: &str, state:
     crate::service::coordinates::with_world(state, |places, tree| {
         let (units, domain) = crate::service::coordinates::table_place(places, tree, &ws, &manifest, table_id);
         let table = Object { containers: vec![format!("workspace:{workspace}"), format!("app:{app}")], units, domain };
-        row_reach(&holders, &shared, &table, &row_hierarchies, tree, places, now)
+        row_contributions(&holders, &shared, &table, &row_hierarchies, tree, places, now)
     })
     .ok()
 }

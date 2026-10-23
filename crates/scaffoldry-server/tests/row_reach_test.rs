@@ -120,17 +120,29 @@ async fn world() -> World {
             "id": "cases", "name": "Cases", "slug": "cases",
             "fields": [
                 { "name": "title", "label": "Title", "field_type": "Text", "required": false, "ferpa_sensitive": false },
-                { "name": "unit", "label": "Unit", "field_type": "Unit", "hierarchy": "academic", "required": false, "ferpa_sensitive": false }
+                { "name": "unit", "label": "Unit", "field_type": "Unit", "hierarchy": "academic", "required": false, "ferpa_sensitive": false },
+                { "name": "ssn", "label": "SSN", "field_type": "Text", "required": false, "ferpa_sensitive": true, "indexed": true }
             ],
             "row_place": { "academic": "unit" }
         }]
     });
     let (s, body) = send(&app, "POST", &format!("/api/v1/workspaces/{WS}/apps"), ADMIN, Some(manifest)).await;
-    assert!(s == StatusCode::CREATED || s == StatusCode::ACCEPTED, "{s} {body}");
-    for (name, id) in [("science", science), ("physics", physics), ("lab", lab), ("chemistry", chemistry)] {
-        let (s, body) = send(&app, "POST", &format!("/api/v1/apps/{slug}/records"), ADMIN, Some(json!({ "data": { "_table_id": "cases", "title": name, "unit": id.to_string() } }))).await;
+    // A protected field in an Internal workspace needs a second person to approve the app.
+    if s == StatusCode::ACCEPTED {
+        let id = body["proposal_id"].as_str().expect("a proposal id").to_string();
+        let (s, done) = send(&app, "POST", &format!("/api/v1/proposals/{id}/decision"), ADMIN_TWO, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await;
+        assert_eq!(s, StatusCode::OK, "{done}");
+    } else {
         assert_eq!(s, StatusCode::CREATED, "{body}");
     }
+    for (name, id) in [("science", science), ("physics", physics), ("lab", lab), ("chemistry", chemistry)] {
+        let (s, body) = send(&app, "POST", &format!("/api/v1/apps/{slug}/records"), ADMIN, Some(json!({ "data": { "_table_id": "cases", "title": name, "unit": id.to_string(), "ssn": format!("ssn-of-{name}") } }))).await;
+        assert_eq!(s, StatusCode::CREATED, "{body}");
+    }
+    // The indexes of a new app are built by a job. The rows above wrote their index entries as they were saved, so the
+    // fields are ready to filter and sort on.
+    let slug_for_db = slug.clone();
+    db.run(move |c| c.execute("UPDATE index_status SET state = 'ready' WHERE app_slug = $1", &[&slug_for_db]).unwrap());
     World { _db: db, app, science, physics, lab, chemistry, slug }
 }
 
@@ -224,4 +236,71 @@ async fn a_grant_below_the_workspace_does_not_open_the_app() {
     grant(&w, unit_grant("hal@state.edu", w.chemistry, None)).await;
     let err = tool(&w, "hal@state.edu", "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "limit": 200 })).await;
     assert!(err.is_err(), "hal reaches chemistry rows only, and the workspace is above chemistry");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Clearance
+// ---------------------------------------------------------------------------------------------------------------------
+
+fn cleared_grant(who: &str, role: &str, anchor: Uuid, clearance: Option<&str>) -> Value {
+    json!({ "holder_kind": "person", "holder_id": who, "role": role, "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "clearance": clearance, "source": "request", "reason": "Test grant" })
+}
+
+/// The `ssn` values a list shows, by title. A title with no `ssn` key shows `None`.
+async fn ssns(w: &World, who: &str, filter: Option<Value>) -> Result<std::collections::BTreeMap<String, Option<String>>, String> {
+    let mut args = json!({ "app_slug": w.slug, "table_id": "cases", "limit": 200 });
+    if let Some(f) = filter {
+        args["filter"] = f;
+    }
+    let page = tool(w, who, "list_records", args).await?;
+    Ok(page["records"].as_array().unwrap().iter().map(|r| (r["data"]["title"].as_str().unwrap().to_string(), r["data"]["ssn"].as_str().map(str::to_string))).collect())
+}
+
+fn unit_is(unit: Uuid) -> Value {
+    json!({ "conjunction": "And", "clauses": [{ "id": "c1", "field_name": "unit", "operator": "Equals", "value": unit.to_string() }] })
+}
+
+// 3. Cleared for protected fields in physics and not in chemistry: shown on a physics-only list, hidden on a list that
+// also holds chemistry rows.
+#[tokio::test]
+async fn a_field_is_shown_on_a_list_only_if_every_grant_that_contributes_rows_clears_it() {
+    let w = world().await;
+    grant(&w, cleared_grant("ida@state.edu", "viewer", w.science, Some("Restricted"))).await;
+    grant(&w, cleared_grant("ida@state.edu", "viewer", w.chemistry, None)).await;
+    // The science grant reaches the workspace. Ida reads physics through it, cleared.
+    let physics_only = ssns(&w, "ida@state.edu", Some(unit_is(w.physics))).await.unwrap();
+    assert_eq!(physics_only.keys().cloned().collect::<Vec<_>>(), ["physics"]);
+    assert_eq!(physics_only["physics"].as_deref(), Some("ssn-of-physics"), "a physics-only list shows the field");
+
+    let everything = ssns(&w, "ida@state.edu", None).await.unwrap();
+    assert!(everything.len() >= 4, "{everything:?}");
+    assert!(everything.values().all(|v| v.is_none()), "chemistry contributes rows and is not cleared, so the field is hidden: {everything:?}");
+}
+
+#[tokio::test]
+async fn a_viewer_is_cleared_for_nothing_protected_and_an_editor_for_everything() {
+    let w = world().await;
+    grant(&w, cleared_grant("viv@state.edu", "viewer", w.science, None)).await;
+    grant(&w, cleared_grant("ed@state.edu", "editor", w.science, None)).await;
+    grant(&w, cleared_grant("lo@state.edu", "editor", w.science, Some("Internal"))).await;
+    assert!(ssns(&w, "viv@state.edu", None).await.unwrap().values().all(|v| v.is_none()), "a viewer, as before");
+    assert!(ssns(&w, "ed@state.edu", None).await.unwrap().values().all(|v| v.is_some()), "an editor, as before");
+    assert!(ssns(&w, "lo@state.edu", None).await.unwrap().values().all(|v| v.is_none()), "a grant may lower an editor's clearance");
+}
+
+// 4. Filtering or sorting on a field that a contributing grant does not clear is `field_hidden`.
+#[tokio::test]
+async fn filtering_or_sorting_on_a_field_a_contributing_grant_does_not_clear_is_field_hidden() {
+    let w = world().await;
+    grant(&w, cleared_grant("ida@state.edu", "viewer", w.science, Some("Restricted"))).await;
+    grant(&w, cleared_grant("ida@state.edu", "viewer", w.chemistry, None)).await;
+    let by_ssn = json!({ "conjunction": "And", "clauses": [{ "id": "c1", "field_name": "ssn", "operator": "Equals", "value": "ssn-of-physics" }] });
+    let err = tool(&w, "ida@state.edu", "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "filter": by_ssn })).await.unwrap_err();
+    assert!(err.contains("'ssn'") && err.contains("cannot see"), "{err}");
+    let err = tool(&w, "ida@state.edu", "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "sort": { "field_name": "ssn", "direction": "Asc" } })).await.unwrap_err();
+    assert!(err.to_lowercase().contains("ssn"), "{err}");
+    // Someone cleared everywhere may.
+    grant(&w, cleared_grant("ed@state.edu", "editor", w.science, None)).await;
+    let ok = tool(&w, "ed@state.edu", "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "sort": { "field_name": "ssn", "direction": "Asc" } })).await;
+    assert!(ok.is_ok(), "{ok:?}");
 }

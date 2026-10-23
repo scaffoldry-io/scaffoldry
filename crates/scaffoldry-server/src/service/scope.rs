@@ -152,6 +152,13 @@ fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &
     by_rules.and(reach_scope(caller, app_slug, table, state))
 }
 
+/// For each hierarchy, the field that places a row of this table in it. Empty for a table that places no rows.
+pub fn row_place_of(app_slug: &str, table: &str, state: &SharedState) -> std::collections::BTreeMap<String, String> {
+    use scaffoldry_engine::HostRouter;
+    let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+    engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table)).map(|t| t.row_place.clone()).unwrap_or_default()
+}
+
 /// The rows of a table that places its rows (`row_place`) which the caller's grants reach. A table that places no rows
 /// is not narrowed. A container grant, a workspace membership and a Platform Admin reach every row. Rows reached by any
 /// grant are the union, and a row with no place is reached only by a container grant.

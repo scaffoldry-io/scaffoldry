@@ -311,21 +311,26 @@ pub fn row_contributions(holders: &HolderSet, grants: &[Grant], table: &Object, 
     out
 }
 
-/// The units a person reaches in each hierarchy that places the rows of a table, as one set per hierarchy: the union of
-/// what every grant contributes.
-pub fn row_reach(holders: &HolderSet, grants: &[Grant], table: &Object, row_hierarchies: &BTreeSet<String>, tree: &OrgTree, places: &dyn Places, now: i64) -> RowReach {
+/// The union of what the grants contribute: every row if any grant gives every row, else one set of units per hierarchy.
+pub fn fold_reach(contributions: &[Contribution]) -> RowReach {
     let mut sets: BTreeMap<String, BTreeSet<Uuid>> = BTreeMap::new();
-    for c in row_contributions(holders, grants, table, row_hierarchies, tree, places, now) {
-        match c.reach {
+    for c in contributions {
+        match &c.reach {
             RowReach::All => return RowReach::All,
             RowReach::Units(by_hierarchy) => {
                 for (h, units) in by_hierarchy {
-                    sets.entry(h).or_default().extend(units);
+                    sets.entry(h.clone()).or_default().extend(units.iter().copied());
                 }
             }
         }
     }
     RowReach::Units(sets)
+}
+
+/// The units a person reaches in each hierarchy that places the rows of a table, as one set per hierarchy: the union of
+/// what every grant contributes.
+pub fn row_reach(holders: &HolderSet, grants: &[Grant], table: &Object, row_hierarchies: &BTreeSet<String>, tree: &OrgTree, places: &dyn Places, now: i64) -> RowReach {
+    fold_reach(&row_contributions(holders, grants, table, row_hierarchies, tree, places, now))
 }
 
 /// Whether the rows on a page may show a field that needs clearance `needed`: every grant that contributes a row to the
