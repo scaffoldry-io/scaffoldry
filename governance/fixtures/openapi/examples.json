@@ -1,0 +1,21 @@
+{
+  "valid": {
+    "cases": [
+      { "title": "A case" },
+      { "title": "A full case", "status": "open", "tags": ["a", "b"], "score": 4.5, "due": "2026-10-23", "done": false, "related": ["3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11"], "files": [{ "ref_id": "r1", "name": "a.pdf" }] }
+    ],
+    "notes": [
+      { "body": "A note" }
+    ]
+  },
+  "invalid": {
+    "cases": [
+      { "status": "open" },
+      { "title": "Unknown select id", "status": "pending" },
+      { "title": "Unknown multi-select id", "tags": ["z"] },
+      { "title": "Above the maximum", "score": 11 },
+      { "title": "Wrong type", "done": "yes" },
+      { "title": "Unknown field", "invented": 1 }
+    ]
+  }
+}

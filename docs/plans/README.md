@@ -147,7 +147,7 @@ Faculty want quick, custom web apps with interfaces of their own. These rows let
 | 75 | [proposal-preview.md](proposal-preview.md) | 2 | The proposer and the people who may decide open the proposed app, read-only, under the stricter of the live and proposed rules | **COMPLETED** |
 | 76 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations | **COMPLETED** |
 | 77 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests. The `openapi` resource waits for row 78 | **COMPLETED** |
-| 78 | [integrations.md](integrations.md) | 3 | An API description generated for each app |
+| 78 | [integrations.md](integrations.md) | 3 | An API description generated for each app | **COMPLETED** |
 | 79 | [agent-coverage.md](agent-coverage.md) | 4 | An AI tool is set up in one step: an AGENTS.md section, a skill, and docs that match the server's version | |
 | 80 | [external-apps.md](external-apps.md) | 1 | An outside app is a registered client with a ceiling a person approved. A ceiling never names a sensitive field | |
 | 81 | [external-apps.md](external-apps.md) | 2 | Sign-in with OAuth 2.1 and PKCE, consent naming the client and its operator, one-hour tokens, and revocation | |
