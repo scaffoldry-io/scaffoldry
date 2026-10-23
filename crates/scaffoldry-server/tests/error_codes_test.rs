@@ -76,6 +76,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::ProposalChanged("Changed".into()), "proposal_changed", StatusCode::CONFLICT),
         (ServiceError::PreviewReadOnly("Read only".into()), "preview_read_only", StatusCode::FORBIDDEN),
         (ServiceError::TokenScope("Scoped".into()), "token_scope", StatusCode::FORBIDDEN),
+        (ServiceError::ClientSensitiveField("Sensitive".into()), "client_sensitive_field", StatusCode::BAD_REQUEST),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];
     for (e, _, _) in &samples {
@@ -87,6 +88,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::ProposalChanged(_)
             | ServiceError::PreviewReadOnly(_)
             | ServiceError::TokenScope(_)
+            | ServiceError::ClientSensitiveField(_)
             | ServiceError::NotFound(_)
             | ServiceError::BadRequest(_)
             | ServiceError::Invalid { .. }

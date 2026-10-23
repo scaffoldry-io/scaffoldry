@@ -478,6 +478,7 @@ impl ServerState {
         settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
+        settings_map.insert("oauth.allow_localhost".to_string(), serde_json::json!(false));
         settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
         add_sensitivity_defaults(&mut settings_map);
 

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/app-client.schema.json",
+  "title": "Outside app registration",
+  "description": "What a person sends to POST /api/v1/clients to register an outside app as a client with a ceiling. The ceiling is the most the client may ever use, whoever signs in. It never names a sensitive field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "operator", "kind", "redirect_uris", "ceiling"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "operator": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Who runs the app. The consent screen names them." },
+    "kind": { "enum": ["public", "confidential"], "description": "A browser app is public and uses PKCE alone. A server app is confidential and also holds a secret, shown once." },
+    "redirect_uris": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": { "type": "string", "pattern": "^https://[^*?#\\s]+$", "maxLength": 2048 },
+      "description": "Exact https addresses. No wildcard, no query string, no fragment. A localhost http address is allowed only when the setting oauth.allow_localhost is true, which this schema cannot know."
+    },
+    "ceiling": { "$ref": "#/$defs/ceiling" }
+  },
+  "$defs": {
+    "ceiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apps"],
+      "properties": {
+        "apps": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/app" } }
+      }
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app_slug", "tables"],
+      "properties": {
+        "app_slug": { "type": "string", "minLength": 1 },
+        "tables": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/table" } }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table_id"],
+      "properties": {
+        "table_id": { "type": "string", "minLength": 1 },
+        "read": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "write": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "create": { "type": "boolean" },
+        "delete": { "type": "boolean" }
+      }
+    }
+  }
+}
