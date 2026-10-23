@@ -81,6 +81,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "You can only give access inside your own units, and never above admin.", next: "Choose a unit you administer, or ask a Platform Admin." };
     case "grant_too_broad":
       return { message: "That would give access to everyone below the top of a hierarchy.", next: "Anchor it on one workspace as a viewer, or use the workspace's institutional visibility." };
+    case "proposal_changed":
+      return { message: "This proposal is not what you reviewed.", next: "Open it again, read what it now holds, and approve that." };
     case "storage_unavailable":
       return { message: "The server cannot reach its database right now.", next: "Try again in a minute. If it keeps happening, tell an administrator." };
     case "scanner_unavailable":

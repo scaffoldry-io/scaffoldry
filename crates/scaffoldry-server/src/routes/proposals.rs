@@ -55,9 +55,12 @@ async fn get_proposal(State(state): State<SharedState>, headers: HeaderMap, Path
 struct Decision {
     decision: String,
     rationale: String,
+    /// To approve: the digest of the proposal that was reviewed.
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 async fn decide_proposal(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<Decision>) -> Reply {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
-    blocking(move || crate::service::proposals::decide(&user, &id, &body.decision, &body.rationale, &state)).await.map(Json)
+    blocking(move || crate::service::proposals::decide(&user, &id, &body.decision, &body.rationale, body.digest.as_deref(), &state)).await.map(Json)
 }

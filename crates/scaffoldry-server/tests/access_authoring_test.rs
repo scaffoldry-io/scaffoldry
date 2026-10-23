@@ -153,7 +153,8 @@ async fn removing_a_rule_raises_access_loosened_requiring_second_person() {
         json!({
             "proposal_id": id1,
             "decision": "approve",
-            "rationale": "Initial setup"
+            "rationale": "Initial setup",
+            "digest": p1["digest"]
         }),
     )
     .await;
@@ -185,7 +186,8 @@ async fn removing_a_rule_raises_access_loosened_requiring_second_person() {
         json!({
             "proposal_id": id2,
             "decision": "approve",
-            "rationale": "Self-approval attempt"
+            "rationale": "Self-approval attempt",
+            "digest": p2["digest"]
         }),
     )
     .await;
@@ -204,7 +206,8 @@ async fn removing_a_rule_raises_access_loosened_requiring_second_person() {
         json!({
             "proposal_id": id2,
             "decision": "approve",
-            "rationale": "Approved by second admin"
+            "rationale": "Approved by second admin",
+            "digest": p2["digest"]
         }),
     )
     .await;

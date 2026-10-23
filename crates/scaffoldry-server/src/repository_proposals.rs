@@ -29,6 +29,8 @@ pub struct ProposalRow {
     /// `[{ "rule": <AutomationRule>, "base_version": <number> }]`. `base_version` is the rule's
     /// live version when it was proposed, and 0 for a new rule.
     pub rules: Option<Value>,
+    /// The digest of the content, set when the proposal is made. Empty on a proposal that predates it.
+    pub digest: String,
 }
 
 /// What an approval kept.
@@ -51,7 +53,7 @@ pub enum Approval {
 
 const COLUMNS: &str = "id, workspace_id, app_slug, base_version, manifest, checks, summary, status, proposed_by, decided_by, \
      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-     to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), rules";
+     to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), rules, COALESCE(digest, '')";
 
 fn row_of(r: &postgres::Row) -> ProposalRow {
     ProposalRow {
@@ -68,6 +70,7 @@ fn row_of(r: &postgres::Row) -> ProposalRow {
         created_at: r.get(10),
         decided_at: r.get(11),
         rules: r.get(12),
+        digest: r.get::<_, String>(13).trim().to_string(),
     }
 }
 
@@ -92,6 +95,52 @@ pub fn rule_changes(rules: &Option<Value>) -> Vec<(AutomationRule, u32)> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Writes `v` as compact JSON with every object's keys in sorted order. Arrays keep their order, which is meaningful.
+fn canonical_json(v: &Value, out: &mut String) {
+    match v {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&Value::String(k.clone()).to_string());
+                out.push(':');
+                canonical_json(&map[k], out);
+            }
+            out.push('}');
+        }
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                canonical_json(item, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&other.to_string()),
+    }
+}
+
+/// The digest of what a proposal would apply: the SHA-256 of one canonical JSON object holding the manifest, the text of
+/// each custom page's source keyed by page id, and the rules. Keys are sorted and there is no white space that carries
+/// meaning, so the same content gives the same digest however it was written down. An approval names this digest, and
+/// only content that has it can go live.
+pub fn proposal_digest(manifest: Option<&Value>, page_sources: &std::collections::BTreeMap<String, String>, rules: Option<&Value>) -> String {
+    let content = json!({
+        "manifest": manifest.cloned().unwrap_or(Value::Null),
+        "sources": page_sources,
+        "rules": rules.cloned().unwrap_or(Value::Null),
+    });
+    let mut canonical = String::new();
+    canonical_json(&content, &mut canonical);
+    Sha256::digest(canonical.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 pub fn manifest_sha256(manifest: &Value) -> String {
@@ -138,9 +187,9 @@ impl PostgresRepository {
                 )?;
             }
             tx.execute(
-                "INSERT INTO app_proposals (id, workspace_id, app_slug, base_version, manifest, checks, summary, proposed_by, rules) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-                &[&p.id, &p.workspace_id, &p.app_slug, &p.base_version, &p.manifest, &p.checks, &p.summary, &p.proposed_by, &p.rules],
+                "INSERT INTO app_proposals (id, workspace_id, app_slug, base_version, manifest, checks, summary, proposed_by, rules, digest) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                &[&p.id, &p.workspace_id, &p.app_slug, &p.base_version, &p.manifest, &p.checks, &p.summary, &p.proposed_by, &p.rules, &p.digest],
             )?;
             tx.commit()?;
             Ok(())
@@ -189,8 +238,8 @@ impl PostgresRepository {
     }
 
     /// Approves a proposal in one transaction on one connection. If any step fails, none is kept.
-    pub fn approve_proposal(&self, id: uuid::Uuid, decider: &str, rationale: &str) -> Result<Approval, RepositoryError> {
-        let (decider, rationale) = (decider.to_string(), rationale.to_string());
+    pub fn approve_proposal(&self, id: uuid::Uuid, decider: &str, rationale: &str, digest: &str) -> Result<Approval, RepositoryError> {
+        let (decider, rationale, digest) = (decider.to_string(), rationale.to_string(), digest.to_string());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let row = tx
@@ -249,6 +298,7 @@ impl PostgresRepository {
                         payload: json!({
                             "proposal_id": p.id.to_string(),
                             "manifest_sha256": manifest_sha256(raw),
+                            "digest": digest,
                             "base_version": p.base_version,
                         }),
                     },
@@ -261,7 +311,7 @@ impl PostgresRepository {
             // Each rule: its own ledger entry, a version row, and the live row.
             let mut saved_rules = Vec::new();
             for (rule, _) in changes {
-                let (saved, entry) = save_rule_in_tx(&mut tx, rule, &p.summary, Some(p.id), &decider, "institutional")?;
+                let (saved, entry) = save_rule_in_tx(&mut tx, rule, &p.summary, Some(p.id), Some(&digest), &decider, "institutional")?;
                 entries.push(entry);
                 saved_rules.push(saved);
             }
@@ -378,6 +428,7 @@ pub(crate) fn save_rule_in_tx(
     mut rule: AutomationRule,
     summary: &str,
     proposal_id: Option<uuid::Uuid>,
+    digest: Option<&str>,
     changed_by: &str,
     organization_code: &str,
 ) -> Result<(AutomationRule, LedgerEntry), RepositoryError> {
@@ -397,6 +448,7 @@ pub(crate) fn save_rule_in_tx(
                 "version": rule.version,
                 "rule_sha256": manifest_sha256(&rule_json),
                 "proposal_id": proposal_id.map(|p| p.to_string()),
+                "digest": digest,
             }),
         },
     )?;
@@ -458,7 +510,7 @@ impl PostgresRepository {
         let (rule, summary, by, org) = (rule.clone(), summary.to_string(), changed_by.to_string(), organization_code.to_string());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let saved = save_rule_in_tx(&mut tx, rule, &summary, proposal_id, &by, &org)?;
+            let saved = save_rule_in_tx(&mut tx, rule, &summary, proposal_id, None, &by, &org)?;
             tx.commit()?;
             Ok(saved)
         })

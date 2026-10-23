@@ -80,7 +80,7 @@ async fn change_app(app: &Router, slug: &str, extra: &str) -> String {
     let (err, p) = tool(app, OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": manifest(slug, Some(extra)), "summary": "A field" })).await;
     assert!(!err, "{p}");
     let id = p["proposal_id"].as_str().unwrap().to_string();
-    let (err, done) = tool(app, OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed" })).await;
+    let (err, done) = tool(app, OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed", "digest": p["digest"] })).await;
     assert!(!err, "{done}");
     id
 }
@@ -100,7 +100,7 @@ fn service_rule(id: &str, new_status: &str) -> Value {
 async fn change_rule(app: &Router, slug: &str, rule: Value) {
     let (err, p) = tool(app, OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "app_slug": slug, "rules": [rule], "summary": "A rule" })).await;
     assert!(!err, "{p}");
-    let (err, done) = tool(app, OWNER, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "Reviewed" })).await;
+    let (err, done) = tool(app, OWNER, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "Reviewed", "digest": p["digest"] })).await;
     assert!(!err, "{done}");
 }
 
@@ -162,11 +162,12 @@ async fn two_instances_approving_one_proposal_at_once_publish_it_once() {
     let (err, p) = tool(&a, OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": manifest(&slug, Some("nickname")), "summary": "A field" })).await;
     assert!(!err, "{p}");
     let id = p["proposal_id"].as_str().unwrap().to_string();
+    let digest = p["digest"].clone();
 
     let token = issue_test_token_and_user(OWNER);
     let decide = |app: Router, id: String| {
-        let token = token.clone();
-        tokio::spawn(async move { send_with(&app, "POST", &format!("/api/v1/proposals/{id}/decision"), &token, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await })
+        let (token, digest) = (token.clone(), digest.clone());
+        tokio::spawn(async move { send_with(&app, "POST", &format!("/api/v1/proposals/{id}/decision"), &token, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": digest }))).await })
     };
     let (x, y) = tokio::join!(decide(a.clone(), id.clone()), decide(b.clone(), id.clone()));
     let mut codes = vec![x.unwrap().0.as_u16(), y.unwrap().0.as_u16()];

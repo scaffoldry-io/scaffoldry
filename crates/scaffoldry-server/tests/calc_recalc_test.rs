@@ -197,7 +197,7 @@ async fn propose(w: &World, m: &AppManifest, summary: &str) -> Value {
 }
 
 async fn decide(w: &World, token: &str, proposal: &Value) -> Value {
-    tool_full(w, token, "decide_proposal", json!({ "proposal_id": proposal["proposal_id"], "decision": "approve", "rationale": "ok" })).await
+    tool_full(w, token, "decide_proposal", json!({ "proposal_id": proposal["proposal_id"], "decision": "approve", "rationale": "ok", "digest": proposal["digest"] })).await
 }
 
 /// Goes live and approves the formula `{score} * 3`. Returns how long the approval took.

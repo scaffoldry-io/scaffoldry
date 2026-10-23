@@ -126,7 +126,7 @@ async fn publish(w: &World, pages: Vec<Value>, sources: Vec<&str>) -> Result<(),
     )
     .await?;
     let id = proposed["proposal_id"].as_str().ok_or("a proposal id")?.to_string();
-    tool(w, &w.owner, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed" })).await?;
+    tool(w, &w.owner, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] })).await?;
     Ok(())
 }
 
@@ -407,7 +407,7 @@ async fn a_bundle_must_declare_libraries_on_the_license_list() {
 
     // A failed check is a flagged check: the proposer cannot approve their own bundle.
     let id = bad_license["proposal_id"].as_str().unwrap().to_string();
-    let err = tool(&w, &w.owner, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "x" })).await.unwrap_err();
+    let err = tool(&w, &w.owner, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "x", "digest": "0".repeat(64) })).await.unwrap_err();
     assert!(!err.is_empty(), "a flagged proposal needs a second person");
 }
 

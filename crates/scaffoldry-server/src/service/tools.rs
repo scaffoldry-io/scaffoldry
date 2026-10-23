@@ -250,7 +250,7 @@ Tool {
     },
     Tool {
         name: "decide_proposal",
-        description: "Approve or reject a proposal. A workspace owner or admin only. A change with a failed sensitivity, data loss, or page sensitivity check needs a second person.",
+        description: "Approve or reject a proposal. To approve, send the digest of the proposal you reviewed. A workspace owner or admin only. A change with a failed sensitivity, data loss, or page sensitivity check needs a second person.",
         input_schema: schema_decide_proposal,
         scope: Scope::Proposal("manage_workspace"),
         read_only: false,
@@ -1137,7 +1137,8 @@ fn schema_decide_proposal() -> Value {
         "properties": {
             "proposal_id": { "type": "string", "description": "UUID of the proposal" },
             "decision": { "type": "string", "description": "approve or reject" },
-            "rationale": { "type": "string", "description": "Why. It is recorded in the ledger" }
+            "rationale": { "type": "string", "description": "Why. It is recorded in the ledger" },
+            "digest": { "type": "string", "description": "To approve: the digest of the proposal you reviewed, from get_proposal. A different digest applies nothing" }
         },
         "required": ["proposal_id", "decision", "rationale"]
     })
@@ -1168,6 +1169,7 @@ struct DecideArgs {
     proposal_id: String,
     decision: String,
     rationale: String,
+    digest: Option<String>,
 }
 
 fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1198,7 +1200,7 @@ fn run_get_proposal(_caller: &AuthUser, _origin: &Origin, args: Value, state: &S
 
 fn run_decide_proposal(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: DecideArgs = parse(args)?;
-    crate::service::proposals::decide(caller, &a.proposal_id, &a.decision, &a.rationale, state)
+    crate::service::proposals::decide(caller, &a.proposal_id, &a.decision, &a.rationale, a.digest.as_deref(), state)
 }
 
 fn schema_decide_process() -> Value {

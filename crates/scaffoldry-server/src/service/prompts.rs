@@ -25,7 +25,7 @@ Read the resource scaffoldry://guide/building-apps first. Then, in order:\n\
 2. Call list_apps for it, so you do not duplicate an app that exists. If one fits, call describe_app and change it instead.\n\
 3. Draft a manifest. Use a Select for a fixed set of choices and a Link for a reference to another table. Mark a field ferpa_sensitive when it identifies a student.\n\
 4. Call propose_app_change with the whole manifest and a one-sentence summary. Show the person the checks it returns.\n\
-5. Stop. Only when the person says to, or an admin has approved, call decide_proposal. Never say the app is live before the status is Approved.\n\
+5. Stop. Only when the person says to, or an admin has approved, call decide_proposal with the digest the proposal showed. Never say the app is live before the status is Approved.\n\
 6. Call create_record to add the first row.",
     },
     Prompt {

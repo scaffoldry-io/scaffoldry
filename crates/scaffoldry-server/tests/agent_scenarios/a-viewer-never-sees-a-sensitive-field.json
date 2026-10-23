@@ -56,7 +56,8 @@
         }
       },
       "save": {
-        "p": "$.proposal_id"
+        "p": "$.proposal_id",
+        "d_p": "$.digest"
       },
       "expect": {
         "checks.sensitivity": "fail"
@@ -68,7 +69,8 @@
       "args": {
         "proposal_id": "$p",
         "decision": "approve",
-        "rationale": "Reviewed"
+        "rationale": "Reviewed",
+        "digest": "$d_p"
       },
       "expect": {
         "status": "Approved"

@@ -81,6 +81,7 @@ pub const ERROR_CODES: &[&str] = &[
     "storage_unavailable",
     "grant_outside_scope",
     "grant_too_broad",
+    "proposal_changed",
 ];
 
 #[derive(Debug, Clone)]
@@ -143,6 +144,8 @@ pub enum ServiceError {
     GrantOutsideScope(String),
     /// A grant to everyone below a hierarchy's root. Institutional visibility already says that.
     GrantTooBroad(String),
+    /// An approval named a digest that is not the proposal's. Nothing was applied.
+    ProposalChanged(String),
     Internal(String),
 }
 
@@ -182,7 +185,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -215,6 +218,7 @@ impl ServiceError {
             Self::UndoConflict { .. } => "undo_conflict",
             Self::GrantOutsideScope(_) => "grant_outside_scope",
             Self::GrantTooBroad(_) => "grant_too_broad",
+            Self::ProposalChanged(_) => "proposal_changed",
             Self::Internal(_) => "internal",
         }
     }
@@ -238,6 +242,7 @@ impl ServiceError {
             | Self::ConstraintViolated(msg)
             | Self::GrantOutsideScope(msg)
             | Self::GrantTooBroad(msg)
+            | Self::ProposalChanged(msg)
             | Self::Internal(msg) => msg,
             Self::ConstraintViolation { message, .. } | Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }

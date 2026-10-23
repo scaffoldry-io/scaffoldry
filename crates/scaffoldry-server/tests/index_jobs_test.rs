@@ -217,7 +217,7 @@ async fn approve_sort_on_score(w: &World, rows: i64) -> Duration {
     let (err, p) = tool(w, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": serde_json::to_value(&proposed).unwrap(), "summary": "Sort by score" })).await;
     assert!(!err, "{}", p);
     let started = Instant::now();
-    let (err, done) = tool(w, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "ok" })).await;
+    let (err, done) = tool(w, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "ok", "digest": p["digest"] })).await;
     assert!(!err, "{}", done);
     started.elapsed()
 }

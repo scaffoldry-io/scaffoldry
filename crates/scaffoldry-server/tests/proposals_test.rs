@@ -140,7 +140,8 @@ async fn propose(w: &World, token: &str, m: Value, sources: Vec<String>) -> (boo
 }
 
 async fn decide(w: &World, token: &str, id: &str, decision: &str) -> (bool, Value) {
-    tool(&w.app, token, "decide_proposal", json!({ "proposal_id": id, "decision": decision, "rationale": "Reviewed" })).await
+    let digest = tool(&w.app, token, "get_proposal", json!({ "proposal_id": id })).await.1["digest"].clone();
+    tool(&w.app, token, "decide_proposal", json!({ "proposal_id": id, "decision": decision, "rationale": "Reviewed", "digest": digest })).await
 }
 
 fn check<'a>(result: &'a Value, name: &str) -> &'a Value {

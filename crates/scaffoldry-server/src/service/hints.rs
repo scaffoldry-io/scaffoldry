@@ -74,6 +74,7 @@ pub fn hint_for(err: &ServiceError) -> String {
         "undo_conflict" => "Call get_record_history to see what changed since, then decide what to keep.",
         "position_full" => "Call list_workspaces to find the unit, then ask a Platform Admin to replace the holder.",
         "view_as_read_only" => "Exit the view to make changes. Call list_records to keep reading in the meantime.",
+        "proposal_changed" => "Call get_proposal, read what it now holds, and approve with the digest it returns.",
         "grant_outside_scope" | "grant_too_broad" => "Ask for access inside your own units, and call list_workspaces to see what you administer.",
         "unauthorized" => "Sign in again, then call list_workspaces to confirm access.",
         _ => "Retry once, and call list_workspaces to check that the server is answering.",

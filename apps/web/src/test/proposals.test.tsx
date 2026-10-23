@@ -12,6 +12,7 @@ const flagged: ProposalRow = {
   workspace_id: "ws-1",
   app_slug: "awards",
   base_version: 3,
+  digest: "a".repeat(64),
   status: "Pending",
   summary: "Add a dashboard page",
   proposed_by: "owner@state.edu",
@@ -77,7 +78,7 @@ describe("Proposals", () => {
     expect(confirm).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/reason for decision/i), { target: { value: "Checked the grants" } });
     fireEvent.click(confirm);
-    await waitFor(() => expect(decide).toHaveBeenCalledWith("p-1", "approve", "Checked the grants"));
+    await waitFor(() => expect(decide).toHaveBeenCalledWith("p-1", "approve", "Checked the grants", "a".repeat(64)));
   });
 });
 

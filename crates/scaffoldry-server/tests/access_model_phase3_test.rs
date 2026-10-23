@@ -234,10 +234,10 @@ async fn lowering_a_tables_sensitivity_raises_coordinates_widened_and_needs_a_se
     assert_eq!(check(&removed, "coordinates_widened")["outcome"], "fail", "a removed coordinate falls back to the container's, which is lower");
 
     // The proposer cannot approve. Another person can.
-    let (err, msg) = tool(&app, OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Mine" })).await;
+    let (err, msg) = tool(&app, OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Mine", "digest": lowered["digest"] })).await;
     assert!(err, "the proposer is refused: {msg}");
     assert!(msg.as_str().unwrap_or("").contains("second person") || msg.as_str().unwrap_or("").contains("proposer"), "{msg}");
-    let (err, done) = tool(&app, ADMIN, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed" })).await;
+    let (err, done) = tool(&app, ADMIN, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed", "digest": lowered["digest"] })).await;
     assert!(!err, "a different person approves: {done}");
 }
 
