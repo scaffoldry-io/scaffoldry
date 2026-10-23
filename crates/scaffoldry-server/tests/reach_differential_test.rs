@@ -257,6 +257,37 @@ fn test_differential_20_worlds_and_properties() {
             }
         }
         let _ = (both, only_one);
+
+        // 6. Row filters on: the set of units a person reaches in a table's rows agrees with `role_at` row by row. Every
+        // object is a row here, grouped with the objects that share its containers and domain, which is what a table is.
+        let row_hierarchies: BTreeSet<String> = opts.hierarchies.iter().cloned().collect();
+        let mut tables: std::collections::BTreeMap<(Vec<String>, String), Vec<&Object>> = std::collections::BTreeMap::new();
+        for obj in &world.objects {
+            tables.entry((obj.containers.clone(), obj.domain.clone())).or_default().push(obj);
+        }
+        let (mut by_all, mut by_units, mut by_none) = (0, 0, 0);
+        for person in world.people.iter().step_by(10) {
+            let holders = holder_set(&person.eppn, &holdings_of(&person.eppn), &tree, groups_of(&person.eppn), now);
+            let fetched = grants_held_by(&holders, &world.grants);
+            for ((containers, domain), rows) in &tables {
+                let table = Object { containers: containers.clone(), units: Default::default(), domain: domain.clone() };
+                let reach = scaffoldry_core::reach::row_reach(&holders, &fetched, &table, &row_hierarchies, &tree, &places, now);
+                match &reach {
+                    scaffoldry_core::reach::RowReach::All => by_all += 1,
+                    scaffoldry_core::reach::RowReach::Units(m) if m.values().all(|s| s.is_empty()) => by_none += 1,
+                    _ => by_units += 1,
+                }
+                for row in rows {
+                    let by_set = match &reach {
+                        scaffoldry_core::reach::RowReach::All => true,
+                        scaffoldry_core::reach::RowReach::Units(m) => m.iter().any(|(h, set)| row.units.get(h).is_some_and(|u| set.contains(u))),
+                    };
+                    let by_role = role_at(&holders, &fetched, row, &tree, &places, now).is_some();
+                    assert_eq!(by_set, by_role, "world {w}: {} row {:?}: the unit set says {by_set}, role_at says {by_role}", person.eppn, row);
+                }
+            }
+        }
+        assert!(by_all > 0 && by_units > 0 && by_none > 0, "world {w}: the row filter is exercised three ways: {by_all} all, {by_units} units, {by_none} none");
     }
 
     let elapsed = total_start.elapsed();
