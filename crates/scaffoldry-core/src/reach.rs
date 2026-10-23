@@ -229,3 +229,57 @@ pub fn role_at(holders: &HolderSet, grants: &[Grant], object: &Object, tree: &Or
     let top = reaching.iter().map(|g| g.role).max()?;
     Some((top, reaching.iter().filter(|g| g.role == top).map(|g| g.id).collect()))
 }
+
+/// What a person reaches among the rows of one table (access model phase 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowReach {
+    /// Every row. A list adds no predicate.
+    All,
+    /// The rows placed in these units, for each hierarchy that places the table's rows. A hierarchy with no entry
+    /// reaches nothing. Rows reached by any hierarchy are the union.
+    Units(BTreeMap<String, BTreeSet<Uuid>>),
+}
+
+/// The units a person reaches in each hierarchy that places the rows of a table, as one set per hierarchy.
+///
+/// `table` is the table as an object: its containers, the unit it sits at in each hierarchy, and its domain. A row is
+/// the same object with its own unit in each hierarchy in `row_hierarchies`. This returns what `reaches` would give for
+/// every such row, in one pass over the grants and without looking at a row. A test keeps the two the same.
+///
+/// A grant in a hierarchy that does not place rows covers the table as a whole, so it gives `All` or nothing.
+pub fn row_reach(holders: &HolderSet, grants: &[Grant], table: &Object, row_hierarchies: &BTreeSet<String>, tree: &OrgTree, places: &dyn Places, now: i64) -> RowReach {
+    let mut sets: BTreeMap<String, BTreeSet<Uuid>> = BTreeMap::new();
+    for g in grants {
+        if g.revoked || g.valid_from > now || g.valid_until.is_some_and(|u| u <= now) || !holders.is_holder(g) {
+            continue;
+        }
+        // A row has no domain of its own. The table's domain is every row's.
+        if g.domain.as_deref().is_some_and(|d| !places.domain_within(&table.domain, d)) {
+            continue;
+        }
+        if g.anchor_kind == AnchorKind::Container {
+            if g.anchor_id.as_ref().is_some_and(|a| table.containers.contains(a)) {
+                return RowReach::All;
+            }
+            continue;
+        }
+        let Some(h) = g.hierarchy.as_deref() else { continue };
+        // The anchors of this grant: the one it names, or each unit where the holder holds the position.
+        let anchors: Vec<Uuid> = match g.anchor_kind {
+            AnchorKind::Unit => g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok()).into_iter().collect(),
+            _ if g.holder_kind != HolderKind::Position => Vec::new(),
+            _ => {
+                let (key, named) = position_of(&g.holder_id);
+                holders.positions.iter().filter(|(k, u)| k == key && named.is_none_or(|n| n == *u)).map(|(_, u)| *u).collect()
+            }
+        };
+        for anchor in anchors.into_iter().filter(|a| tree.hierarchy_of(*a) == Some(h)) {
+            if row_hierarchies.contains(h) {
+                sets.entry(h.to_string()).or_default().extend(tree.descendants(anchor, g.depth));
+            } else if table.units.get(h).is_some_and(|u| tree.hierarchy_of(*u) == Some(h) && within_depth(tree, *u, anchor, g.depth)) {
+                return RowReach::All;
+            }
+        }
+    }
+    RowReach::Units(sets)
+}

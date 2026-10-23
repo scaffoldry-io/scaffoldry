@@ -203,3 +203,123 @@ fn a_holder_is_every_unit_where_they_hold_a_role_with_its_ancestors() {
     assert_eq!(set.person, "ada@x.edu");
     assert_eq!(set.positions, vec![("chair".to_string(), w.physics)]);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Access model phase 6: the reach of a person over the rows of a table, as a set of units.
+// ---------------------------------------------------------------------------------------------------------------------
+
+use scaffoldry_core::reach::{row_reach, RowReach};
+use std::collections::BTreeSet;
+
+fn person_set(w: &World, who: &str) -> scaffoldry_core::reach::HolderSet {
+    holder_set(who, &[], &w.tree, Vec::<String>::new(), NOW)
+}
+
+fn rows_of(units: &[Uuid]) -> BTreeSet<Uuid> {
+    units.iter().copied().collect()
+}
+
+fn table_object(w: &World) -> Object {
+    object_in(w.root, "institution")
+}
+
+fn units_of(r: RowReach, h: &str) -> BTreeSet<Uuid> {
+    match r {
+        RowReach::Units(map) => map.get(h).cloned().unwrap_or_default(),
+        RowReach::All => panic!("expected a set of units, got all"),
+    }
+}
+
+#[test]
+fn a_unit_grant_reaches_the_rows_in_its_subtree_and_a_depth_limits_it() {
+    let w = world();
+    let me = person_set(&w, "ada@state.edu");
+    let rows = ["academic".to_string()].into_iter().collect::<BTreeSet<_>>();
+    let g = |depth| vec![grant(1, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.science.to_string())), depth)];
+
+    let all = row_reach(&me, &g(None), &table_object(&w), &rows, &w.tree, &Domains, NOW);
+    assert_eq!(units_of(all, "academic"), rows_of(&[w.science, w.physics, w.lab, w.chemistry]));
+    let one = row_reach(&me, &g(Some(1)), &table_object(&w), &rows, &w.tree, &Domains, NOW);
+    assert_eq!(units_of(one, "academic"), rows_of(&[w.science, w.physics, w.chemistry]));
+    let anchor_only = row_reach(&me, &g(Some(0)), &table_object(&w), &rows, &w.tree, &Domains, NOW);
+    assert_eq!(units_of(anchor_only, "academic"), rows_of(&[w.science]));
+}
+
+#[test]
+fn a_container_grant_reaches_every_row_and_a_grant_on_the_tables_own_unit_does_too_when_rows_are_not_placed() {
+    let w = world();
+    let me = person_set(&w, "ada@state.edu");
+    let none: BTreeSet<String> = BTreeSet::new();
+    let container = vec![grant(1, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Container, Some("workspace:ws".to_string())), None)];
+    assert_eq!(row_reach(&me, &container, &table_object(&w), &["academic".to_string()].into(), &w.tree, &Domains, NOW), RowReach::All);
+    // The table sits at `physics` and its rows are not placed: a grant at `science` covers the table, so every row.
+    let table = object_in(w.physics, "institution");
+    let unit = vec![grant(2, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.science.to_string())), None)];
+    assert_eq!(row_reach(&me, &unit, &table, &none, &w.tree, &Domains, NOW), RowReach::All);
+    let elsewhere = vec![grant(3, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.arts.to_string())), None)];
+    assert_eq!(units_of_or_empty(row_reach(&me, &elsewhere, &table, &none, &w.tree, &Domains, NOW)), BTreeSet::new());
+}
+
+fn units_of_or_empty(r: RowReach) -> BTreeSet<Uuid> {
+    match r {
+        RowReach::Units(map) => map.values().flatten().copied().collect(),
+        RowReach::All => panic!("expected no reach"),
+    }
+}
+
+#[test]
+fn several_grants_are_a_union_and_each_keeps_its_own_domain_and_validity() {
+    let w = world();
+    let me = person_set(&w, "ada@state.edu");
+    let rows = ["academic".to_string()].into_iter().collect::<BTreeSet<_>>();
+    let mut in_domain = grant(1, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.physics.to_string())), None);
+    in_domain.domain = Some("research".to_string());
+    let mut wrong_domain = grant(2, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.chemistry.to_string())), None);
+    wrong_domain.domain = Some("finance".to_string());
+    let mut expired = grant(3, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.arts.to_string())), None);
+    expired.valid_until = Some(NOW - 1);
+    let mut revoked = grant(4, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.arts.to_string())), None);
+    revoked.revoked = true;
+    let other_person = grant(5, (HolderKind::Person, "bo@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.arts.to_string())), None);
+    let second = grant(6, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.lab.to_string())), Some(0));
+
+    let table = object_in(w.root, "grants");
+    let got = row_reach(&me, &[in_domain, wrong_domain, expired, revoked, other_person, second], &table, &rows, &w.tree, &Domains, NOW);
+    assert_eq!(units_of(got, "academic"), rows_of(&[w.physics, w.lab]), "physics and below from one grant, the lab from the other, and nothing from the rest");
+}
+
+#[test]
+fn a_position_grant_on_the_holders_own_unit_reaches_the_rows_below_the_unit_the_person_holds() {
+    let w = world();
+    let rows = ["academic".to_string()].into_iter().collect::<BTreeSet<_>>();
+    let holdings = [Holding { unit: w.physics, position_key: Some("chair".to_string()), effective: None, end: None }];
+    let me = holder_set("ada@state.edu", &holdings, &w.tree, Vec::<String>::new(), NOW);
+    let g = vec![grant(1, (HolderKind::Position, "chair"), Role::Editor, (AnchorKind::HolderUnit, None), None)];
+    let got = row_reach(&me, &g, &table_object(&w), &rows, &w.tree, &Domains, NOW);
+    assert_eq!(units_of(got, "academic"), rows_of(&[w.physics, w.lab]));
+}
+
+/// The set and `reaches` must agree row by row, for every unit a row could be in.
+#[test]
+fn the_set_agrees_with_reaches_for_a_row_in_every_unit() {
+    let w = world();
+    let rows = ["academic".to_string()].into_iter().collect::<BTreeSet<_>>();
+    let holdings = [Holding { unit: w.chemistry, position_key: Some("chair".to_string()), effective: None, end: None }];
+    let me = holder_set("ada@state.edu", &holdings, &w.tree, Vec::<String>::new(), NOW);
+    let grants = vec![
+        grant(1, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.physics.to_string())), Some(1)),
+        grant(2, (HolderKind::Position, "chair"), Role::Editor, (AnchorKind::HolderUnit, None), Some(0)),
+        grant(3, (HolderKind::Unit, &w.science.to_string()), Role::Viewer, (AnchorKind::Unit, Some(w.arts.to_string())), None),
+    ];
+    let table = table_object(&w);
+    let set = match row_reach(&me, &grants, &table, &rows, &w.tree, &Domains, NOW) {
+        RowReach::Units(m) => m.get("academic").cloned().unwrap_or_default(),
+        RowReach::All => panic!("not all"),
+    };
+    for unit in [w.root, w.science, w.physics, w.lab, w.chemistry, w.arts] {
+        let mut row = table.clone();
+        row.units.insert("academic".to_string(), unit);
+        let by_reaches = role_at(&me, &grants, &row, &w.tree, &Domains, NOW).is_some();
+        assert_eq!(set.contains(&unit), by_reaches, "row in unit {unit}");
+    }
+}
