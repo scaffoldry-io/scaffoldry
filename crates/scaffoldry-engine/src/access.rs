@@ -284,7 +284,8 @@ pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str,
 /// The same predicate as `to_sql`, for a statement that reads records in order and stops after a page. An OR of
 /// comparisons is probed record by record, so the page stops once it has enough matches. `to_sql` would build the union
 /// of the sets whole, sort it, and only then cut. `None` when the predicate is not an OR of equality or membership tests,
-/// where the set form is already right. Do not use it for a statement that reads every match, such as a count: there the
+/// where the set form is already right. `OFFSET 0` keeps the planner from turning each probe back into a hashed set, which
+/// would be built whole and could not stop early. Do not use it for a statement that reads every match, such as a count: there the
 /// probes would scan the table.
 pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> Result<Option<(String, Vec<Param>)>, CompileError> {
     let Pred::Or(parts) = pred else { return Ok(None) };
@@ -299,7 +300,7 @@ pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug
         let Set::Pos(set) = c.cmp(field, *op, value)? else { unreachable!("an equality selects a positive set") };
         // A comparison with nothing to match selects nothing.
         if set != none() {
-            probes.push(format!("EXISTS ({set} AND i.record_id = {id_expr})"));
+            probes.push(format!("EXISTS ({set} AND i.record_id = {id_expr} OFFSET 0)"));
         }
     }
     let sql = if probes.is_empty() { "FALSE".to_string() } else { format!("({})", probes.join(" OR ")) };

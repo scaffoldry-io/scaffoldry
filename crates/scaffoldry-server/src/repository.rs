@@ -587,7 +587,30 @@ pub struct ScopePlan {
     pub indexed: Vec<scaffoldry_engine::FieldSpec>,
 }
 
+/// How many values a scope may name before a statement that reads every match is planned for a large set.
+///
+/// ponytail: measured on 1,000,000 rows with 505 rows in each unit, a grouped count over a scope of N units took, with the
+/// planner free to choose and with nested loops off: 50 units 149 ms and 392 ms, 100 units 296 ms and 439 ms, 200 units
+/// 607 ms and 582 ms, 495 units 2,190 ms and 721 ms. The planner estimates a membership list at one-seventeenth of its
+/// real size, so it keeps choosing a probe for each id. The two cross near 200 units. 150 is a little before that.
+pub const LARGE_SCOPE_VALUES: usize = 150;
+
 impl ScopePlan {
+    /// True when the scope names enough values that the planner should hash them and not probe for each.
+    pub fn is_large(&self) -> bool {
+        fn values(p: &scaffoldry_core::access::Pred) -> usize {
+            use scaffoldry_core::access::{Operand, Pred};
+            match p {
+                Pred::True => 0,
+                Pred::Cmp { value: Operand::Literal(serde_json::Value::Array(items)), .. } => items.len(),
+                Pred::Cmp { .. } => 1,
+                Pred::And(ps) | Pred::Or(ps) => ps.iter().map(values).sum(),
+                Pred::Not(p) => values(p),
+            }
+        }
+        values(&self.pred) >= LARGE_SCOPE_VALUES
+    }
+
     /// The `AND` fragment for a statement that names the record id as `id_expr`, with placeholders
     /// from `first_param`, and the parameters it needs. A scope the engine cannot compile reads nothing.
     pub fn clause_at(
@@ -1790,10 +1813,18 @@ impl PostgresRepository {
     ) -> Result<AggregateResultRaw, RepositoryError> {
         let (sql, params) = build_aggregate_sql(plan);
         let is_group_by = plan.group_by.is_some();
+        let large_scope = plan.scope.as_ref().is_some_and(ScopePlan::is_large);
         self.with_client(move |client| {
             let boxed = to_sql_params(params);
             let refs: Vec<&(dyn postgres::types::ToSql + Sync)> =
                 boxed.iter().map(|b| b.as_ref()).collect();
+            // A scope of many units is read whole. The planner expects a fraction of it and probes for each id, so the
+            // statement is planned for the real size: hash the set and read the grouped field once.
+            let mut tx = client.transaction()?;
+            if large_scope {
+                tx.batch_execute("SET LOCAL enable_nestloop = off")?;
+            }
+            let client = &mut tx;
             if is_group_by {
                 let rows = client.query(&sql, &refs)?;
                 let mut groups = Vec::new();
