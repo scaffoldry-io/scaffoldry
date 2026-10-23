@@ -103,7 +103,7 @@ fn ceiling(w: &World, read: &[&str], write: &[&str], create: bool) -> Value {
     json!({ "apps": [{ "app_slug": w.slug, "tables": [{ "table_id": "proposals", "read": read, "write": write, "create": create, "delete": false }] }] })
 }
 
-fn registration(w: &World, kind: &str, ceiling: Value) -> Value {
+fn registration(_w: &World, kind: &str, ceiling: Value) -> Value {
     json!({ "name": "Grant tracker", "operator": "Physics Department", "kind": kind, "redirect_uris": ["https://tracker.example.edu/callback"], "ceiling": ceiling })
 }
 
