@@ -133,7 +133,7 @@ fn load(shadow: &str, row: &crate::repository_proposals::ProposalRow, state: &Sh
         return Ok(());
     }
     let manifest = proposed_manifest(row, state)?;
-    state.engine.write().unwrap_or_else(|p| p.into_inner()).register_manifest(manifest).map_err(internal)
+    state.hold_preview(manifest).map_err(internal)
 }
 
 /// Whether the preview token may be used now. It may while its proposal is pending. This also builds the preview
