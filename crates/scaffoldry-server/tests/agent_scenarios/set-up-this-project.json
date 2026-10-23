@@ -1,0 +1,17 @@
+{
+  "id": "set-up-this-project",
+  "ask": "Set up this project to use Scaffoldry.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "get_agent_kit",
+      "args": {},
+      "expect": {
+        "files.0.path": "AGENTS.md",
+        "files": { "len": 5 },
+        "skill.paths": { "len": 2 }
+      }
+    }
+  ]
+}

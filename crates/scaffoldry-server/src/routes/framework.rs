@@ -6,7 +6,7 @@ use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
 use serde_json::json;
 
 pub fn router() -> Router<SharedState> {
-    Router::new().route("/framework/spec", get(get_framework_specification))
+    Router::new().route("/framework/spec", get(get_framework_specification)).route("/agent-kit", get(get_agent_kit))
 }
 
 pub fn build_framework_spec_json() -> serde_json::Value {
@@ -165,4 +165,9 @@ async fn get_framework_specification(
     State(_state): State<SharedState>,
 ) -> impl IntoResponse {
     Json(build_framework_spec_json())
+}
+
+/// The same kit the `get_agent_kit` tool returns, for people who set up by hand.
+async fn get_agent_kit() -> impl IntoResponse {
+    Json(crate::service::agent_kit::kit())
 }
