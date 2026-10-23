@@ -180,7 +180,8 @@ jobs:
   # nightly, and by hand. A skipped run still reports success, so `validate` does not wait on it.
   million-rows:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Two proofs seed 1,000,000 rows each. The pair took 28 minutes on a runner with the old limit of 30.
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
