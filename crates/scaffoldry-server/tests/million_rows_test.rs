@@ -486,11 +486,11 @@ fn seed_units() {
                 &[&key, &(DIVISIONS as i32), &(LEAVES as i32)],
             )
             .unwrap();
-            c.execute("INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) SELECT $1, id, id, 0 FROM organizations WHERE hierarchy_key = $1", &[&key]).unwrap();
-            c.execute("INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) SELECT $1, parent_id, id, 1 FROM organizations WHERE hierarchy_key = $1 AND parent_id IS NOT NULL", &[&key]).unwrap();
+            c.execute("INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) SELECT $1::varchar, id, id, 0 FROM organizations WHERE hierarchy_key = $1::varchar", &[&key]).unwrap();
+            c.execute("INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) SELECT $1::varchar, parent_id, id, 1 FROM organizations WHERE hierarchy_key = $1::varchar AND parent_id IS NOT NULL", &[&key]).unwrap();
             c.execute(
-                "INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) SELECT $1, p.parent_id, o.id, 2 FROM organizations o JOIN organizations p ON o.parent_id = p.id \
-                 WHERE o.hierarchy_key = $1 AND p.parent_id IS NOT NULL",
+                "INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) SELECT $1::varchar, p.parent_id, o.id, 2 FROM organizations o JOIN organizations p ON o.parent_id = p.id \
+                 WHERE o.hierarchy_key = $1::varchar AND p.parent_id IS NOT NULL",
                 &[&key],
             )
             .unwrap();
