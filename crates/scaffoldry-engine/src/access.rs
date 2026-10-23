@@ -280,3 +280,28 @@ pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str,
     };
     Ok((sql, c.params))
 }
+
+/// The same predicate as `to_sql`, for a statement that reads records in order and stops after a page. An OR of
+/// comparisons is probed record by record, so the page stops once it has enough matches. `to_sql` would build the union
+/// of the sets whole, sort it, and only then cut. `None` when the predicate is not an OR of equality or membership tests,
+/// where the set form is already right. Do not use it for a statement that reads every match, such as a count: there the
+/// probes would scan the table.
+pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> Result<Option<(String, Vec<Param>)>, CompileError> {
+    let Pred::Or(parts) = pred else { return Ok(None) };
+    if parts.len() < 2 || !parts.iter().all(|p| matches!(p, Pred::Cmp { op: Op::Eq | Op::In, .. })) {
+        return Ok(None);
+    }
+    check(pred)?;
+    let mut c = Compiler { indexed, params: vec![Param::Text(app_slug.to_string()), Param::Text(table_id.to_string())], first: first_param };
+    let mut probes = Vec::with_capacity(parts.len());
+    for part in parts {
+        let Pred::Cmp { field, op, value } = part else { unreachable!("checked above") };
+        let Set::Pos(set) = c.cmp(field, *op, value)? else { unreachable!("an equality selects a positive set") };
+        // A comparison with nothing to match selects nothing.
+        if set != none() {
+            probes.push(format!("EXISTS ({set} AND i.record_id = {id_expr})"));
+        }
+    }
+    let sql = if probes.is_empty() { "FALSE".to_string() } else { format!("({})", probes.join(" OR ")) };
+    Ok(Some((sql, c.params)))
+}

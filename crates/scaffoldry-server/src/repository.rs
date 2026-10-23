@@ -597,15 +597,30 @@ impl ScopePlan {
         table_id: &str,
         first_param: usize,
     ) -> (String, Vec<SqlParam>) {
-        use scaffoldry_engine::access::{to_sql, Param};
-        match to_sql(
-            &self.pred,
-            &self.indexed,
-            id_expr,
-            app_slug,
-            table_id,
-            first_param,
-        ) {
+        use scaffoldry_engine::access::to_sql;
+        Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param))
+    }
+
+    /// The same, for a statement that reads records in order and stops after a page. An OR of memberships is probed
+    /// record by record there, which lets the page stop early. A statement that reads every match must use `clause_at`.
+    pub fn clause_for_page(
+        &self,
+        id_expr: &str,
+        app_slug: &str,
+        table_id: &str,
+        first_param: usize,
+    ) -> (String, Vec<SqlParam>) {
+        use scaffoldry_engine::access::to_sql_probes;
+        match to_sql_probes(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
+            Ok(Some(compiled)) => Self::wrap(Ok(compiled)),
+            Ok(None) => self.clause_at(id_expr, app_slug, table_id, first_param),
+            Err(e) => Self::wrap(Err(e)),
+        }
+    }
+
+    fn wrap(compiled: Result<(String, Vec<scaffoldry_engine::access::Param>), scaffoldry_engine::access::CompileError>) -> (String, Vec<SqlParam>) {
+        use scaffoldry_engine::access::Param;
+        match compiled {
             Ok((sql, added)) => {
                 let params = added
                     .into_iter()
@@ -726,7 +741,9 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
                 },
                 q.table_id.clone(),
             );
-            plan.clause("dataset_records.id", &app, &table, &mut params)
+            let (sql, added) = plan.clause_for_page("dataset_records.id", &app, &table, params.len() + 1);
+            params.extend(added);
+            sql
         }
         None => String::new(),
     };

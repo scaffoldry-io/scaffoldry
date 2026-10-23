@@ -699,6 +699,21 @@ async fn million_rows_with_grants() {
         let (sql, params) = build_record_query(&appslug, &scoped(pred));
         plans.push((name, plan_of(&w, &sql, &params)));
     }
+    // The grouped count, over the 500 units of one hierarchy.
+    let agg = AggregatePlan {
+        app_slug: appslug.clone(),
+        table_id: "t1".into(),
+        function: AggregateFunction::Count,
+        field: None,
+        driver: None,
+        group_by: Some("status".into()),
+        clauses: vec![],
+        expr: None,
+        scope: Some(ScopePlan { pred: in_set("u1", units_of("gate_a", 1..=5)), indexed: fields.clone() }),
+        ..Default::default()
+    };
+    let (sql, params) = build_aggregate_sql(&agg);
+    plans.push(("grouped count over 500 units", plan_of(&w, &sql, &params)));
     for (name, plan) in &plans {
         println!("million_rows_with_grants: plan for {name}:\n{plan}\n");
     }
