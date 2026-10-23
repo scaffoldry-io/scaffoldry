@@ -83,6 +83,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "That would give access to everyone below the top of a hierarchy.", next: "Anchor it on one workspace as a viewer, or use the workspace's institutional visibility." };
     case "proposal_changed":
       return { message: "This proposal is not what you reviewed.", next: "Open it again, read what it now holds, and approve that." };
+    case "client_sensitive_field":
+      return { message: "An outside app cannot be given a sensitive field.", next: "Remove the sensitive field from its list. Sensitive data stays inside Scaffoldry." };
     case "token_scope":
       return { message: "This token is limited and cannot do that.", next: "Ask the person who made the token for one that covers this app, table and operation." };
     case "preview_read_only":

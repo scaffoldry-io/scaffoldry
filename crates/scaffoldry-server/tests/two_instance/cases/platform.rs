@@ -44,6 +44,10 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/settings/{key}".into(), case!(setting_put));
     m.insert("POST /api/v1/settings/sensitivity/presets/{id}".into(), case!(preset_enable));
 
+    m.insert("POST /api/v1/clients".into(), case!(client_create));
+    m.insert("POST /api/v1/clients/{id}/decide".into(), case!(client_decide));
+    m.insert("POST /api/v1/clients/{id}/disable".into(), case!(client_disable));
+
     m.insert("POST /api/v1/auth/tokens".into(), case!(token_create));
     m.insert("DELETE /api/v1/auth/tokens/{id}".into(), case!(token_revoke));
     m.insert("POST /api/v1/auth/logout".into(), case!(logout));
@@ -363,6 +367,42 @@ async fn preset_enable(w: World) -> Outcome {
     status(w.wa("POST", "/api/v1/settings/sensitivity/presets/pci", ADMIN, None).await, StatusCode::OK, "enable the preset")?;
     let after = status(w.rb("GET", "/api/v1/settings", ADMIN, None).await, StatusCode::OK, "B reads settings again")?;
     ensure(before != after, "B shows the categories the preset added")
+}
+
+// --- outside apps ----------------------------------------------------------------------------------------------------------
+
+/// A client with a read-only ceiling over a new app, registered through A. Returns its id.
+async fn register_client(w: &World) -> Result<String, String> {
+    let slug = make_app(w).await?;
+    let body = json!({
+        "name": unique("p6client"), "operator": "Physics", "kind": "public", "redirect_uris": ["https://tracker.example.edu/callback"],
+        "ceiling": { "apps": [{ "app_slug": slug, "tables": [{ "table_id": "apps", "read": ["name", "gpa"], "write": [], "create": false, "delete": false }] }] }
+    });
+    let made = status(w.wa("POST", "/api/v1/clients", OWNER, Some(body)).await, StatusCode::CREATED, "register a client")?;
+    Ok(made["client_id"].as_str().ok_or("a client id")?.to_string())
+}
+
+async fn client_create(w: World) -> Outcome {
+    let id = register_client(&w).await?;
+    let seen = status(w.rb("GET", &format!("/api/v1/clients/{id}"), OWNER, None).await, StatusCode::OK, "B reads the client")?;
+    ensure(seen["status"] == "Pending" && has(&seen, "Read the name and gpa of Applications"), format!("B shows the client A registered: {seen}"))?;
+    let listed = status(w.rb("GET", "/api/v1/clients", OWNER, None).await, StatusCode::OK, "B lists clients")?;
+    ensure(has(&listed, &id), format!("B lists it: {listed}"))
+}
+
+async fn client_decide(w: World) -> Outcome {
+    let id = register_client(&w).await?;
+    status(World::call(&w.b, "POST", &format!("/api/v1/clients/{id}/decide"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "B approves")?;
+    let seen = status(World::call(&w.a, "GET", &format!("/api/v1/clients/{id}"), OWNER, None).await, StatusCode::OK, "A reads the client")?;
+    ensure(seen["status"] == "Active", format!("A shows the approval B made: {seen}"))
+}
+
+async fn client_disable(w: World) -> Outcome {
+    let id = register_client(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/clients/{id}/decide"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "A approves")?;
+    status(World::call(&w.b, "POST", &format!("/api/v1/clients/{id}/disable"), OWNER, Some(json!({ "reason": "Done" }))).await, StatusCode::OK, "B disables")?;
+    let seen = status(World::call(&w.a, "GET", &format!("/api/v1/clients/{id}"), OWNER, None).await, StatusCode::OK, "A reads the client")?;
+    ensure(seen["status"] == "Disabled", format!("A shows the disablement B made: {seen}"))
 }
 
 // --- sessions ------------------------------------------------------------------------------------------------------------

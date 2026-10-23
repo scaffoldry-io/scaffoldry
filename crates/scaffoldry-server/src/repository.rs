@@ -75,6 +75,7 @@ const SCHEMA_0060: &str = include_str!("../../scaffoldry-core/migrations/0060_sy
 const SCHEMA_0061: &str = include_str!("../../scaffoldry-core/migrations/0061_page_settings.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
+const SCHEMA_0064: &str = include_str!("../../scaffoldry-core/migrations/0064_app_clients.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str =
@@ -1085,6 +1086,7 @@ impl PostgresRepository {
                             ("0024_proposal_rules.sql", SCHEMA_0024),
                             ("0062_proposal_digest.sql", SCHEMA_0062),
                             ("0063_token_scope.sql", SCHEMA_0063),
+                            ("0064_app_clients.sql", SCHEMA_0064),
                         ];
 
                         let mut fresh_install = false;

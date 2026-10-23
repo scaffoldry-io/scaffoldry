@@ -30,6 +30,7 @@ pub mod tool_meta;
 pub mod tools;
 pub mod calc;
 pub mod agent_kit;
+pub mod clients;
 pub mod openapi;
 pub mod preview;
 pub mod token_scope;
@@ -87,6 +88,7 @@ pub const ERROR_CODES: &[&str] = &[
     "grant_too_broad",
     "proposal_changed",
     "preview_read_only",
+    "client_sensitive_field",
 ];
 
 #[derive(Debug, Clone)]
@@ -143,6 +145,8 @@ pub enum ServiceError {
     PreviewReadOnly(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
     TokenScope(String),
+    /// A client's ceiling names a field that is sensitive. Sensitive data stays inside the platform.
+    ClientSensitiveField(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
     FieldHidden { message: String, reason: String, remedy: String },
     /// A table may index 20 fields. `unused` lists the indexed fields no view uses, which can go.
@@ -193,7 +197,7 @@ impl ServiceError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -223,6 +227,7 @@ impl ServiceError {
             Self::ViewAsReadOnly(_) => "view_as_read_only",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::TokenScope(_) => "token_scope",
+            Self::ClientSensitiveField(_) => "client_sensitive_field",
             Self::FieldHidden { .. } => "field_hidden",
             Self::TooManyIndexes { .. } => "too_many_indexes",
             Self::FieldReadOnly { .. } => "field_read_only",
@@ -252,6 +257,7 @@ impl ServiceError {
             | Self::ViewAsReadOnly(msg)
             | Self::PreviewReadOnly(msg)
             | Self::TokenScope(msg)
+            | Self::ClientSensitiveField(msg)
             | Self::ConstraintViolated(msg)
             | Self::GrantOutsideScope(msg)
             | Self::GrantTooBroad(msg)
