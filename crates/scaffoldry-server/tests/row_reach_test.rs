@@ -407,3 +407,32 @@ fn a_scope_with_many_units_is_large_and_a_small_or_empty_one_is_not() {
     assert!(plan(Pred::Or(vec![members(LARGE_SCOPE_VALUES / 2), members(LARGE_SCOPE_VALUES / 2 + 1)])).is_large());
     assert!(!plan(Pred::True).is_large());
 }
+
+/// Statements the database has run for this test's database so far: committed transactions, which is one per statement here.
+fn statements(w: &World) -> i64 {
+    w._db.run(|c| {
+        c.batch_execute("SELECT pg_stat_clear_snapshot()").unwrap();
+        c.query_one("SELECT (xact_commit + xact_rollback)::bigint FROM pg_stat_database WHERE datname = current_database()", &[]).unwrap().get(0)
+    })
+}
+
+// The statements a list runs do not grow with the number of grants the caller holds.
+#[tokio::test]
+async fn a_list_runs_the_same_statements_for_one_grant_and_for_four() {
+    let w = world().await;
+    grant(&w, unit_grant("one@state.edu", w.science, None)).await;
+    for anchor in [w.science, w.physics, w.chemistry, w.lab] {
+        grant(&w, unit_grant("four@state.edu", anchor, None)).await;
+    }
+    let mut used = Vec::new();
+    for who in ["one@state.edu", "four@state.edu"] {
+        let _ = listed(&w, who).await;
+        // The database counts a session's transactions when the session ends, so let the pooled connections settle.
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let before = statements(&w);
+        let _ = listed(&w, who).await;
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        used.push(statements(&w) - before);
+    }
+    assert!(used[1] <= used[0] + 2, "one grant ran {} statements, four ran {}", used[0], used[1]);
+}
