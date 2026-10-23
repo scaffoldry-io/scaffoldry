@@ -534,7 +534,7 @@ fn grant_divisions(who: &str, hierarchy: &str, divisions: std::ops::RangeInclusi
         for d in divisions {
             c.execute(
                 "INSERT INTO access_grants (holder_kind, holder_id, role, hierarchy_key, anchor_kind, anchor_id, depth, source, reason, created_by) \
-                 VALUES ('person', $1, 'viewer', $2, 'unit', md5($2 || 'd' || $3::int)::text::uuid::text, NULL, 'request', 'gate', 'test')",
+                 VALUES ('person', $1::varchar, 'viewer', $2::varchar, 'unit', md5($2::text || 'd' || $3::int)::uuid::text, NULL, 'request', 'gate', 'test')",
                 &[&who, &hierarchy, &(d as i32)],
             )
             .unwrap();
