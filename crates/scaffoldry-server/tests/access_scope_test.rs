@@ -5,7 +5,7 @@ mod common;
 
 use postgres::types::ToSql;
 use scaffoldry_core::access::{check, row_scope, substitute, Op, Operand, Person, PersonAttr, Pred, RowOp, RowRule, RowScope};
-use scaffoldry_engine::access::{eval, to_sql, CompileError, Param};
+use scaffoldry_engine::access::{eval, to_sql, to_sql_probes, CompileError, Param};
 use scaffoldry_engine::{index_rows, FieldSpec, FieldType};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -224,6 +224,14 @@ fn both(tx: &mut postgres::Transaction, slug: &str, pred: &Pred, records: &[(Str
     let statement = format!("SELECT r.id FROM dataset_records r WHERE r.app_slug = $1 AND r.table_id = $2 AND r.deleted_at IS NULL AND {sql}");
     let from_sql: BTreeSet<String> = tx.query(&statement, &refs).unwrap_or_else(|e| panic!("{e}\n{statement}")).iter().map(|r| r.get(0)).collect();
     let from_eval: BTreeSet<String> = records.iter().filter(|(_, d)| eval(pred, d, &fields())).map(|(id, _)| id.clone()).collect();
+    // The probe form, where there is one, selects the same records.
+    if let Some((probe, params)) = to_sql_probes(pred, &fields(), "r.id", slug, "t1", 1)? {
+        let all = boxed(params);
+        let refs: Vec<&(dyn ToSql + Sync)> = all.iter().map(|b| b.as_ref()).collect();
+        let statement = format!("SELECT r.id FROM dataset_records r WHERE r.app_slug = $1 AND r.table_id = $2 AND r.deleted_at IS NULL AND {probe}");
+        let from_probe: BTreeSet<String> = tx.query(&statement, &refs).unwrap_or_else(|e| panic!("{e}\n{statement}")).iter().map(|r| r.get(0)).collect();
+        assert_eq!(from_probe, from_eval, "the probe form disagrees with eval for {pred:?}");
+    }
     Ok((from_sql, from_eval))
 }
 
@@ -444,4 +452,25 @@ fn a_rule_round_trips_in_the_schema_shape() {
     assert_eq!(json["visible_when"]["and"][1], json!({ "not": "true" }));
     let back: RowRule = serde_json::from_value(json).unwrap();
     assert_eq!(back, rule);
+}
+
+// A scope that is an OR of comparisons on indexed fields is probed for each record in the order the list reads them, so a
+// first page stops after a page of matches. A union of the sets would be built whole and sorted first.
+#[test]
+fn an_or_of_comparisons_compiles_to_probes_and_not_to_a_union() {
+    let leaf = |f: &str, v: &str| Pred::Cmp { field: f.to_string(), op: Op::In, value: Operand::Literal(json!([v, "other"])) };
+    let pred = Pred::Or(vec![leaf("t", "a"), leaf("m", "b"), leaf("t", "c")]);
+    let (sql, params) = to_sql_probes(&pred, &fields(), "r.id", "app", "t1", 1).unwrap().expect("an OR of memberships");
+    assert!(!sql.contains("UNION") && !sql.contains("INTERSECT") && !sql.contains("EXCEPT"), "{sql}");
+    assert_eq!(sql.matches("EXISTS").count(), 3, "{sql}");
+    assert!(sql.matches(" OR ").count() >= 2, "{sql}");
+    assert!(sql.contains("i.record_id = r.id"), "each probe is tied to the record: {sql}");
+    assert_eq!(params.len(), 2 + 3 * 2, "the app, the table, and a field and a value list for each: {params:?}");
+    // One membership test is probed too. A conjunction and a negation have no probe form. The set form is right for them.
+    let (one, _) = to_sql_probes(&leaf("t", "a"), &fields(), "r.id", "app", "t1", 1).unwrap().expect("one membership test");
+    assert_eq!(one.matches("EXISTS").count(), 1, "{one}");
+    assert!(to_sql_probes(&Pred::And(vec![leaf("t", "a"), leaf("m", "b")]), &fields(), "r.id", "app", "t1", 1).unwrap().is_none());
+    // The unbounded form is still the set form, so a count never scans the records.
+    let (set_form, _) = to_sql(&pred, &fields(), "r.id", "app", "t1", 1).unwrap();
+    assert!(set_form.contains("UNION"), "{set_form}");
 }

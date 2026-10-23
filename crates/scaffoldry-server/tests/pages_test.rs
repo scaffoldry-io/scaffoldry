@@ -10,10 +10,9 @@ use axum::Router;
 use http_body_util::BodyExt;
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
-use scaffoldry_server::state::{CollaboratorRecord, ServerState};
+use scaffoldry_server::state::CollaboratorRecord;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -25,6 +24,7 @@ const OTHER: &str = "jordan.lee@state.edu";
 const SOURCE: &str = "export default function Page() { return <p>AWARD-DASHBOARD-MARKER</p>; }";
 
 struct World {
+    _db: common::TestDb,
     app: Router,
     owner: String,
     viewer: String,
@@ -33,7 +33,9 @@ struct World {
 }
 
 async fn world() -> World {
-    let state = Arc::new(ServerState::new().expect("state"));
+    // Each test has a database of its own, so tests that start together do not race to seed the demo data.
+    let db = common::TestDb::new();
+    let state = db.state();
     state.seed_demo().expect("seed");
     state.collaborators.write().unwrap().entry(WORKSPACE.to_string()).or_default().push(CollaboratorRecord {
         id: format!("collab-{}", Uuid::new_v4()),
@@ -48,6 +50,7 @@ async fn world() -> World {
     });
     let app = build_app_with_state(state).expect("router");
     World {
+        _db: db,
         app,
         owner: issue_test_token_and_user(OWNER),
         viewer: issue_test_token_and_user(VIEWER),

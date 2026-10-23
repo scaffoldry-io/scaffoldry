@@ -43,6 +43,7 @@ impl GrantRow {
             valid_from: r.get(10),
             valid_until: r.get(11),
             revoked: r.get::<_, Option<i64>>(12).is_some(),
+            clearance: r.get::<_, Option<String>>(9).and_then(|c| scaffoldry_core::coordinates::sensitivity_rank(&c)),
         };
         Some(GrantRow {
             hierarchy: grant.hierarchy.clone(),
@@ -125,6 +126,21 @@ impl PostgresRepository {
                 &[&eppn],
             )?;
             Ok(rows.iter().map(|r| (Holding { unit: r.get(0), position_key: r.get(1), effective: r.get(2), end: r.get(3) }, r.get(4))).collect())
+        })
+    }
+
+    /// The addresses, lowercase, of the people with an appointment at any of these units today. A hierarchy of people
+    /// places a row by a person, so this turns the units a grant reaches into the people whose rows it reaches.
+    pub fn appointed_addresses(&self, units: &[uuid::Uuid]) -> Result<Vec<String>, RepositoryError> {
+        let units = units.to_vec();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT DISTINCT lower(p.eppn) FROM roles r JOIN persons p ON p.id = r.person_id \
+                 WHERE r.organization_id = ANY($1) AND r.effective_date <= CURRENT_DATE AND (r.end_date IS NULL OR r.end_date >= CURRENT_DATE) \
+                 ORDER BY 1",
+                &[&units],
+            )?;
+            Ok(rows.iter().map(|r| r.get(0)).collect())
         })
     }
 

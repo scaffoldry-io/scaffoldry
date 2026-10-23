@@ -142,11 +142,76 @@ pub fn scope_of(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state
 fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &SharedState) -> RowScope {
     // An app the engine does not hold, such as one whose stored manifest no longer validates, shows no rows.
     let Some(rules) = rules_loaded(app_slug, state) else { return RowScope::DenyAll };
-    if rules.is_empty() {
+    let by_rules = if rules.is_empty() {
+        RowScope::AllowAll
+    } else {
+        let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
+        row_scope(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table, op)
+    };
+    // The rules narrow what the grants reach. A rule never widens it.
+    by_rules.and(reach_scope(caller, app_slug, table, state))
+}
+
+/// For each hierarchy, the field that places a row of this table in it. Empty for a table that places no rows.
+pub fn row_place_of(app_slug: &str, table: &str, state: &SharedState) -> std::collections::BTreeMap<String, String> {
+    use scaffoldry_engine::HostRouter;
+    let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+    engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table)).map(|t| t.row_place.clone()).unwrap_or_default()
+}
+
+/// The rows of a table that places its rows (`row_place`) which the caller's grants reach. A table that places no rows
+/// is not narrowed. A container grant, a workspace membership and a Platform Admin reach every row. Rows reached by any
+/// grant are the union, and a row with no place is reached only by a container grant.
+fn reach_scope(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> RowScope {
+    use scaffoldry_core::reach::RowReach;
+    let placed: std::collections::BTreeMap<String, String> = {
+        use scaffoldry_engine::HostRouter;
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        match engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table)) {
+            Some(t) if !t.row_place.is_empty() => t.row_place.clone(),
+            _ => return RowScope::AllowAll,
+        }
+    };
+    if caller.affiliation == "central_admin" {
         return RowScope::AllowAll;
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
-    row_scope(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table, op)
+    let by_person: std::collections::BTreeSet<String> = fields_of(app_slug, table, state)
+        .into_iter()
+        .filter(|f| matches!(f.field_type, scaffoldry_engine::FieldType::Collaborator { .. }))
+        .map(|f| f.name)
+        .collect();
+    let Some(workspace) = workspace_of(app_slug, state) else { return RowScope::DenyAll };
+    let table_id = state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table).map(|t| t.id.clone())).unwrap_or_else(|| table.to_string());
+    match members::rows_reach(&caller.eppn, &workspace, app_slug, &table_id, state) {
+        None => RowScope::DenyAll,
+        Some(RowReach::All) => RowScope::AllowAll,
+        Some(RowReach::Units(by_hierarchy)) => {
+            let parts: Vec<Pred> = by_hierarchy
+                .iter()
+                .filter(|(_, units)| !units.is_empty())
+                .filter_map(|(hierarchy, units)| {
+                    let field = placed.get(hierarchy)?;
+                    // A row is placed by a unit, or in a hierarchy of people by a person. For people, the reach is the
+                    // addresses of those appointed at the units, and the filter is the same shape over that field.
+                    let ids: Vec<Value> = if by_person.contains(field) {
+                        let units: Vec<uuid::Uuid> = units.iter().copied().collect();
+                        state.repository.appointed_addresses(&units).unwrap_or_default().into_iter().map(Value::String).collect()
+                    } else {
+                        units.iter().map(|u| Value::String(u.to_string())).collect()
+                    };
+                    if ids.is_empty() {
+                        return Some(never());
+                    }
+                    Some(Pred::Cmp { field: field.clone(), op: scaffoldry_core::access::Op::In, value: scaffoldry_core::access::Operand::Literal(Value::Array(ids)) })
+                })
+                .collect();
+            match parts.len() {
+                0 => RowScope::DenyAll,
+                1 => RowScope::of(parts.into_iter().next().expect("one part")),
+                _ => RowScope::of(Pred::Or(parts)),
+            }
+        }
+    }
 }
 
 fn table_of(record: &DatasetRecord) -> String {

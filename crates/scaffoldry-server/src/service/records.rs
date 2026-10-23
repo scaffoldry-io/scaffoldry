@@ -1403,39 +1403,78 @@ pub(crate) fn sensitive_fields_of(app_slug: &str, table: &str, state: &SharedSta
 }
 
 fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
-    // The app's column rules hold a field back from any member they name. The viewer rule hides
-    // sensitive fields from a viewer. A field either rule hides is hidden.
+    hidden_fields_on(caller, app_slug, table, fields, None, state)
+}
+
+/// The fields a caller may not read in one table. The app's column rules hold a field back from any member they name.
+/// A protected field is held back unless every grant that contributes rows clears it. `page` is the unit of each row
+/// shown in each hierarchy, or `None` for every row the caller reaches, which is what a filter or a sort works on.
+/// A field either rule hides is hidden. The effective flag decides what is protected, so a label counts.
+fn hidden_fields_on(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], page: Option<&[std::collections::BTreeMap<String, uuid::Uuid>]>, state: &SharedState) -> Vec<String> {
     let mut hidden = crate::service::scope::field_visibility_of(caller, app_slug, table, state).hidden_names();
-    if is_viewer(caller, app_slug, state) {
+    let protected: Vec<String> = {
         let categories = state.sensitivity_categories();
         let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
-        for f in fields {
-            let label = labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone()));
-            if scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected && !hidden.contains(&f.name) {
-                hidden.push(f.name.clone());
+        fields
+            .iter()
+            .filter(|f| scaffoldry_engine::effective_ferpa_sensitive(f, labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone())), &categories).protected)
+            .map(|f| f.name.clone())
+            .collect()
+    };
+    if !protected.is_empty() && protected_withheld(caller, app_slug, table, page, state) {
+        for name in protected {
+            if !hidden.contains(&name) {
+                hidden.push(name);
             }
         }
     }
     hidden
 }
 
-/// Removes, from each row, the fields the caller may not read. Rows of the same table share one
-/// lookup.
-pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRecord>, state: &SharedState) -> Vec<DatasetRecord> {
-    if !is_viewer(caller, app_slug, state) && crate::service::scope::column_rules_of(app_slug, state).is_empty() {
-        return rows;
+/// Whether the caller's grants withhold protected fields. A Platform Admin is never held back. A person with no grant
+/// that reaches the table is not held back here, as before. For anyone else, a field is shown only if every grant that
+/// contributes rows clears it: on the rows of `page`, or on everything reached when there is no page.
+fn protected_withheld(caller: &AuthUser, app_slug: &str, table: &str, page: Option<&[std::collections::BTreeMap<String, uuid::Uuid>]>, state: &SharedState) -> bool {
+    use scaffoldry_core::reach::{page_clears, PROTECTED_RANK};
+    if caller.affiliation == "central_admin" {
+        return false;
     }
-    let mut by_table: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for row in &mut rows {
-        let table = row.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let hidden = by_table.entry(table.clone()).or_insert_with(|| {
-            table_fields(app_slug, &table, false, state)
-                .map(|(fields, canonical)| hidden_fields(caller, app_slug, &canonical, &fields, state))
-                .unwrap_or_default()
-        });
-        if let Some(map) = row.data.as_object_mut() {
-            for name in hidden.iter() {
-                map.remove(name);
+    let workspace = state.engine.read().ok().and_then(|e| e.resolve_by_slug(app_slug).and_then(|m| m.workspace_id.clone()));
+    let Some(workspace) = workspace else { return false };
+    let Some(parts) = crate::service::members::contributions_to(&caller.eppn, &workspace, app_slug, table, state) else {
+        return is_viewer(caller, app_slug, state);
+    };
+    match page {
+        _ if parts.is_empty() => false,
+        None => parts.iter().any(|c| c.clearance < PROTECTED_RANK),
+        Some(rows) => !page_clears(&parts, rows, PROTECTED_RANK),
+    }
+}
+
+/// The unit of each row in each hierarchy that places the rows of the table, read from the rows themselves.
+fn units_of_rows(app_slug: &str, table: &str, rows: &[&DatasetRecord], state: &SharedState) -> Vec<std::collections::BTreeMap<String, uuid::Uuid>> {
+    let place = crate::service::scope::row_place_of(app_slug, table, state);
+    rows.iter()
+        .map(|r| place.iter().filter_map(|(h, field)| r.data.get(field).and_then(Value::as_str).and_then(|u| uuid::Uuid::parse_str(u).ok()).map(|u| (h.clone(), u))).collect())
+        .collect()
+}
+
+/// Removes, from each row, the fields the caller may not read. Rows of the same table are judged together, because a
+/// field is shown only if every grant that contributes one of these rows clears it.
+pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRecord>, state: &SharedState) -> Vec<DatasetRecord> {
+    let mut by_table: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    for (i, row) in rows.iter().enumerate() {
+        by_table.entry(row.data.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string()).or_default().push(i);
+    }
+    for (table, indices) in by_table {
+        let Ok((fields, canonical)) = table_fields(app_slug, &table, false, state) else { continue };
+        let page = units_of_rows(app_slug, &canonical, &indices.iter().map(|i| &rows[*i]).collect::<Vec<_>>(), state);
+        let hidden = hidden_fields_on(caller, app_slug, &canonical, &fields, Some(&page), state);
+        for i in indices {
+            if let Some(map) = rows[i].data.as_object_mut() {
+                for name in &hidden {
+                    map.remove(name);
+                }
             }
         }
     }
@@ -1628,7 +1667,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     let sort_field = query.sort.as_ref().map(|s| s.field_name.clone());
 
     if query.search.as_ref().is_some_and(|s| !s.trim().is_empty()) {
-        let sensitive_hidden = is_viewer(caller, app_slug, state) && {
+        let sensitive_hidden = protected_withheld(caller, app_slug, &table, None, state) && {
             let categories = state.sensitivity_categories();
             let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
             fields.iter().any(|f| {

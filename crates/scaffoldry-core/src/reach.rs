@@ -124,6 +124,8 @@ pub struct Grant {
     pub valid_from: i64,
     pub valid_until: Option<i64>,
     pub revoked: bool,
+    /// The sensitivity rank this grant clears for protected fields, or `None` for its role's default.
+    pub clearance: Option<u8>,
 }
 
 /// One role a person holds at a unit: an appointment, an affiliation, or a position.
@@ -228,4 +230,114 @@ pub fn role_at(holders: &HolderSet, grants: &[Grant], object: &Object, tree: &Or
     let reaching: Vec<&Grant> = grants.iter().filter(|g| reaches(g, holders, object, tree, places, now)).collect();
     let top = reaching.iter().map(|g| g.role).max()?;
     Some((top, reaching.iter().filter(|g| g.role == top).map(|g| g.id).collect()))
+}
+
+/// What a person reaches among the rows of one table (access model phase 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowReach {
+    /// Every row. A list adds no predicate.
+    All,
+    /// The rows placed in these units, for each hierarchy that places the table's rows. A hierarchy with no entry
+    /// reaches nothing. Rows reached by any hierarchy are the union.
+    Units(BTreeMap<String, BTreeSet<Uuid>>),
+}
+
+/// What one grant contributes to the rows of a table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Contribution {
+    pub grant_id: i64,
+    /// The sensitivity rank this grant clears.
+    pub clearance: u8,
+    pub reach: RowReach,
+}
+
+/// The sensitivity rank of a protected field. A field flagged as protected needs a grant cleared to this rank.
+pub const PROTECTED_RANK: u8 = 3;
+
+/// What a grant clears: its own clearance, or its role's default. A viewer and a commenter are cleared for nothing
+/// protected. An editor and above are cleared for everything. This is what the platform did before clearance existed.
+pub fn effective_clearance(g: &Grant) -> u8 {
+    g.clearance.unwrap_or(if g.role >= Role::Editor { PROTECTED_RANK } else { PROTECTED_RANK - 1 })
+}
+
+/// What each grant that reaches the table contributes. A grant in a hierarchy that does not place rows covers the table
+/// as a whole, so it gives `All` or nothing. A grant in one that does gives the units it covers.
+///
+/// `table` is the table as an object: its containers, the unit it sits at in each hierarchy, and its domain. A row is
+/// the same object with its own unit in each hierarchy in `row_hierarchies`. The union of the contributions is what
+/// `reaches` would give for every such row. A test keeps the two the same.
+pub fn row_contributions(holders: &HolderSet, grants: &[Grant], table: &Object, row_hierarchies: &BTreeSet<String>, tree: &OrgTree, places: &dyn Places, now: i64) -> Vec<Contribution> {
+    let mut out = Vec::new();
+    for g in grants {
+        if g.revoked || g.valid_from > now || g.valid_until.is_some_and(|u| u <= now) || !holders.is_holder(g) {
+            continue;
+        }
+        // A row has no domain of its own. The table's domain is every row's.
+        if g.domain.as_deref().is_some_and(|d| !places.domain_within(&table.domain, d)) {
+            continue;
+        }
+        let clearance = effective_clearance(g);
+        if g.anchor_kind == AnchorKind::Container {
+            if g.anchor_id.as_ref().is_some_and(|a| table.containers.contains(a)) {
+                out.push(Contribution { grant_id: g.id, clearance, reach: RowReach::All });
+            }
+            continue;
+        }
+        let Some(h) = g.hierarchy.as_deref() else { continue };
+        // The anchors of this grant: the one it names, or each unit where the holder holds the position.
+        let anchors: Vec<Uuid> = match g.anchor_kind {
+            AnchorKind::Unit => g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok()).into_iter().collect(),
+            _ if g.holder_kind != HolderKind::Position => Vec::new(),
+            _ => {
+                let (key, named) = position_of(&g.holder_id);
+                holders.positions.iter().filter(|(k, u)| k == key && named.is_none_or(|n| n == *u)).map(|(_, u)| *u).collect()
+            }
+        };
+        let mut units: BTreeSet<Uuid> = BTreeSet::new();
+        let mut whole = false;
+        for anchor in anchors.into_iter().filter(|a| tree.hierarchy_of(*a) == Some(h)) {
+            if row_hierarchies.contains(h) {
+                units.extend(tree.descendants(anchor, g.depth));
+            } else if table.units.get(h).is_some_and(|u| tree.hierarchy_of(*u) == Some(h) && within_depth(tree, *u, anchor, g.depth)) {
+                whole = true;
+            }
+        }
+        if whole {
+            out.push(Contribution { grant_id: g.id, clearance, reach: RowReach::All });
+        } else if !units.is_empty() {
+            out.push(Contribution { grant_id: g.id, clearance, reach: RowReach::Units(BTreeMap::from([(h.to_string(), units)])) });
+        }
+    }
+    out
+}
+
+/// The union of what the grants contribute: every row if any grant gives every row, else one set of units per hierarchy.
+pub fn fold_reach(contributions: &[Contribution]) -> RowReach {
+    let mut sets: BTreeMap<String, BTreeSet<Uuid>> = BTreeMap::new();
+    for c in contributions {
+        match &c.reach {
+            RowReach::All => return RowReach::All,
+            RowReach::Units(by_hierarchy) => {
+                for (h, units) in by_hierarchy {
+                    sets.entry(h.clone()).or_default().extend(units.iter().copied());
+                }
+            }
+        }
+    }
+    RowReach::Units(sets)
+}
+
+/// The units a person reaches in each hierarchy that places the rows of a table, as one set per hierarchy: the union of
+/// what every grant contributes.
+pub fn row_reach(holders: &HolderSet, grants: &[Grant], table: &Object, row_hierarchies: &BTreeSet<String>, tree: &OrgTree, places: &dyn Places, now: i64) -> RowReach {
+    fold_reach(&row_contributions(holders, grants, table, row_hierarchies, tree, places, now))
+}
+
+/// Whether the rows on a page may show a field that needs clearance `needed`: every grant that contributes a row to the
+/// page must clear it. `page` is the unit of each row in each hierarchy. A page with no rows has nothing to hide.
+pub fn page_clears(contributions: &[Contribution], page: &[BTreeMap<String, Uuid>], needed: u8) -> bool {
+    contributions.iter().filter(|c| c.clearance < needed).all(|c| match &c.reach {
+        RowReach::All => page.is_empty(),
+        RowReach::Units(by_hierarchy) => !page.iter().any(|row| by_hierarchy.iter().any(|(h, units)| row.get(h).is_some_and(|u| units.contains(u)))),
+    })
 }

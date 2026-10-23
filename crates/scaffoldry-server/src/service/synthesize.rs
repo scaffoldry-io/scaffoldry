@@ -417,6 +417,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
                 valid_from: 0,
                 valid_until: None,
                 revoked: false,
+                clearance: None,
             });
             grant_id += 1;
         }
@@ -438,6 +439,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
             valid_from: 0,
             valid_until: None,
             revoked: false,
+            clearance: None,
         });
         grant_id += 1;
     }
@@ -456,6 +458,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
             valid_from: 0,
             valid_until: None,
             revoked: false,
+            clearance: None,
         });
         grant_id += 1;
     }
@@ -496,7 +499,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
             15..=19 => (0, Some(FAR), false),
             _ => (0, None, false),
         };
-        grants.push(Grant { id: grant_id, holder_kind, holder_id, role, hierarchy, anchor_kind, anchor_id, depth, domain, valid_from, valid_until, revoked });
+        grants.push(Grant { id: grant_id, holder_kind, holder_id, role, hierarchy, anchor_kind, anchor_id, depth, domain, valid_from, valid_until, revoked, clearance: None });
         grant_id += 1;
     }
 

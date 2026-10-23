@@ -87,6 +87,21 @@ pub fn object_place(places: &dyn Places, tree: &OrgTree, ws: &WorkspaceRecord, a
     (units, e.domain)
 }
 
+/// Where one table sits: a unit in each hierarchy and a domain, after the workspace, the app and the table have each
+/// narrowed what they were given. A table that names nothing sits where its app sits.
+pub fn table_place(places: &dyn Places, tree: &OrgTree, ws: &WorkspaceRecord, app: &AppManifest, table_id: &str) -> (BTreeMap<String, Uuid>, String) {
+    let ws_coords = (!ws.coordinates.is_empty()).then_some(&ws.coordinates);
+    let Some((app_effective, tables)) = walk(ws_coords, app, places).0 else { return (BTreeMap::new(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()) };
+    let e = tables.get(table_id).cloned().unwrap_or(app_effective);
+    let mut units: BTreeMap<String, Uuid> = e.units.iter().filter_map(|(h, u)| Uuid::parse_str(u).ok().map(|u| (h.clone(), u))).collect();
+    if let Some(own) = ws.organization_id {
+        if let Some(h) = tree.hierarchy_of(own) {
+            units.entry(h.to_string()).or_insert(own);
+        }
+    }
+    (units, e.domain)
+}
+
 /// Names every coordinate that points at a hierarchy, unit, or domain that is not there.
 pub fn missing(own: &Coordinates, places: &dyn Places) -> Vec<String> {
     let mut out = Vec::new();

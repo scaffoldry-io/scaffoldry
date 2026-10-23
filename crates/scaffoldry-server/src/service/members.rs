@@ -4,7 +4,7 @@
 //! but a person, `eppn` holds `{type}:{principal_id}`, so the unique key on `(workspace, eppn)` holds.
 
 use crate::state::{AuthUser, CollaboratorRecord, SharedState};
-use scaffoldry_core::reach::{holder_set, role_at, AnchorKind, Grant, HolderKind, HolderSet, Holding, Object};
+use scaffoldry_core::reach::{fold_reach, holder_set, role_at, row_contributions, AnchorKind, Contribution, Grant, HolderKind, HolderSet, Holding, Object, RowReach};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -215,6 +215,7 @@ fn membership_grant(c: &CollaboratorRecord, index: usize) -> Option<Grant> {
         valid_from: 0,
         valid_until: None,
         revoked: false,
+        clearance: None,
     })
 }
 
@@ -294,6 +295,7 @@ fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) 
             valid_from: h.effective.unwrap_or(0),
             valid_until: h.end,
             revoked: false,
+            clearance: None,
         })
         .collect();
 
@@ -441,4 +443,62 @@ pub fn people_records(workspace: &str, state: &SharedState) -> Vec<CollaboratorR
             rec
         })
         .collect()
+}
+
+/// What one person reaches among the rows of `table_id` in an app that places its rows. `None` when the app, its
+/// workspace, or the person's directory record cannot be read, so a caller treats it as reaching nothing.
+pub fn rows_reach(eppn: &str, workspace: &str, app: &str, table_id: &str, state: &SharedState) -> Option<RowReach> {
+    contributions_to(eppn, workspace, app, table_id, state).map(|c| fold_reach(&c))
+}
+
+/// What each of one person's grants contributes to the rows of a table, with what each clears.
+pub fn contributions_to(eppn: &str, workspace: &str, app: &str, table_id: &str, state: &SharedState) -> Option<Vec<Contribution>> {
+    let now = chrono::Utc::now().timestamp();
+    let rows = state.repository.holdings_of(eppn).unwrap_or_default();
+    let holdings: Vec<Holding> = rows.iter().map(|(h, _)| h.clone()).collect();
+    let groups = state.group_ids_of(eppn);
+    let ws = state.workspaces.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned()?;
+    let memberships: Vec<CollaboratorRecord> = state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default();
+    let manifest = {
+        use scaffoldry_engine::HostRouter;
+        state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(app).cloned()?
+    };
+    let row_hierarchies: std::collections::BTreeSet<String> = manifest.tables.iter().find(|t| t.id == table_id).map(|t| t.row_place.keys().cloned().collect()).unwrap_or_default();
+
+    let mut shared: Vec<Grant> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, affiliation))| affiliation == "unit_admin")
+        .map(|(i, (h, _))| Grant {
+            id: -1_000_000 - i as i64,
+            holder_kind: HolderKind::Person,
+            holder_id: eppn.to_string(),
+            role: Role::Admin,
+            hierarchy: None,
+            anchor_kind: AnchorKind::Unit,
+            anchor_id: Some(h.unit.to_string()),
+            depth: None,
+            domain: None,
+            valid_from: h.effective.unwrap_or(0),
+            valid_until: h.end,
+            revoked: false,
+            clearance: None,
+        })
+        .collect();
+    let holders = crate::service::coordinates::with_world(state, |_, tree| {
+        for g in shared.iter_mut() {
+            g.hierarchy = g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok()).and_then(|u| tree.hierarchy_of(u)).map(str::to_string);
+        }
+        holder_set(eppn, &holdings, tree, groups, now)
+    })
+    .ok()?;
+    shared.extend(state.repository.grants_held_by(&holder_pairs(&holders)).unwrap_or_default());
+    shared.extend(memberships.iter().filter(|c| c.app_slug.is_empty() || c.app_slug == app).enumerate().filter_map(|(i, c)| membership_grant(c, i)));
+
+    crate::service::coordinates::with_world(state, |places, tree| {
+        let (units, domain) = crate::service::coordinates::table_place(places, tree, &ws, &manifest, table_id);
+        let table = Object { containers: vec![format!("workspace:{workspace}"), format!("app:{app}")], units, domain };
+        row_contributions(&holders, &shared, &table, &row_hierarchies, tree, places, now)
+    })
+    .ok()
 }
