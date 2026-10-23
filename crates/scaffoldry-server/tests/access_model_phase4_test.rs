@@ -41,7 +41,7 @@ async fn send(app: &axum::Router, method: &str, uri: &str, who: &str, body: Opti
 fn unit(state: &ServerState, name: &str, parent: Option<Uuid>) -> Uuid {
     let root = Uuid::parse_str(ROOT).unwrap();
     let id = Uuid::new_v4();
-    let node = OrganizationNode { id, parent_id: Some(parent.unwrap_or(root)), name: name.to_string(), code: name.to_uppercase(), org_type: "Unit".to_string(), hierarchy_key: "academic".to_string() };
+    let node = OrganizationNode { id, parent_id: Some(parent.unwrap_or(root)), name: name.to_string(), code: name.to_uppercase(), org_type: "Unit".to_string(), hierarchy_key: "academic".to_string(), synthetic: false };
     state.organizations.write().unwrap().insert(id, node.clone());
     state.persist_organization(&node).unwrap();
     id
@@ -80,6 +80,7 @@ fn workspace(state: &ServerState, id: &str, unit: Uuid) {
         data_classification: "restricted".to_string(),
         created_at: now,
         organization_id: Some(unit),
+        synthetic: false,
     };
     state.workspaces.write().unwrap().insert(id.to_string(), ws.clone());
     state.repository.upsert_workspace(&ws).unwrap();

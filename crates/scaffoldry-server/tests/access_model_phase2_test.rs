@@ -94,6 +94,7 @@ fn test_2_moving_subtree_of_500_units_rewrites_only_subtree_closure_rows_and_no_
             code: "TGT-A".into(),
             org_type: "College".into(),
             hierarchy_key: "academic".into(),
+            synthetic: false,
         })
         .unwrap();
     state
@@ -104,6 +105,7 @@ fn test_2_moving_subtree_of_500_units_rewrites_only_subtree_closure_rows_and_no_
             code: "TGT-B".into(),
             org_type: "College".into(),
             hierarchy_key: "academic".into(),
+            synthetic: false,
         })
         .unwrap();
 
@@ -117,6 +119,7 @@ fn test_2_moving_subtree_of_500_units_rewrites_only_subtree_closure_rows_and_no_
             code: "SUB-ROOT".into(),
             org_type: "Department".into(),
             hierarchy_key: "academic".into(),
+            synthetic: false,
         })
         .unwrap();
 
@@ -132,6 +135,7 @@ fn test_2_moving_subtree_of_500_units_rewrites_only_subtree_closure_rows_and_no_
                 code: format!("SUB-{i:04}"),
                 org_type: "Program".into(),
                 hierarchy_key: "academic".into(),
+                synthetic: false,
             })
             .unwrap();
         subtree_ids.push(id);
@@ -239,6 +243,7 @@ fn test_3_cycle_through_move_is_refused_and_closure_unchanged() {
             code: "CYC-A".into(),
             org_type: "College".into(),
             hierarchy_key: "academic".into(),
+            synthetic: false,
         })
         .unwrap();
     state
@@ -249,6 +254,7 @@ fn test_3_cycle_through_move_is_refused_and_closure_unchanged() {
             code: "CYC-B".into(),
             org_type: "Department".into(),
             hierarchy_key: "academic".into(),
+            synthetic: false,
         })
         .unwrap();
     state
@@ -259,6 +265,7 @@ fn test_3_cycle_through_move_is_refused_and_closure_unchanged() {
             code: "CYC-C".into(),
             org_type: "Program".into(),
             hierarchy_key: "academic".into(),
+            synthetic: false,
         })
         .unwrap();
 
@@ -324,6 +331,7 @@ fn test_4_second_root_in_academic_is_refused_by_unique_index() {
         code: "ROOT2".into(),
         org_type: "Institution".into(),
         hierarchy_key: "academic".into(),
+        synthetic: false,
     };
 
     let res = state.persist_organization(&second_root);

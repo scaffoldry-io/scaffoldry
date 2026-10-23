@@ -245,6 +245,7 @@ impl World {
             code: format!("{}-{}", name.to_uppercase(), self.tag),
             org_type: "Department".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         };
         self.state.persist_organization(&node).unwrap();
         id

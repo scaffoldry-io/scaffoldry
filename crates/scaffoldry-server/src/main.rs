@@ -28,6 +28,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
 
+    if args.len() > 1 && args[1] == "synthesize" {
+        let mut opts = service::synthesize::SynthesizeOptions::default();
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--seed" if i + 1 < args.len() => {
+                    opts.seed = args[i + 1].parse()?;
+                    i += 2;
+                }
+                "--people" if i + 1 < args.len() => {
+                    opts.people = args[i + 1].parse()?;
+                    i += 2;
+                }
+                "--units" if i + 1 < args.len() => {
+                    opts.units = args[i + 1].parse()?;
+                    i += 2;
+                }
+                "--hierarchies" if i + 1 < args.len() => {
+                    opts.hierarchies = args[i + 1].split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                    i += 2;
+                }
+                "--apps" if i + 1 < args.len() => {
+                    opts.apps = args[i + 1].parse()?;
+                    i += 2;
+                }
+                "--records" if i + 1 < args.len() => {
+                    opts.records = args[i + 1].parse()?;
+                    i += 2;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        let state = Arc::new(ServerState::new()?);
+        let hash = service::synthesize::synthesize(&state, &opts)?;
+        println!("Synthetic institution created with seed {}. World hash: {}", opts.seed, hash);
+        return Ok(());
+    }
+
     let state = Arc::new(ServerState::new()?);
     if service::identity::boot_setup_token_needed(&state)
         && service::identity::create_setup_token(&state).is_ok()

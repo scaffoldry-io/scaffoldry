@@ -155,6 +155,7 @@ fn test_is_platform_admin_and_unit_in_reach_agreement() {
             name: "State University".to_string(),
             org_type: "institution".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
         OrganizationNode {
             id: dept_id,
@@ -163,6 +164,7 @@ fn test_is_platform_admin_and_unit_in_reach_agreement() {
             name: "Computer Science".to_string(),
             org_type: "department".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         },
     ];
 
@@ -274,6 +276,7 @@ async fn test_overview_counts_match_fixture() {
             name: "Mathematics".to_string(),
             org_type: "department".to_string(),
             hierarchy_key: "academic".to_string(),
+            synthetic: false,
         })
         .unwrap();
 
@@ -301,6 +304,7 @@ async fn test_overview_counts_match_fixture() {
             roles: vec![],
             enterprise_extension: None,
             title: Some("central_admin".to_string()),
+            synthetic: false,
         });
         users.push(scaffoldry_server::state::ScimUser {
             id: "u-hold".to_string(),
@@ -312,6 +316,7 @@ async fn test_overview_counts_match_fixture() {
             roles: vec![],
             enterprise_extension: None,
             title: Some("student".to_string()),
+            synthetic: false,
         });
         users.push(scaffoldry_server::state::ScimUser {
             id: "u-active".to_string(),
@@ -323,6 +328,7 @@ async fn test_overview_counts_match_fixture() {
             roles: vec![],
             enterprise_extension: None,
             title: Some("faculty".to_string()),
+            synthetic: false,
         });
         for u in users {
             state.persist_scim_user(u).unwrap();
@@ -360,6 +366,7 @@ async fn test_overview_counts_match_fixture() {
             data_classification: "Internal".to_string(),
             created_at: "2026-10-10T00:00:00Z".to_string(),
             organization_id: Some(dept_id),
+            synthetic: false,
         })
         .unwrap();
 
