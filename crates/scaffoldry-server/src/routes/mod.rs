@@ -24,6 +24,7 @@ pub mod framework;
 pub mod governance;
 pub mod jobs;
 pub mod mcp;
+pub mod oauth;
 pub mod policy;
 pub mod files;
 pub mod records;
@@ -69,6 +70,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(disclosures::router())
         .merge(datasets::router())
         .merge(clients::router())
+        .merge(oauth::me_router())
         .merge(framework::router())
         .merge(policy::router())
         .merge(governance::router())
@@ -87,6 +89,7 @@ pub fn api_router(state: SharedState) -> Router {
         ));
     let mcp_root = mcp::router().with_state(state.clone());
     let discovery_routes = discovery::router().with_state(state.clone());
+    let oauth_root = oauth::root_router().with_state(state.clone());
     let ws_root = workspaces::router().with_state(state.clone());
     let admin_root = admin::router().merge(admin_workspaces::router()).merge(access_grants::router()).with_state(state.clone());
 
@@ -94,6 +97,7 @@ pub fn api_router(state: SharedState) -> Router {
         .route("/healthz", get(health_check))
         .merge(Router::new().route("/readyz", get(ready_check)).with_state(state))
         .merge(discovery_routes)
+        .merge(oauth_root)
         .merge(admin_root)
         .merge(ws_root)
         .nest("/api/v1", api_v1)

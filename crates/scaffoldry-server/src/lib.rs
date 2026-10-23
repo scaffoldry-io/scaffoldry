@@ -58,13 +58,14 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
                     return true;
                 }
                 if let Ok(settings) = state_cors.settings.read() {
-                    if let Some(val) = settings.get("cors.allowed_origins") {
-                        if let Some(arr) = val.as_array() {
-                            return arr.iter().any(|v| v.as_str() == Some(origin_str));
+                    if let Some(arr) = settings.get("cors.allowed_origins").and_then(|v| v.as_array()) {
+                        if arr.iter().any(|v| v.as_str() == Some(origin_str)) {
+                            return true;
                         }
                     }
                 }
-                false
+                // The origin of an active outside app's redirect address may call too.
+                crate::service::oauth::client_origins(&state_cors).iter().any(|o| o == origin_str)
             },
         ))
         .allow_methods([

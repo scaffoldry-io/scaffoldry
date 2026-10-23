@@ -12,13 +12,16 @@ use axum::{
 use crate::service::ServiceError;
 
 /// Paths that stay reachable without an authenticated session.
-const PUBLIC_PATHS: [&str; 6] = [
+const PUBLIC_PATHS: [&str; 9] = [
     "/healthz",
     "/readyz",
     "/.well-known/oauth-protected-resource",
     "/.well-known/openid-configuration",
     "/.well-known/jwks.json",
     "/api/v1/auth/token",
+    "/.well-known/oauth-authorization-server",
+    "/oauth/token",
+    "/oauth/revoke",
 ];
 
 pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -63,6 +66,10 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
         // The viewer must still resolve. Rights are the target's intersected with theirs.
         let viewer = row.original_admin.as_deref().and_then(|a| resolve_user(a, state))?;
         user.view_as_by = Some(Box::new(viewer));
+    }
+    // A token an outside app holds works while its client is active.
+    if row.kind == "client" && !crate::service::oauth::client_token_allowed(&hash, state) {
+        return None;
     }
     // A preview works while its proposal is pending, and builds the preview app in this server.
     if row.kind == "preview" && !crate::service::preview::admit(&row, state) {

@@ -1,6 +1,6 @@
 import { COMMON_TIMEZONES, getUserTimezone, setUserTimezone } from "./utils/durationDatetime";
 import React, { useState, useEffect } from "react";
-import { apiClient, type MyApp } from "./api";
+import { apiClient, type Connection, type MyApp } from "./api";
 import { scopeSentence, TOKEN_OPS, type TokenOp, type TokenScope } from "./tokenScope";
 
 export interface UserSettingsModalProps {
@@ -32,6 +32,28 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
   const [label, setLabel] = useState("");
   const [days, setDays] = useState(30);
   const [mintedSecret, setMintedSecret] = useState<string | null>(null);
+
+  // The outside apps this person has agreed to.
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const loadConnections = async () => {
+    try {
+      setConnections(await apiClient.listConnections());
+    } catch {
+      setConnections([]);
+    }
+  };
+  const handleDisconnect = async (clientId: string) => {
+    setError(null);
+    try {
+      await apiClient.disconnectClient(clientId);
+      setConnections((prev) => prev.filter((c) => c.client_id !== clientId));
+    } catch (e: any) {
+      setError(e?.message || "Failed to disconnect");
+    }
+  };
+  useEffect(() => {
+    if (isOpen) void loadConnections();
+  }, [isOpen]);
 
   // Limit this token: the apps, then the tables, then what it may do there.
   const [limit, setLimit] = useState(false);
@@ -209,6 +231,39 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
           </div>
         </div>
 
+
+        {/* Outside apps */}
+        <div className="space-y-2 pb-4 border-b border-slate-100 dark:border-slate-800" data-testid="connected-apps">
+          <h3 className="text-xs font-semibold text-slate-900 dark:text-white uppercase tracking-wider">Connected apps</h3>
+          {connections.length === 0 ? (
+            <p className="text-xs text-slate-400">No outside app is connected to your account.</p>
+          ) : (
+            <ul className="space-y-2">
+              {connections.map((c) => (
+                <li key={c.client_id} className="flex items-start justify-between gap-3 text-xs">
+                  <div>
+                    <div className="font-medium text-slate-900 dark:text-white">
+                      {c.name} <span className="font-normal text-slate-500">run by {c.operator}</span>
+                      {c.status !== "Active" && <span className="ml-2 text-amber-600">({c.status})</span>}
+                    </div>
+                    <ul className="list-disc pl-4 text-slate-600 dark:text-slate-300">
+                      {c.sentences.map((s) => (
+                        <li key={s}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDisconnect(c.client_id)}
+                    className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-300 rounded font-medium text-[11px] cursor-pointer shrink-0"
+                  >
+                    Disconnect
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {agentEnabled && (
           <div className="space-y-4">
