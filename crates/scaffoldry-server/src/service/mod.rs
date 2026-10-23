@@ -29,6 +29,7 @@ pub mod prompts;
 pub mod tool_meta;
 pub mod tools;
 pub mod calc;
+pub mod agent_kit;
 pub mod openapi;
 pub mod preview;
 pub mod token_scope;

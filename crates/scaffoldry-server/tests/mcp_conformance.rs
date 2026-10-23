@@ -255,6 +255,7 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("get_proposal", true, false, false),
     ("decide_proposal", false, false, false),
     ("preview_proposal", false, false, false),
+    ("get_agent_kit", true, false, false),
     ("list_waiting_decisions", true, false, false),
     ("decide_process", false, false, false),
     ("list_views", true, false, false),
@@ -332,9 +333,7 @@ async fn the_tool_list_stays_inside_the_budget_and_a_fixture_tool_pushes_it_over
     let mut fat = tools.clone();
     fat.push(json!({ "name": "fixture", "description": "x".repeat(BYTE_BUDGET), "inputSchema": { "type": "object" } }));
     assert!(over_budget(&fat).unwrap().contains("bytes"), "a big tool is over the byte budget");
-    let mut many = tools.clone();
-    while many.len() <= TOOL_BUDGET {
-        many.push(json!({ "name": "f", "description": "d", "inputSchema": { "type": "object" } }));
-    }
+    // Small tools on their own, so the count is what goes over and the bytes cannot, however near the real list is to its budget.
+    let many: Vec<Value> = (0..=TOOL_BUDGET).map(|_| json!({ "name": "f", "description": "d", "inputSchema": { "type": "object" } })).collect();
     assert!(over_budget(&many).unwrap().contains("tools"), "too many tools is over the count budget");
 }

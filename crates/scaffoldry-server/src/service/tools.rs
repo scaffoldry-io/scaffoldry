@@ -265,6 +265,14 @@ Tool {
         run: run_preview_proposal,
     },
     Tool {
+        name: "get_agent_kit",
+        description: "Get the setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. It writes nothing. Show the person the files and ask before you write them.",
+        input_schema: schema_empty,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_get_agent_kit,
+    },
+    Tool {
         name: "list_waiting_decisions",
         description: "List the process steps waiting for you to decide, in apps you can read. Up to 200.",
         input_schema: schema_empty,
@@ -1229,6 +1237,10 @@ fn run_preview_proposal(caller: &AuthUser, origin: &Origin, args: Value, state: 
     }
     opened["pages"] = Value::Array(pages);
     Ok(opened)
+}
+
+fn run_get_agent_kit(_caller: &AuthUser, _origin: &Origin, _args: Value, _state: &SharedState) -> Result<Value, ServiceError> {
+    Ok(crate::service::agent_kit::kit())
 }
 
 fn schema_decide_process() -> Value {

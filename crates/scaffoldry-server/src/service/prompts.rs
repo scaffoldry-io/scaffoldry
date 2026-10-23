@@ -50,6 +50,17 @@ Read the resource scaffoldry://guide/building-apps first. Then, in order:\n\
 4. When it is live, call list_waiting_decisions to see the steps waiting, and call decide_process only for the person who decides.",
     },
     Prompt {
+        name: "set_up_this_project",
+        description: "Set this project up to work with Scaffoldry: an AGENTS.md section and a skill, after the person agrees.",
+        arguments: &[],
+        template: "Set this project up to use Scaffoldry.\n\
+1. Call get_agent_kit.\n\
+2. Show the person every file in its `files` list and what will happen to it. Then ask whether to go ahead. Write nothing before they say yes.\n\
+3. For AGENTS.md: if the file has the markers <!-- scaffoldry:begin --> and <!-- scaffoldry:end -->, change only the text between the markers and keep every other line exactly. If it has no markers, add the section at the end. If there is no file, create it.\n\
+4. Write the skill folder to the paths the person chooses, for Claude Code or for Codex, with the file contents the kit gives.\n\
+5. Put no token, address or record value in any file. Tell the person what you wrote.",
+    },
+    Prompt {
         name: "explain_denial",
         description: "Explain why a request was refused and what would change it.",
         arguments: &[("error", "The error text, as the tool returned it", true)],
