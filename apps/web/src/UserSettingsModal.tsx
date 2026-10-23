@@ -1,6 +1,7 @@
 import { COMMON_TIMEZONES, getUserTimezone, setUserTimezone } from "./utils/durationDatetime";
 import React, { useState, useEffect } from "react";
-import { apiClient } from "./api";
+import { apiClient, type MyApp } from "./api";
+import { scopeSentence, TOKEN_OPS, type TokenOp, type TokenScope } from "./tokenScope";
 
 export interface UserSettingsModalProps {
   isOpen: boolean;
@@ -15,6 +16,8 @@ export interface ApiTokenItem {
   created_at: string;
   expires_at: string;
   last_used_at: string | null;
+  /** What the token is limited to. Null is its owner's full rights. */
+  scope?: TokenScope | null;
 }
 
 export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, onClose, eppn }) => {
@@ -29,6 +32,14 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
   const [label, setLabel] = useState("");
   const [days, setDays] = useState(30);
   const [mintedSecret, setMintedSecret] = useState<string | null>(null);
+
+  // Limit this token: the apps, then the tables, then what it may do there.
+  const [limit, setLimit] = useState(false);
+  const [myApps, setMyApps] = useState<MyApp[]>([]);
+  const [tablesOf, setTablesOf] = useState<Record<string, { id: string; name: string }[]>>({});
+  const [chosenApps, setChosenApps] = useState<string[]>([]);
+  const [chosenTables, setChosenTables] = useState<string[]>([]);
+  const [chosenOps, setChosenOps] = useState<TokenOp[]>(["read"]);
 
   useEffect(() => {
     if (isOpen) {
@@ -66,15 +77,52 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
     }
   };
 
+  // The apps are loaded when the person asks to limit a token, and when the list needs their titles.
+  const loadApps = async () => {
+    try {
+      const apps = await apiClient.listMyApps();
+      setMyApps(apps);
+      const entries = await Promise.all(
+        apps.map(async (a) => {
+          const manifest = await apiClient.getApp(a.slug).catch(() => null);
+          return [a.slug, ((manifest?.tables ?? []) as { id: string; name?: string }[]).map((t) => ({ id: t.id, name: t.name ?? t.id }))] as const;
+        })
+      );
+      setTablesOf(Object.fromEntries(entries));
+    } catch {
+      // Without the apps the sentences show ids, and the form offers nothing to choose.
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) void loadApps();
+  }, [isOpen]);
+
+  const names = {
+    apps: Object.fromEntries(myApps.map((a) => [a.slug, a.title])),
+    tables: Object.fromEntries(Object.values(tablesOf).flat().map((t) => [t.id, t.name])),
+  };
+  const offeredTables = chosenApps.flatMap((slug) => tablesOf[slug] ?? []).filter((t, i, all) => all.findIndex((x) => x.id === t.id) === i);
+  const draft: TokenScope = {
+    apps: chosenApps,
+    tables: Object.fromEntries(chosenTables.filter((t) => offeredTables.some((o) => o.id === t)).map((t) => [t, TOKEN_OPS.filter((o) => chosenOps.includes(o.op)).map((o) => o.op)])),
+  };
+  const toggle = <T,>(list: T[], item: T): T[] => (list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
+
   const handleCreateToken = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!label.trim()) return;
     setError(null);
+    if (limit && (draft.apps.length === 0 || Object.keys(draft.tables).length === 0 || chosenOps.length === 0)) {
+      setError("Choose an app and a table, and at least one thing the token may do there.");
+      return;
+    }
     try {
       const res = await apiClient.createToken({
         label: label.trim(),
         days: Number(days),
         kind: "agent",
+        ...(limit ? { scope: draft } : {}),
       });
       setMintedSecret(res.token);
       setLabel("");
@@ -236,12 +284,64 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
               </button>
             </form>
 
+            {/* Limit this token */}
+            <div className="space-y-2 text-xs">
+              <label className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
+                <input type="checkbox" checked={limit} onChange={(e) => setLimit(e.target.checked)} />
+                Limit this token
+              </label>
+              {limit && (
+                <div className="space-y-2 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
+                  <fieldset>
+                    <legend className="font-medium text-slate-700 dark:text-slate-300">Apps</legend>
+                    {myApps.length === 0 && <p className="text-slate-400">No apps to choose from.</p>}
+                    {myApps.map((a) => (
+                      <label key={a.slug} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={chosenApps.includes(a.slug)}
+                          onChange={() => setChosenApps((prev) => toggle(prev, a.slug))}
+                        />
+                        <span>{a.title}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  {offeredTables.length > 0 && (
+                    <fieldset>
+                      <legend className="font-medium text-slate-700 dark:text-slate-300">Tables</legend>
+                      {offeredTables.map((t) => (
+                        <label key={t.id} className="flex items-center gap-2">
+                          <input type="checkbox" checked={chosenTables.includes(t.id)} onChange={() => setChosenTables((prev) => toggle(prev, t.id))} />
+                          <span>{t.name}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
+                  <fieldset>
+                    <legend className="font-medium text-slate-700 dark:text-slate-300">What it may do</legend>
+                    <div className="flex gap-4">
+                      {TOKEN_OPS.map((o) => (
+                        <label key={o.op} className="flex items-center gap-2">
+                          <input type="checkbox" checked={chosenOps.includes(o.op)} onChange={() => setChosenOps((prev) => toggle(prev, o.op))} />
+                          <span>{o.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <p data-testid="token-scope-sentence" className="text-slate-600 dark:text-slate-300">
+                    {scopeSentence(draft, names)}
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Token List */}
             <div data-testid="agent-token-list" className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <th className="px-3 py-2 font-medium">Label</th>
+                    <th className="px-3 py-2 font-medium">Limit</th>
                     <th className="px-3 py-2 font-medium">Created</th>
                     <th className="px-3 py-2 font-medium">Expires</th>
                     <th className="px-3 py-2 font-medium">Last Used</th>
@@ -251,7 +351,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {tokens.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-3 py-4 text-center text-slate-400">
+                      <td colSpan={6} className="px-3 py-4 text-center text-slate-400">
                         No agent tokens created yet.
                       </td>
                     </tr>
@@ -259,6 +359,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
                     tokens.map((tok) => (
                       <tr key={tok.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
                         <td className="px-3 py-2 font-medium text-slate-900 dark:text-white">{tok.label}</td>
+                        <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{scopeSentence(tok.scope, names)}</td>
                         <td className="px-3 py-2 text-slate-500 font-mono text-[11px]">{tok.created_at.split("T")[0]}</td>
                         <td className="px-3 py-2 text-slate-500 font-mono text-[11px]">{tok.expires_at.split("T")[0]}</td>
                         <td className="px-3 py-2 text-slate-500 font-mono text-[11px]">{tok.last_used_at ? tok.last_used_at.split("T")[0] : "Never"}</td>

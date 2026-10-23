@@ -109,9 +109,9 @@ fn api_token(eppn: &str, kind: &str, raw: &str) -> ApiToken {
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
-    },
         scope: None,
     }
+}
 
 // 1. Paging, order, and the row shape.
 #[tokio::test]

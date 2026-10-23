@@ -1,3 +1,4 @@
+import type { TokenScope } from "./tokenScope";
 export interface AdminOverviewData {
   server: {
     version: string;
@@ -206,6 +207,7 @@ export interface AdminUserDetail {
     expires_at: string;
     last_used_at: string | null;
     revoked: boolean;
+    scope?: TokenScope | null;
   }[];
   ledger: { timestamp?: string; decision_type: string; rationale: string }[];
 }
@@ -725,11 +727,13 @@ export const callPage = (appSlug: string, pageId: string, args: Record<string, u
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {
-    return request<{ tokens: any[] }>("/auth/tokens");
+    // The server sends the list itself. A wrapped list is read the same way.
+    const res = await request<any[] | { tokens: any[] }>("/auth/tokens");
+    return { tokens: Array.isArray(res) ? res : res?.tokens ?? [] };
   },
 
-  createToken: async (input: { label: string; days?: number; kind?: string }) => {
-    return request<{ token: string; id: string; expires_at: string; label: string; kind: string }>("/auth/tokens", {
+  createToken: async (input: { label: string; days?: number; kind?: string; scope?: TokenScope }) => {
+    return request<{ token: string; id: string; expires_at: string; label: string; kind: string; scope?: TokenScope }>("/auth/tokens", {
       method: "POST",
       body: JSON.stringify(input),
     });

@@ -140,3 +140,52 @@ fn join_and(items: &[&str]) -> String {
         [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn scope() -> TokenScope {
+        TokenScope::parse(&json!({ "apps": ["admissions"], "tables": { "applicants": ["read", "create"] } })).expect("a scope")
+    }
+
+    #[test]
+    fn a_scope_allows_only_what_it_names() {
+        let s = scope();
+        assert!(s.allows("admissions", "applicants", TokenOp::Read));
+        assert!(s.allows("admissions", "applicants", TokenOp::Create));
+        assert!(!s.allows("admissions", "applicants", TokenOp::Update));
+        assert!(!s.allows("admissions", "notes", TokenOp::Read));
+        assert!(!s.allows("housing", "applicants", TokenOp::Read));
+    }
+
+    #[test]
+    fn only_data_tools_are_ever_allowed() {
+        let s = scope();
+        assert!(s.allows_tool("list_records") && s.allows_tool("create_record") && s.allows_tool("describe_app"));
+        assert!(!s.allows_tool("update_record"), "no table may be changed");
+        for admin in ["propose_app_change", "decide_proposal", "manage_workspace_member", "record_governance_decision", "list_workspaces"] {
+            assert!(!s.allows_tool(admin), "{admin}");
+        }
+    }
+
+    #[test]
+    fn a_bad_scope_says_what_is_wrong() {
+        for bad in [
+            json!({ "apps": [], "tables": { "t": ["read"] } }),
+            json!({ "apps": ["a"], "tables": {} }),
+            json!({ "apps": ["a"], "tables": { "t": [] } }),
+            json!({ "apps": ["a"], "tables": { "t": ["read"] }, "tools": ["decide_proposal"] }),
+            json!({ "apps": ["a"], "tables": { "t": ["read"] }, "max_rows_per_call": 0 }),
+            json!({ "apps": ["a"], "tables": { "t": ["read"] }, "extra": true }),
+        ] {
+            assert!(TokenScope::parse(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_sentence_names_the_operations_tables_and_apps() {
+        assert_eq!(scope().sentence(), "This token can read and add applicants in admissions. It cannot do anything else.");
+    }
+}

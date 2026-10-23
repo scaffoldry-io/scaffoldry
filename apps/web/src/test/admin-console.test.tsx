@@ -202,7 +202,7 @@ describe("Admin People", () => {
     ],
     workspace_memberships: [],
     tokens: [
-      { id: "t-1", kind: "agent", label: "Lab notebook agent", created_at: "2026-10-01T00:00:00Z", expires_at: "2026-12-01T00:00:00Z", last_used_at: null, revoked: false },
+      { id: "t-1", kind: "agent", label: "Lab notebook agent", created_at: "2026-10-01T00:00:00Z", expires_at: "2026-12-01T00:00:00Z", last_used_at: null, revoked: false, scope: { apps: ["notebook"], tables: { entries: ["read", "create"] } } },
     ],
     ledger: [],
   };
@@ -232,6 +232,7 @@ describe("Admin People", () => {
   it("the detail drawer shows tokens and appointments", async () => {
     await openDrawer();
     expect(screen.getByTestId("admin-user-tokens")).toHaveTextContent("Lab notebook agent");
+    expect(screen.getByTestId("admin-user-tokens")).toHaveTextContent("This token can read and add entries in notebook. It cannot do anything else.");
     expect(screen.getByTestId("admin-user-appointments")).toHaveTextContent("unit_admin in Biology");
   });
 
