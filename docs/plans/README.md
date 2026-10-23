@@ -150,7 +150,7 @@ Faculty want quick, custom web apps with interfaces of their own. These rows let
 | 78 | [integrations.md](integrations.md) | 3 | An API description generated for each app | **COMPLETED** |
 | 79 | [agent-coverage.md](agent-coverage.md) | 4 | An AI tool is set up in one step: an AGENTS.md section, a skill, and docs that match the server's version | **COMPLETED** |
 | 80 | [external-apps.md](external-apps.md) | 1 | An outside app is a registered client with a ceiling a person approved. A ceiling never names a sensitive field | **COMPLETED** |
-| 81 | [external-apps.md](external-apps.md) | 2 | Sign-in with OAuth 2.1 and PKCE, consent naming the client and its operator, one-hour tokens, and revocation | |
+| 81 | [external-apps.md](external-apps.md) | 2 | Sign-in with OAuth 2.1 and PKCE, consent naming the client and its operator, one-hour tokens, and revocation | **COMPLETED** |
 | 82 | [external-apps.md](external-apps.md) | 3 | An outside app calls as the signed-in person, within its ceiling, and every call records the client | |
 | 83 | [external-apps.md](external-apps.md) | 4 | A TypeScript client generated for each app, and a guide for building outside Scaffoldry | |
 | 84 | [external-apps.md](external-apps.md) | 8 | AI tools sign in through OAuth as themselves, for a person, with the scope the person picked, and every action names the person, the tool and the task | |

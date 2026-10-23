@@ -724,6 +724,26 @@ export const getPage = (appSlug: string, pageId: string): Promise<{ html: string
 export const callPage = (appSlug: string, pageId: string, args: Record<string, unknown>): Promise<unknown> =>
   request(`/apps/${encodeURIComponent(appSlug)}/pages/${encodeURIComponent(pageId)}/call`, { method: "POST", body: JSON.stringify(args) });
 
+/** What an outside app's sign-in request asks the person to agree to. */
+export interface OAuthConsent {
+  client: { client_id: string; name: string; operator: string; callback_origin: string };
+  /** The ceiling, in sentences. */
+  sentences: string[];
+  /** The person already agreed to exactly this. */
+  remembered: boolean;
+  user: { eppn: string; name: string };
+}
+
+/** An outside app the person has agreed to. */
+export interface Connection {
+  client_id: string;
+  name: string;
+  operator: string;
+  status: string;
+  sentences: string[];
+  connected_at: string;
+}
+
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {
@@ -1024,6 +1044,23 @@ export const apiClient = {
       summary: string;
       read_only: boolean;
     }>(`/proposals/${id}/preview`, { method: "POST" }),
+
+  /** What the consent screen shows for an outside app's sign-in request. A bad request is an error, never a redirect. */
+  oauthConsent: (params: Record<string, string>) =>
+    request<OAuthConsent>(`/oauth/authorize?${new URLSearchParams(params).toString()}`),
+
+  /** The person's answer. The reply is the address to send them to. */
+  oauthDecide: (params: Record<string, string>, decision: "allow" | "deny") =>
+    request<{ redirect_to: string }>("/oauth/authorize", { method: "POST", body: JSON.stringify({ ...params, decision }) }),
+
+  /** The outside apps the signed-in person has agreed to. */
+  listConnections: async (): Promise<Connection[]> => {
+    const res = await request<Connection[]>("/me/connections");
+    return Array.isArray(res) ? res : [];
+  },
+
+  /** Disconnects an outside app. Its tokens for this person stop working. */
+  disconnectClient: (clientId: string) => request<{ status: string }>(`/me/connections/${encodeURIComponent(clientId)}`, { method: "DELETE" }),
 
   /** Ends the view-as or preview session that the current token belongs to. */
   stopViewAs: () => request<{ status: string }>("/auth/stop-view-as", { method: "POST" }),

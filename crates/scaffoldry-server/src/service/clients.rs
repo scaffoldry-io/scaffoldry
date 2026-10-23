@@ -209,6 +209,14 @@ pub fn sentences(ceiling: &Ceiling, state: &SharedState) -> Vec<String> {
     out
 }
 
+/// A client row, for functions that show its ceiling.
+pub struct ClientView<'a>(pub &'a ClientRow);
+
+/// The ceiling of a stored client as sentences. The consent screen and the console both call this.
+pub fn ceiling_sentences(client: &ClientView<'_>, state: &SharedState) -> Vec<String> {
+    sentences(&ceiling_of(client.0), state)
+}
+
 fn ceiling_of(row: &ClientRow) -> Ceiling {
     serde_json::from_value(row.ceiling.clone()).unwrap_or(Ceiling { apps: Vec::new() })
 }

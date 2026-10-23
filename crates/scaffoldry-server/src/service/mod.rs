@@ -31,6 +31,7 @@ pub mod tools;
 pub mod calc;
 pub mod agent_kit;
 pub mod clients;
+pub mod oauth;
 pub mod openapi;
 pub mod preview;
 pub mod token_scope;

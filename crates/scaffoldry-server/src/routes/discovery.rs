@@ -15,11 +15,17 @@ pub fn router() -> Router<SharedState> {
         .route("/.well-known/oauth-protected-resource", get(get_oauth_protected_resource))
 }
 
-async fn get_oauth_protected_resource() -> impl IntoResponse {
-    let issuer = get_jwt_issuer();
+async fn get_oauth_protected_resource(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    // This server issues tokens for outside apps, and the institution's identity provider issues the others.
+    let own = crate::service::oauth::issuer_of(&headers);
+    let mut servers = vec![own.clone()];
+    let idp = get_jwt_issuer();
+    if idp != own {
+        servers.push(idp);
+    }
     Json(json!({
-        "resource": "/api/mcp",
-        "authorization_servers": [issuer],
+        "resource": format!("{own}/api/mcp"),
+        "authorization_servers": servers,
         "scopes_supported": [
             "mcp:read",
             "mcp:write",

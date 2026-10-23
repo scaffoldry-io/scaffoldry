@@ -48,6 +48,12 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/clients/{id}/decide".into(), case!(client_decide));
     m.insert("POST /api/v1/clients/{id}/disable".into(), case!(client_disable));
 
+    m.insert("POST /oauth/authorize".into(), case!(oauth_authorize));
+    m.insert("POST /api/v1/oauth/authorize".into(), case!(oauth_authorize_v1));
+    m.insert("POST /oauth/token".into(), case!(oauth_token));
+    m.insert("POST /oauth/revoke".into(), case!(oauth_revoke));
+    m.insert("DELETE /api/v1/me/connections/{client_id}".into(), case!(connection_delete));
+
     m.insert("POST /api/v1/auth/tokens".into(), case!(token_create));
     m.insert("DELETE /api/v1/auth/tokens/{id}".into(), case!(token_revoke));
     m.insert("POST /api/v1/auth/logout".into(), case!(logout));
@@ -403,6 +409,110 @@ async fn client_disable(w: World) -> Outcome {
     status(World::call(&w.b, "POST", &format!("/api/v1/clients/{id}/disable"), OWNER, Some(json!({ "reason": "Done" }))).await, StatusCode::OK, "B disables")?;
     let seen = status(World::call(&w.a, "GET", &format!("/api/v1/clients/{id}"), OWNER, None).await, StatusCode::OK, "A reads the client")?;
     ensure(seen["status"] == "Disabled", format!("A shows the disablement B made: {seen}"))
+}
+
+// --- signing in to an outside app ------------------------------------------------------------------------------------------
+
+const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const CALLBACK: &str = "https://tracker.example.edu/callback";
+
+/// A form post to `uri` through `app`.
+async fn form_post(app: &axum::Router, uri: &str, body: String) -> (StatusCode, Value) {
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let req = Request::builder().method("POST").uri(uri).header("content-type", "application/x-www-form-urlencoded").body(Body::from(body)).unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// An approved client, and a code for OWNER from it, made through A.
+async fn client_and_code(w: &World) -> Result<(String, String), String> {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let id = register_client(w).await?;
+    status(w.wa("POST", &format!("/api/v1/clients/{id}/decide"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "approve the client")?;
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()));
+    let allowed = status(
+        w.wa("POST", "/oauth/authorize", OWNER, Some(json!({
+            "client_id": id, "redirect_uri": CALLBACK, "response_type": "code", "state": "s1", "code_challenge": challenge,
+            "code_challenge_method": "S256", "resource": "https://localhost", "decision": "allow"
+        }))).await,
+        StatusCode::OK,
+        "allow",
+    )?;
+    let redirect = allowed["redirect_to"].as_str().ok_or("a redirect")?;
+    let code = redirect.split_once("code=").and_then(|(_, rest)| rest.split('&').next()).ok_or("a code")?.to_string();
+    Ok((id, code))
+}
+
+fn token_form(id: &str, code: &str) -> String {
+    format!("grant_type=authorization_code&code={code}&redirect_uri={CALLBACK}&client_id={id}&code_verifier={VERIFIER}")
+}
+
+/// An access token for OWNER: the code is made on A and traded on B.
+async fn access_token(w: &World) -> Result<(String, String), String> {
+    let (id, code) = client_and_code(w).await?;
+    let (s, issued) = form_post(&w.b, "/oauth/token", token_form(&id, &code)).await;
+    ensure(s == StatusCode::OK, format!("B trades the code A made: {s} {issued}"))?;
+    Ok((id, issued["access_token"].as_str().ok_or("a token")?.to_string()))
+}
+
+async fn token_works(app: &axum::Router, token: &str) -> bool {
+    World::call_with(app, "GET", "/api/v1/auth/me", token, None).await.0 == StatusCode::OK
+}
+
+async fn oauth_authorize(w: World) -> Outcome {
+    let (id, code) = client_and_code(&w).await?;
+    // B reads the code A stored and knows the consent A recorded.
+    let (s, issued) = form_post(&w.b, "/oauth/token", token_form(&id, &code)).await;
+    ensure(s == StatusCode::OK, format!("B accepts the code A made: {s} {issued}"))?;
+    let shown = World::call(&w.b, "GET", &format!("/oauth/authorize?client_id={id}&redirect_uri={CALLBACK}&response_type=code&state=s&code_challenge={}&code_challenge_method=S256&resource=https://localhost", "a".repeat(43)), OWNER, None).await;
+    ensure(shown.0 == StatusCode::OK && shown.1["remembered"] == true, format!("B knows the consent A recorded: {} {}", shown.0, shown.1))
+}
+
+/// The desk's copy of the consent call, under /api/v1. A consent made on B through it is remembered on A.
+async fn oauth_authorize_v1(w: World) -> Outcome {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let id = register_client(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/clients/{id}/decide"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "approve the client")?;
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()));
+    let (s, body) = World::call(&w.b, "POST", "/api/v1/oauth/authorize", OWNER, Some(json!({
+        "client_id": id, "redirect_uri": CALLBACK, "response_type": "code", "state": "s1", "code_challenge": challenge,
+        "code_challenge_method": "S256", "resource": "https://localhost", "decision": "allow"
+    }))).await;
+    ensure(s == StatusCode::OK && body["redirect_to"].is_string(), format!("B records the consent: {s} {body}"))?;
+    let listed = status(World::call(&w.a, "GET", "/api/v1/me/connections", OWNER, None).await, StatusCode::OK, "A lists connections")?;
+    ensure(has(&listed, &id), format!("A shows the consent B recorded: {listed}"))
+}
+
+async fn oauth_token(w: World) -> Outcome {
+    let (id, token) = access_token(&w).await?;
+    ensure(token_works(&w.a, &token).await && token_works(&w.b, &token).await, "both instances accept the token B issued")?;
+    // The same code on A is a second use. It revokes the token B issued.
+    let (_, code) = client_and_code(&w).await?;
+    let (first, _) = form_post(&w.b, "/oauth/token", token_form(&id, &code)).await;
+    let (second, _) = form_post(&w.a, "/oauth/token", token_form(&id, &code)).await;
+    ensure(first != StatusCode::OK || second == StatusCode::BAD_REQUEST, "A refuses a code B already used")
+}
+
+async fn oauth_revoke(w: World) -> Outcome {
+    let (id, token) = access_token(&w).await?;
+    let (s, _) = form_post(&w.b, "/oauth/revoke", format!("token={token}&client_id={id}")).await;
+    ensure(s == StatusCode::OK, "B revokes")?;
+    ensure(!token_works(&w.a, &token).await, "A refuses the token B revoked")
+}
+
+async fn connection_delete(w: World) -> Outcome {
+    let (id, token) = access_token(&w).await?;
+    let (s, body) = World::call(&w.b, "DELETE", &format!("/api/v1/me/connections/{id}"), OWNER, None).await;
+    ensure(s == StatusCode::OK, format!("B disconnects: {s} {body}"))?;
+    ensure(!token_works(&w.a, &token).await, "A refuses the token after B disconnected")?;
+    let listed = status(World::call(&w.a, "GET", "/api/v1/me/connections", OWNER, None).await, StatusCode::OK, "A lists connections")?;
+    ensure(!has(&listed, &id), format!("A no longer lists it: {listed}"))
 }
 
 // --- sessions ------------------------------------------------------------------------------------------------------------
