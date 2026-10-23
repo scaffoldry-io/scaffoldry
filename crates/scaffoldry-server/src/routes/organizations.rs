@@ -86,6 +86,8 @@ pub struct CreateOrgPayload {
     pub org_type: String,
     pub parent_id: Option<Uuid>,
     pub hierarchy_key: Option<String>,
+    #[serde(default)]
+    pub synthetic: bool,
 }
 
 const ALLOWED_ORG_TYPES: [&str; 5] = ["Institution", "College", "Department", "Center", "Program"];
@@ -134,6 +136,17 @@ async fn create_org(
                 ));
             }
         }
+        if payload.synthetic {
+            if !parent.synthetic && parent.parent_id.is_some() {
+                return Err(ServiceError::BadRequest(
+                    "A synthetic unit may only sit under a synthetic unit".to_string(),
+                ));
+            }
+        } else if parent.synthetic {
+            return Err(ServiceError::BadRequest(
+                "A non-synthetic unit may not sit under a synthetic unit".to_string(),
+            ));
+        }
         parent.hierarchy_key.clone()
     } else {
         payload
@@ -164,6 +177,7 @@ async fn create_org(
         code: payload.code,
         org_type: payload.org_type,
         hierarchy_key,
+        synthetic: payload.synthetic,
     };
 
     drop(orgs_map);
@@ -215,6 +229,19 @@ async fn patch_org(
                 return Err(ServiceError::BadRequest(format!(
                     "Parent organization '{new_parent_id}' does not exist"
                 )));
+            }
+
+            let new_parent = orgs_map.get(&new_parent_id).unwrap();
+            if node.synthetic {
+                if !new_parent.synthetic && new_parent.parent_id.is_some() {
+                    return Err(ServiceError::BadRequest(
+                        "A synthetic unit may only sit under a synthetic unit".to_string(),
+                    ));
+                }
+            } else if new_parent.synthetic {
+                return Err(ServiceError::BadRequest(
+                    "A non-synthetic unit may not sit under a synthetic unit".to_string(),
+                ));
             }
 
             let tree = state.tree.read().unwrap();

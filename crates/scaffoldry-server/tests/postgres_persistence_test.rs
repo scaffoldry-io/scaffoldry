@@ -111,6 +111,7 @@ fn test_postgres_persistence_lifecycle() {
         data_classification: "Restricted".to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),
         organization_id: Some(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
+        synthetic: false,
     };
 
     state.persist_workspace(ws.clone()).expect("Failed to persist workspace");
@@ -154,6 +155,7 @@ fn test_institutional_scale_workspaces() {
             data_classification: "Internal".to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
             organization_id: Some(uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()),
+            synthetic: false,
         });
     }
 
@@ -243,6 +245,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         roles: vec![],
         enterprise_extension: None,
         title: None,
+        synthetic: false,
     };
     state.persist_scim_user(scim_u.clone()).expect("Persist SCIM user");
 

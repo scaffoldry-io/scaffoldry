@@ -22,3 +22,8 @@ cedar-policy = "4.13.0"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 postgres = { version = "0.19", features = ["with-serde_json-1", "with-uuid-1", "with-chrono-0_4"] }
 sha2 = "0.11"
+
+# The reach rules and their reference evaluator run millions of times in `reach_differential_test`, which has a 60 second
+# limit. Optimizing this one small crate keeps that test fast in a debug build, and changes nothing else.
+[profile.dev.package.scaffoldry-core]
+opt-level = 2

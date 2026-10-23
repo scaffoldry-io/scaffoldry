@@ -24,6 +24,7 @@ fn two_opposite_moves_at_once_leave_no_cycle() {
                 code,
                 org_type: "Department".into(),
                 hierarchy_key: "academic".into(),
+                synthetic: false,
             };
             state.persist_organization(&node).unwrap();
             node
