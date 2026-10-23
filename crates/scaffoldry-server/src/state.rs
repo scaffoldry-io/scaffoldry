@@ -28,6 +28,9 @@ pub struct ApiToken {
     /// The one app a `viewas` token reaches. Empty for every other kind.
     #[serde(default)]
     pub app_slug: Option<String>,
+    /// What the token is limited to. None is its owner's full rights.
+    #[serde(default)]
+    pub scope: Option<scaffoldry_core::TokenScope>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -465,7 +468,8 @@ impl ServerState {
             last_used_at: None,
             revoked_at: None,
             app_slug: None,
-        };
+        scope: None,
+    };
 
         let mut settings_map = HashMap::new();
         settings_map.insert("cors.allowed_origins".to_string(), serde_json::json!([]));

@@ -74,6 +74,7 @@ const SCHEMA_0059: &str = include_str!("../../scaffoldry-core/migrations/0059_ac
 const SCHEMA_0060: &str = include_str!("../../scaffoldry-core/migrations/0060_synthetic.sql");
 const SCHEMA_0061: &str = include_str!("../../scaffoldry-core/migrations/0061_page_settings.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
+const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str =
@@ -1083,6 +1084,7 @@ impl PostgresRepository {
                             ("0019_rule_versions.sql", SCHEMA_0019),
                             ("0024_proposal_rules.sql", SCHEMA_0024),
                             ("0062_proposal_digest.sql", SCHEMA_0062),
+                            ("0063_token_scope.sql", SCHEMA_0063),
                         ];
 
                         let mut fresh_install = false;
@@ -3527,7 +3529,7 @@ impl PostgresRepository {
         let token = token.clone();
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO api_tokens (token_hash, id, kind, eppn, label, original_admin, created_at, expires_at, last_used_at, revoked_at, app_slug)                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)                  ON CONFLICT (token_hash) DO UPDATE SET                     label = EXCLUDED.label,                     last_used_at = EXCLUDED.last_used_at,                     revoked_at = EXCLUDED.revoked_at",
+                "INSERT INTO api_tokens (token_hash, id, kind, eppn, label, original_admin, created_at, expires_at, last_used_at, revoked_at, app_slug, scope)                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)                  ON CONFLICT (token_hash) DO UPDATE SET                     label = EXCLUDED.label,                     last_used_at = EXCLUDED.last_used_at,                     revoked_at = EXCLUDED.revoked_at",
                 &[
                     &token.token_hash,
                     &token.id,
@@ -3540,6 +3542,7 @@ impl PostgresRepository {
                     &token.last_used_at,
                     &token.revoked_at,
                     &token.app_slug,
+                    &token.scope.as_ref().and_then(|s| serde_json::to_value(s).ok()),
                 ],
             )?;
             Ok(())
@@ -3553,7 +3556,7 @@ impl PostgresRepository {
         let hash = token_hash.to_string();
         self.with_client(move |client| {
             let row_opt = client.query_opt(
-                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at, expires_at, last_used_at, revoked_at, app_slug                  FROM api_tokens WHERE token_hash = $1",
+                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at, expires_at, last_used_at, revoked_at, app_slug, scope                  FROM api_tokens WHERE token_hash = $1",
                 &[&hash],
             )?;
             match row_opt {
@@ -3569,6 +3572,7 @@ impl PostgresRepository {
                     last_used_at: r.get(8),
                     revoked_at: r.get(9),
                     app_slug: r.get(10),
+                    scope: token_scope_of(r.get(11)),
                 })),
                 None => Ok(None),
             }
@@ -3631,7 +3635,7 @@ impl PostgresRepository {
         let eppn = eppn.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text, app_slug                  FROM api_tokens WHERE eppn = $1 AND kind = 'agent' AND revoked_at IS NULL ORDER BY created_at DESC",
+                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text, app_slug, scope                  FROM api_tokens WHERE eppn = $1 AND kind = 'agent' AND revoked_at IS NULL ORDER BY created_at DESC",
                 &[&eppn],
             )?;
             let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
@@ -3658,6 +3662,7 @@ impl PostgresRepository {
                     last_used_at: last_used_str.map(|s| parse_time(&s)),
                     revoked_at: revoked_str.map(|s| parse_time(&s)),
                     app_slug: r.get(10),
+                    scope: token_scope_of(r.get(11)),
                 });
             }
             Ok(list)
@@ -3671,7 +3676,7 @@ impl PostgresRepository {
         let eppn = eppn.to_string();
         self.with_client(move |client| {
             let rows = client.query(
-                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text, app_slug                  FROM api_tokens WHERE eppn = $1  ORDER BY created_at DESC",
+                "SELECT token_hash, id, kind, eppn, label, original_admin,                         created_at::text, expires_at::text, last_used_at::text, revoked_at::text, app_slug, scope                  FROM api_tokens WHERE eppn = $1  ORDER BY created_at DESC",
                 &[&eppn],
             )?;
             let parse_time = |s: &str| -> chrono::DateTime<chrono::Utc> {
@@ -3698,6 +3703,7 @@ impl PostgresRepository {
                     last_used_at: last_used_str.map(|s| parse_time(&s)),
                     revoked_at: revoked_str.map(|s| parse_time(&s)),
                     app_slug: r.get(10),
+                    scope: token_scope_of(r.get(11)),
                 });
             }
             Ok(list)
@@ -3931,6 +3937,7 @@ pub(crate) fn api_token_of_text_row(
         last_used_at: last_used.map(|s| parse_time(&s)),
         revoked_at: revoked.map(|s| parse_time(&s)),
         app_slug: r.get(10),
+        scope: token_scope_of(r.get(11)),
     })
 }
 
@@ -3980,4 +3987,11 @@ pub(crate) fn upsert_role_in(
         ],
     )?;
     Ok(())
+}
+
+/// The scope a stored token carries. A value that does not parse is no scope, which would widen the token, so it is
+/// read as a scope that allows nothing.
+fn token_scope_of(stored: Option<serde_json::Value>) -> Option<scaffoldry_core::TokenScope> {
+    let value = stored?;
+    Some(serde_json::from_value(value).unwrap_or(scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: Some(Vec::new()), max_rows_per_call: Some(1) }))
 }

@@ -83,6 +83,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "That would give access to everyone below the top of a hierarchy.", next: "Anchor it on one workspace as a viewer, or use the workspace's institutional visibility." };
     case "proposal_changed":
       return { message: "This proposal is not what you reviewed.", next: "Open it again, read what it now holds, and approve that." };
+    case "token_scope":
+      return { message: "This token is limited and cannot do that.", next: "Ask the person who made the token for one that covers this app, table and operation." };
     case "preview_read_only":
       return { message: "A preview only reads. Nothing here is live.", next: "Stop the preview to make a change, or approve the proposal to make it live." };
     case "storage_unavailable":

@@ -78,6 +78,11 @@ pub fn view_as_token(state: &SharedState, headers: &HeaderMap) -> Option<crate::
     matches!(row.kind.as_str(), "viewas" | "preview").then_some(row)
 }
 
+/// The stored token behind this request.
+pub fn token_row(state: &SharedState, headers: &HeaderMap) -> Option<crate::state::ApiToken> {
+    state.get_api_token(&hash_token(bearer_token(headers)?))
+}
+
 /// What a read-only session says when it is asked to change something.
 fn read_only(row: &crate::state::ApiToken) -> ServiceError {
     if row.kind == "preview" {
@@ -185,6 +190,21 @@ pub async fn require_session(
             if let Some(row) = view_as_token(&state, req.headers()) {
                 if let Some(refusal) = view_as_gate(&row, req.method(), req.uri().path()) {
                     return refusal.into_response();
+                }
+            }
+            // A limited token reaches the record routes its scope allows and the tool endpoint, where each tool is checked.
+            if let Some(scope) = token_row(&state, req.headers()).and_then(|r| r.scope) {
+                let path = req.uri().path().to_string();
+                let tool_endpoint = req.method() == axum::http::Method::POST && matches!(path.as_str(), "/api/v1/mcp" | "/api/mcp");
+                if !tool_endpoint {
+                    if let Err(refusal) = crate::service::token_scope::check_request(&scope, req.method(), &path, &state) {
+                        return refusal.into_response();
+                    }
+                    if let Some(query) = crate::service::token_scope::capped_query(&scope, req.method(), &path, req.uri().query()) {
+                        if let Ok(uri) = format!("{path}?{query}").parse::<axum::http::Uri>() {
+                            *req.uri_mut() = uri;
+                        }
+                    }
                 }
             }
             req.extensions_mut().insert(user);

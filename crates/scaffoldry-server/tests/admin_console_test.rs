@@ -386,7 +386,8 @@ async fn test_overview_counts_match_fixture() {
             last_used_at: None,
             revoked_at: None,
             app_slug: None,
-        })
+        scope: None,
+    })
         .unwrap();
 
     let app = build_app_with_state(state).expect("app router");
