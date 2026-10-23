@@ -23,6 +23,8 @@ pub fn router() -> Router<SharedState> {
         .route("/me/apps", get(list_my_apps))
         .route("/apps/{slug}", get(get_app).put(update_app))
         .route("/apps/{slug}/publish", post(publish_app))
+        .route("/apps/{slug}/pages/{id}", get(get_app_page))
+        .route("/apps/{slug}/pages/{id}/call", post(call_app_page))
         .route("/apps/{slug}/automations", get(list_app_automations).post(create_app_automation))
         .route("/apps/{slug}/automations/simulate", post(simulate_app_automation))
         .route("/apps/{slug}/processes", get(list_app_processes))
@@ -99,6 +101,31 @@ fn live_manifest_of(state: &SharedState, slug: &str) -> Result<AppManifest, (Sta
         .resolve_by_slug(slug)
         .cloned()
         .ok_or_else(|| ServiceError::not_found("App not found").into_pair())
+}
+
+/// The page document, inside JSON. The same tool the MCP `get_page` runs, so the same checks apply.
+async fn get_app_page(State(state): State<SharedState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    run_page_tool(state, headers, "get_page", json!({ "app_slug": slug, "page_id": id })).await
+}
+
+/// What a page asks for. The body is the arguments of `page_call` without the app and the page.
+async fn call_app_page(State(state): State<SharedState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, Json(body): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let mut args = match body {
+        Value::Object(map) => map,
+        _ => return Err(ServiceError::BadRequest("The body must be an object".into()).into_pair()),
+    };
+    args.insert("app_slug".into(), json!(slug));
+    args.insert("page_id".into(), json!(id));
+    run_page_tool(state, headers, "page_call", Value::Object(args)).await
+}
+
+async fn run_page_tool(state: SharedState, headers: HeaderMap, tool: &'static str, args: Value) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::tools::call(&user, &crate::service::history::Origin::user(), tool, args, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The call stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
 }
 
 async fn get_app(

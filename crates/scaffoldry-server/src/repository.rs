@@ -72,6 +72,7 @@ const SCHEMA_0057: &str = include_str!("../../scaffoldry-core/migrations/0057_hi
 const SCHEMA_0058: &str = include_str!("../../scaffoldry-core/migrations/0058_coordinates.sql");
 const SCHEMA_0059: &str = include_str!("../../scaffoldry-core/migrations/0059_access_grants.sql");
 const SCHEMA_0060: &str = include_str!("../../scaffoldry-core/migrations/0060_synthetic.sql");
+const SCHEMA_0061: &str = include_str!("../../scaffoldry-core/migrations/0061_page_settings.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str =
@@ -1035,6 +1036,7 @@ impl PostgresRepository {
                             ("0058_coordinates.sql", SCHEMA_0058),
                             ("0059_access_grants.sql", SCHEMA_0059),
                             ("0060_synthetic.sql", SCHEMA_0060),
+                            ("0061_page_settings.sql", SCHEMA_0061),
                             ("0027_record_history.sql", SCHEMA_0027),
                             ("0011_app_proposals.sql", SCHEMA_0011),
                             ("0019_rule_versions.sql", SCHEMA_0019),

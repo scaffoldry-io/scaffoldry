@@ -7,7 +7,7 @@
 use crate::service::tools;
 use crate::state::{AuthUser, SharedState};
 use axum::{
-    extract::{Extension, State},
+    extract::{DefaultBodyLimit, Extension, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -16,10 +16,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// A proposal may carry a 2 MB bundle. The JSON that holds it can be several times larger than the source it escapes.
+const MAX_MCP_BODY: usize = 8 * 1024 * 1024;
+
 pub fn router() -> Router<SharedState> {
     Router::new()
-        .route("/mcp", post(handle_mcp_request))
-        .route("/apps/{slug}/mcp", post(handle_mcp_request))
+        .route("/mcp", post(handle_mcp_request).layer(DefaultBodyLimit::max(MAX_MCP_BODY)))
+        .route("/apps/{slug}/mcp", post(handle_mcp_request).layer(DefaultBodyLimit::max(MAX_MCP_BODY)))
 }
 
 #[derive(Debug, Deserialize)]

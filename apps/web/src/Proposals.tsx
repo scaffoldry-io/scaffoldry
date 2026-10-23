@@ -3,7 +3,7 @@ import { apiClient, type ProposalCheck, type ProposalRow } from "./api";
 import { ConfirmAction, DataTable, Drawer, PageHeader, StatusBadge, type DataTableColumn } from "./ui";
 
 /** The checks that need a second person when they fail. */
-const FLAGGED = new Set(["sensitivity", "data_loss", "page_sensitivity", "rule_effects", "access_loosened"]);
+const FLAGGED = new Set(["sensitivity", "data_loss", "page_sensitivity", "page_dependencies", "rule_effects", "access_loosened"]);
 
 const CHECK_WORDS: Record<string, string> = {
   schema: "Manifest format",
@@ -12,6 +12,7 @@ const CHECK_WORDS: Record<string, string> = {
   stale: "Out of date",
   page_source: "Page source",
   page_sensitivity: "Page reads sensitive data",
+  page_dependencies: "Bundle libraries",
   rule_schema: "Rule format",
   rule_effects: "Rule sets sensitive data",
   rule_loop: "Rule may loop",

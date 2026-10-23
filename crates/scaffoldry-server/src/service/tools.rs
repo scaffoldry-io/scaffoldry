@@ -185,6 +185,30 @@ Tool {
         run: run_get_record_history,
     },
     Tool {
+        name: "list_pages",
+        description: "List the pages of an app: id, title, kind, and for a custom page its grants, format and libraries.",
+        input_schema: schema_describe_app,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_list_pages,
+    },
+    Tool {
+        name: "get_page",
+        description: "Get a custom page as one HTML document to show in a sandboxed frame. It holds no record data. The page reads and writes only through page_call.",
+        input_schema: schema_get_page,
+        scope: Scope::App(AppAction::Read),
+        read_only: true,
+        run: run_get_page,
+    },
+    Tool {
+        name: "page_call",
+        description: "Read or change data as a custom page. op is list, get, create, update, remove, settings_get, or settings_set. The page's grants bound it, and the caller's own rights still apply.",
+        input_schema: schema_page_call,
+        scope: Scope::App(AppAction::Read),
+        read_only: false,
+        run: run_page_call,
+    },
+    Tool {
         name: "update_record",
         description: "Change fields of a record. Send the version you read. Fields you do not name keep their value. A stale version is an error that names the current one.",
         input_schema: schema_update_record,
@@ -799,6 +823,51 @@ fn schema_describe_app() -> Value {
         "properties": { "app_slug": { "type": "string", "description": "Application slug identifier" } },
         "required": ["app_slug"]
     })
+}
+
+fn schema_get_page() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "page_id": { "type": "string", "description": "Page id from list_pages. It must be a custom page" }
+        },
+        "required": ["app_slug", "page_id"]
+    })
+}
+
+fn schema_page_call() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "page_id": { "type": "string", "description": "Page id from list_pages" },
+            "op": { "type": "string", "description": "list, get, create, update, remove, settings_get, or settings_set" },
+            "table_id": { "type": "string", "description": "The table. The page needs a grant for it" },
+            "record_id": { "type": "string", "description": "For get, update, and remove" },
+            "version": { "type": "integer", "description": "For update and remove: the version you read" },
+            "data": { "type": "object", "description": "For create and update: only fields the page may write" },
+            "filter": { "type": "object", "description": "For list. Same shape as list_records, on fields the page may read" },
+            "sort": { "type": "object", "description": "For list: { field_name, direction: Asc|Desc }" },
+            "limit": { "type": "integer", "description": "For list: rows per page, 1 to 200" },
+            "cursor": { "type": "string", "description": "For list: the next_cursor of the previous page" },
+            "key": { "type": "string", "description": "For settings_get and settings_set" },
+            "value": { "description": "For settings_set: any JSON value. A person keeps 64 KB per page" }
+        },
+        "required": ["app_slug", "page_id", "op"]
+    })
+}
+
+fn run_list_pages(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::pages::list_pages(required_str(&args, "app_slug")?, state)
+}
+
+fn run_get_page(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::pages::get_page(required_str(&args, "app_slug")?, required_str(&args, "page_id")?, state)
+}
+
+fn run_page_call(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::pages::page_call(caller, origin, args, state)
 }
 
 fn schema_list_records() -> Value {

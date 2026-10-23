@@ -1,0 +1,104 @@
+{
+  "slug": "advising",
+  "title": "Advising",
+  "description": "Advising notes",
+  "organization_code": "ADV",
+  "department": "advising",
+  "views": [
+    {
+      "id": "all",
+      "table_id": "students",
+      "title": "All",
+      "view_type": "Table",
+      "fields": [
+        {
+          "name": "name",
+          "label": "Name",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": false
+        }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "id": "students",
+      "name": "Students",
+      "slug": "students",
+      "fields": [
+        {
+          "name": "name",
+          "label": "Name",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "gpa",
+          "label": "Gpa",
+          "field_type": "Number",
+          "required": false,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "ssn",
+          "label": "Ssn",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": true
+        },
+        {
+          "name": "standing",
+          "label": "Standing",
+          "field_type": "Formula",
+          "required": false,
+          "ferpa_sensitive": false,
+          "formula_expression": "{gpa} * 1"
+        }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "id": "list",
+      "title": "List",
+      "kind": {
+        "View": {
+          "view_id": "all"
+        }
+      }
+    },
+    {
+      "id": "dashboard",
+      "title": "Dashboard",
+      "kind": {
+        "Custom": {
+          "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "grants": [
+            {
+              "table_id": "students",
+              "read": [
+                "name",
+                "gpa"
+              ],
+              "write": [
+                "gpa"
+              ],
+              "create": false,
+              "delete": false
+            }
+          ],
+          "format": "bundle",
+          "dependencies": [
+            {
+              "name": "chart.js",
+              "version": "4.4.0",
+              "license": "MIT"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
