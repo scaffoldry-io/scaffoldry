@@ -4,9 +4,9 @@ import { DatasetExplorer } from "./DatasetExplorer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
-import { apiClient, getAuthToken, setAuthToken, type MyApp } from "./api";
+import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow } from "./api";
 import { MyApps } from "./MyApps";
-import { BackgroundWork, ViewAsBanner } from "./ui";
+import { BackgroundWork, PreviewBanner, ViewAsBanner } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
@@ -1058,6 +1058,53 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     if (!revoked) showToast("The view has ended here. The server closes it within 30 minutes.");
   };
 
+  // Preview: a read-only look at a pending proposal as an app. Like view-as, its token is kept in memory only.
+  const [preview, setPreview] = useState<{ summary: string; ownToken: string | null } | null>(null);
+
+  const handlePreviewProposal = async (proposal: ProposalRow) => {
+    if (preview || viewAs) return;
+    try {
+      const ownToken = getAuthToken();
+      const started = await apiClient.previewProposal(proposal.id);
+      setAuthToken(started.token, false);
+      try {
+        const manifest = await apiClient.getApp(started.app_slug);
+        const shown = registeredAppOf(
+          {
+            slug: started.app_slug,
+            title: manifest?.title ?? proposal.app_slug,
+            department: manifest?.department ?? "",
+            workspace_id: proposal.workspace_id,
+            description: manifest?.description ?? "",
+          } as MyApp,
+          manifest
+        );
+        setPreview({ summary: started.summary, ownToken });
+        setIsWorkspaceSettingsOpen(false);
+        setActiveWorkspaceApp(shown);
+      } catch (err) {
+        setAuthToken(ownToken);
+        throw err;
+      }
+    } catch (err: any) {
+      showToast(err?.message || "The preview could not be opened.");
+    }
+  };
+
+  const handleStopPreview = async () => {
+    if (!preview) return;
+    let revoked = true;
+    try {
+      await apiClient.stopViewAs();
+    } catch {
+      revoked = false;
+    }
+    setAuthToken(preview.ownToken);
+    setPreview(null);
+    setActiveWorkspaceApp(null);
+    if (!revoked) showToast("The preview has ended here. The server closes it within 30 minutes.");
+  };
+
   // Applications & Policy Data
   const [apps, setApps] = useState<RegisteredApp[]>(INITIAL_APPS);
   const [sourceRules] = useState<SourceRule[]>(INITIAL_SOURCE_RULES);
@@ -1746,6 +1793,13 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       {viewAs && (
         <div className="sticky top-0 z-50">
           <ViewAsBanner appTitle={viewAs.appTitle} person={viewAs.person} onExit={handleExitViewAs} />
+        </div>
+      )}
+
+      {/* Stays on screen for the whole of a preview, so no one mistakes a proposed app for the live one. */}
+      {preview && (
+        <div className="sticky top-0 z-50">
+          <PreviewBanner summary={preview.summary} onStop={handleStopPreview} />
         </div>
       )}
 
@@ -2952,6 +3006,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 onClose={() => setIsWorkspaceSettingsOpen(false)}
                 onSave={handleSaveWorkspaceSettings}
                 ledgerEntries={ledger}
+                onPreviewProposal={handlePreviewProposal}
               />
             </div>
           )}

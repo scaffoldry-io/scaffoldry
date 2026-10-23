@@ -251,6 +251,9 @@ pub fn member_roles_in_apps(eppn: &str, pairs: &[(String, String)], state: &Shar
 
 /// `role_at` for each `(workspace, app)` target. No lock is held while the database is read.
 fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) -> Vec<Option<Role>> {
+    // A preview of a proposal is the person's rights in the live app.
+    let stored: Vec<(&str, Option<&str>)> = targets.iter().map(|(w, a)| (*w, a.map(crate::service::preview::stored_slug))).collect();
+    let targets = stored.as_slice();
     let none = || vec![None; targets.len()];
     let now = chrono::Utc::now().timestamp();
     let rows = state.repository.holdings_of(eppn).unwrap_or_default();
@@ -453,6 +456,7 @@ pub fn rows_reach(eppn: &str, workspace: &str, app: &str, table_id: &str, state:
 
 /// What each of one person's grants contributes to the rows of a table, with what each clears.
 pub fn contributions_to(eppn: &str, workspace: &str, app: &str, table_id: &str, state: &SharedState) -> Option<Vec<Contribution>> {
+    let app = crate::service::preview::stored_slug(app);
     let now = chrono::Utc::now().timestamp();
     let rows = state.repository.holdings_of(eppn).unwrap_or_default();
     let holdings: Vec<Holding> = rows.iter().map(|(h, _)| h.clone()).collect();

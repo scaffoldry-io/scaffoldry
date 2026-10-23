@@ -257,6 +257,14 @@ Tool {
         run: run_decide_proposal,
     },
     Tool {
+        name: "preview_proposal",
+        description: "Show a proposed change as an app before it is live. Returns a 30-minute read-only token, the app as proposed, and each custom page rendered. Live data is read through the stricter of the live and proposed rules.",
+        input_schema: schema_get_proposal,
+        scope: Scope::Proposal("access_workspace"),
+        read_only: false,
+        run: run_preview_proposal,
+    },
+    Tool {
         name: "list_waiting_decisions",
         description: "List the process steps waiting for you to decide, in apps you can read. Up to 200.",
         input_schema: schema_empty,
@@ -1201,6 +1209,26 @@ fn run_get_proposal(_caller: &AuthUser, _origin: &Origin, args: Value, state: &S
 fn run_decide_proposal(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: DecideArgs = parse(args)?;
     crate::service::proposals::decide(caller, &a.proposal_id, &a.decision, &a.rationale, a.digest.as_deref(), state)
+}
+
+fn run_preview_proposal(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ProposalIdArgs = parse(args)?;
+    let mut opened = crate::service::preview::start(caller, &a.proposal_id, state)?;
+    let shadow = opened["app_slug"].as_str().unwrap_or_default().to_string();
+    opened["app"] = call(caller, origin, "describe_app", json!({ "app_slug": shadow }), state)?;
+    let custom: Vec<String> = state
+        .engine
+        .read()
+        .map_err(|e| ServiceError::Internal(e.to_string()))?
+        .resolve_by_slug(&shadow)
+        .map(|m| m.pages.iter().filter(|p| matches!(p.kind, scaffoldry_engine::PageKind::Custom { .. })).map(|p| p.id.clone()).collect())
+        .unwrap_or_default();
+    let mut pages = Vec::new();
+    for id in custom {
+        pages.push(json!({ "id": id, "html": crate::service::pages::get_page(&shadow, &id, state)?["html"] }));
+    }
+    opened["pages"] = Value::Array(pages);
+    Ok(opened)
 }
 
 fn schema_decide_process() -> Value {

@@ -1774,6 +1774,7 @@ impl PostgresRepository {
     // -------------------------------------------------------------------------
 
     pub fn list_records(&self, app_slug: &str) -> Result<Vec<DatasetRecord>, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let slug = app_slug.to_string();
         self.with_client(move |client| {
             let rows = client.query(
@@ -1794,6 +1795,7 @@ impl PostgresRepository {
         limit: usize,
         cursor: Option<(String, String)>,
     ) -> Result<Vec<DatasetRecord>, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         self.with_client(move |client| {
@@ -1864,6 +1866,7 @@ impl PostgresRepository {
         app_slug: &str,
         query: &RecordQuery,
     ) -> Result<Vec<DatasetRecord>, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (sql, params) = build_record_query(app_slug, query);
         self.with_client(move |client| {
             count_page_statement();
@@ -1882,6 +1885,7 @@ impl PostgresRepository {
         table_id: &str,
         limit: i64,
     ) -> Result<bool, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         self.with_client(move |client| {
             let n: i64 = client
@@ -1900,6 +1904,7 @@ impl PostgresRepository {
         table_id: &str,
         scope: Option<&ScopePlan>,
     ) -> Result<u64, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         let mut params = vec![SqlParam::Text(slug), SqlParam::Text(table)];
         let scope_clause = match scope {
@@ -1924,6 +1929,7 @@ impl PostgresRepository {
         app_slug: &str,
         id: &str,
     ) -> Result<Option<DatasetRecord>, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (slug, id) = (app_slug.to_string(), id.to_string());
         self.with_client(move |client| {
             let row = client.query_opt(

@@ -29,6 +29,7 @@ pub mod prompts;
 pub mod tool_meta;
 pub mod tools;
 pub mod calc;
+pub mod preview;
 pub mod view_as;
 pub mod views;
 pub mod link_options;
@@ -82,6 +83,7 @@ pub const ERROR_CODES: &[&str] = &[
     "grant_outside_scope",
     "grant_too_broad",
     "proposal_changed",
+    "preview_read_only",
 ];
 
 #[derive(Debug, Clone)]
@@ -134,6 +136,8 @@ pub enum ServiceError {
     QuotaExceeded(String),
     /// A view-as session tried to change something. View-as only reads.
     ViewAsReadOnly(String),
+    /// A preview of a proposal tried to change something. A preview only reads.
+    PreviewReadOnly(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
     FieldHidden { message: String, reason: String, remedy: String },
     /// A table may index 20 fields. `unused` lists the indexed fields no view uses, which can go.
@@ -182,7 +186,7 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::PreviewReadOnly(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
@@ -212,6 +216,7 @@ impl ServiceError {
             Self::ConstraintViolation { .. } | Self::ConstraintViolated(_) => "constraint_violated",
             Self::QuotaExceeded(_) => "quota_exceeded",
             Self::ViewAsReadOnly(_) => "view_as_read_only",
+            Self::PreviewReadOnly(_) => "preview_read_only",
             Self::FieldHidden { .. } => "field_hidden",
             Self::TooManyIndexes { .. } => "too_many_indexes",
             Self::FieldReadOnly { .. } => "field_read_only",
@@ -239,6 +244,7 @@ impl ServiceError {
             | Self::Calculating(msg)
             | Self::QuotaExceeded(msg)
             | Self::ViewAsReadOnly(msg)
+            | Self::PreviewReadOnly(msg)
             | Self::ConstraintViolated(msg)
             | Self::GrantOutsideScope(msg)
             | Self::GrantTooBroad(msg)

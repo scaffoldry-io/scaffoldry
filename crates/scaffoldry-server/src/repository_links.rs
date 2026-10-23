@@ -613,6 +613,7 @@ impl PostgresRepository {
 
     /// How many records point at `record_id` through any of `fields`.
     pub fn count_links_to(&self, app_slug: &str, record_id: &str, fields: &[String]) -> Result<i64, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (slug, id, fields) = (app_slug.to_string(), record_id.to_string(), fields.to_vec());
         self.with_client(move |client| {
             Ok(client

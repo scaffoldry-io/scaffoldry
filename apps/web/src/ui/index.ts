@@ -13,6 +13,7 @@ export * from "./Tabs";
 export * from "./Toast";
 export * from "./CalculatingNote";
 export * from "./ViewAsBanner";
+export * from "./PreviewBanner";
 export * from "./BackgroundWork";
 export * from "./ControlLabel";
 export * from "./UnitLabel";

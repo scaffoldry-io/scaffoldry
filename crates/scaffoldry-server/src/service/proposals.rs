@@ -738,7 +738,7 @@ fn digest_of_content(manifest: Option<&Value>, rules: Option<&Value>, local: &[(
 
 /// The digest of a stored proposal. A proposal made before digests were stored has none, and its content cannot have
 /// changed, so it is worked out from the content.
-fn digest_of(p: &ProposalRow, state: &SharedState) -> Result<String, ServiceError> {
+pub(crate) fn digest_of(p: &ProposalRow, state: &SharedState) -> Result<String, ServiceError> {
     if !p.digest.is_empty() {
         return Ok(p.digest.clone());
     }

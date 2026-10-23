@@ -13,6 +13,7 @@ pub fn add(m: &mut Entries) {
     m.insert("tool:record_governance_decision".into(), case!(record_governance_decision));
     m.insert("tool:propose_app_change".into(), case!(propose_app_change));
     m.insert("tool:decide_proposal".into(), case!(decide_proposal));
+    m.insert("tool:preview_proposal".into(), case!(preview_proposal));
     m.insert("tool:decide_process".into(), case!(decide_process));
     m.insert("tool:save_view".into(), case!(save_view));
     m.insert("tool:delete_view".into(), case!(delete_view));
@@ -74,6 +75,17 @@ async fn propose_app_change(w: World) -> Outcome {
     let id = proposed["proposal_id"].as_str().ok_or("a proposal id")?.to_string();
     let seen = status(w.rb("GET", &format!("/api/v1/proposals/{id}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
     ensure(has(&seen, &id), format!("B shows the proposal the tool made: {seen}"))
+}
+
+async fn preview_proposal(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let mut changed = manifest(&slug);
+    changed["tables"][0]["fields"].as_array_mut().ok_or("fields")?.push(json!({ "name": "shown", "label": "shown", "field_type": "Text", "required": false, "ferpa_sensitive": false }));
+    let proposed = w.tool_a(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": changed, "summary": "To preview" })).await?;
+    let shown = w.tool_a(OWNER, "preview_proposal", json!({ "proposal_id": proposed["proposal_id"] })).await?;
+    let (token, shadow) = (shown["token"].as_str().ok_or("a token")?.to_string(), shown["app_slug"].as_str().ok_or("an app slug")?.to_string());
+    let seen = status(World::call_with(&w.b, "GET", &format!("/api/v1/apps/{shadow}/schema"), &token, None).await, StatusCode::OK, "B serves the preview token")?;
+    ensure(has(&seen, "shown"), format!("B shows the field the proposal adds: {seen}"))
 }
 
 async fn decide_proposal(w: World) -> Outcome {

@@ -278,6 +278,12 @@ impl ServerState {
     /// Reads one stored app definition and puts it in the engine, with the stored views of its app merged in. One that
     /// no longer parses or validates is taken out of service by name and logged. The other apps are not touched, and
     /// the version is noted either way, so a damaged definition is not parsed again until it changes.
+    /// Holds the preview of a proposal in this server's engine. It is built from the stored proposal when a request for
+    /// it arrives, is never stored, and is dropped when the proposal is decided.
+    pub fn hold_preview(&self, manifest: AppManifest) -> Result<(), String> {
+        self.engine.write().unwrap_or_else(|p| p.into_inner()).register_manifest(manifest).map_err(|e| e.to_string())
+    }
+
     fn load_app(&self, slug: &str) -> Result<(), crate::repository::RepositoryError> {
         let Some((version, value)) = self.repository.get_app_manifest_row(slug)? else { return Ok(()) };
         let own = self.app_views.read().unwrap_or_else(|p| p.into_inner()).get(slug).cloned().unwrap_or_default();

@@ -132,7 +132,11 @@ fn workspace_of(app_slug: &str, state: &SharedState) -> Option<String> {
 /// In view-as the rights are the target's intersected with the viewer's, so the result never shows
 /// more than the viewer could see.
 pub fn scope_of(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &SharedState) -> RowScope {
-    let own = scope_for(caller, app_slug, table, op, state);
+    let mut own = scope_for(caller, app_slug, table, op, state);
+    // A preview of a proposal shows live rows through the proposed rules and the live ones together.
+    if crate::service::preview::is_preview(app_slug) {
+        own = own.and(scope_for(caller, crate::service::preview::stored_slug(app_slug), table, op, state));
+    }
     match &caller.view_as_by {
         Some(viewer) => own.and(scope_for(viewer, app_slug, table, op, state)),
         None => own,
@@ -317,7 +321,11 @@ pub fn set_column_rules(app_slug: &str, rules: Vec<scaffoldry_core::access::Colu
 /// The fields of `table` held back from the caller by the app's column rules.
 /// In view-as, what either the target or the viewer may not see is held back.
 pub fn field_visibility_of(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> scaffoldry_core::access::FieldVisibility {
-    let own = field_visibility_for(caller, app_slug, table, state);
+    let mut own = field_visibility_for(caller, app_slug, table, state);
+    // A field the live rules hide is hidden in a preview of a proposal too, and so is one the proposed rules hide.
+    if crate::service::preview::is_preview(app_slug) {
+        own = own.union(field_visibility_for(caller, crate::service::preview::stored_slug(app_slug), table, state));
+    }
     match &caller.view_as_by {
         Some(viewer) => own.union(field_visibility_for(viewer, app_slug, table, state)),
         None => own,

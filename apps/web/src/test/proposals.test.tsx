@@ -5,6 +5,7 @@ import { Proposals } from "../Proposals";
 import { WorkflowBuilder } from "../WorkflowBuilder";
 import { Overview } from "../admin/Overview";
 import { apiClient, type ProposalRow } from "../api";
+import { PreviewBanner } from "../ui";
 
 const flagged: ProposalRow = {
   id: "p-1",
@@ -47,6 +48,29 @@ describe("Proposals", () => {
     // Pending first.
     const rows = screen.getAllByRole("row");
     expect(rows[1]).toHaveTextContent("Add a dashboard page");
+  });
+
+  it("Preview opens the proposed app, and is not offered when the desk cannot host one", async () => {
+    const onPreview = vi.fn();
+    const { unmount } = render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" onPreview={onPreview} />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    fireEvent.click(await screen.findByRole("button", { name: /^preview$/i }));
+    expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ id: "p-1" }));
+    unmount();
+
+    render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    await screen.findByRole("button", { name: /^approve$/i });
+    expect(screen.queryByRole("button", { name: /^preview$/i })).not.toBeInTheDocument();
+  });
+
+  it("the preview banner says nothing is live and Stop preview ends it", () => {
+    const onStop = vi.fn();
+    render(<PreviewBanner summary="Add a dashboard page" onStop={onStop} />);
+    expect(screen.getByText(/Previewing a proposed change/)).toBeInTheDocument();
+    expect(screen.getByText(/Read-only\. Nothing here is live\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /stop preview/i }));
+    expect(onStop).toHaveBeenCalledTimes(1);
   });
 
   it("a row opens a drawer with the change list in sentences and each check in words", async () => {

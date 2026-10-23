@@ -18,6 +18,7 @@ pub fn router() -> Router<SharedState> {
         .route("/workspaces/{id}/proposals", get(list_proposals))
         .route("/proposals/{id}", get(get_proposal))
         .route("/proposals/{id}/decision", post(decide_proposal))
+        .route("/proposals/{id}/preview", post(preview_proposal))
 }
 
 type Reply = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -63,4 +64,10 @@ struct Decision {
 async fn decide_proposal(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<Decision>) -> Reply {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     blocking(move || crate::service::proposals::decide(&user, &id, &body.decision, &body.rationale, body.digest.as_deref(), &state)).await.map(Json)
+}
+
+/// Opens a read-only preview of the proposed app. The reply holds a token for it.
+async fn preview_proposal(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    blocking(move || crate::service::preview::start(&user, &id, &state)).await.map(Json)
 }

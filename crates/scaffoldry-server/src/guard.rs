@@ -64,13 +64,35 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
         let viewer = row.original_admin.as_deref().and_then(|a| resolve_user(a, state))?;
         user.view_as_by = Some(Box::new(viewer));
     }
+    // A preview works while its proposal is pending, and builds the preview app in this server.
+    if row.kind == "preview" && !crate::service::preview::admit(&row, state) {
+        return None;
+    }
     Some(user)
 }
 
-/// The stored `viewas` token behind this request, if that is what it carries.
+/// The stored `viewas` or `preview` token behind this request, if that is what it carries. Both reach one app and only
+/// read, so they share the gates below.
 pub fn view_as_token(state: &SharedState, headers: &HeaderMap) -> Option<crate::state::ApiToken> {
     let row = state.get_api_token(&hash_token(bearer_token(headers)?))?;
-    (row.kind == "viewas").then_some(row)
+    matches!(row.kind.as_str(), "viewas" | "preview").then_some(row)
+}
+
+/// What a read-only session says when it is asked to change something.
+fn read_only(row: &crate::state::ApiToken) -> ServiceError {
+    if row.kind == "preview" {
+        ServiceError::PreviewReadOnly("You are previewing a proposed change. A preview is read-only. Nothing here is live.".to_string())
+    } else {
+        ServiceError::ViewAsReadOnly("You are viewing as someone else. This view is read-only.".to_string())
+    }
+}
+
+fn one_app_only(row: &crate::state::ApiToken) -> ServiceError {
+    if row.kind == "preview" {
+        ServiceError::forbidden("This preview reaches one app only. Stop it to open anything else.")
+    } else {
+        ServiceError::forbidden("This view reaches one app only. Exit it to open anything else.")
+    }
 }
 
 /// What a view-as session may reach: reads in its own app, the way out, and the tool endpoint
@@ -81,7 +103,7 @@ fn view_as_gate(row: &crate::state::ApiToken, method: &axum::http::Method, path:
         return None;
     }
     if method != Method::GET && method != Method::HEAD {
-        return Some(ServiceError::ViewAsReadOnly("You are viewing as someone else. This view is read-only.".to_string()));
+        return Some(read_only(row));
     }
     if path.starts_with("/api/v1/auth/") {
         return None;
@@ -89,19 +111,21 @@ fn view_as_gate(row: &crate::state::ApiToken, method: &axum::http::Method, path:
     let slug = path.split_once("/apps/").and_then(|(_, rest)| rest.split('/').next());
     match (slug, row.app_slug.as_deref()) {
         (Some(asked), Some(allowed)) if asked == allowed => None,
-        _ => Some(ServiceError::forbidden("This view reaches one app only. Exit it to open anything else.")),
+        _ => Some(one_app_only(row)),
     }
 }
 
 /// The same limits for a tool call: it must read only, and name the app being viewed.
 pub fn view_as_tool_gate(row: &crate::state::ApiToken, name: &str, args: &serde_json::Value) -> Result<(), ServiceError> {
     if let Some(tool) = crate::service::tools::TOOLS.iter().find(|t| t.name == name) {
-        if !tool.read_only {
-            return Err(ServiceError::ViewAsReadOnly("You are viewing as someone else. This view is read-only.".to_string()));
+        // A page reads and writes through one tool. Its reads are reads.
+        let page_read = name == "page_call" && matches!(args.get("op").and_then(serde_json::Value::as_str), Some("list" | "get" | "settings_get"));
+        if !tool.read_only && !page_read {
+            return Err(read_only(row));
         }
     }
     if args.get("app_slug").and_then(serde_json::Value::as_str) != row.app_slug.as_deref() {
-        return Err(ServiceError::forbidden("This view reaches one app only. Exit it to open anything else."));
+        return Err(one_app_only(row));
     }
     Ok(())
 }
