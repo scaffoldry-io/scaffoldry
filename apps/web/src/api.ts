@@ -1008,7 +1008,20 @@ export const apiClient = {
       read_only: boolean;
     }>(`/apps/${appSlug}/view-as`, { method: "POST", body: JSON.stringify({ eppn }) }),
 
-  /** Ends the view-as session that the current token belongs to. */
+  /** Opens a read-only preview of a pending proposal. The token reaches the proposed app only, for 30 minutes. */
+  previewProposal: (id: string) =>
+    request<{
+      token: string;
+      expires_at: string;
+      app_slug: string;
+      live_app_slug: string;
+      proposal_id: string;
+      digest: string;
+      summary: string;
+      read_only: boolean;
+    }>(`/proposals/${id}/preview`, { method: "POST" }),
+
+  /** Ends the view-as or preview session that the current token belongs to. */
   stopViewAs: () => request<{ status: string }>("/auth/stop-view-as", { method: "POST" }),
 
   logout: async () => {

@@ -118,7 +118,9 @@ fn view_as_gate(row: &crate::state::ApiToken, method: &axum::http::Method, path:
 /// The same limits for a tool call: it must read only, and name the app being viewed.
 pub fn view_as_tool_gate(row: &crate::state::ApiToken, name: &str, args: &serde_json::Value) -> Result<(), ServiceError> {
     if let Some(tool) = crate::service::tools::TOOLS.iter().find(|t| t.name == name) {
-        if !tool.read_only {
+        // A page reads and writes through one tool. Its reads are reads.
+        let page_read = name == "page_call" && matches!(args.get("op").and_then(serde_json::Value::as_str), Some("list" | "get" | "settings_get"));
+        if !tool.read_only && !page_read {
             return Err(read_only(row));
         }
     }

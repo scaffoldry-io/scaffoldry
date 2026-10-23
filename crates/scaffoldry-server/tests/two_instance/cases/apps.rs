@@ -12,6 +12,7 @@ pub fn add(m: &mut Entries) {
     exempt(m, "POST /api/v1/apps/{slug}/access/preview", "asks what a person could see and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/fields/convert-preview", "reports what a field conversion would do and stores nothing");
     m.insert("POST /api/v1/proposals/{id}/decision".into(), case!(proposal_decide));
+    m.insert("POST /api/v1/proposals/{id}/preview".into(), case!(proposal_preview));
 
     m.insert("POST /api/v1/apps/{slug}/records".into(), case!(record_create));
     m.insert("PATCH /api/v1/apps/{slug}/records/{id}".into(), case!(record_patch));
@@ -115,6 +116,22 @@ async fn proposal_decide(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/proposals/{id}/decision"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] }))).await, StatusCode::OK, "approve")?;
     let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/schema"), OWNER, None).await, StatusCode::OK, "B reads the schema")?;
     ensure(has(&seen, "pet"), format!("B shows the field A approved: {seen}"))
+}
+
+/// A opens a preview. B serves its token while the proposal is pending and refuses it once A approves.
+async fn proposal_preview(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let mut changed = manifest(&slug);
+    changed["tables"][0]["fields"].as_array_mut().ok_or("fields")?.push(json!({ "name": "pet", "label": "pet", "field_type": "Text", "required": false, "ferpa_sensitive": false }));
+    let proposed = w.tool_a(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": changed, "summary": "A field" })).await?;
+    let id = proposed["proposal_id"].as_str().ok_or("a proposal id")?.to_string();
+    let opened = status(w.wa("POST", &format!("/api/v1/proposals/{id}/preview"), OWNER, None).await, StatusCode::OK, "A opens the preview")?;
+    let (token, shadow) = (opened["token"].as_str().ok_or("a token")?.to_string(), opened["app_slug"].as_str().ok_or("an app slug")?.to_string());
+    let seen = status(World::call_with(&w.b, "GET", &format!("/api/v1/apps/{shadow}/schema"), &token, None).await, StatusCode::OK, "B serves the preview token")?;
+    ensure(has(&seen, "pet"), format!("B shows the proposed field: {seen}"))?;
+    status(w.wa("POST", &format!("/api/v1/proposals/{id}/decision"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] }))).await, StatusCode::OK, "A approves")?;
+    status(World::call_with(&w.b, "GET", &format!("/api/v1/apps/{shadow}/schema"), &token, None).await, StatusCode::UNAUTHORIZED, "B refuses the token once the proposal is decided")?;
+    Ok(())
 }
 
 // --- records -------------------------------------------------------------------------------------------------------------

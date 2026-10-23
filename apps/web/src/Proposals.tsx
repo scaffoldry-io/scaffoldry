@@ -41,9 +41,11 @@ export interface ProposalsProps {
   workspaceId: string;
   /** The signed-in person, so a proposer cannot approve a flagged change of their own. */
   viewerEppn: string;
+  /** Opens the proposed app read-only. The desk swaps its token and shows a banner. */
+  onPreview?: (proposal: ProposalRow) => void | Promise<void>;
 }
 
-export function Proposals({ workspaceId, viewerEppn }: ProposalsProps) {
+export function Proposals({ workspaceId, viewerEppn, onPreview }: ProposalsProps) {
   const [open, setOpen] = useState<ProposalRow | null>(null);
   const [version, setVersion] = useState(0);
 
@@ -90,6 +92,7 @@ export function Proposals({ workspaceId, viewerEppn }: ProposalsProps) {
           <ProposalDetail
             proposal={open}
             viewerEppn={viewerEppn}
+            onPreview={onPreview}
             onDecided={() => {
               setOpen(null);
               setVersion((v) => v + 1);
@@ -101,7 +104,17 @@ export function Proposals({ workspaceId, viewerEppn }: ProposalsProps) {
   );
 }
 
-function ProposalDetail({ proposal, viewerEppn, onDecided }: { proposal: ProposalRow; viewerEppn: string; onDecided: () => void }) {
+function ProposalDetail({
+  proposal,
+  viewerEppn,
+  onDecided,
+  onPreview,
+}: {
+  proposal: ProposalRow;
+  viewerEppn: string;
+  onDecided: () => void;
+  onPreview?: (proposal: ProposalRow) => void | Promise<void>;
+}) {
   const [mode, setMode] = useState<"approve" | "reject" | null>(null);
   const pending = proposal.status === "Pending";
   const needsSecondPerson = isFlagged(proposal) && proposal.proposed_by.toLowerCase() === viewerEppn.toLowerCase();
@@ -148,6 +161,15 @@ function ProposalDetail({ proposal, viewerEppn, onDecided }: { proposal: Proposa
             </p>
           )}
           <div className="flex gap-2">
+            {onPreview && (
+              <button
+                type="button"
+                onClick={() => void onPreview(proposal)}
+                className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 dark:border-gray-700"
+              >
+                Preview
+              </button>
+            )}
             <button
               type="button"
               disabled={needsSecondPerson}

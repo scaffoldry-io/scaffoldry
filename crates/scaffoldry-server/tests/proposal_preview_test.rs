@@ -14,7 +14,7 @@ use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 const WORKSPACE: &str = "ws-physics-optics";
@@ -23,7 +23,6 @@ const PLATFORM_ADMIN: &str = "jordan.lee@state.edu";
 
 struct World {
     _db: common::TestDb,
-    state: Arc<ServerState>,
     app: Router,
     owner: String,
     second: String,
@@ -54,10 +53,9 @@ async fn world() -> World {
     let (second, viewer) = (format!("second-{tag}@state.edu"), format!("viewer-{tag}@state.edu"));
     member(&state, &second, "admin");
     member(&state, &viewer, "viewer");
-    let app = build_app_with_state(state.clone()).expect("router");
+    let app = build_app_with_state(state).expect("router");
     World {
         _db: db,
-        state,
         app,
         owner: issue_test_token_and_user(OWNER),
         second: issue_test_token_and_user(&second),
@@ -296,4 +294,56 @@ async fn the_shadow_app_is_in_no_list_and_another_instance_serves_the_token() {
     let b = w._db.second_app();
     let (status, body) = rest(&b, "GET", &format!("/api/v1/apps/{shadow}/tables/cases/records"), &token, None).await;
     assert_eq!(status, StatusCode::OK, "the second instance builds the preview from the proposal: {body}");
+}
+
+const PAGE_SOURCE: &str = "export default function Page() { return <p>PROPOSED-PAGE-MARKER</p>; }";
+
+fn sha(text: &str) -> String {
+    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// 4 (pages). A page in the proposal renders from the proposal's source. Its reads go through the same rules and its
+// writes are refused.
+#[tokio::test]
+async fn a_proposed_page_renders_from_the_proposal_and_its_writes_are_refused() {
+    let w = world().await;
+    live(&w).await;
+    let mut m = manifest(&w.slug, &["title", "note"], vec![hide("secret")]);
+    m["pages"] = json!([{ "id": "board", "title": "Board", "kind": { "Custom": { "source_sha256": sha(PAGE_SOURCE), "grants": [
+        { "table_id": "cases", "read": ["title"], "write": ["title"], "create": true, "delete": false }
+    ]}}}]);
+    let p = tool(&w, &w.owner, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": m, "summary": "A page", "page_sources": [PAGE_SOURCE] })).await.expect("proposed");
+    let (token, shadow) = opened(&w, &p).await;
+
+    let live_page = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug, "page_id": "board" })).await;
+    assert!(live_page.is_err(), "the page is not live");
+    let page = tool(&w, &token, "get_page", json!({ "app_slug": shadow, "page_id": "board" })).await.expect("the preview renders the page");
+    assert!(page["html"].as_str().unwrap().contains("PROPOSED-PAGE-MARKER"), "the proposal's source is in the document");
+
+    let listed = tool(&w, &token, "page_call", json!({ "app_slug": shadow, "page_id": "board", "op": "list", "table_id": "cases" })).await.expect("a read");
+    let rows = listed["records"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "the live rule still hides the secret row: {listed}");
+    assert_eq!(rows[0]["data"]["title"], "plain");
+
+    let err = tool(&w, &token, "page_call", json!({ "app_slug": shadow, "page_id": "board", "op": "create", "table_id": "cases", "data": { "title": "new" } })).await.unwrap_err();
+    assert!(err.to_lowercase().contains("read-only") || err.to_lowercase().contains("preview"), "{err}");
+    assert_eq!(titles(&w, &w.owner, &w.slug).await, vec!["plain"], "nothing was created");
+}
+
+// 7. The tool opens the preview and returns the app as proposed and each custom page rendered.
+#[tokio::test]
+async fn the_tool_returns_the_proposed_app_and_its_rendered_pages() {
+    let w = world().await;
+    live(&w).await;
+    let mut m = manifest(&w.slug, &["title", "note", "extra"], vec![hide("secret")]);
+    m["pages"] = json!([{ "id": "board", "title": "Board", "kind": { "Custom": { "source_sha256": sha(PAGE_SOURCE), "grants": [
+        { "table_id": "cases", "read": ["title"], "write": [], "create": false, "delete": false }
+    ]}}}]);
+    let p = tool(&w, &w.owner, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": m, "summary": "A page", "page_sources": [PAGE_SOURCE] })).await.expect("proposed");
+    let shown = tool(&w, &w.owner, "preview_proposal", json!({ "proposal_id": p["proposal_id"] })).await.expect("previewed");
+    assert!(shown["token"].is_string() && shown["app_slug"].as_str().unwrap().contains("~preview~"), "{shown}");
+    assert!(shown["app"].to_string().contains("extra"), "the app as proposed: {shown}");
+    assert!(shown["pages"][0]["html"].as_str().unwrap().contains("PROPOSED-PAGE-MARKER"), "the rendered page: {shown}");
+    let err = tool(&w, &w.viewer, "preview_proposal", json!({ "proposal_id": p["proposal_id"] })).await.unwrap_err();
+    assert!(err.to_lowercase().contains("forbidden") || err.to_lowercase().contains("not"), "{err}");
 }
