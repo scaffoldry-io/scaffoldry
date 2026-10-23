@@ -35,6 +35,7 @@ pub fn router() -> Router<SharedState> {
         // App Schema & Metadata
         .route("/apps/{slug}/schema", get(get_app_schema))
         .route("/apps/{slug}/tables/{table_id}/schema", get(get_table_schema))
+        .route("/apps/{slug}/openapi.json", get(get_openapi))
         // Table Records
         .route(
             "/apps/{slug}/tables/{table_id}/aggregate",
@@ -540,4 +541,26 @@ async fn aggregate_table_records(
     .map_err(ServiceError::into_pair)?;
 
     Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
+}
+
+/// The app's API description for the caller. `ETag` changes when the app or the caller's view of it changes, and
+/// `If-None-Match` is honored.
+async fn get_openapi(State(state): State<SharedState>, headers: HeaderMap, Path(slug): Path<String>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(user) = session_user(&state, &headers) else { return ServiceError::unauthorized("Unauthorized").into_pair().into_response() };
+    let described = tokio::task::spawn_blocking(move || crate::service::openapi::describe(&user, &slug, &state)).await;
+    let document = match described {
+        Ok(Ok(d)) => d,
+        Ok(Err(e)) => return e.into_pair().into_response(),
+        Err(_) => return ServiceError::internal("The description could not be built").into_pair().into_response(),
+    };
+    let etag = crate::service::openapi::etag_of(&document);
+    let unchanged = headers.get("if-none-match").and_then(|v| v.to_str().ok()).is_some_and(|v| v.split(',').any(|t| t.trim().trim_start_matches("W/") == etag));
+    let mut response = if unchanged { StatusCode::NOT_MODIFIED.into_response() } else { Json(document).into_response() };
+    if let Ok(v) = axum::http::HeaderValue::from_str(&etag) {
+        response.headers_mut().insert(axum::http::header::ETAG, v);
+    }
+    response.headers_mut().insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("private, no-cache"));
+    response.headers_mut().insert(axum::http::header::VARY, axum::http::HeaderValue::from_static("Authorization"));
+    response
 }

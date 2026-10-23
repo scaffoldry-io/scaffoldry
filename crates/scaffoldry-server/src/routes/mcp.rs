@@ -337,6 +337,20 @@ async fn handle_mcp_request(
             })
         }
 
+        "resources/templates/list" => rpc(JsonRpcResponse {
+            jsonrpc: "2.0",
+            id: req_id,
+            result: Some(json!({
+                "resourceTemplates": [{
+                    "uriTemplate": "scaffoldry://apps/{slug}/openapi",
+                    "name": "App API description",
+                    "description": "The OpenAPI 3.1 description of one app, for you. It lists the tables you can read and the fields you can see",
+                    "mimeType": "application/json"
+                }]
+            })),
+            error: None,
+        }),
+
         "resources/read" => {
             let params = req.params.unwrap_or(json!({}));
             let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
@@ -365,6 +379,17 @@ async fn handle_mcp_request(
                                 "text": err.message()
                             }
                         ]
+                    }),
+                }
+            } else if let Some(slug) = crate::service::openapi::slug_of_resource(uri) {
+                // The shape of a record, for this caller, before an agent writes one.
+                match crate::service::openapi::describe(&caller, slug, &state) {
+                    Ok(document) => json!({
+                        "contents": [{ "uri": uri, "mimeType": "application/json", "text": serde_json::to_string(&document).unwrap_or_default() }]
+                    }),
+                    Err(err) => json!({
+                        "isError": true,
+                        "contents": [{ "uri": uri, "mimeType": "text/plain", "text": err.message() }]
                     }),
                 }
             } else if uri == "ui://governance/decision-ledger" {

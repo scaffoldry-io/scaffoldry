@@ -74,6 +74,10 @@ jobs:
         run: |
           python3 governance/scripts/validate-manifest.py
 
+      - name: Hard Gate - OpenAPI Description
+        run: |
+          python3 governance/scripts/validate-openapi.py
+
       - name: Hard Gate - Governance Script Tests
         run: |
           python3 -m unittest discover -s governance/scripts -p "test_*.py"
