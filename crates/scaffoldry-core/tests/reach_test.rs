@@ -338,9 +338,7 @@ fn a_role_has_a_default_clearance_and_a_grant_may_set_a_lower_or_a_higher_one() 
     let w = world();
     let base = grant(1, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.science.to_string())), None);
     assert!(effective_clearance(&base) < RESTRICTED, "a viewer is cleared for nothing protected");
-    for role in [Role::Commenter] {
-        assert!(effective_clearance(&Grant { role, ..base.clone() }) < RESTRICTED);
-    }
+    assert!(effective_clearance(&Grant { role: Role::Commenter, ..base.clone() }) < RESTRICTED);
     for role in [Role::Editor, Role::Admin, Role::Owner] {
         assert_eq!(effective_clearance(&Grant { role, ..base.clone() }), RESTRICTED, "{role:?} is cleared for everything");
     }
