@@ -161,6 +161,7 @@ fn test_differential_20_worlds_and_properties() {
             valid_from: 0,
             valid_until: None,
             revoked: false,
+            clearance: None,
         });
         let after = reachable(&widened);
         assert!(before.is_subset(&after), "monotonicity: adding a grant must never remove an object");
@@ -209,6 +210,7 @@ fn test_differential_20_worlds_and_properties() {
             valid_from: 0,
             valid_until: None,
             revoked: false,
+            clearance: None,
         };
         let inside = Object { containers: vec![], units: [("academic".to_string(), moved)].into(), domain: "institution".to_string() };
         let reader = holder_set("reader@synthetic.invalid", &[], &moved_tree, vec![], now);

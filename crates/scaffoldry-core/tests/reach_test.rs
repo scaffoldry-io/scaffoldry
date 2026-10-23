@@ -71,6 +71,7 @@ fn grant(id: i64, holder: (HolderKind, &str), role: Role, anchor: (AnchorKind, O
         valid_from: NOW - DAY,
         valid_until: None,
         revoked: false,
+        clearance: None,
     }
 }
 
@@ -322,4 +323,65 @@ fn the_set_agrees_with_reaches_for_a_row_in_every_unit() {
         let by_reaches = role_at(&me, &grants, &row, &w.tree, &Domains, NOW).is_some();
         assert_eq!(set.contains(&unit), by_reaches, "row in unit {unit}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Access model phase 6: clearance. A field is shown on a list only if every grant that contributes rows to it clears it.
+// ---------------------------------------------------------------------------------------------------------------------
+
+use scaffoldry_core::reach::{effective_clearance, page_clears, row_contributions};
+
+const RESTRICTED: u8 = 3;
+
+#[test]
+fn a_role_has_a_default_clearance_and_a_grant_may_set_a_lower_or_a_higher_one() {
+    let w = world();
+    let base = grant(1, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Unit, Some(w.science.to_string())), None);
+    assert!(effective_clearance(&base) < RESTRICTED, "a viewer is cleared for nothing protected");
+    for role in [Role::Commenter] {
+        assert!(effective_clearance(&Grant { role, ..base.clone() }) < RESTRICTED);
+    }
+    for role in [Role::Editor, Role::Admin, Role::Owner] {
+        assert_eq!(effective_clearance(&Grant { role, ..base.clone() }), RESTRICTED, "{role:?} is cleared for everything");
+    }
+    assert_eq!(effective_clearance(&Grant { clearance: Some(RESTRICTED), ..base.clone() }), RESTRICTED, "a grant may raise it");
+    assert_eq!(effective_clearance(&Grant { role: Role::Editor, clearance: Some(1), ..base }), 1, "or lower it");
+}
+
+fn cleared(role: Role, anchor: Uuid, clearance: Option<u8>, id: i64) -> Grant {
+    Grant { clearance, ..grant(id, (HolderKind::Person, "ada@state.edu"), role, (AnchorKind::Unit, Some(anchor.to_string())), None) }
+}
+
+fn on_page(units: &[Uuid]) -> Vec<BTreeMap<String, Uuid>> {
+    units.iter().map(|u| BTreeMap::from([("academic".to_string(), *u)])).collect()
+}
+
+// Test 3 of the brief, in the pure model: cleared in one department, not in the other.
+#[test]
+fn a_field_is_shown_only_if_every_grant_that_contributes_rows_clears_it() {
+    let w = world();
+    let me = person_set(&w, "ada@state.edu");
+    let rows = ["academic".to_string()].into_iter().collect::<BTreeSet<_>>();
+    // Cleared for protected fields in physics, a plain viewer in chemistry.
+    let grants = vec![cleared(Role::Viewer, w.physics, Some(RESTRICTED), 1), cleared(Role::Viewer, w.chemistry, None, 2)];
+    let parts = row_contributions(&me, &grants, &table_object(&w), &rows, &w.tree, &Domains, NOW);
+    assert_eq!(parts.len(), 2);
+
+    assert!(page_clears(&parts, &on_page(&[w.physics, w.lab]), RESTRICTED), "a physics-only page: only the physics grant contributes");
+    assert!(!page_clears(&parts, &on_page(&[w.physics, w.chemistry]), RESTRICTED), "a page with chemistry rows: the chemistry grant contributes and does not clear");
+    assert!(!page_clears(&parts, &on_page(&[w.chemistry]), RESTRICTED));
+    assert!(page_clears(&parts, &on_page(&[]), RESTRICTED), "no rows, nothing to hide");
+    assert!(page_clears(&parts, &on_page(&[w.chemistry]), 2), "a field below protected is cleared by both");
+}
+
+#[test]
+fn a_grant_that_reaches_no_row_on_the_page_does_not_count_and_a_container_grant_reaches_every_row() {
+    let w = world();
+    let me = person_set(&w, "ada@state.edu");
+    let rows = ["academic".to_string()].into_iter().collect::<BTreeSet<_>>();
+    let container = Grant { clearance: None, ..grant(3, (HolderKind::Person, "ada@state.edu"), Role::Viewer, (AnchorKind::Container, Some("workspace:ws".to_string())), None) };
+    let parts = row_contributions(&me, &[cleared(Role::Editor, w.physics, None, 1), container], &table_object(&w), &rows, &w.tree, &Domains, NOW);
+    assert!(!page_clears(&parts, &on_page(&[w.physics]), RESTRICTED), "the viewer-level container grant reaches the physics row too");
+    let only_editor = row_contributions(&me, &[cleared(Role::Editor, w.physics, None, 1), cleared(Role::Viewer, w.arts, None, 2)], &table_object(&w), &rows, &w.tree, &Domains, NOW);
+    assert!(page_clears(&only_editor, &on_page(&[w.lab]), RESTRICTED), "the arts grant reaches nothing on this page");
 }

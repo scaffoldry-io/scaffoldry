@@ -215,6 +215,7 @@ fn membership_grant(c: &CollaboratorRecord, index: usize) -> Option<Grant> {
         valid_from: 0,
         valid_until: None,
         revoked: false,
+        clearance: None,
     })
 }
 
@@ -294,6 +295,7 @@ fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) 
             valid_from: h.effective.unwrap_or(0),
             valid_until: h.end,
             revoked: false,
+            clearance: None,
         })
         .collect();
 
@@ -475,6 +477,7 @@ pub fn rows_reach(eppn: &str, workspace: &str, app: &str, table_id: &str, state:
             valid_from: h.effective.unwrap_or(0),
             valid_until: h.end,
             revoked: false,
+            clearance: None,
         })
         .collect();
     let holders = crate::service::coordinates::with_world(state, |_, tree| {

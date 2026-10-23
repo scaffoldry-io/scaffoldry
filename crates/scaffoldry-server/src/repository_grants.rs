@@ -43,6 +43,7 @@ impl GrantRow {
             valid_from: r.get(10),
             valid_until: r.get(11),
             revoked: r.get::<_, Option<i64>>(12).is_some(),
+            clearance: r.get::<_, Option<String>>(9).and_then(|c| scaffoldry_core::coordinates::sensitivity_rank(&c)),
         };
         Some(GrantRow {
             hierarchy: grant.hierarchy.clone(),
