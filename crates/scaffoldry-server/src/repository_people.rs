@@ -259,7 +259,7 @@ impl PostgresRepository {
         let names: Vec<String> = names.to_vec();
         self.with_client(move |c| {
             let q = "SELECT token_hash, id, kind, eppn, label, original_admin, created_at::text, expires_at::text, last_used_at::text, \
-                            revoked_at::text, app_slug FROM api_tokens WHERE eppn = ANY($1) ORDER BY created_at DESC";
+                            revoked_at::text, app_slug, scope FROM api_tokens WHERE eppn = ANY($1) ORDER BY created_at DESC";
             c.query(q, &[&names])?.iter().map(crate::repository::api_token_of_text_row).collect()
         })
     }

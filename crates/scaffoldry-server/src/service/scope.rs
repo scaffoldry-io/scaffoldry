@@ -40,6 +40,8 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "restore",
     "undo_batch",
     "validate_links",
+    // Reads a record only for its table id, to check a limited token's scope. It returns no data.
+    "table_of_record",
     // Helpers that sit under a listed reader and apply the scope before they return.
     "find",
     "link_names",
