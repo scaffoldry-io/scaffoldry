@@ -107,6 +107,11 @@ impl TestDb {
 impl Drop for TestDb {
     fn drop(&mut self) {
         scaffoldry_server::testing::use_database(None);
+        // For looking at a database after a long seed: KEEP_TEST_DB=1 leaves it, and prints its name.
+        if std::env::var_os("KEEP_TEST_DB").is_some() {
+            eprintln!("KEEP_TEST_DB: left the database {}", self.name);
+            return;
+        }
         // FORCE ends the connections the servers of this test still hold.
         let name = self.name.clone();
         let _ = std::thread::spawn(move || {

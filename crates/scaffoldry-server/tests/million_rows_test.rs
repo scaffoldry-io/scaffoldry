@@ -632,6 +632,11 @@ async fn million_rows_with_grants() {
     let seeded = seed(&slug);
     seed_placed(&slug);
     state.refresh().expect("refresh");
+    if std::env::var_os("GATE_SEED_ONLY").is_some() {
+        println!("million_rows_with_grants: seeded only, slug {slug}");
+        std::mem::forget(Cleanup(slug.clone()));
+        return;
+    }
     println!("million_rows_with_grants: seeded {ROWS} rows placed in 3 hierarchies and owned by 20,000 people in {:?}", seeded);
     let w = World { app: build_app_with_state(state.clone()).expect("router"), state, token: String::new(), slug: slug.clone(), _cleanup: Cleanup(slug.clone()) };
 
