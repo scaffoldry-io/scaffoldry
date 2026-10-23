@@ -129,6 +129,21 @@ impl PostgresRepository {
         })
     }
 
+    /// The addresses, lowercase, of the people with an appointment at any of these units today. A hierarchy of people
+    /// places a row by a person, so this turns the units a grant reaches into the people whose rows it reaches.
+    pub fn appointed_addresses(&self, units: &[uuid::Uuid]) -> Result<Vec<String>, RepositoryError> {
+        let units = units.to_vec();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT DISTINCT lower(p.eppn) FROM roles r JOIN persons p ON p.id = r.person_id \
+                 WHERE r.organization_id = ANY($1) AND r.effective_date <= CURRENT_DATE AND (r.end_date IS NULL OR r.end_date >= CURRENT_DATE) \
+                 ORDER BY 1",
+                &[&units],
+            )?;
+            Ok(rows.iter().map(|r| r.get(0)).collect())
+        })
+    }
+
     pub fn list_grant_rows(&self, f: &GrantFilter) -> Result<Vec<GrantRow>, RepositoryError> {
         let f = f.clone();
         self.with_client(move |c| {

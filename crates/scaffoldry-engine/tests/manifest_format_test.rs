@@ -213,3 +213,18 @@ fn base_with_page(kind: PageKind) -> AppManifest {
     m.pages = vec![AppPage { id: "p".to_string(), title: "P".to_string(), kind }];
     m
 }
+
+// Access model phase 6: a hierarchy of people places a row by a Collaborator field.
+#[test]
+fn a_row_place_may_name_a_collaborator_field_and_not_a_text_field() {
+    let mut m = base();
+    let mut owner = field("owner", FieldType::Collaborator { allow_multiple: false });
+    owner.hierarchy = None;
+    m.tables[0].fields.push(owner);
+    m.tables[0].fields.push(field("note", FieldType::Text));
+    m.tables[0].row_place.insert("supervisory".to_string(), "owner".to_string());
+    assert!(validate_manifest(&m).is_ok(), "{:?}", validate_manifest(&m));
+    m.tables[0].row_place.insert("supervisory".to_string(), "note".to_string());
+    let problems = validate_manifest(&m).unwrap_err();
+    assert!(problems.iter().any(|p| p.contains("row place") && p.contains("note")), "{problems:?}");
+}

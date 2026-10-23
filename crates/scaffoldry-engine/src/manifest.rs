@@ -105,9 +105,18 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
             }
         }
         for (hierarchy, field) in &table.row_place {
-            let ok = table.fields.iter().any(|f| f.name == *field && f.field_type == FieldType::Unit && f.hierarchy.as_deref() == Some(hierarchy.as_str()));
+            // A hierarchy of units places a row by a Unit field of that hierarchy. A hierarchy of people places it by a
+            // Collaborator field, because the people a unit holds are the ones its reach names.
+            let ok = table.fields.iter().any(|f| {
+                f.name == *field
+                    && match f.field_type {
+                        FieldType::Unit => f.hierarchy.as_deref() == Some(hierarchy.as_str()),
+                        FieldType::Collaborator { .. } => true,
+                        _ => false,
+                    }
+            });
             if !ok {
-                problems.push(format!("table '{}': row place for hierarchy '{hierarchy}' names '{field}', which is not a Unit field of that hierarchy", table.id));
+                problems.push(format!("table '{}': row place for hierarchy '{hierarchy}' names '{field}', which is not a Unit field of that hierarchy or a Collaborator field", table.id));
             }
         }
         for f in &table.fields {

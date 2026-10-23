@@ -175,6 +175,11 @@ fn reach_scope(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedSta
     if caller.affiliation == "central_admin" {
         return RowScope::AllowAll;
     }
+    let by_person: std::collections::BTreeSet<String> = fields_of(app_slug, table, state)
+        .into_iter()
+        .filter(|f| matches!(f.field_type, scaffoldry_engine::FieldType::Collaborator { .. }))
+        .map(|f| f.name)
+        .collect();
     let Some(workspace) = workspace_of(app_slug, state) else { return RowScope::DenyAll };
     let table_id = state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table).map(|t| t.id.clone())).unwrap_or_else(|| table.to_string());
     match members::rows_reach(&caller.eppn, &workspace, app_slug, &table_id, state) {
@@ -186,7 +191,17 @@ fn reach_scope(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedSta
                 .filter(|(_, units)| !units.is_empty())
                 .filter_map(|(hierarchy, units)| {
                     let field = placed.get(hierarchy)?;
-                    let ids: Vec<Value> = units.iter().map(|u| Value::String(u.to_string())).collect();
+                    // A row is placed by a unit, or in a hierarchy of people by a person. For people, the reach is the
+                    // addresses of those appointed at the units, and the filter is the same shape over that field.
+                    let ids: Vec<Value> = if by_person.contains(field) {
+                        let units: Vec<uuid::Uuid> = units.iter().copied().collect();
+                        state.repository.appointed_addresses(&units).unwrap_or_default().into_iter().map(Value::String).collect()
+                    } else {
+                        units.iter().map(|u| Value::String(u.to_string())).collect()
+                    };
+                    if ids.is_empty() {
+                        return Some(never());
+                    }
                     Some(Pred::Cmp { field: field.clone(), op: scaffoldry_core::access::Op::In, value: scaffoldry_core::access::Operand::Literal(Value::Array(ids)) })
                 })
                 .collect();

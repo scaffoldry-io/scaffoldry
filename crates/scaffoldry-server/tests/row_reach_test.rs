@@ -304,3 +304,92 @@ async fn filtering_or_sorting_on_a_field_a_contributing_grant_does_not_clear_is_
     let ok = tool(&w, "ed@state.edu", "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "sort": { "field_name": "ssn", "direction": "Asc" } })).await;
     assert!(ok.is_ok(), "{ok:?}");
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A hierarchy of people
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// A unit in the `supervisory` hierarchy, which holds people.
+fn supervisory_unit(state: &ServerState, name: &str, parent: Option<Uuid>) -> Uuid {
+    let id = Uuid::new_v4();
+    let node = OrganizationNode {
+        id,
+        parent_id: parent,
+        name: name.to_string(),
+        code: name.to_uppercase(),
+        org_type: "Unit".to_string(),
+        hierarchy_key: "supervisory".to_string(),
+        synthetic: false,
+    };
+    state.organizations.write().unwrap().insert(id, node.clone());
+    state.persist_organization(&node).unwrap();
+    id
+}
+
+// Rows placed by a person are reached through the people appointed at the units a grant reaches.
+#[tokio::test]
+async fn a_people_hierarchy_reaches_the_rows_placed_by_the_people_appointed_in_the_units() {
+    let db = TestDb::new();
+    let state = db.state();
+    db.run(|c| c.execute("INSERT INTO hierarchies (key, name, kind, source, created_by) VALUES ('supervisory', 'Supervisory', 'people', 'api', 'test') ON CONFLICT DO NOTHING", &[]).unwrap());
+    let root = Uuid::parse_str(ROOT).unwrap();
+    let science = unit(&state, "science", root);
+    let physics = unit(&state, "physics", science);
+    workspace(&state, WS, science);
+    appoint(&state, ADMIN_TWO, root, "platform_admin");
+    let boss = supervisory_unit(&state, "boss", None);
+    let team_one = supervisory_unit(&state, "team-one", Some(boss));
+    let team_two = supervisory_unit(&state, "team-two", Some(boss));
+    // A Collaborator field accepts only people the directory knows.
+    for who in ["p1", "p2", "p3"] {
+        let user: scaffoldry_server::state::ScimUser = serde_json::from_value(json!({ "id": Uuid::new_v4().to_string(), "userName": format!("{who}@state.edu"), "active": true })).expect("a SCIM user");
+        state.repository.upsert_scim_user(&user).unwrap();
+    }
+    appoint(&state, "p1@state.edu", team_one, "staff");
+    appoint(&state, "p2@state.edu", team_two, "staff");
+    appoint(&state, "p3@state.edu", boss, "staff");
+    let app = build_app_with_state(state).expect("router");
+    let slug = format!("tickets-{}", &Uuid::new_v4().to_string()[..8]);
+    // The table sits in physics. Zed's grant at science reaches the workspace and not the table, so only his supervisory
+    // grants decide which rows he sees.
+    let manifest = json!({
+        "slug": slug, "title": "Tickets", "description": "d", "organization_code": "INST", "department": "science", "views": [],
+        "tables": [{
+            "id": "tickets", "name": "Tickets", "slug": "tickets",
+            "coordinates": { "units": { "academic": physics.to_string() } },
+            "fields": [
+                { "name": "title", "label": "Title", "field_type": "Text", "required": false, "ferpa_sensitive": false },
+                { "name": "requester", "label": "Requester", "field_type": "Collaborator", "required": false, "ferpa_sensitive": false }
+            ],
+            "row_place": { "supervisory": "requester" }
+        }]
+    });
+    let (s, body) = send(&app, "POST", &format!("/api/v1/workspaces/{WS}/apps"), ADMIN, Some(manifest)).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    for who in ["p1", "p2", "p3"] {
+        let (s, body) = send(&app, "POST", &format!("/api/v1/apps/{slug}/records"), ADMIN, Some(json!({ "data": { "_table_id": "tickets", "title": who, "requester": format!("{who}@state.edu") } }))).await;
+        assert_eq!(s, StatusCode::CREATED, "{body}");
+    }
+    let slug_for_db = slug.clone();
+    db.run(move |c| c.execute("UPDATE index_status SET state = 'ready' WHERE app_slug = $1", &[&slug_for_db]).unwrap());
+    let w = World { _db: db, app, science, physics, lab: physics, chemistry: physics, slug };
+
+    grant(&w, unit_grant("zed@state.edu", science, Some(0))).await;
+    let sup = |who: &str, anchor: Uuid, depth: Option<i64>| json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "hierarchy": "supervisory", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "depth": depth, "source": "request", "reason": "Test grant" });
+    grant(&w, sup("zed@state.edu", team_one, None)).await;
+    grant(&w, sup("amy@state.edu", boss, None)).await;
+    grant(&w, unit_grant("amy@state.edu", science, Some(0))).await;
+    grant(&w, sup("bob@state.edu", boss, Some(0))).await;
+    grant(&w, unit_grant("bob@state.edu", science, Some(0))).await;
+
+    let titles = |who: &'static str| {
+        let w = &w;
+        async move {
+            let page = tool(w, who, "list_records", json!({ "app_slug": w.slug, "table_id": "tickets", "limit": 200 })).await.expect("a list");
+            page["records"].as_array().unwrap().iter().map(|r| r["data"]["title"].as_str().unwrap().to_string()).collect::<BTreeSet<_>>()
+        }
+    };
+    assert_eq!(titles("zed@state.edu").await, set(&["p1"]), "team one holds p1");
+    assert_eq!(titles("amy@state.edu").await, set(&["p1", "p2", "p3"]), "the boss's subtree holds everyone");
+    assert_eq!(titles("bob@state.edu").await, set(&["p3"]), "depth 0 is the boss's own unit, which holds p3");
+}
