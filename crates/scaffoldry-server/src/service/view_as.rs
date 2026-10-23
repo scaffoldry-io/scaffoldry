@@ -42,6 +42,7 @@ pub fn start(caller: &AuthUser, app_slug: &str, eppn: &str, state: &SharedState)
         last_used_at: None,
         revoked_at: None,
         app_slug: Some(app_slug.to_string()),
+        scope: None,
     };
 
     let payload = json!({ "viewer": caller.eppn, "target": target.eppn, "app_slug": app_slug });

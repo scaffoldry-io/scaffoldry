@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState, type FormEvent } from "react";
+import { scopeSentence } from "../tokenScope";
 import {
   apiClient,
   type AdminUserDetail,
@@ -409,6 +410,7 @@ function UserDetail({
             {data.tokens.map((t) => (
               <li key={t.id}>
                 {t.kind}: {t.label} {t.revoked ? "(revoked)" : `(expires ${t.expires_at.slice(0, 10)})`}
+                {t.scope && <span className="block text-xs text-gray-500">{scopeSentence(t.scope)}</span>}
               </li>
             ))}
           </ul>

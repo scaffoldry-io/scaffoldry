@@ -426,6 +426,7 @@ pub fn user_detail(state: &SharedState, id: &str) -> Result<Value, ServiceError>
                 "expires_at": t.expires_at.to_rfc3339(),
                 "last_used_at": t.last_used_at.map(|x| x.to_rfc3339()),
                 "revoked": t.revoked_at.is_some(),
+                "scope": t.scope,
             })
         })
         .collect();

@@ -105,6 +105,7 @@ async fn test_expired_session_rejected_with_401() {
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
+        scope: None,
     };
     let _ = state.persist_api_token(&expired_row);
 

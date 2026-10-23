@@ -189,6 +189,7 @@ pub fn create_setup_token(state: &ServerState) -> Result<String, Box<dyn std::er
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
+        scope: None,
     };
     state.persist_api_token(&token)?;
     Ok(raw_token)

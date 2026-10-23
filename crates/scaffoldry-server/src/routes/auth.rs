@@ -36,6 +36,9 @@ pub struct CreateTokenRequest {
     pub days: Option<i64>,
     #[serde(default)]
     pub kind: Option<String>,
+    /// Limits the token. Absent means its owner's full rights.
+    #[serde(default)]
+    pub scope: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,6 +49,8 @@ pub struct CreateTokenResponse {
     pub kind: String,
     pub created_at: String,
     pub expires_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<scaffoldry_core::TokenScope>,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +61,8 @@ pub struct TokenSummary {
     pub created_at: String,
     pub expires_at: String,
     pub last_used_at: Option<String>,
+    /// What the token is limited to. Absent means its owner's full rights.
+    pub scope: Option<scaffoldry_core::TokenScope>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +104,7 @@ async fn list_tokens(
             created_at: t.created_at.to_rfc3339(),
             expires_at: t.expires_at.to_rfc3339(),
             last_used_at: t.last_used_at.map(|d| d.to_rfc3339()),
+            scope: t.scope,
         })
         .collect();
 
@@ -122,8 +130,8 @@ async fn create_token(
         return unauthorized();
     }
 
-    // Agent tokens cannot mint tokens
-    if caller_row.kind == "agent" {
+    // Agent tokens cannot mint tokens, and neither can a limited one
+    if caller_row.kind == "agent" || caller_row.scope.is_some() {
         return ServiceError::forbidden("Agent tokens cannot mint tokens").into_pair()
             .into_response();
     }
@@ -154,6 +162,17 @@ async fn create_token(
         }
     }
 
+    let scope = match payload.scope.as_ref().filter(|v| !v.is_null()) {
+        None => None,
+        Some(_) if requested_kind != "agent" => {
+            return ServiceError::bad_request("Only an agent token can be limited").into_pair().into_response();
+        }
+        Some(value) => match scaffoldry_core::TokenScope::parse(value) {
+            Ok(scope) => Some(scope),
+            Err(message) => return ServiceError::bad_request(message).into_pair().into_response(),
+        },
+    };
+
     let max_days = state.settings.read().ok()
         .and_then(|s| s.get("tokens.max_days").and_then(|v| v.as_i64()))
         .unwrap_or(90)
@@ -177,6 +196,7 @@ async fn create_token(
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
+        scope: scope.clone(),
     };
 
     if let Err(e) = state.persist_api_token(&new_token) {
@@ -193,6 +213,7 @@ async fn create_token(
             kind: requested_kind.to_string(),
             created_at: now.to_rfc3339(),
             expires_at: expires_at.to_rfc3339(),
+            scope,
         })),
     )
         .into_response()
@@ -308,6 +329,7 @@ async fn impersonate_user(
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
+        scope: None,
     };
 
     // Append immutable audit entry to cryptographic decision ledger

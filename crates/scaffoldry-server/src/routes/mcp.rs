@@ -151,7 +151,8 @@ async fn handle_mcp_request(
     }
 
     // A view-as session reaches the tools and nothing else here.
-    if crate::guard::view_as_token(&state, &headers).is_some() && !["initialize", "ping", "tools/list", "tools/call"].contains(&req.method.as_str()) {
+    let scope = crate::guard::token_row(&state, &headers).and_then(|r| r.scope);
+    if (scope.is_some() || crate::guard::view_as_token(&state, &headers).is_some()) && !["initialize", "ping", "tools/list", "tools/call"].contains(&req.method.as_str()) {
         let err = crate::service::ServiceError::forbidden("This view reaches one app only. Exit it to open anything else.");
         return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: None, error: Some(JsonRpcError { code: -32001, message: err.message().to_string(), data: None }) });
     }
@@ -224,7 +225,14 @@ async fn handle_mcp_request(
         "tools/call" => {
             let params = req.params.unwrap_or(json!({}));
             let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            let mut args = params.get("arguments").cloned().unwrap_or(json!({}));
+
+            // A limited token calls the data tools its scope names. The person's own rights are checked by the tool.
+            if let Some(scope) = &scope {
+                if let Err(err) = crate::service::token_scope::check_tool(scope, &tool_name, &mut args, &state) {
+                    return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(service_tool_error(&err)), error: None });
+                }
+            }
 
             if let Some(row) = crate::guard::view_as_token(&state, &headers) {
                 if let Err(err) = crate::guard::view_as_tool_gate(&row, &tool_name, &args) {

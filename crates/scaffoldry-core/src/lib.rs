@@ -9,6 +9,7 @@ pub mod ledger;
 pub mod reach;
 pub mod reach_reference;
 pub mod standards;
+pub mod token_scope;
 pub mod tree;
 pub mod workflow;
 
@@ -21,5 +22,6 @@ pub use dataset::*;
 pub use guards::*;
 pub use ledger::*;
 pub use standards::{ceds, eduperson, herm};
+pub use token_scope::{TokenOp, TokenScope};
 pub use tree::{OrgClosureRow, OrgTree};
 pub use workflow::*;

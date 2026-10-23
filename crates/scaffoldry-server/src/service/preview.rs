@@ -92,6 +92,7 @@ pub fn start(caller: &AuthUser, proposal_id: &str, state: &SharedState) -> Resul
         last_used_at: None,
         revoked_at: None,
         app_slug: Some(shadow.clone()),
+        scope: None,
     };
 
     let organization_code = state

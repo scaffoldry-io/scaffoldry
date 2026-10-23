@@ -209,6 +209,7 @@ async fn scim_requires_the_provisioning_credential_and_fails_closed() {
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
+        scope: None,
     };
     state.persist_api_token(&token).unwrap();
     let app = build_app_with_state(Arc::new(state)).expect("router");
