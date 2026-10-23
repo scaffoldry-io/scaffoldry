@@ -473,7 +473,7 @@ async fn approving_a_view_that_sorts_on_a_new_field_gets_its_index_rows_from_a_j
     .await;
     assert!(!err, "{p}");
     let started = std::time::Instant::now();
-    let (err, done) = tool(&w, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "ok" })).await;
+    let (err, done) = tool(&w, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "ok", "digest": p["digest"] })).await;
     assert!(!err, "{done}");
     println!("row_scale: the approval returned in {:?} on {ROWS} rows", started.elapsed());
     // Since jobs phase 3 the approval only queues the build. A job writes the rows.

@@ -711,6 +711,40 @@ fn rule_sentences(proposed: &AutomationRule, state: &SharedState) -> Vec<String>
     out
 }
 
+/// The source text of each custom page of a manifest, keyed by page id. `local` holds sources that came with the
+/// proposal and are not stored yet. The others are read from the store.
+fn page_texts(manifest: Option<&Value>, local: &[(String, String)], state: &SharedState) -> Result<BTreeMap<String, String>, ServiceError> {
+    let mut out = BTreeMap::new();
+    let Some(pages) = manifest.and_then(|m| m.get("pages")).and_then(Value::as_array) else { return Ok(out) };
+    for page in pages {
+        let (Some(id), Some(sha)) = (page["id"].as_str(), page["kind"]["Custom"]["source_sha256"].as_str()) else { continue };
+        let sha = sha.to_lowercase();
+        let text = match local.iter().find(|(h, _)| *h == sha) {
+            Some((_, text)) => text.clone(),
+            None => repo(state)?
+                .page_source(&sha)
+                .map_err(internal)?
+                .ok_or_else(|| ServiceError::Internal(format!("The source {sha} of page '{id}' is not stored")))?,
+        };
+        out.insert(id.to_string(), text);
+    }
+    Ok(out)
+}
+
+/// The digest of a proposal's content.
+fn digest_of_content(manifest: Option<&Value>, rules: Option<&Value>, local: &[(String, String)], state: &SharedState) -> Result<String, ServiceError> {
+    Ok(crate::repository_proposals::proposal_digest(manifest, &page_texts(manifest, local, state)?, rules))
+}
+
+/// The digest of a stored proposal. A proposal made before digests were stored has none, and its content cannot have
+/// changed, so it is worked out from the content.
+fn digest_of(p: &ProposalRow, state: &SharedState) -> Result<String, ServiceError> {
+    if !p.digest.is_empty() {
+        return Ok(p.digest.clone());
+    }
+    digest_of_content(p.manifest.as_ref(), p.rules.as_ref(), &[], state)
+}
+
 pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
     let repo = repo(state)?;
     let ws = state
@@ -785,6 +819,7 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
     checks.push(check("stale", vec![]));
 
     let base_version = if manifest_json.is_some() { live_version(&slug, state)? } else { None };
+    let digest = digest_of_content(manifest_json.as_ref(), rules_json.as_ref(), &sources, state)?;
     let row = ProposalRow {
         id: uuid::Uuid::new_v4(),
         workspace_id: ws.id.clone(),
@@ -799,6 +834,7 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
         created_at: String::new(),
         decided_at: None,
         rules: rules_json,
+        digest,
     };
     repo.insert_proposal(&row, &sources).map_err(internal)?;
     let stored = repo.get_proposal(row.id).map_err(internal)?.ok_or_else(|| ServiceError::Internal("The proposal was not stored".to_string()))?;
@@ -842,6 +878,7 @@ fn view(p: &ProposalRow, state: &SharedState) -> Result<Value, ServiceError> {
         "decided_by": p.decided_by,
         "created_at": p.created_at,
         "decided_at": p.decided_at,
+        "digest": digest_of(p, state)?,
         "checks": checks,
         "changes": p.checks["changes"],
     }))
@@ -859,7 +896,9 @@ pub fn get(proposal_id: &str, state: &SharedState) -> Result<Value, ServiceError
     view(&row, state)
 }
 
-pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &str, state: &SharedState) -> Result<Value, ServiceError> {
+/// `digest` is what the decider reviewed. An approval must name it. A different one means the content is not what was
+/// reviewed, so nothing is applied.
+pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &str, digest: Option<&str>, state: &SharedState) -> Result<Value, ServiceError> {
     let id = parse_id(proposal_id)?;
     let repo = repo(state)?;
     let row = repo.get_proposal(id).map_err(internal)?.ok_or_else(|| ServiceError::NotFound("Proposal not found".to_string()))?;
@@ -874,6 +913,16 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                 .map_err(|status| ServiceError::Conflict(format!("This proposal is already {status}")))?;
         }
         "approve" => {
+            let stored = digest_of(&row, state)?;
+            match digest {
+                None => return Err(ServiceError::BadRequest("Argument 'digest' is required to approve. Send the digest of the proposal you reviewed".to_string())),
+                Some(named) if !named.trim().eq_ignore_ascii_case(&stored) => {
+                    return Err(ServiceError::ProposalChanged(format!(
+                        "The proposal is not what you reviewed. You named the digest {named}, and its digest is {stored}. Nothing was applied. Read the proposal again and approve its current digest"
+                    )))
+                }
+                Some(_) => {}
+            }
             // The rules are checked again against the app as it is now. A manifest approved since
             // the proposal was made may have removed a field a rule reads.
             let effective: Option<AppManifest> = match &row.manifest {
@@ -889,7 +938,7 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
                 }
             }
-            match repo.approve_proposal(id, &caller.eppn, rationale).map_err(|e| match e {
+            match repo.approve_proposal(id, &caller.eppn, rationale, &stored).map_err(|e| match e {
                 // The approval would start more background work than the person may have. Nothing was kept.
                 crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
                 other => ServiceError::Internal(format!("The approval was not kept: {other}")),
@@ -936,7 +985,9 @@ pub fn submit_direct(caller: &AuthUser, input: ProposeInput, state: &SharedState
         return Ok(Direct::Pending(proposed));
     }
     let id = proposed["proposal_id"].as_str().unwrap_or_default().to_string();
-    decide(caller, &id, "approve", "Applied directly by an owner or admin: no check was raised", state)?;
+    // The direct path reviewed the content it just made, so it names that content's digest itself.
+    let digest = proposed["digest"].as_str().unwrap_or_default().to_string();
+    decide(caller, &id, "approve", "Applied directly by an owner or admin: no check was raised", Some(&digest), state)?;
     Ok(Direct::Applied)
 }
 

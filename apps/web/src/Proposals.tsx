@@ -174,7 +174,7 @@ function ProposalDetail({ proposal, viewerEppn, onDecided }: { proposal: Proposa
                   : "The change is not made. The proposal is closed."
               }
               onConfirm={async (reason) => {
-                await apiClient.decideProposal(proposal.id, mode, reason);
+                await apiClient.decideProposal(proposal.id, mode, reason, proposal.digest);
               }}
               onSuccess={onDecided}
             />

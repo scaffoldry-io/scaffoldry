@@ -54,6 +54,8 @@ export interface ProposalRow {
   workspace_id: string;
   app_slug: string;
   base_version: number | null;
+  /** SHA-256 of the manifest, page sources and rules. An approval sends it back. */
+  digest: string;
   status: "Pending" | "Approved" | "Rejected" | "Superseded";
   summary: string;
   proposed_by: string;
@@ -918,10 +920,10 @@ export const apiClient = {
     return request<ProposalRow>(`/proposals/${id}`);
   },
 
-  decideProposal: async (id: string, decision: "approve" | "reject", rationale: string) => {
+  decideProposal: async (id: string, decision: "approve" | "reject", rationale: string, digest: string) => {
     return request<ProposalRow>(`/proposals/${id}/decision`, {
       method: "POST",
-      body: JSON.stringify({ decision, rationale }),
+      body: JSON.stringify({ decision, rationale, digest }),
     });
   },
 

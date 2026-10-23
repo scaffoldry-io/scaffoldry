@@ -49,7 +49,8 @@
         }
       },
       "save": {
-        "p": "$.proposal_id"
+        "p": "$.proposal_id",
+        "d_p": "$.digest"
       },
       "expect": {
         "checks.schema": "pass",
@@ -61,7 +62,8 @@
       "args": {
         "proposal_id": "$p",
         "decision": "approve",
-        "rationale": "Reviewed"
+        "rationale": "Reviewed",
+        "digest": "$d_p"
       },
       "expect": {
         "status": "Approved"
@@ -132,7 +134,8 @@
         "app_slug": "$app"
       },
       "save": {
-        "rp": "$.proposal_id"
+        "rp": "$.proposal_id",
+        "d_rp": "$.digest"
       }
     },
     {
@@ -140,7 +143,8 @@
       "args": {
         "proposal_id": "$rp",
         "decision": "approve",
-        "rationale": "Reviewed"
+        "rationale": "Reviewed",
+        "digest": "$d_rp"
       },
       "expect": {
         "status": "Approved"

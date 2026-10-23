@@ -83,7 +83,7 @@ async fn approving_one_app_among_many_makes_another_instance_parse_one() {
 
     let (err, p) = tool(&a, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": manifest("bulk-250", Some("nickname")), "summary": "A field" })).await;
     assert!(!err, "{p}");
-    let (err, done) = tool(&a, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "Reviewed" })).await;
+    let (err, done) = tool(&a, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "Reviewed", "digest": p["digest"] })).await;
     assert!(!err, "{done}");
 
     let before = state_b.repository.manifests_parsed();

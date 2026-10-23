@@ -130,7 +130,7 @@ async fn world() -> World {
     // A protected field in an Internal workspace needs a second person to approve the app.
     if s == StatusCode::ACCEPTED {
         let id = body["proposal_id"].as_str().expect("a proposal id").to_string();
-        let (s, done) = send(&app, "POST", &format!("/api/v1/proposals/{id}/decision"), ADMIN_TWO, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await;
+        let (s, done) = send(&app, "POST", &format!("/api/v1/proposals/{id}/decision"), ADMIN_TWO, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": body["digest"] }))).await;
         assert_eq!(s, StatusCode::OK, "{done}");
     } else {
         assert_eq!(s, StatusCode::CREATED, "{body}");

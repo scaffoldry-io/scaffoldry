@@ -73,6 +73,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::UndoConflict { message: "Moved on".into(), conflicts: vec![] }, "undo_conflict", StatusCode::CONFLICT),
         (ServiceError::GrantOutsideScope("Outside".into()), "grant_outside_scope", StatusCode::FORBIDDEN),
         (ServiceError::GrantTooBroad("Broad".into()), "grant_too_broad", StatusCode::BAD_REQUEST),
+        (ServiceError::ProposalChanged("Changed".into()), "proposal_changed", StatusCode::CONFLICT),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];
     for (e, _, _) in &samples {
@@ -81,6 +82,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::Forbidden { .. }
             | ServiceError::GrantOutsideScope(_)
             | ServiceError::GrantTooBroad(_)
+            | ServiceError::ProposalChanged(_)
             | ServiceError::NotFound(_)
             | ServiceError::BadRequest(_)
             | ServiceError::Invalid { .. }

@@ -82,7 +82,7 @@ async fn decide_proposal(w: World) -> Outcome {
     changed["tables"][0]["fields"].as_array_mut().ok_or("fields")?.push(json!({ "name": "decided", "label": "decided", "field_type": "Text", "required": false, "ferpa_sensitive": false }));
     let proposed = w.tool_a(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": changed, "summary": "To decide" })).await?;
     let id = proposed["proposal_id"].as_str().ok_or("a proposal id")?.to_string();
-    w.tool_a(OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed" })).await?;
+    w.tool_a(OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] })).await?;
     let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/schema"), OWNER, None).await, StatusCode::OK, "B reads the schema")?;
     ensure(has(&seen, "decided"), format!("B shows the field the approval added: {seen}"))
 }
@@ -141,7 +141,7 @@ pub async fn make_page_app(w: &World) -> Result<String, String> {
     ]}}}]);
     let proposed = w.tool_a(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": m, "summary": "A page", "page_sources": [PAGE_SOURCE] })).await?;
     let id = proposed["proposal_id"].as_str().ok_or("a proposal id")?.to_string();
-    w.tool_a(OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed" })).await?;
+    w.tool_a(OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] })).await?;
     Ok(slug)
 }
 

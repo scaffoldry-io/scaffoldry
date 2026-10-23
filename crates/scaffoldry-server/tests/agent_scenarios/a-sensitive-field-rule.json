@@ -49,7 +49,8 @@
         }
       },
       "save": {
-        "p1": "$.proposal_id"
+        "p1": "$.proposal_id",
+        "d_p1": "$.digest"
       },
       "expect": {
         "checks.sensitivity": "fail"
@@ -60,7 +61,8 @@
       "args": {
         "proposal_id": "$p1",
         "decision": "approve",
-        "rationale": "Reviewed"
+        "rationale": "Reviewed",
+        "digest": "$d_p1"
       },
       "expect": {
         "status": "Approved"
@@ -98,7 +100,8 @@
         "app_slug": "$app"
       },
       "save": {
-        "rp": "$.proposal_id"
+        "rp": "$.proposal_id",
+        "d_rp": "$.digest"
       },
       "expect": {
         "checks.rule_effects": "fail"
@@ -109,7 +112,8 @@
       "args": {
         "proposal_id": "$rp",
         "decision": "approve",
-        "rationale": "Reviewed"
+        "rationale": "Reviewed",
+        "digest": "$d_rp"
       },
       "error": {
         "code": "forbidden",
@@ -121,7 +125,8 @@
       "args": {
         "proposal_id": "$rp",
         "decision": "approve",
-        "rationale": "Reviewed"
+        "rationale": "Reviewed",
+        "digest": "$d_rp"
       },
       "expect": {
         "status": "Approved"

@@ -143,7 +143,7 @@ Faculty want quick, custom web apps with interfaces of their own. These rows let
 | --- | --- | --- | --- | --- |
 | 72 | [mcp-apps.md](mcp-apps.md) | 6 | A custom page renders in a sandbox, bounded by its grants. A page can be a bundle with its own libraries, and keeps per-person settings | **COMPLETED** |
 | 73 | [mcp-apps.md](mcp-apps.md) | 7 | The web desk shows a custom page in a sandboxed frame | **COMPLETED** |
-| 74 | [proposal-preview.md](proposal-preview.md) | 1 | An approval names the digest of what was reviewed, and only that content can go live | |
+| 74 | [proposal-preview.md](proposal-preview.md) | 1 | An approval names the digest of what was reviewed, and only that content can go live | **COMPLETED** |
 | 75 | [proposal-preview.md](proposal-preview.md) | 2 | The proposer and the people who may decide open the proposed app, read-only, under the stricter of the live and proposed rules | |
 | 76 | [integrations.md](integrations.md) | 2 | Tokens limited to apps, tables, and operations |
 | 77 | [agent-coverage.md](agent-coverage.md) | 2 | Protocol conformance, a tool-list budget, error hints, and a guide that runs as tests. The `openapi` resource waits for row 78 | **COMPLETED** |

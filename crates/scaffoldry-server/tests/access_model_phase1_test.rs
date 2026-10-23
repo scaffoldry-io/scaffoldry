@@ -106,7 +106,7 @@ async fn app_with_a_rule(app: &axum::Router, owner: &str) -> String {
     let slug = format!("app-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let (err, proposed) = tool(app, owner, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": manifest(&slug), "summary": "Advising app" })).await;
     assert!(!err, "{proposed}");
-    let (err, done) = tool(app, owner, "decide_proposal", json!({ "proposal_id": proposed["proposal_id"], "decision": "approve", "rationale": "Set up" })).await;
+    let (err, done) = tool(app, owner, "decide_proposal", json!({ "proposal_id": proposed["proposal_id"], "decision": "approve", "rationale": "Set up", "digest": proposed["digest"] })).await;
     assert!(!err, "{done}");
     for (name, advisor) in [
         ("Alice", OWNER),
@@ -756,7 +756,7 @@ async fn a_person_in_a_department_is_in_its_college_in_cedar_in_rust_and_in_sql(
 
     let (err, proposed) = tool(&app, &owner, "propose_app_change", json!({ "workspace_id": "ws-p1-scope", "manifest": unit_manifest(&slug, "ws-p1-scope"), "summary": "Unit rows" })).await;
     assert!(!err, "{proposed}");
-    let (err, done) = tool(&app, &owner, "decide_proposal", json!({ "proposal_id": proposed["proposal_id"], "decision": "approve", "rationale": "Set up" })).await;
+    let (err, done) = tool(&app, &owner, "decide_proposal", json!({ "proposal_id": proposed["proposal_id"], "decision": "approve", "rationale": "Set up", "digest": proposed["digest"] })).await;
     assert!(!err, "{done}");
     let mut ids = Vec::new();
     for (name, tag) in [("Science row", college), ("Arts row", arts)] {
