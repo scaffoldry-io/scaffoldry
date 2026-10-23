@@ -69,8 +69,8 @@ pub fn start(caller: &AuthUser, app_slug: &str, eppn: &str, state: &SharedState)
 
 /// Ends the session the token belongs to.
 pub fn stop(row: &ApiToken, state: &SharedState) -> Result<Value, ServiceError> {
-    if row.kind != "viewas" {
-        return Err(ServiceError::bad_request("This is not a view-as session."));
+    if !matches!(row.kind.as_str(), "viewas" | "preview") {
+        return Err(ServiceError::bad_request("This is not a view-as or preview session."));
     }
     let _ = state.revoke_api_token(row.id, &row.eppn, true);
     Ok(json!({ "status": "stopped" }))

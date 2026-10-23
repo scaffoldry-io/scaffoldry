@@ -97,6 +97,7 @@ impl PostgresRepository {
 
     /// Records by id, live or in trash. For a check of what the reader could see.
     pub fn records_with_trashed(&self, app_slug: &str, ids: &[String]) -> Result<Vec<crate::state::DatasetRecord>, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (slug, ids) = (app_slug.to_string(), ids.to_vec());
         self.with_client(move |client| {
             let rows = client.query(

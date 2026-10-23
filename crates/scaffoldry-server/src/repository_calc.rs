@@ -96,6 +96,7 @@ pub(crate) fn sync_calcs_in_tx(tx: &mut postgres::Transaction<'_>, old: Option<&
 impl PostgresRepository {
     /// The fields of a table that are being calculated, each with the percent its job has done.
     pub fn calc_states(&self, app_slug: &str, table_id: &str) -> Result<Vec<(String, i64)>, RepositoryError> {
+        let app_slug = scaffoldry_engine::stored_slug(app_slug);
         let (slug, table) = (app_slug.to_string(), table_id.to_string());
         self.with_client(move |client| {
             let rows = client.query(

@@ -74,6 +74,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::GrantOutsideScope("Outside".into()), "grant_outside_scope", StatusCode::FORBIDDEN),
         (ServiceError::GrantTooBroad("Broad".into()), "grant_too_broad", StatusCode::BAD_REQUEST),
         (ServiceError::ProposalChanged("Changed".into()), "proposal_changed", StatusCode::CONFLICT),
+        (ServiceError::PreviewReadOnly("Read only".into()), "preview_read_only", StatusCode::FORBIDDEN),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];
     for (e, _, _) in &samples {
@@ -83,6 +84,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::GrantOutsideScope(_)
             | ServiceError::GrantTooBroad(_)
             | ServiceError::ProposalChanged(_)
+            | ServiceError::PreviewReadOnly(_)
             | ServiceError::NotFound(_)
             | ServiceError::BadRequest(_)
             | ServiceError::Invalid { .. }

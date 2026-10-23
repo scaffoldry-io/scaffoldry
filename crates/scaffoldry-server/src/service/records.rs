@@ -1475,6 +1475,10 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
                 for name in &hidden {
                     map.remove(name);
                 }
+                // A preview shows the proposed table: a field the proposal removes is not there.
+                if crate::service::preview::is_preview(app_slug) {
+                    map.retain(|key, _| key.starts_with('_') || fields.iter().any(|f| f.name == *key));
+                }
             }
         }
     }
@@ -1722,7 +1726,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             return Err(ServiceError::IndexBuilding(format!("This field is still being prepared for sorting. It is {percent}% done.")));
         }
         let mut iq = IndexedQuery {
-            app_slug: app_slug.to_string(),
+            app_slug: crate::service::preview::stored_slug(app_slug).to_string(),
             table_id: table.clone(),
             clauses: iclauses.clone(),
             sort: isort.clone(),
@@ -2131,7 +2135,7 @@ pub fn aggregate_records(
 
     let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
     let plan = crate::repository_index::AggregatePlan {
-        app_slug: app_slug.to_string(),
+        app_slug: crate::service::preview::stored_slug(app_slug).to_string(),
         table_id: table.clone(),
         function: query.function,
         field: query.field.clone(),
@@ -2255,7 +2259,7 @@ fn walk_of(caller: &AuthUser, app_slug: &str, q: &WindowQuery, state: &SharedSta
         return Err(ServiceError::IndexBuilding(format!("This field is still being prepared for sorting. It is {percent}% done.")));
     }
     let spec = crate::repository_index::AnchorSpec {
-        app_slug: app_slug.to_string(),
+        app_slug: crate::service::preview::stored_slug(app_slug).to_string(),
         table_id: table.clone(),
         view_id: q.view_id.unwrap_or_default(),
         sort: sort.clone(),
@@ -2263,7 +2267,7 @@ fn walk_of(caller: &AuthUser, app_slug: &str, q: &WindowQuery, state: &SharedSta
         expr: expr.clone(),
     };
     let query = IndexedQuery {
-        app_slug: app_slug.to_string(),
+        app_slug: crate::service::preview::stored_slug(app_slug).to_string(),
         table_id: table.clone(),
         clauses,
         sort: Some(sort),

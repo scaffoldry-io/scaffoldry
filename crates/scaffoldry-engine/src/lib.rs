@@ -1159,6 +1159,15 @@ pub trait HostRouter {
     fn resolve_by_slug(&self, slug: &str) -> Option<&AppManifest>;
 }
 
+/// Joins a live app's slug to a proposal id. An app under such a slug is a preview of a proposal, not an app: it is in
+/// no list and it holds no record. Its reads are the live app's.
+pub const PREVIEW_MARK: &str = "~preview~";
+
+/// The live app a slug stands for. A slug that is not a preview is its own.
+pub fn stored_slug(slug: &str) -> &str {
+    slug.split_once(PREVIEW_MARK).map_or(slug, |(live, _)| live)
+}
+
 pub struct ManifestEngine {
     manifests_by_slug: HashMap<String, AppManifest>,
     manifests_by_domain: HashMap<String, String>,
@@ -1208,11 +1217,19 @@ impl ManifestEngine {
     }
 
     pub fn manifests_count(&self) -> usize {
-        self.manifests_by_slug.len()
+        self.manifests_by_slug.keys().filter(|s| !s.contains(PREVIEW_MARK)).count()
     }
 
+    /// Every app. A preview of a proposal is not one.
     pub fn list_manifests(&self) -> Vec<AppManifest> {
-        self.manifests_by_slug.values().cloned().collect()
+        self.manifests_by_slug.values().filter(|m| !m.slug.contains(PREVIEW_MARK)).cloned().collect()
+    }
+
+    /// Drops a preview. Nothing else is removed this way.
+    pub fn remove_preview(&mut self, slug: &str) {
+        if slug.contains(PREVIEW_MARK) {
+            self.manifests_by_slug.remove(slug);
+        }
     }
 
     pub fn register_manifest(&mut self, manifest: AppManifest) -> Result<(), EngineError> {
