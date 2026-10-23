@@ -6,7 +6,7 @@ This guide is for an AI tool working for a person at an institution. Read it onc
 
 1. **Describe.** Call `list_workspaces`, then `list_apps` for the workspace you will work in. Call `describe_app` to read an app before you change it. Read `scaffoldry://schema/app-manifest` for the shape of a manifest.
 2. **Propose.** Call `propose_app_change` with a whole manifest and a one-sentence summary. Nothing is live yet. The reply holds the proposal's `checks`. Read them with the person.
-3. **Wait for approval.** A workspace owner or admin calls `decide_proposal` with the proposal's `digest`. If it changed, you get `proposal_changed`. When every check passes, an admin may approve their own proposal. When a check marked as needing review fails, a second person must approve.
+3. **Wait for approval.** A workspace owner or admin calls `decide_proposal` with the proposal's `digest`. If it changed, the call fails as changed. When every check passes, an admin may approve their own proposal. When a check marked as needing review fails, a second person must approve.
 4. **Work with records.** Once the proposal is approved the app is live. Use `create_record`, `list_records`, `update_record` and `delete_record`.
 
 ```scenario
