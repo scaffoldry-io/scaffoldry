@@ -288,8 +288,13 @@ pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str,
 /// would be built whole and could not stop early. Do not use it for a statement that reads every match, such as a count: there the
 /// probes would scan the table.
 pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> Result<Option<(String, Vec<Param>)>, CompileError> {
-    let Pred::Or(parts) = pred else { return Ok(None) };
-    if parts.len() < 2 || !parts.iter().all(|p| matches!(p, Pred::Cmp { op: Op::Eq | Op::In, .. })) {
+    // One test, or an OR of them.
+    let parts: &[Pred] = match pred {
+        Pred::Or(parts) => parts,
+        Pred::Cmp { .. } => std::slice::from_ref(pred),
+        _ => return Ok(None),
+    };
+    if parts.is_empty() || !parts.iter().all(|p| matches!(p, Pred::Cmp { op: Op::Eq | Op::In, .. })) {
         return Ok(None);
     }
     check(pred)?;

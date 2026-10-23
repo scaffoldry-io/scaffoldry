@@ -466,8 +466,9 @@ fn an_or_of_comparisons_compiles_to_probes_and_not_to_a_union() {
     assert!(sql.matches(" OR ").count() >= 2, "{sql}");
     assert!(sql.contains("i.record_id = r.id"), "each probe is tied to the record: {sql}");
     assert_eq!(params.len(), 2 + 3 * 2, "the app, the table, and a field and a value list for each: {params:?}");
-    // One comparison, a conjunction, and a negation have no probe form. The set form is right for them.
-    assert!(to_sql_probes(&leaf("t", "a"), &fields(), "r.id", "app", "t1", 1).unwrap().is_none());
+    // One membership test is probed too. A conjunction and a negation have no probe form. The set form is right for them.
+    let (one, _) = to_sql_probes(&leaf("t", "a"), &fields(), "r.id", "app", "t1", 1).unwrap().expect("one membership test");
+    assert_eq!(one.matches("EXISTS").count(), 1, "{one}");
     assert!(to_sql_probes(&Pred::And(vec![leaf("t", "a"), leaf("m", "b")]), &fields(), "r.id", "app", "t1", 1).unwrap().is_none());
     // The unbounded form is still the set form, so a count never scans the records.
     let (set_form, _) = to_sql(&pred, &fields(), "r.id", "app", "t1", 1).unwrap();
