@@ -142,11 +142,54 @@ pub fn scope_of(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state
 fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &SharedState) -> RowScope {
     // An app the engine does not hold, such as one whose stored manifest no longer validates, shows no rows.
     let Some(rules) = rules_loaded(app_slug, state) else { return RowScope::DenyAll };
-    if rules.is_empty() {
+    let by_rules = if rules.is_empty() {
+        RowScope::AllowAll
+    } else {
+        let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
+        row_scope(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table, op)
+    };
+    // The rules narrow what the grants reach. A rule never widens it.
+    by_rules.and(reach_scope(caller, app_slug, table, state))
+}
+
+/// The rows of a table that places its rows (`row_place`) which the caller's grants reach. A table that places no rows
+/// is not narrowed. A container grant, a workspace membership and a Platform Admin reach every row. Rows reached by any
+/// grant are the union, and a row with no place is reached only by a container grant.
+fn reach_scope(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> RowScope {
+    use scaffoldry_core::reach::RowReach;
+    let placed: std::collections::BTreeMap<String, String> = {
+        use scaffoldry_engine::HostRouter;
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        match engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table)) {
+            Some(t) if !t.row_place.is_empty() => t.row_place.clone(),
+            _ => return RowScope::AllowAll,
+        }
+    };
+    if caller.affiliation == "central_admin" {
         return RowScope::AllowAll;
     }
-    let role = workspace_of(app_slug, state).and_then(|w| members::member_role_in_app(caller, &w, app_slug, state)).map(|r| r.as_str());
-    row_scope(&person_of(caller, state), role, caller.affiliation == "central_admin", &rules, table, op)
+    let Some(workspace) = workspace_of(app_slug, state) else { return RowScope::DenyAll };
+    let table_id = state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table).map(|t| t.id.clone())).unwrap_or_else(|| table.to_string());
+    match members::rows_reach(&caller.eppn, &workspace, app_slug, &table_id, state) {
+        None => RowScope::DenyAll,
+        Some(RowReach::All) => RowScope::AllowAll,
+        Some(RowReach::Units(by_hierarchy)) => {
+            let parts: Vec<Pred> = by_hierarchy
+                .iter()
+                .filter(|(_, units)| !units.is_empty())
+                .filter_map(|(hierarchy, units)| {
+                    let field = placed.get(hierarchy)?;
+                    let ids: Vec<Value> = units.iter().map(|u| Value::String(u.to_string())).collect();
+                    Some(Pred::Cmp { field: field.clone(), op: scaffoldry_core::access::Op::In, value: scaffoldry_core::access::Operand::Literal(Value::Array(ids)) })
+                })
+                .collect();
+            match parts.len() {
+                0 => RowScope::DenyAll,
+                1 => RowScope::of(parts.into_iter().next().expect("one part")),
+                _ => RowScope::of(Pred::Or(parts)),
+            }
+        }
+    }
 }
 
 fn table_of(record: &DatasetRecord) -> String {

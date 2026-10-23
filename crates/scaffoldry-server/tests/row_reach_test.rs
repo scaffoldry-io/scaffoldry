@@ -1,0 +1,227 @@
+//! Access model phase 6: a list shows the rows a person's grants reach.
+//!
+//! A table that places its rows (`row_place`) shows each person the rows in the units their grants reach. A container
+//! grant on the workspace shows every row. Several grants are a union. The list, a single record, and a count agree.
+
+mod common;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use common::TestDb;
+use http_body_util::BodyExt;
+use scaffoldry_server::build_app_with_state;
+use scaffoldry_server::service::identity::issue_test_token_and_user;
+use scaffoldry_server::state::{CollaboratorRecord, OrganizationNode, RoleRow, ServerState, WorkspaceRecord};
+use serde_json::{json, Value};
+use std::collections::BTreeSet;
+use tower::ServiceExt;
+use uuid::Uuid;
+
+const ADMIN: &str = "jordan.lee@state.edu";
+const ADMIN_TWO: &str = "second.admin@state.edu";
+const ROOT: &str = "00000000-0000-0000-0000-000000000001";
+const WS: &str = "ws-science";
+
+async fn send(app: &axum::Router, method: &str, uri: &str, who: &str, body: Option<Value>) -> (StatusCode, Value) {
+    let mut req = Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {}", issue_test_token_and_user(who)));
+    let body = match body {
+        Some(v) => {
+            req = req.header("content-type", "application/json");
+            Body::from(v.to_string())
+        }
+        None => Body::empty(),
+    };
+    let resp = app.clone().oneshot(req.body(body).unwrap()).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) })
+}
+
+fn unit(state: &ServerState, name: &str, parent: Uuid) -> Uuid {
+    let id = Uuid::new_v4();
+    let node = OrganizationNode {
+        id,
+        parent_id: Some(parent),
+        name: name.to_string(),
+        code: name.to_uppercase(),
+        org_type: "Unit".to_string(),
+        hierarchy_key: "academic".to_string(),
+        synthetic: false,
+    };
+    state.organizations.write().unwrap().insert(id, node.clone());
+    state.persist_organization(&node).unwrap();
+    id
+}
+
+fn appoint(state: &ServerState, eppn: &str, unit: Uuid, scoped_affiliation: &str) {
+    state
+        .persist_role(&RoleRow {
+            id: Uuid::new_v4(),
+            person_id: Uuid::new_v4(),
+            eppn: eppn.to_string(),
+            organization_id: unit,
+            role_title: scoped_affiliation.to_string(),
+            scoped_affiliation: scoped_affiliation.to_string(),
+            is_primary: false,
+            source: "test".to_string(),
+            position_key: None,
+        })
+        .unwrap();
+}
+
+fn workspace(state: &ServerState, id: &str, unit: Uuid) {
+    let ws = WorkspaceRecord {
+        id: id.to_string(),
+        name: format!("Workspace {id}"),
+        code: format!("WS-{id}"),
+        organization: "INST".to_string(),
+        department: "science".to_string(),
+        description: "Test".to_string(),
+        icon: "dna".to_string(),
+        lead: "Lead".to_string(),
+        visibility: "departmental".to_string(),
+        coordinates: Default::default(),
+        data_classification: "restricted".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        organization_id: Some(unit),
+        synthetic: false,
+    };
+    state.workspaces.write().unwrap().insert(id.to_string(), ws.clone());
+    state.repository.upsert_workspace(&ws).unwrap();
+    state.collaborators.write().unwrap().insert(id.to_string(), Vec::<CollaboratorRecord>::new());
+}
+
+struct World {
+    _db: TestDb,
+    app: axum::Router,
+    science: Uuid,
+    physics: Uuid,
+    lab: Uuid,
+    chemistry: Uuid,
+    slug: String,
+}
+
+/// science > physics > lab, science > chemistry. One row in each unit, titled with the unit's name.
+async fn world() -> World {
+    let db = TestDb::new();
+    let state = db.state();
+    let root = Uuid::parse_str(ROOT).unwrap();
+    let science = unit(&state, "science", root);
+    let physics = unit(&state, "physics", science);
+    let lab = unit(&state, "lab", physics);
+    let chemistry = unit(&state, "chemistry", science);
+    workspace(&state, WS, science);
+    appoint(&state, ADMIN_TWO, root, "platform_admin");
+    let app = build_app_with_state(state).expect("router");
+    let slug = format!("cases-{}", &Uuid::new_v4().to_string()[..8]);
+    let manifest = json!({
+        "slug": slug, "title": "Cases", "description": "d", "organization_code": "INST", "department": "science", "views": [],
+        "tables": [{
+            "id": "cases", "name": "Cases", "slug": "cases",
+            "fields": [
+                { "name": "title", "label": "Title", "field_type": "Text", "required": false, "ferpa_sensitive": false },
+                { "name": "unit", "label": "Unit", "field_type": "Unit", "hierarchy": "academic", "required": false, "ferpa_sensitive": false }
+            ],
+            "row_place": { "academic": "unit" }
+        }]
+    });
+    let (s, body) = send(&app, "POST", &format!("/api/v1/workspaces/{WS}/apps"), ADMIN, Some(manifest)).await;
+    assert!(s == StatusCode::CREATED || s == StatusCode::ACCEPTED, "{s} {body}");
+    for (name, id) in [("science", science), ("physics", physics), ("lab", lab), ("chemistry", chemistry)] {
+        let (s, body) = send(&app, "POST", &format!("/api/v1/apps/{slug}/records"), ADMIN, Some(json!({ "data": { "_table_id": "cases", "title": name, "unit": id.to_string() } }))).await;
+        assert_eq!(s, StatusCode::CREATED, "{body}");
+    }
+    World { _db: db, app, science, physics, lab, chemistry, slug }
+}
+
+fn unit_grant(who: &str, anchor: Uuid, depth: Option<i64>) -> Value {
+    json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "depth": depth, "source": "request", "reason": "Test grant" })
+}
+
+async fn grant(w: &World, body: Value) {
+    let (s, pending) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(body)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{pending}");
+    let change = pending["change_id"].as_str().unwrap();
+    let (s, done) = send(&w.app, "POST", &format!("/api/v1/admin/access/changes/{change}/decide"), ADMIN_TWO, Some(json!({ "decision": "confirm", "reason": "Reviewed" }))).await;
+    assert_eq!(s, StatusCode::OK, "{done}");
+}
+
+async fn tool(w: &World, who: &str, name: &str, args: Value) -> Result<Value, String> {
+    let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } });
+    let (_, v) = send(&w.app, "POST", "/api/mcp", who, Some(payload)).await;
+    if let Some(err) = v.get("error") {
+        return Err(err["message"].as_str().unwrap_or("").to_string());
+    }
+    if v["result"]["isError"] == true {
+        return Err(v["result"]["content"][0]["text"].as_str().unwrap_or("").to_string());
+    }
+    Ok(v["result"]["structuredContent"].clone())
+}
+
+/// The titles a person's list shows.
+async fn listed(w: &World, who: &str) -> BTreeSet<String> {
+    let page = tool(w, who, "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "limit": 200 })).await.expect("a list");
+    page["records"].as_array().unwrap().iter().map(|r| r["data"]["title"].as_str().unwrap().to_string()).collect()
+}
+
+fn set(names: &[&str]) -> BTreeSet<String> {
+    names.iter().map(|s| s.to_string()).collect()
+}
+
+// 1. A unit grant shows the rows in its subtree, and a depth limits it.
+#[tokio::test]
+async fn a_unit_grant_shows_the_rows_in_its_subtree_and_a_depth_limits_it() {
+    let w = world().await;
+    grant(&w, unit_grant("ada@state.edu", w.science, Some(1))).await;
+    grant(&w, unit_grant("bo@state.edu", w.science, Some(0))).await;
+    grant(&w, unit_grant("cy@state.edu", w.science, None)).await;
+    assert_eq!(listed(&w, "ada@state.edu").await, set(&["science", "physics", "chemistry"]), "depth 1 stops above the lab");
+    assert_eq!(listed(&w, "bo@state.edu").await, set(&["science"]), "depth 0 is the unit only");
+    assert_eq!(listed(&w, "cy@state.edu").await, set(&["science", "physics", "lab", "chemistry"]), "no depth is the whole subtree");
+}
+
+// 2. A container grant on the workspace shows every row, and so does a platform admin.
+#[tokio::test]
+async fn a_container_grant_and_a_platform_admin_see_every_row() {
+    let w = world().await;
+    grant(&w, json!({ "holder_kind": "person", "holder_id": "dee@state.edu", "role": "viewer", "anchor_kind": "container", "anchor_id": format!("workspace:{WS}"), "source": "request", "reason": "Test grant" })).await;
+    assert_eq!(listed(&w, "dee@state.edu").await, set(&["science", "physics", "lab", "chemistry"]));
+    assert_eq!(listed(&w, ADMIN).await, set(&["science", "physics", "lab", "chemistry"]));
+}
+
+// 3. Several grants are a union. A grant that does not reach the workspace still adds its rows.
+#[tokio::test]
+async fn several_grants_are_a_union() {
+    let w = world().await;
+    grant(&w, unit_grant("eve@state.edu", w.science, Some(0))).await;
+    grant(&w, unit_grant("eve@state.edu", w.physics, None)).await;
+    assert_eq!(listed(&w, "eve@state.edu").await, set(&["science", "physics", "lab"]));
+}
+
+// 4. The list, one record, and a count agree.
+#[tokio::test]
+async fn the_list_a_single_record_and_a_count_agree() {
+    let w = world().await;
+    grant(&w, unit_grant("fay@state.edu", w.science, Some(1))).await;
+    let page = tool(&w, "fay@state.edu", "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "limit": 200 })).await.unwrap();
+    let shown: Vec<String> = page["records"].as_array().unwrap().iter().map(|r| r["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(shown.len(), 3);
+
+    let all = tool(&w, ADMIN, "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "limit": 200 })).await.unwrap();
+    for r in all["records"].as_array().unwrap() {
+        let id = r["id"].as_str().unwrap();
+        let got = tool(&w, "fay@state.edu", "get_record", json!({ "app_slug": w.slug, "record_id": id })).await;
+        assert_eq!(got.is_ok(), shown.iter().any(|s| s == id), "get_record agrees with the list for {}", r["data"]["title"]);
+    }
+    let count = tool(&w, "fay@state.edu", "aggregate_records", json!({ "app_slug": w.slug, "table_id": "cases", "function": "count" })).await.unwrap();
+    assert_eq!(count["value"].as_f64(), Some(3.0), "{count}");
+}
+
+// 5. A grant below the workspace does not open the app. Rows are narrowed for people who are in, never widened.
+#[tokio::test]
+async fn a_grant_below_the_workspace_does_not_open_the_app() {
+    let w = world().await;
+    grant(&w, unit_grant("hal@state.edu", w.chemistry, None)).await;
+    let err = tool(&w, "hal@state.edu", "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "limit": 200 })).await;
+    assert!(err.is_err(), "hal reaches chemistry rows only, and the workspace is above chemistry");
+}
