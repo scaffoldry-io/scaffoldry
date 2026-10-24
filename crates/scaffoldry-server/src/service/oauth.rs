@@ -6,18 +6,23 @@
 //!
 //! A client token carries the scope its ceiling comes to (`clients::scope_of`). Phase 3 enforces it.
 
-use crate::repository_clients::{ClientRow, CodeRow, CodeUse};
+use crate::repository_clients::{ClientRow, CodeRow, CodeUse, RefreshUse};
 use crate::service::clients::{ceiling_sentences, ClientView};
 use crate::service::identity::{generate_raw_token, hash_token, resolve_user};
 use crate::service::ServiceError;
 use crate::state::{ApiToken, AuthUser, RecordDecisionInput, SharedState};
 use base64::Engine;
-use scaffoldry_core::DecisionType;
+use scaffoldry_core::{AgentLevel, DecisionType, TokenScope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub const TOKEN_SECONDS: i64 = 3600;
+
+/// How long an agent session lasts, in hours: `access.agent_session_hours`, 1 to 24, 12 unless the setting says.
+pub fn agent_session_hours(state: &SharedState) -> i64 {
+    state.settings.read().ok().and_then(|s| s.get("access.agent_session_hours").and_then(Value::as_i64)).filter(|h| (1..=24).contains(h)).unwrap_or(12)
+}
 
 fn internal(e: impl std::fmt::Display) -> ServiceError {
     ServiceError::Internal(e.to_string())
@@ -40,7 +45,7 @@ pub fn authorization_server_metadata(issuer: &str) -> Value {
         "token_endpoint": format!("{issuer}/oauth/token"),
         "revocation_endpoint": format!("{issuer}/oauth/revoke"),
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "none"],
         "revocation_endpoint_auth_methods_supported": ["client_secret_basic", "none"]
@@ -80,6 +85,9 @@ pub struct AuthorizeParams {
     pub resource: String,
     #[serde(default)]
     pub decision: String,
+    /// An agent client's choice: `read`, `propose` or `write`.
+    #[serde(default)]
+    pub access: String,
 }
 
 fn origin_of(uri: &str) -> String {
@@ -130,13 +138,20 @@ fn checked(p: &AuthorizeParams, issuer: &str, state: &SharedState) -> Result<Cli
 /// What the consent screen shows: the client, its operator, the callback origin, and the ceiling as sentences.
 pub fn consent(user: &AuthUser, p: &AuthorizeParams, issuer: &str, state: &SharedState) -> Result<Value, ServiceError> {
     let client = checked(p, issuer, state)?;
-    let remembered = state.repository.consent_digest(&user.eppn, &client.client_id).map_err(internal)?.as_deref() == Some(digest_of(&client).as_str());
-    Ok(json!({
-        "client": { "client_id": client.client_id, "name": client.name, "operator": client.operator, "callback_origin": origin_of(&p.redirect_uri) },
+    let agent = client.kind == "agent";
+    // An agent session is chosen every time. A remembered answer is for an app with a fixed ceiling.
+    let remembered = !agent && state.repository.consent_digest(&user.eppn, &client.client_id).map_err(internal)?.as_deref() == Some(digest_of(&client).as_str());
+    let mut out = json!({
+        "client": { "client_id": client.client_id, "name": client.name, "operator": client.operator, "kind": client.kind, "callback_origin": origin_of(&p.redirect_uri) },
         "sentences": ceiling_sentences(&ClientView(&client), state),
         "remembered": remembered,
         "user": { "eppn": user.eppn, "name": user.name }
-    }))
+    });
+    if agent {
+        out["choices"] = Value::Array(AgentLevel::ALL.iter().map(|l| json!({ "id": l.word(), "sentence": l.sentence() })).collect());
+        out["session_hours"] = json!(agent_session_hours(state));
+    }
+    Ok(out)
 }
 
 fn encode(s: &str) -> String {
@@ -150,13 +165,19 @@ pub fn decide(user: &AuthUser, p: &AuthorizeParams, issuer: &str, state: &Shared
     let target = match p.decision.as_str() {
         "deny" => format!("{}?error=access_denied&state={state_param}", p.redirect_uri),
         "allow" => {
+            let access = if client.kind == "agent" {
+                let level = AgentLevel::parse(&p.access).ok_or_else(|| ServiceError::bad_request("access must be read, propose or write."))?;
+                Some(level.word().to_string())
+            } else {
+                None
+            };
             let raw = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
             let digest = digest_of(&client);
             state
                 .repository
                 .insert_code(
                     &hash_token(&raw),
-                    &CodeRow { client_id: client.client_id.clone(), eppn: user.eppn.clone(), redirect_uri: p.redirect_uri.clone(), code_challenge: p.code_challenge.clone(), ceiling_digest: digest.clone() },
+                    &CodeRow { client_id: client.client_id.clone(), eppn: user.eppn.clone(), redirect_uri: p.redirect_uri.clone(), code_challenge: p.code_challenge.clone(), ceiling_digest: digest.clone(), access },
                 )
                 .map_err(internal)?;
             state.repository.upsert_consent(&user.eppn, &client.client_id, &digest).map_err(internal)?;
@@ -209,20 +230,72 @@ pub struct TokenForm {
     pub client_id: Option<String>,
     #[serde(default)]
     pub code_verifier: String,
+    #[serde(default)]
+    pub refresh_token: String,
 }
 
-/// Trades a code for a token.
+/// Trades a code, or a refresh token, for a token.
 pub fn token(basic: Option<(String, String)>, form: &TokenForm, state: &SharedState) -> Result<Value, OAuthError> {
-    if form.grant_type != "authorization_code" {
-        return Err(OAuthError::new(400, "unsupported_grant_type", "Only authorization_code is supported."));
+    match form.grant_type.as_str() {
+        "authorization_code" => from_code(basic, form, state),
+        "refresh_token" => from_refresh(basic, form, state),
+        _ => Err(OAuthError::new(400, "unsupported_grant_type", "Only authorization_code and refresh_token are supported.")),
     }
+}
+
+fn server_error(e: &dyn std::fmt::Display) -> OAuthError {
+    OAuthError::new(500, "server_error", e.to_string())
+}
+
+/// The scope of a token: an app client's ceiling, or an agent session's level.
+fn scope_for(client: &ClientRow, level: Option<AgentLevel>) -> TokenScope {
+    match level {
+        Some(level) => TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: Some(level) },
+        None => crate::service::clients::scope_of(&crate::service::clients::ceiling_of(client)),
+    }
+}
+
+/// Makes and stores an access token. An agent session's token ends with its session if that comes first.
+fn issue(client: &ClientRow, eppn: &str, code_hash: &str, session: Option<(uuid::Uuid, AgentLevel, i64)>, state: &SharedState) -> Result<String, OAuthError> {
+    let raw = generate_raw_token();
+    let now = chrono::Utc::now();
+    let seconds = session.map_or(TOKEN_SECONDS, |(_, _, left)| TOKEN_SECONDS.min(left)).max(1);
+    let token = ApiToken {
+        token_hash: hash_token(&raw),
+        id: uuid::Uuid::new_v4(),
+        kind: "client".to_string(),
+        eppn: eppn.to_string(),
+        // The label is what the history shows for a write made through this app, so it names the client id.
+        label: format!("Client {} [{}]", client.name, client.client_id),
+        original_admin: None,
+        created_at: now,
+        expires_at: now + chrono::Duration::seconds(seconds),
+        last_used_at: None,
+        revoked_at: None,
+        app_slug: None,
+        scope: Some(scope_for(client, session.map(|(_, level, _)| level))),
+    };
+    state.persist_api_token(&token).map_err(|e| server_error(&e))?;
+    state.repository.insert_oauth_token(&token.token_hash, &client.client_id, eppn, code_hash, session.map(|(id, _, _)| id)).map_err(|e| server_error(&e))?;
+    Ok(raw)
+}
+
+/// An agent client's reply: the access token, and a refresh token that belongs to the session.
+fn agent_reply(client: &ClientRow, eppn: &str, code_hash: &str, session: uuid::Uuid, level: AgentLevel, left: i64, state: &SharedState) -> Result<Value, OAuthError> {
+    let access = issue(client, eppn, code_hash, Some((session, level, left)), state)?;
+    let refresh = generate_raw_token();
+    state.repository.insert_refresh(&hash_token(&refresh), session).map_err(|e| server_error(&e))?;
+    Ok(json!({ "access_token": access, "token_type": "Bearer", "expires_in": TOKEN_SECONDS.min(left).max(1), "refresh_token": refresh }))
+}
+
+fn from_code(basic: Option<(String, String)>, form: &TokenForm, state: &SharedState) -> Result<Value, OAuthError> {
     let client = authenticate(basic, form.client_id.as_deref(), state)?;
     let grant = |why: &str| OAuthError::new(400, "invalid_grant", why);
     if form.code.is_empty() || form.redirect_uri.is_empty() || form.code_verifier.is_empty() {
         return Err(OAuthError::new(400, "invalid_request", "code, redirect_uri and code_verifier are required."));
     }
     let code_hash = hash_token(&form.code);
-    let row = match state.repository.take_code(&code_hash).map_err(|e| OAuthError::new(500, "server_error", e.to_string()))? {
+    let row = match state.repository.take_code(&code_hash).map_err(|e| server_error(&e))? {
         CodeUse::Fresh(row) => row,
         CodeUse::Reused => return Err(grant("This code was already used. The tokens it issued have been revoked.")),
         CodeUse::Missing => return Err(grant("This code is unknown or has expired.")),
@@ -242,27 +315,38 @@ pub fn token(basic: Option<(String, String)>, form: &TokenForm, state: &SharedSt
         return Err(grant("This person cannot sign in now."));
     }
 
-    let raw = generate_raw_token();
-    let now = chrono::Utc::now();
-    let token = ApiToken {
-        token_hash: hash_token(&raw),
-        id: uuid::Uuid::new_v4(),
-        kind: "client".to_string(),
-        eppn: row.eppn.clone(),
-        // The label is what the history shows for a write made through this app, so it names the client id.
-        label: format!("Client {} [{}]", client.name, client.client_id),
-        original_admin: None,
-        created_at: now,
-        expires_at: now + chrono::Duration::seconds(TOKEN_SECONDS),
-        last_used_at: None,
-        revoked_at: None,
-        app_slug: None,
-        scope: Some(crate::service::clients::scope_of(&crate::service::clients::ceiling_of(&client))),
-    };
-    let server_error = |e: &dyn std::fmt::Display| OAuthError::new(500, "server_error", e.to_string());
-    state.persist_api_token(&token).map_err(|e| server_error(&e))?;
-    state.repository.insert_oauth_token(&token.token_hash, &client.client_id, &row.eppn, &code_hash).map_err(|e| server_error(&e))?;
+    if client.kind == "agent" {
+        let level = row.access.as_deref().and_then(AgentLevel::parse).ok_or_else(|| grant("This code carries no choice of access."))?;
+        let hours = agent_session_hours(state);
+        let session = state.repository.create_session(&client.client_id, &row.eppn, level.word(), hours).map_err(|e| server_error(&e))?;
+        return agent_reply(&client, &row.eppn, &code_hash, session, level, hours * 3600, state);
+    }
+    let raw = issue(&client, &row.eppn, &code_hash, None, state)?;
     Ok(json!({ "access_token": raw, "token_type": "Bearer", "expires_in": TOKEN_SECONDS }))
+}
+
+/// RFC 9700 section 4.14. A refresh token is used once. Using one again ends the whole session.
+fn from_refresh(basic: Option<(String, String)>, form: &TokenForm, state: &SharedState) -> Result<Value, OAuthError> {
+    let client = authenticate(basic, form.client_id.as_deref(), state)?;
+    if client.kind != "agent" {
+        return Err(OAuthError::new(400, "unauthorized_client", "This client does not get refresh tokens. Sign in again."));
+    }
+    let grant = |why: &str| OAuthError::new(400, "invalid_grant", why);
+    if form.refresh_token.is_empty() {
+        return Err(OAuthError::new(400, "invalid_request", "refresh_token is required."));
+    }
+    let (session, client_id, eppn, access, left) = match state.repository.take_refresh(&hash_token(&form.refresh_token)).map_err(|e| server_error(&e))? {
+        RefreshUse::Fresh { session_id, client_id, eppn, access, seconds_left } => (session_id, client_id, eppn, access, seconds_left),
+        RefreshUse::Reused => return Err(grant("This refresh token was already used. The session has ended.")),
+        RefreshUse::Missing => return Err(grant("This refresh token is unknown, or its session has ended.")),
+    };
+    let consent = state.repository.consents_of(&eppn).map_err(|e| server_error(&e))?.iter().any(|(id, _)| *id == client_id);
+    if client_id != client.client_id || !consent || resolve_user(&eppn, state).is_none() {
+        let _ = state.repository.end_session(session);
+        return Err(grant("This person cannot continue the session."));
+    }
+    let level = AgentLevel::parse(&access).ok_or_else(|| grant("The session carries no access."))?;
+    agent_reply(&client, &eppn, "", session, level, left, state)
 }
 
 /// RFC 7009. The client revokes one of its own tokens. The answer is the same for a token it does not own.
@@ -274,9 +358,11 @@ pub fn revoke(basic: Option<(String, String)>, client_id: Option<&str>, token: &
     Ok(())
 }
 
-/// The client behind a token of kind `client`, when that client is still active.
-pub fn active_client_of(token_hash: &str, state: &SharedState) -> Option<ClientRow> {
-    state.repository.client_of_token(token_hash).ok().flatten().filter(|c| c.status == "Active")
+/// The client behind a token of kind `client` and its session, when the client is still active and the session, if
+/// there is one, has not ended.
+pub fn active_client_of(token_hash: &str, state: &SharedState) -> Option<(ClientRow, Option<crate::repository_clients::SessionRow>)> {
+    let (client, session) = state.repository.client_of_token(token_hash).ok().flatten()?;
+    (client.status == "Active" && session.as_ref().is_none_or(|s| s.active)).then_some((client, session))
 }
 
 /// The clients a person has agreed to.

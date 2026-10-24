@@ -77,6 +77,7 @@ const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_pr
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
 const SCHEMA_0064: &str = include_str!("../../scaffoldry-core/migrations/0064_app_clients.sql");
 const SCHEMA_0065: &str = include_str!("../../scaffoldry-core/migrations/0065_oauth.sql");
+const SCHEMA_0066: &str = include_str!("../../scaffoldry-core/migrations/0066_agent_sessions.sql");
 const SCHEMA_0045: &str = include_str!("../../scaffoldry-core/migrations/0045_index_status.sql");
 const SCHEMA_0028: &str = include_str!("../../scaffoldry-core/migrations/0028_record_comments.sql");
 const SCHEMA_0030: &str =
@@ -1089,6 +1090,7 @@ impl PostgresRepository {
                             ("0063_token_scope.sql", SCHEMA_0063),
                             ("0064_app_clients.sql", SCHEMA_0064),
                             ("0065_oauth.sql", SCHEMA_0065),
+                            ("0066_agent_sessions.sql", SCHEMA_0066),
                         ];
 
                         let mut fresh_install = false;
@@ -3997,5 +3999,5 @@ pub(crate) fn upsert_role_in(
 /// read as a scope that allows nothing.
 fn token_scope_of(stored: Option<serde_json::Value>) -> Option<scaffoldry_core::TokenScope> {
     let value = stored?;
-    Some(serde_json::from_value(value).unwrap_or(scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: Some(Vec::new()), max_rows_per_call: Some(1) }))
+    Some(serde_json::from_value(value).unwrap_or(scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: Some(Vec::new()), max_rows_per_call: Some(1), level: None }))
 }

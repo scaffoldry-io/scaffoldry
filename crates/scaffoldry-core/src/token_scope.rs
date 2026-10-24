@@ -59,6 +59,49 @@ pub fn data_tool(name: &str) -> Option<(TokenOp, TableFrom)> {
 
 const MAX_ROWS_LIMIT: u32 = 10_000;
 
+/// What a person lets an AI tool do for a session (external apps phase 8). The tool acts within the person's own rights
+/// in every app, so a scope with a level names no app and no table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLevel {
+    /// Read.
+    Read,
+    /// Read and propose changes.
+    Propose,
+    /// Read, propose, and write records.
+    Write,
+}
+
+impl AgentLevel {
+    pub fn parse(word: &str) -> Option<AgentLevel> {
+        match word {
+            "read" => Some(AgentLevel::Read),
+            "propose" => Some(AgentLevel::Propose),
+            "write" => Some(AgentLevel::Write),
+            _ => None,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            AgentLevel::Read => "read",
+            AgentLevel::Propose => "propose",
+            AgentLevel::Write => "write",
+        }
+    }
+
+    /// The choice as the person reads it.
+    pub fn sentence(self) -> &'static str {
+        match self {
+            AgentLevel::Read => "Read",
+            AgentLevel::Propose => "Read and propose changes",
+            AgentLevel::Write => "Read, propose, and write records",
+        }
+    }
+
+    pub const ALL: [AgentLevel; 3] = [AgentLevel::Read, AgentLevel::Propose, AgentLevel::Write];
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenScope {
@@ -70,6 +113,9 @@ pub struct TokenScope {
     pub tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_rows_per_call: Option<u32>,
+    /// An AI tool's session. When set, `apps` and `tables` are empty and the level decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<AgentLevel>,
 }
 
 impl TokenScope {
@@ -123,6 +169,9 @@ impl TokenScope {
 
     /// What the token may do, as a sentence. It names ids. The desk shows the same sentence with titles.
     pub fn sentence(&self) -> String {
+        if let Some(level) = self.level {
+            return format!("This session acts as the person, within their own rights, and may only: {}.", level.sentence().to_lowercase());
+        }
         let mut ops: Vec<TokenOp> = self.tables.values().flatten().copied().collect();
         ops.sort();
         ops.dedup();

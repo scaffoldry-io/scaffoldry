@@ -353,7 +353,7 @@ async fn the_metadata_documents_have_the_required_fields() {
     assert_eq!(m["issuer"], ISSUER, "the issuer is the address the document was read from");
     assert!(m["issuer"].as_str().unwrap().starts_with("https://") && !m["issuer"].as_str().unwrap().contains('?') && !m["issuer"].as_str().unwrap().ends_with('/'));
     assert_eq!(m["response_types_supported"], json!(["code"]));
-    assert_eq!(m["grant_types_supported"], json!(["authorization_code"]));
+    assert_eq!(m["grant_types_supported"], json!(["authorization_code", "refresh_token"]));
     assert_eq!(m["code_challenge_methods_supported"], json!(["S256"]));
     for (key, path) in [("authorization_endpoint", "/oauth/authorize"), ("token_endpoint", "/oauth/token"), ("revocation_endpoint", "/oauth/revoke")] {
         assert_eq!(m[key], format!("{ISSUER}{path}"), "{key}");

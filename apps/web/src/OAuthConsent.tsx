@@ -16,11 +16,12 @@ export function OAuthConsent() {
   const [consent, setConsent] = useState<Consent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [access, setAccess] = useState("read");
 
   const answer = async (decision: "allow" | "deny") => {
     setBusy(true);
     try {
-      const { redirect_to } = await apiClient.oauthDecide(params, decision);
+      const { redirect_to } = await apiClient.oauthDecide(params, decision, decision === "allow" && consent?.choices ? access : undefined);
       window.location.assign(redirect_to);
     } catch (e: any) {
       setError(e?.message || "The answer could not be sent.");
@@ -81,6 +82,20 @@ export function OAuthConsent() {
         </ul>
         <p className="mt-2 text-xs text-slate-500">It can never do more than you can. You can disconnect it at any time from your settings.</p>
       </section>
+      {consent.choices && (
+        <fieldset className="space-y-1" data-testid="oauth-choices">
+          <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">What may it do for you?</legend>
+          {consent.choices.map((c) => (
+            <label key={c.id} className="flex items-center gap-2 text-sm">
+              <input type="radio" name="access" value={c.id} checked={access === c.id} onChange={() => setAccess(c.id)} />
+              {c.sentence}
+            </label>
+          ))}
+          <p className="text-xs text-slate-500">
+            The session lasts up to {consent.session_hours ?? 12} hours. It also ends when you disconnect it or an administrator turns it off.
+          </p>
+        </fieldset>
+      )}
       <div className="flex gap-2">
         <button type="button" disabled={busy} onClick={() => void answer("allow")} className="px-4 py-2 rounded bg-blue-600 text-white text-sm font-semibold disabled:opacity-50">
           Allow
