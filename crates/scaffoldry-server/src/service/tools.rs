@@ -1501,9 +1501,7 @@ fn run_export_records(
         .find(|t| t.id == table_id || t.slug == table_id)
         .ok_or_else(|| ServiceError::NotFound(format!("Table '{table_id}' not found")))?;
 
-    let field_vis = crate::service::scope::field_visibility_of(caller, &app_slug, &table.id, state);
-    let disallowed_fields = field_vis.hidden_names();
-    let sensitive_fields = crate::service::records::sensitive_fields_of(&app_slug, &table.id, state);
+    let limits = crate::service::records::export_limits(caller, &app_slug, &table.id, &table.fields, state);
 
     let rules = crate::service::scope::rules_of(&app_slug, state);
     let person = crate::service::scope::person_of(caller, state);
@@ -1523,8 +1521,9 @@ fn run_export_records(
             "caller_affiliation": caller.affiliation,
             "caller_person": person,
             "row_rules": rules,
-            "disallowed_fields": disallowed_fields,
-            "sensitive_fields": sensitive_fields,
+            "disallowed_fields": limits.disallowed,
+            "masks": limits.masks,
+            "sensitive_fields": limits.sensitive,
         }),
         &caller.eppn,
         None,

@@ -181,6 +181,16 @@
         "ferpa_sensitive": {
           "type": "boolean"
         },
+        "mask": {
+          "type": "object",
+          "description": "What a reader who is not cleared for the field sees of it. The shape is mask.schema.json. Showing more than the category's default raises the flagged check mask_weakened.",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["hide", "last4", "initials", "year", "month", "band"] },
+            "width": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
         "categories": {
           "type": "array",
           "items": {

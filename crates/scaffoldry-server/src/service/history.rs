@@ -5,7 +5,7 @@
 
 use crate::repository::{ActorKind, HistoryEntry, HistoryFilter, WriteCtx};
 use crate::service::access::{authorize_app, AppAction};
-use crate::service::records::{hidden_fields_for, table_fields_lenient};
+use crate::service::records::{table_fields_lenient, withheld_for};
 use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use serde_json::{json, Value};
@@ -65,14 +65,22 @@ pub fn ctx_for(actor: &str, kind: ActorKind, app_slug: &str, data: &Value, state
 
 /// What `reader` may see of an entry. A field the reader may not read shows that it changed and
 /// nothing else. Both routes and the tool call this.
-pub fn visible_changes(entry: &HistoryEntry, hidden: &[String]) -> Value {
+pub fn visible_changes(entry: &HistoryEntry, withheld: &std::collections::BTreeMap<String, scaffoldry_core::mask::Mask>) -> Value {
     let Some(map) = entry.changes.as_object() else { return entry.changes.clone() };
     let mut out = serde_json::Map::new();
     for (field, change) in map {
-        if hidden.iter().any(|h| h == field) {
-            out.insert(field.clone(), json!({ "changed": true }));
-        } else {
-            out.insert(field.clone(), change.clone());
+        match withheld.get(field) {
+            Some(mask) if mask.is_hide() => {
+                out.insert(field.clone(), json!({ "changed": true }));
+            }
+            // A masked field shows both values as the reader sees the field now: masked.
+            Some(mask) => {
+                let masked = |side: &str| change.get(side).map(|v| scaffoldry_core::mask::mask(v, *mask));
+                out.insert(field.clone(), json!({ "old": masked("old"), "new": masked("new") }));
+            }
+            None => {
+                out.insert(field.clone(), change.clone());
+            }
         }
     }
     Value::Object(out)
@@ -171,13 +179,13 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
     rows.retain(|r| readable.contains(&r.record_id));
 
     // One lookup of the hidden fields per table, and one of the people.
-    let mut hidden: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut hidden: std::collections::HashMap<String, std::collections::BTreeMap<String, scaffoldry_core::mask::Mask>> = std::collections::HashMap::new();
     let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut entries = Vec::with_capacity(rows.len());
     for row in &rows {
         let hide = hidden.entry(row.table_id.clone()).or_insert_with(|| {
             let (fields, canonical) = table_fields_lenient(app_slug, &row.table_id, state);
-            hidden_fields_for(caller, app_slug, &canonical, &fields, state)
+            withheld_for(caller, app_slug, &canonical, &fields, state)
         });
         let name = names
             .entry(row.actor.clone())
@@ -193,7 +201,7 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
             "table_id": row.table_id,
             "version": row.version,
             "action": row.action,
-            "changes": link_names(caller, app_slug, &row.table_id, visible_changes(row, hide), hide, state),
+            "changes": link_names(caller, app_slug, &row.table_id, visible_changes(row, hide), &hide.keys().cloned().collect::<Vec<_>>(), state),
             "actor": row.actor,
             "actor_name": name,
             "actor_kind": row.actor_kind,

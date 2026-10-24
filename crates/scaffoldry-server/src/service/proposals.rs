@@ -590,6 +590,19 @@ fn check_manifest_part(
         Some(l) => crate::service::coordinates::widened(state, ws, l, &manifest)?,
         None => vec![],
     };
+    // A field that shows more than its category's default, and did not already, needs a second person.
+    let categories = state.sensitivity_categories();
+    let mask_weakened: Vec<String> = manifest
+        .tables
+        .iter()
+        .flat_map(|t| t.fields.iter().map(move |f| (t, f)))
+        .filter_map(|(t, f)| {
+            let mask = f.mask?;
+            let was = live.and_then(|l| l.tables.iter().find(|x| x.id == t.id)).and_then(|x| x.fields.iter().find(|x| x.name == f.name)).and_then(|x| x.mask);
+            let default = scaffoldry_engine::default_mask(f, &categories);
+            (was != Some(mask) && mask.weaker_than(default)).then(|| format!("table '{}' field '{}': the mask shows more than its category's default. {} The default: {}", t.id, f.name, mask.sentence(), default.sentence()))
+        })
+        .collect();
     let checks = vec![
         check("schema", vec![]),
         check("sensitivity", sensitivity_problems),
@@ -601,6 +614,7 @@ fn check_manifest_part(
         warn("access_rules", access_problems),
         check("access_loosened", loosened),
         check("coordinates_widened", coordinates_widened),
+        check("mask_weakened", mask_weakened),
     ];
     Ok(ManifestPart { manifest, checks, sources: provided.into_iter().collect() })
 }

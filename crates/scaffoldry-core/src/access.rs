@@ -319,6 +319,8 @@ pub fn row_scope(person: &Person, role: Option<&str>, platform_admin: bool, rule
 pub enum ColumnMode {
     /// The field is removed from every response and cannot be filtered, sorted, or totalled on.
     Hidden,
+    /// The value is replaced by its mask in every response, and the field cannot be filtered, sorted, or totalled on.
+    Masked { mask: crate::mask::Mask },
     /// The field can be read and cannot be changed.
     ReadOnly,
 }
@@ -414,6 +416,8 @@ pub struct Denial {
 pub struct FieldVisibility {
     pub hidden: Vec<Denial>,
     pub read_only: Vec<Denial>,
+    /// Fields shown as their mask, with the mask.
+    pub masked: Vec<(Denial, crate::mask::Mask)>,
 }
 
 impl FieldVisibility {
@@ -429,7 +433,19 @@ impl FieldVisibility {
                 self.read_only.push(d);
             }
         }
+        // Two readers' masks combine to whichever shows less.
+        for (d, m) in other.masked {
+            match self.masked.iter_mut().find(|(x, _)| x.field == d.field) {
+                Some((_, mine)) => *mine = mine.stronger(m),
+                None => self.masked.push((d, m)),
+            }
+        }
         self
+    }
+
+    /// The fields shown as a mask, with the mask. A field that is also hidden is not in it.
+    pub fn masked_names(&self) -> std::collections::BTreeMap<String, crate::mask::Mask> {
+        self.masked.iter().filter(|(d, _)| !self.hidden.iter().any(|h| h.field == d.field)).map(|(d, m)| (d.field.clone(), *m)).collect()
     }
 
     pub fn hidden_names(&self) -> Vec<String> {
@@ -445,19 +461,26 @@ pub fn field_visibility(person: &Person, role: Option<&str>, platform_admin: boo
     }
     for rule in rules.iter().filter(|r| r.table_id == table && !r.unless.includes(person, role)) {
         for field in &rule.fields {
-            let (verb, bucket) = match rule.mode {
-                ColumnMode::Hidden => ("see", &mut out.hidden),
-                ColumnMode::ReadOnly => ("change", &mut out.read_only),
+            let verb = match rule.mode {
+                ColumnMode::Hidden => "see",
+                ColumnMode::Masked { .. } => "see all of",
+                ColumnMode::ReadOnly => "change",
             };
-            if bucket.iter().any(|d| &d.field == field) {
-                continue;
-            }
-            bucket.push(Denial {
+            let denial = Denial {
                 field: field.clone(),
                 rule_id: rule.id.clone(),
                 reason: rule.message.clone().unwrap_or_else(|| format!("An access rule for this app stops you from being able to {verb} '{field}'.")),
                 remedy: format!("Ask {}, or an owner of this workspace.", rule.unless.in_words()),
-            });
+            };
+            match rule.mode {
+                ColumnMode::Hidden if !out.hidden.iter().any(|d| &d.field == field) => out.hidden.push(denial),
+                ColumnMode::ReadOnly if !out.read_only.iter().any(|d| &d.field == field) => out.read_only.push(denial),
+                ColumnMode::Masked { mask } => match out.masked.iter_mut().find(|(d, _)| &d.field == field) {
+                    Some((_, mine)) => *mine = mine.stronger(mask),
+                    None => out.masked.push((denial, mask)),
+                },
+                _ => {}
+            }
         }
     }
     out
