@@ -247,7 +247,7 @@ async fn get_current_user(
         None => return unauthorized(),
     };
     // A token from the institution's identity provider has no stored row. It names the person, and that is all.
-    if !token.starts_with("scf_") {
+    if crate::jwt::is_jwt_shaped(token) {
         let Some(user) = session_user(&state, &headers) else { return unauthorized() };
         let is_platform_admin = crate::service::admin::require_platform_admin(&user, &state).is_ok();
         return (

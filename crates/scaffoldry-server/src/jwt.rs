@@ -28,6 +28,12 @@ fn text(state: &SharedState, key: &str) -> Option<String> {
     setting(state, key).and_then(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
 }
 
+/// Whether a bearer is shaped like a JWT: three parts joined by two dots. A stored token is a random string with no dot, so
+/// the two never meet. A shaped token that does not verify is refused, never looked up.
+pub fn is_jwt_shaped(token: &str) -> bool {
+    token.matches('.').count() == 2
+}
+
 /// The issuer to name in the protected-resource document, when one is set.
 pub fn configured_issuer(state: &SharedState) -> Option<String> {
     text(state, "oidc.issuer")

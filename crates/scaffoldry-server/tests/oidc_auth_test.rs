@@ -469,7 +469,7 @@ async fn replacing_the_keys_takes_effect_on_the_next_request() {
     assert_eq!(institution::get(&app, "/api/v1/auth/me", &new).await.0, StatusCode::OK, "the second key works");
 }
 
-// With any of the three settings missing, a JWT is 401. A `scf_` token never reaches the JWT path.
+// With any of the three settings missing, a JWT is 401. A stored token never reaches the JWT path.
 #[tokio::test]
 async fn without_all_three_settings_a_jwt_is_refused_and_scf_tokens_are_unchanged() {
     let key = institution::new_key("k1");
