@@ -65,6 +65,7 @@ pub fn check_request(scope: &TokenScope, method: &axum::http::Method, path: &str
         ["auth", "me"] if read => Ok(()),
         ["auth", "logout"] if method == Method::POST => Ok(()),
         ["apps", app, "openapi.json"] if read => scope.allows_app(app).then_some(()).ok_or_else(|| refuse(scope, &format!("This token may not use the app '{app}'."))),
+        ["apps", app, "client.ts"] if read => scope.allows_app(app).then_some(()).ok_or_else(|| refuse(scope, &format!("This token may not use the app '{app}'."))),
         ["apps", app, "schema"] if read => scope.allows_app(app).then_some(()).ok_or_else(|| refuse(scope, &format!("This token may not use the app '{app}'."))),
         ["apps", app, "tables", table, "aggregate"] if read => check_table(scope, app, table, TokenOp::Read),
         ["apps", app, "tables", table, "records"] if read => check_table(scope, app, table, TokenOp::Read),

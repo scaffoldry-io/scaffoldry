@@ -9,7 +9,7 @@
       "args": {},
       "expect": {
         "files.0.path": "AGENTS.md",
-        "files": { "len": 5 },
+        "files": { "len": 7 },
         "skill.paths": { "len": 2 }
       }
     }
