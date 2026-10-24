@@ -328,9 +328,29 @@ pub fn field_visibility_of(caller: &AuthUser, app_slug: &str, table: &str, state
     if crate::service::preview::is_preview(app_slug) {
         own = own.union(field_visibility_for(caller, crate::service::preview::stored_slug(app_slug), table, state));
     }
-    match &caller.view_as_by {
-        Some(viewer) => own.union(field_visibility_for(viewer, app_slug, table, state)),
-        None => own,
+    if let Some(viewer) = &caller.view_as_by {
+        own = own.union(field_visibility_for(viewer, app_slug, table, state));
+    }
+    // Through an outside app, what the ceiling does not read is hidden and what it does not write is read-only.
+    if let Some(client) = &caller.via_client {
+        own = own.union(client_visibility(client, app_slug, table, state));
+    }
+    own
+}
+
+fn client_visibility(client: &crate::state::ViaClient, app_slug: &str, table: &str, state: &SharedState) -> scaffoldry_core::access::FieldVisibility {
+    use scaffoldry_core::access::{Denial, FieldVisibility};
+    let names: Vec<String> = fields_of(crate::service::preview::stored_slug(app_slug), table, state).into_iter().map(|f| f.name).collect();
+    let (unread, unwritten) = crate::service::clients::field_limits(&client.ceiling, crate::service::preview::stored_slug(app_slug), table, &names);
+    let denial = |field: String, reason: &str| Denial {
+        field,
+        rule_id: format!("client:{}", client.client_id),
+        reason: reason.to_string(),
+        remedy: "Ask the owners of the app to widen its ceiling.".to_string(),
+    };
+    FieldVisibility {
+        hidden: unread.into_iter().map(|f| denial(f, &format!("The app '{}' is not allowed to read this field.", client.name))).collect(),
+        read_only: unwritten.into_iter().map(|f| denial(f, &format!("The app '{}' is not allowed to change this field.", client.name))).collect(),
     }
 }
 
@@ -404,7 +424,7 @@ pub fn preview_access(
             role_title: String::new(),
             department: String::new(),
             affiliation: String::new(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
         };
         person_of(&dummy, state)
     } else {

@@ -354,7 +354,7 @@ fn test_workspace_service_persists_to_second_server_state() {
         role_title: "Central Admin".to_string(),
         affiliation: "central_admin".to_string(),
         department: "Central IT".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
 
     let payload = scaffoldry_server::service::workspaces::CreateWorkspacePayload {

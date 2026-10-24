@@ -185,7 +185,7 @@ async fn test_01_deny_export_unless_affiliation() {
         role_title: "Professor".to_string(),
         affiliation: "faculty".to_string(),
         department: "biology".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let staff_user = AuthUser {
         eppn: "marcus.vance@state.edu".to_string(),
@@ -193,7 +193,7 @@ async fn test_01_deny_export_unless_affiliation() {
         role_title: "Staff".to_string(),
         affiliation: "staff".to_string(),
         department: "biology".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let resource = Resource::Record(RecordCtx {
         app_slug: "bio-app".to_string(),
@@ -275,7 +275,7 @@ async fn test_03_guard_on_workspace_a_no_effect_on_workspace_b() {
         role_title: "Professor".to_string(),
         affiliation: "faculty".to_string(),
         department: "biology".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let res_a = Resource::Record(RecordCtx {
         app_slug: "bio-app".to_string(),
@@ -322,7 +322,7 @@ async fn test_04_guard_cannot_grant_access() {
         role_title: "Student".to_string(),
         affiliation: "student".to_string(),
         department: "biology".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let res = Resource::Workspace(WorkspaceCtx {
         workspace_id: "ws-restricted".to_string(),
@@ -476,7 +476,7 @@ async fn test_05_deny_access_outside_units() {
         role_title: "Professor".to_string(),
         affiliation: "faculty".to_string(),
         department: "biology".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let other_user = AuthUser {
         eppn: "albert.einstein@state.edu".to_string(),
@@ -484,7 +484,7 @@ async fn test_05_deny_access_outside_units() {
         role_title: "Professor".to_string(),
         affiliation: "faculty".to_string(),
         department: "physics".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let res = Resource::Workspace(WorkspaceCtx {
         workspace_id: "ws-units".to_string(),
@@ -783,7 +783,7 @@ async fn test_10_automation_forbidden_by_guard_applies_no_effects() {
         role_title: "Student".to_string(),
         affiliation: "student".to_string(),
         department: "biology".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let res = Resource::Record(RecordCtx {
         app_slug: "bio-app".to_string(),

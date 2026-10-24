@@ -774,6 +774,18 @@ pub fn create_record(
     Ok(final_record)
 }
 
+/// A field the caller cannot see or change keeps its stored value when the write leaves it out. A write that sends a
+/// record back without a field it never saw must not blank that field.
+fn keep_what_the_caller_cannot_touch(caller: &AuthUser, app_slug: &str, table: &str, stored: &Value, new_data: &mut Value, state: &SharedState) {
+    let visibility = crate::service::scope::field_visibility_of(caller, app_slug, table, state);
+    let Some(map) = new_data.as_object_mut() else { return };
+    for denial in visibility.hidden.iter().chain(&visibility.read_only) {
+        if let (false, Some(old)) = (map.contains_key(&denial.field), stored.get(&denial.field)) {
+            map.insert(denial.field.clone(), old.clone());
+        }
+    }
+}
+
 /// Fields the caller may not change that a write sets. On create, any value counts. On update, a
 /// value that differs from the stored one counts, so sending a record back unchanged is not a write.
 fn check_read_only(caller: &AuthUser, app_slug: &str, table: &str, new_data: &Value, stored: Option<&Value>, state: &SharedState) -> Result<(), ServiceError> {
@@ -912,6 +924,7 @@ pub fn update_record(
     if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
         return Err(outside_scope());
     }
+    keep_what_the_caller_cannot_touch(caller, app_slug, &table, &current.data, &mut new_data, state);
     check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
 
@@ -1863,7 +1876,7 @@ fn run_automations_in(
                 role_title: String::new(),
                 affiliation: aff_str.to_string(),
                 department: actor.department.to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
             };
             let resource = scaffoldry_policy::entities::Resource::Record(scaffoldry_policy::entities::RecordCtx {
                 app_slug: app_slug.to_string(),

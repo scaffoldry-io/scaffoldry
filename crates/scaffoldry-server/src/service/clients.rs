@@ -217,8 +217,51 @@ pub fn ceiling_sentences(client: &ClientView<'_>, state: &SharedState) -> Vec<St
     sentences(&ceiling_of(client.0), state)
 }
 
-fn ceiling_of(row: &ClientRow) -> Ceiling {
+/// A stored client's ceiling. One that does not parse is empty, which allows nothing.
+pub fn ceiling_of(row: &ClientRow) -> Ceiling {
     serde_json::from_value(row.ceiling.clone()).unwrap_or(Ceiling { apps: Vec::new() })
+}
+
+/// The token scope a ceiling comes to. A client token is a narrowed token with this scope (integrations phase 2), and
+/// the fields come from the same ceiling through `field_limits`. A table that reads, writes, creates or deletes nothing
+/// is left out, so an empty ceiling is a scope that allows nothing.
+pub fn scope_of(ceiling: &Ceiling) -> scaffoldry_core::TokenScope {
+    use scaffoldry_core::TokenOp;
+    let mut scope = scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None };
+    for app in &ceiling.apps {
+        for table in &app.tables {
+            let ops: Vec<TokenOp> = [
+                (!table.read.is_empty(), TokenOp::Read),
+                (!table.write.is_empty(), TokenOp::Update),
+                (table.create, TokenOp::Create),
+                (table.delete, TokenOp::Delete),
+            ]
+            .into_iter()
+            .filter_map(|(on, op)| on.then_some(op))
+            .collect();
+            if ops.is_empty() {
+                continue;
+            }
+            if !scope.apps.contains(&app.app_slug) {
+                scope.apps.push(app.app_slug.clone());
+            }
+            scope.tables.entry(table.table_id.clone()).or_default().extend(ops);
+        }
+    }
+    if scope.apps.is_empty() {
+        // Nothing to name. A scope with no tools allows no tool, and no app allows no table.
+        scope.tools = Some(Vec::new());
+    }
+    scope
+}
+
+/// The fields of `table` in `app` the ceiling does not let the client read, and those it does not let it change.
+pub fn field_limits(ceiling: &Ceiling, app: &str, table: &str, fields: &[String]) -> (Vec<String>, Vec<String>) {
+    let allowed = ceiling.apps.iter().filter(|a| a.app_slug == app).flat_map(|a| &a.tables).find(|t| t.table_id == table);
+    let outside = |pick: fn(&TableCeiling) -> &Vec<String>| -> Vec<String> {
+        fields.iter().filter(|f| !allowed.is_some_and(|t| pick(t).contains(f))).cloned().collect()
+    };
+    (outside(|t| &t.read), outside(|t| &t.write))
 }
 
 /// A client as the API shows it. It never holds a secret or a hash of one.

@@ -153,13 +153,13 @@ impl PostgresRepository {
         })
     }
 
-    /// The status of the client a `client` token came from. None when the token has no client.
-    pub fn client_status_of_token(&self, token_hash: &str) -> Result<Option<String>, RepositoryError> {
+    /// The client a `client` token came from. None when the token has no client.
+    pub fn client_of_token(&self, token_hash: &str) -> Result<Option<ClientRow>, RepositoryError> {
         let token_hash = token_hash.to_string();
         self.with_client(move |client| {
-            Ok(client
-                .query_opt("SELECT c.status FROM oauth_tokens t JOIN app_clients c ON c.client_id = t.client_id WHERE t.token_hash = $1", &[&token_hash])?
-                .map(|r| r.get(0)))
+            let columns: Vec<String> = COLUMNS.split(", ").map(|c| format!("c.{c}")).collect();
+            let sql = format!("SELECT {} FROM oauth_tokens t JOIN app_clients c ON c.client_id = t.client_id WHERE t.token_hash = $1", columns.join(", "));
+            Ok(client.query_opt(&sql, &[&token_hash])?.map(|r| row_of(&r)))
         })
     }
 

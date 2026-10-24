@@ -16,7 +16,7 @@ fn caller() -> AuthUser {
         role_title: "Professor".to_string(),
         affiliation: "faculty".to_string(),
         department: "physics".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     }
 }
 

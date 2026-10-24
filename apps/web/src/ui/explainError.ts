@@ -85,6 +85,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "This proposal is not what you reviewed.", next: "Open it again, read what it now holds, and approve that." };
     case "client_sensitive_field":
       return { message: "An outside app cannot be given a sensitive field.", next: "Remove the sensitive field from its list. Sensitive data stays inside Scaffoldry." };
+    case "client_scope":
+      return { message: "This outside app is not allowed to do that.", next: "The app's ceiling does not cover it. Ask its owners to widen the ceiling, or do it in Scaffoldry yourself." };
     case "token_scope":
       return { message: "This token is limited and cannot do that.", next: "Ask the person who made the token for one that covers this app, table and operation." };
     case "preview_read_only":
