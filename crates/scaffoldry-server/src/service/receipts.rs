@@ -53,15 +53,19 @@ pub fn record(state: &SharedState, receipt: &NewReceipt) {
     }
 }
 
-// The user a request resolved to, kept for the receipt layer. `session_user` fills it, so the layer needs no second look-up.
+/// Who one request is for. It lives as long as the request and is never shared between requests, so it is not state of the
+/// server. `session_user` fills it, so the receipt layer needs no second look-up.
+#[derive(Default)]
+pub struct RequestUser(Mutex<Option<AuthUser>>);
+
 tokio::task_local! {
-    pub static REQUEST_USER: Arc<Mutex<Option<AuthUser>>>;
+    pub static REQUEST_USER: Arc<RequestUser>;
 }
 
 /// Notes who a request is for, if a receipt layer is waiting for it.
 pub fn note_user(user: &AuthUser) {
     let _ = REQUEST_USER.try_with(|slot| {
-        if let Ok(mut s) = slot.lock() {
+        if let Ok(mut s) = slot.0.lock() {
             *s = Some(user.clone());
         }
     });
@@ -91,9 +95,9 @@ fn is_privileged(method: &axum::http::Method, path: &str) -> bool {
 /// The layer that writes the receipts a request owes: a denial, a privileged action, and everything done under view-as.
 pub async fn layer(State(state): State<SharedState>, req: Request, next: Next) -> Response {
     let (method, path) = (req.method().clone(), req.uri().path().to_string());
-    let slot: Arc<Mutex<Option<AuthUser>>> = Arc::new(Mutex::new(None));
+    let slot: Arc<RequestUser> = Arc::new(RequestUser::default());
     let response = REQUEST_USER.scope(slot.clone(), next.run(req)).await;
-    let Some(user) = slot.lock().ok().and_then(|mut s| s.take()) else { return response };
+    let Some(user) = slot.0.lock().ok().and_then(|mut s| s.take()) else { return response };
     let status = response.status();
     let object = object_of_path(&path);
     let action = format!("{method} {}", path.trim_start_matches("/api/v1").trim_start_matches("/api"));
