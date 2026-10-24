@@ -34,6 +34,11 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser> {
     let token = bearer_token(headers)?;
+    // A token shaped like a JWT comes from the institution's identity provider and is verified against the keys in settings.
+    // Anything else is a stored row. It names the person and nothing more: roles come from the stored rows.
+    if crate::jwt::is_jwt_shaped(token) {
+        return resolve_user(&crate::jwt::validate_jwt(token, state)?, state);
+    }
     let hash = hash_token(token);
 
     let row = match state.get_api_token(&hash) {

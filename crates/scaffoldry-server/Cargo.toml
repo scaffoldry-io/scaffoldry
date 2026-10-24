@@ -25,6 +25,8 @@ sha2 = { workspace = true }
 calamine = { version = "0.26", features = ["dates"] }
 rust_xlsxwriter = "0.80"
 zip = { version = "2.4", default-features = false }
+# Verifies the institution's tokens (foundation phase 10). Pure Rust: no C code, no ring.
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto", "use_pem"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

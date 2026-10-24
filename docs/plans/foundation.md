@@ -382,7 +382,7 @@ Tests in a new `apps/web/src/test/settings.test.tsx`, with `fetch` stubbed:
 4. Saving `tokens.max_days` calls `PUT /api/v1/settings/tokens.max_days`.
 5. `localStorage` holds no value equal to the minted token.
 
-## Phase 10 — institution sign-in [OPEN]
+## Phase 10 — institution sign-in [DONE]
 
 This phase adds one dependency: `jsonwebtoken` (MIT). Add nothing else.
 

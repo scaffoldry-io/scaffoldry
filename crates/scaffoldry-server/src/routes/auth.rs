@@ -246,6 +246,16 @@ async fn get_current_user(
         Some(t) => t,
         None => return unauthorized(),
     };
+    // A token from the institution's identity provider has no stored row. It names the person, and that is all.
+    if crate::jwt::is_jwt_shaped(token) {
+        let Some(user) = session_user(&state, &headers) else { return unauthorized() };
+        let is_platform_admin = crate::service::admin::require_platform_admin(&user, &state).is_ok();
+        return (
+            StatusCode::OK,
+            Json(json!(AuthResponse { token: token.to_string(), user, is_impersonating: false, original_admin: None, is_platform_admin })),
+        )
+            .into_response();
+    }
     let hash = hash_token(token);
     let row = match state.get_api_token(&hash) {
         Some(r) => r,
