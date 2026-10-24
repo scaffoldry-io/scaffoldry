@@ -90,6 +90,7 @@ pub const ERROR_CODES: &[&str] = &[
     "proposal_changed",
     "preview_read_only",
     "client_sensitive_field",
+    "client_scope",
 ];
 
 #[derive(Debug, Clone)]

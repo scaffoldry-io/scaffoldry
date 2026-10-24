@@ -75,6 +75,7 @@ pub fn hint_for(err: &ServiceError) -> String {
         "position_full" => "Call list_workspaces to find the unit, then ask a Platform Admin to replace the holder.",
         "view_as_read_only" => "Exit the view to make changes. Call list_records to keep reading in the meantime.",
         "client_sensitive_field" => "Remove the sensitive field from the client's ceiling. Sensitive data stays inside Scaffoldry's own pages.",
+        "client_scope" => "The app's ceiling does not cover this. Ask its owners to widen the ceiling, or do it in Scaffoldry yourself.",
         "token_scope" => "This token is limited. Ask the person who made it for a token that covers this app, table and operation.",
         "preview_read_only" => "Stop the preview to make a change. A preview only reads. Approve the proposal to make it live.",
         "proposal_changed" => "Call get_proposal, read what it now holds, and approve with the digest it returns.",
