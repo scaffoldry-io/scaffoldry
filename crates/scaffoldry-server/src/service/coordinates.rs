@@ -95,9 +95,14 @@ pub fn table_place(places: &dyn Places, tree: &OrgTree, ws: &WorkspaceRecord, ap
     let Some((app_effective, tables)) = walk(ws_coords, app, places).0 else { return (BTreeMap::new(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()) };
     let e = tables.get(table_id).cloned().unwrap_or(app_effective);
     let mut units: BTreeMap<String, Uuid> = e.units.iter().filter_map(|(h, u)| Uuid::parse_str(u).ok().map(|u| (h.clone(), u))).collect();
+    // The workspace sits at its own unit, as an app does, unless the app or the table named a narrower one itself.
+    // Otherwise a table would sit at the root of the hierarchy and no unit grant would reach it.
     if let Some(own) = ws.organization_id {
         if let Some(h) = tree.hierarchy_of(own) {
-            units.entry(h.to_string()).or_insert(own);
+            let named = [app.coordinates.as_ref(), app.tables.iter().find(|t| t.id == table_id).and_then(|t| t.coordinates.as_ref())].into_iter().flatten().any(|c| c.units.contains_key(h));
+            if !named {
+                units.insert(h.to_string(), own);
+            }
         }
     }
     (units, e.domain)

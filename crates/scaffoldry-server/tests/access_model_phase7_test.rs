@@ -17,6 +17,9 @@ const ADMIN: &str = "jordan.lee@state.edu";
 const ADMIN_TWO: &str = "second.admin@state.edu";
 const ROOT: &str = "00000000-0000-0000-0000-000000000001";
 const WS: &str = "ws-science";
+const WS_LAB: &str = "ws-lab";
+const SCIENCE_ADMIN: &str = "science.admin@state.edu";
+const CHEMISTRY_ADMIN: &str = "chemistry.admin@state.edu";
 
 async fn send(app: &axum::Router, method: &str, uri: &str, who: &str, body: Option<Value>) -> (StatusCode, Value) {
     let mut req = Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {}", issue_test_token_and_user(who)));
@@ -119,7 +122,10 @@ async fn world() -> World {
     let lab = unit(&state, "lab", physics);
     let chemistry = unit(&state, "chemistry", science);
     workspace(&state, WS, science);
+    workspace(&state, WS_LAB, lab);
     appoint(&state, ADMIN_TWO, root, "platform_admin");
+    appoint(&state, SCIENCE_ADMIN, science, "unit_admin");
+    appoint(&state, CHEMISTRY_ADMIN, chemistry, "unit_admin");
     let app = build_app_with_state(state).expect("router");
     let slug = format!("lab-{}", &Uuid::new_v4().to_string()[..8]);
     let manifest = manifest(&slug, true, false);
@@ -239,4 +245,84 @@ async fn a_grant_anchors_at_a_table_that_exists() {
     let (s, body) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(container_grant("x@state.edu", "viewer", &format!("table:{}/ghost", w.slug)))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
     assert!(body["error"].as_str().unwrap_or("").contains("table:<slug>/<table id>"), "{body}");
+}
+
+async fn explain(w: &World, who: &str, person: &str, object: &str) -> (StatusCode, Value) {
+    send(&w.app, "GET", &format!("/api/v1/access/explain?person={person}&object={object}"), who, None).await
+}
+
+// 3. For a denied person, `explain` names the axis that failed. For an allowed person it names the grant id and the closure
+// path from the anchor to the object's unit. A sealed container is named when it stopped a grant.
+#[tokio::test]
+async fn explain_names_the_axis_that_failed_and_the_path_that_reached() {
+    let w = world().await;
+    let ada = grant(&w, unit_grant("ada@state.edu", "viewer", w.science)).await;
+    let eve = grant(&w, unit_grant("eve@state.edu", "viewer", w.chemistry)).await;
+    grant(&w, unit_grant("dean@state.edu", "viewer", w.science)).await;
+    let lab = format!("workspace:{WS_LAB}");
+
+    let (s, allowed) = explain(&w, ADMIN, "ada@state.edu", &lab).await;
+    assert_eq!(s, StatusCode::OK, "{allowed}");
+    assert_eq!(allowed["role"], "viewer");
+    let reached = &allowed["reached"][0];
+    assert_eq!(reached["grant_id"], ada, "{allowed}");
+    let path: Vec<&str> = reached["path"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+    assert_eq!(path, [w.science.to_string(), w.physics.to_string(), w.lab.to_string()], "from the anchor down to the object's unit");
+    assert!(allowed["missed"].as_array().unwrap().is_empty());
+
+    let (s, denied) = explain(&w, ADMIN, "eve@state.edu", &lab).await;
+    assert_eq!(s, StatusCode::OK, "{denied}");
+    assert_eq!(denied["role"], Value::Null);
+    assert!(denied["reached"].as_array().unwrap().is_empty());
+    assert_eq!(denied["missed"][0]["grant_id"], eve);
+    assert_eq!(denied["missed"][0]["axis"], "anchor", "chemistry is not above the lab: {denied}");
+
+    let open = format!("table:{}/notes", w.slug);
+    let (s, reaching) = explain(&w, ADMIN, "dean@state.edu", &open).await;
+    assert_eq!(s, StatusCode::OK, "{reaching}");
+    assert_eq!(reaching["role"], "viewer", "an open table sits where its workspace sits: {reaching}");
+    assert_eq!(reaching["reached"][0]["path"][0], w.science.to_string());
+
+    let sealed = format!("table:{}/cases", w.slug);
+    let (s, stopped) = explain(&w, ADMIN, "dean@state.edu", &sealed).await;
+    assert_eq!(s, StatusCode::OK, "{stopped}");
+    assert_eq!(stopped["role"], Value::Null);
+    assert_eq!(stopped["missed"][0]["axis"], "sealed", "{stopped}");
+    assert_eq!(stopped["missed"][0]["sealed_by"], sealed.as_str());
+    assert!(stopped["policy"].is_object() && stopped["guards"].is_array() && stopped["rules"].is_array(), "the answer also carries the policy, guards and rules: {stopped}");
+
+    // Who may ask: the person, a Platform Admin, an Org Unit Admin whose subtree holds the object. No one else.
+    assert_eq!(explain(&w, "eve@state.edu", "eve@state.edu", &lab).await.0, StatusCode::OK, "a person may ask about themselves");
+    assert_eq!(explain(&w, "eve@state.edu", "ada@state.edu", &lab).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(explain(&w, SCIENCE_ADMIN, "ada@state.edu", &lab).await.0, StatusCode::OK, "science holds the lab");
+    assert_eq!(explain(&w, CHEMISTRY_ADMIN, "ada@state.edu", &lab).await.0, StatusCode::FORBIDDEN, "chemistry does not");
+}
+
+// 6. `explain_access` explains the caller's own access, and refuses to explain another person to an agent token.
+#[tokio::test]
+async fn explain_access_refuses_to_explain_another_person_to_an_agent_token() {
+    let w = world().await;
+    grant(&w, unit_grant("ada@state.edu", "viewer", w.science)).await;
+    grant(&w, unit_grant("eve@state.edu", "viewer", w.chemistry)).await;
+    let (s, minted) = send(&w.app, "POST", "/api/v1/auth/tokens", "ada@state.edu", Some(json!({ "label": "an agent", "kind": "agent" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{minted}");
+    let token = minted["token"].as_str().unwrap().to_string();
+    let call = |args: Value| {
+        let app = w.app.clone();
+        let token = token.clone();
+        async move {
+            let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "explain_access", "arguments": args } });
+            let req = Request::builder().method("POST").uri("/api/mcp").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(payload.to_string())).unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            serde_json::from_slice::<Value>(&bytes).unwrap()
+        }
+    };
+    let lab = format!("workspace:{WS_LAB}");
+    let own = call(json!({ "object": lab })).await;
+    assert_ne!(own["result"]["isError"], true, "{own}");
+    assert_eq!(own["result"]["structuredContent"]["role"], "viewer", "{own}");
+    let other = call(json!({ "object": lab, "person": "eve@state.edu" })).await;
+    assert_eq!(other["result"]["isError"], true, "{other}");
+    assert!(other["result"]["content"][0]["text"].as_str().unwrap().contains("your own"), "{other}");
 }
