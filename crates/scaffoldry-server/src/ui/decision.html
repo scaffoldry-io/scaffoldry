@@ -30,7 +30,6 @@
   // Tables with no prototype: a method or id such as "constructor" finds nothing in them.
   var pending = Object.create(null);
   var next = 1;
-  var handlers = Object.create(null);
 
   function post(message) {
     window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, message), "*");
@@ -51,7 +50,8 @@
       delete pending[msg.id];
       return msg.error ? p.reject(new Error(msg.error.message || "The host refused the request")) : p.resolve(msg.result);
     }
-    if (typeof msg.method === "string" && Object.prototype.hasOwnProperty.call(handlers, msg.method)) handlers[msg.method](msg.params || {});
+    if (msg.method === "ui/notifications/tool-result") onToolResult(msg.params || {});
+    else if (msg.method === "ui/notifications/tool-cancelled") onToolCancelled();
   });
 
   function el(tag, text, cls) {
@@ -125,15 +125,15 @@
     }, function () { /* the record may not be readable. The prompt is still shown. */ });
   }
 
-  handlers["ui/notifications/tool-result"] = function (params) {
+  function onToolResult(params) {
     var items = itemsOf(params);
     root.replaceChildren(el("h1", "Decisions waiting for you"));
     if (!items.length) { root.appendChild(el("p", "Nothing is waiting for your decision.")); return; }
     items.forEach(show);
-  };
-  handlers["ui/notifications/tool-cancelled"] = function () {
+  }
+  function onToolCancelled() {
     root.replaceChildren(el("p", "The request was cancelled."));
-  };
+  }
 
   // The handshake comes first. The host sends nothing until it has the `initialized` notification.
   request("ui/initialize", { protocolVersion: "2026-01-26", appCapabilities: {}, clientInfo: { name: "scaffoldry-decision", version: "1" } }).then(

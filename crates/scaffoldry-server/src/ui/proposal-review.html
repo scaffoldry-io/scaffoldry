@@ -34,7 +34,6 @@
   var pending = Object.create(null);
   var next = 1;
   var ready = false;
-  var handlers = Object.create(null);
 
   function post(message) {
     window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, message), "*");
@@ -55,7 +54,8 @@
       delete pending[msg.id];
       return msg.error ? p.reject(new Error(msg.error.message || "The host refused the request")) : p.resolve(msg.result);
     }
-    if (typeof msg.method === "string" && Object.prototype.hasOwnProperty.call(handlers, msg.method)) handlers[msg.method](msg.params || {});
+    if (msg.method === "ui/notifications/tool-result") onToolResult(msg.params || {});
+    else if (msg.method === "ui/notifications/tool-cancelled") onToolCancelled();
   });
 
   function el(tag, text, cls) {
@@ -147,14 +147,14 @@
     root.appendChild(message);
   }
 
-  handlers["ui/notifications/tool-result"] = function (params) {
+  function onToolResult(params) {
     var p = proposalOf(params);
     if (p && typeof p === "object") render(p);
     else root.replaceChildren(el("p", "There is no proposal to show."));
-  };
-  handlers["ui/notifications/tool-cancelled"] = function () {
+  }
+  function onToolCancelled() {
     root.replaceChildren(el("p", "The request was cancelled."));
-  };
+  }
 
   // The handshake comes first. The host sends nothing until it has the `initialized` notification.
   request("ui/initialize", { protocolVersion: "2026-01-26", appCapabilities: {}, clientInfo: { name: "scaffoldry-proposal-review", version: "1" } }).then(
