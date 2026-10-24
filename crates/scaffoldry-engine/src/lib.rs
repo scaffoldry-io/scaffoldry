@@ -583,11 +583,12 @@ pub fn effective_ferpa_sensitive(
 /// What a reader who is not cleared for the field sees of it when the field names no mask: the strongest default among the
 /// categories it carries. A category that settings do not list, and a field with none, give `hide`.
 pub fn default_mask(field: &FieldSpec, categories: &[sensitivity::Category]) -> scaffoldry_core::mask::Mask {
-    let mut carried: Vec<&str> = field.categories.iter().map(String::as_str).collect();
-    if field.ferpa_sensitive {
-        carried.push(LEGACY_FLAG_CATEGORY);
-    }
-    carried.iter().map(|id| categories.iter().find(|c| c.id == *id).map_or(scaffoldry_core::mask::Mask::Hide, |c| c.default_mask)).reduce(|a, b| a.stronger(b)).unwrap_or_default()
+    effective_ferpa_sensitive(field, None, categories)
+        .categories
+        .iter()
+        .map(|id| categories.iter().find(|c| &c.id == id).map_or(scaffoldry_core::mask::Mask::Hide, |c| c.default_mask))
+        .reduce(|a, b| a.stronger(b))
+        .unwrap_or_default()
 }
 
 /// What a reader who is not cleared sees of the field: its own mask, or its categories' default.
