@@ -383,7 +383,12 @@ pub fn call(caller: &AuthUser, origin: &Origin, name: &str, args: Value, state: 
     }
 
     validate_args(&(tool.input_schema)(), &args)?;
-    (tool.run)(caller, origin, args, state)
+    let outcome = (tool.run)(caller, origin, args.clone(), state);
+    // A refusal inside a tool call is a denial too. The HTTP answer is 200, so the receipt layer cannot see it.
+    if let Err(e) = &outcome {
+        crate::service::receipts::record_tool_denial(state, caller, name, &args, e);
+    }
+    outcome
 }
 
 fn required_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, ServiceError> {

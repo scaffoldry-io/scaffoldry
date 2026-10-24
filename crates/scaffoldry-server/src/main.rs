@@ -99,6 +99,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "purge_unattached_files", 60 * 60)?;
     // A safety net for uploads whose scan job could not be queued.
     jobs::register_schedule(repo, "scan_file", 10 * 60)?;
+    // Access receipts are sealed into a hash-chained batch every minute.
+    jobs::register_schedule(repo, "seal_receipts", 60)?;
     let job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?;
 
     let app = build_app_with_state(state)?;

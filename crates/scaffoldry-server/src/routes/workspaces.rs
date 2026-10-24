@@ -253,6 +253,7 @@ fn check_can_manage_guards(
         reasons: vec![],
         diagnostics: vec![],
         policy: None,
+        action: None,
     })
 }
 

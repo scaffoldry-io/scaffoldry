@@ -293,6 +293,7 @@ pub fn require_for(
         reasons: decision.reasons,
         diagnostics: decision.diagnostics,
         policy: decision.policy,
+        action: Some(action.to_string()),
     })
 }
 

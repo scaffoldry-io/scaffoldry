@@ -309,6 +309,7 @@ async fn impersonate_user(
             reasons: vec![],
             diagnostics: vec![],
             policy: dec.policy,
+            action: Some("impersonate".to_string()),
         }
         .into_response();
     }

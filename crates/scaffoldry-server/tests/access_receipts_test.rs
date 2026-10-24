@@ -58,12 +58,25 @@ fn manifest(slug: &str, sensitivity: &str, fields: Vec<Value>) -> Value {
 }
 
 async fn make_app(w: &World, slug: &str, sensitivity: &str, fields: Vec<Value>) {
-    let (s, body) = send(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(manifest(slug, sensitivity, fields))).await;
-    assert!(s == StatusCode::CREATED || s == StatusCode::ACCEPTED, "{s} {body}");
-    if s == StatusCode::ACCEPTED {
-        let (s, done) = send(&w.app, "POST", &format!("/api/v1/proposals/{}/decision", body["proposal_id"].as_str().unwrap()), ADMIN, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": body["digest"] }))).await;
-        assert_eq!(s, StatusCode::OK, "{done}");
+    // Proposed and approved by two people, since a protected field in an Internal workspace needs a second one.
+    let call = |who: &'static str, name: &'static str, args: Value| {
+        let app = w.app.clone();
+        async move {
+            let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } });
+            let (_, v) = send(&app, "POST", "/api/mcp", who, Some(payload)).await;
+            v["result"].clone()
+        }
+    };
+    let proposed = call(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": manifest(slug, sensitivity, fields), "summary": "Receipts" })).await;
+    let proposal = &proposed["structuredContent"];
+    let id = proposal["proposal_id"].as_str().unwrap_or_else(|| panic!("a proposal: {proposed}")).to_string();
+    for who in [OWNER, ADMIN] {
+        let decided = call(who, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Reviewed", "digest": proposal["digest"] })).await;
+        if decided["isError"] != true {
+            return;
+        }
     }
+    panic!("nobody could approve the app");
 }
 
 async fn receipts(w: &World, query: &str) -> Vec<Value> {
@@ -115,14 +128,15 @@ async fn a_list_of_many_rows_with_a_protected_field_writes_one_receipt() {
         let (code, body) = send(&w.app, "POST", &format!("/api/v1/apps/{s}/records"), OWNER, Some(json!({ "data": { "_table_id": "items", "name": format!("n{i}"), "ssn": format!("s{i}") } }))).await;
         assert_eq!(code, StatusCode::CREATED, "{body}");
     }
-    let before = receipts(&w, &format!("actor={OWNER}&object={s}")).await.len();
+    // Saving a record answers with the record, so each save left a receipt of its own. Only what the list adds is counted.
+    let newest = receipts(&w, &format!("actor={OWNER}&object={s}&limit=1")).await[0]["id"].as_i64().unwrap();
     let (code, page) = send(&w.app, "GET", &format!("/api/v1/apps/{s}/tables/items/records?limit=200"), OWNER, None).await;
     assert_eq!(code, StatusCode::OK);
     assert_eq!(page["records"].as_array().unwrap().len(), 200);
-    let after = receipts(&w, &format!("actor={OWNER}&object={s}")).await;
-    assert_eq!(after.len(), before + 1, "one receipt for the call, not one per row: {after:?}");
-    assert_eq!(after[0]["action"], "read_protected");
-    assert_eq!(after[0]["outcome"], "allow");
+    let added: Vec<Value> = receipts(&w, &format!("actor={OWNER}&object={s}&limit=200")).await.into_iter().filter(|r| r["id"].as_i64().unwrap() > newest).collect();
+    assert_eq!(added.len(), 1, "one receipt for the call, not one per row: {added:?}");
+    assert_eq!(added[0]["action"], "read_protected");
+    assert_eq!(added[0]["outcome"], "allow");
 }
 
 // 3. Editing a receipt in a sealed batch makes verification fail and name the batch.

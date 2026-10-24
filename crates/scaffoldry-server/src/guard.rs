@@ -59,6 +59,13 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser> {
+    let user = session_user_inner(state, headers)?;
+    // The receipt layer, if one is waiting, learns who this request is for without asking again.
+    crate::service::receipts::note_user(&user);
+    Some(user)
+}
+
+fn session_user_inner(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser> {
     let token = bearer_token(headers)?;
     // A token shaped like a JWT comes from the institution's identity provider and is verified against the keys in settings.
     // Anything else is a stored row. It names the person and nothing more: roles come from the stored rows.
