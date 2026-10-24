@@ -111,7 +111,7 @@ fn manifest(slug: &str, cases_sealed: bool, notes_sealed: bool) -> Value {
     })
 }
 
-/// science > physics > lab, science > chemistry. The workspace sits at science. The app has a sealed table `cases` and
+/// science > physics > lab, science > chemistry. The workspace sits at physics, a department of the college. The app has a sealed table `cases` and
 /// an open table `notes`, one row of each.
 async fn world() -> World {
     let db = TestDb::new();
@@ -121,11 +121,15 @@ async fn world() -> World {
     let physics = unit(&state, "physics", science);
     let lab = unit(&state, "lab", physics);
     let chemistry = unit(&state, "chemistry", science);
-    workspace(&state, WS, science);
+    workspace(&state, WS, physics);
     workspace(&state, WS_LAB, lab);
     appoint(&state, ADMIN_TWO, root, "platform_admin");
     appoint(&state, SCIENCE_ADMIN, science, "unit_admin");
     appoint(&state, CHEMISTRY_ADMIN, chemistry, "unit_admin");
+    appoint(&state, "ann@state.edu", physics, "staff");
+    appoint(&state, "bo@state.edu", lab, "staff");
+    appoint(&state, "cy@state.edu", chemistry, "staff");
+    appoint(&state, "dee@state.edu", physics, "staff");
     let app = build_app_with_state(state).expect("router");
     let slug = format!("lab-{}", &Uuid::new_v4().to_string()[..8]);
     let manifest = manifest(&slug, true, false);
@@ -325,4 +329,115 @@ async fn explain_access_refuses_to_explain_another_person_to_an_agent_token() {
     let other = call(json!({ "object": lab, "person": "eve@state.edu" })).await;
     assert_eq!(other["result"]["isError"], true, "{other}");
     assert!(other["result"]["content"][0]["text"].as_str().unwrap().contains("your own"), "{other}");
+}
+
+fn ids(list: &Value, key: &str) -> Vec<String> {
+    let mut out: Vec<String> = list.as_array().unwrap().iter().map(|x| x[key].as_str().unwrap().to_string()).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+// 4. The per-object review lists a college grant on a department's table. The per-person review counts it.
+#[tokio::test]
+async fn the_reviews_list_a_college_grant_on_a_departments_table_and_count_it() {
+    let w = world().await;
+    let dean = grant(&w, unit_grant("dean@state.edu", "viewer", w.science)).await;
+    let member = grant(&w, container_grant("member@state.edu", "editor", &format!("workspace:{WS}"))).await;
+    grant(&w, unit_grant("eve@state.edu", "viewer", w.chemistry)).await;
+
+    let (s, object) = send(&w.app, "GET", &format!("/api/v1/admin/access/objects/table/{}/notes", w.slug), ADMIN, None).await;
+    assert_eq!(s, StatusCode::OK, "{object}");
+    let listed: Vec<i64> = object["grants"].as_array().unwrap().iter().filter_map(|g| g["grant_id"].as_i64()).collect();
+    assert!(listed.contains(&dean), "the college grant reaches the department's table: {object}");
+    assert!(listed.contains(&member), "so does a grant on its workspace: {object}");
+    assert_eq!(listed.len(), 2, "and the chemistry grant does not: {object}");
+    let college = object["grants"].as_array().unwrap().iter().find(|g| g["grant_id"] == dean).unwrap();
+    assert_eq!(college["path"][0], w.science.to_string(), "the review says how it reached: {college}");
+
+    let sealed = send(&w.app, "GET", &format!("/api/v1/admin/access/objects/table/{}/cases", w.slug), ADMIN, None).await.1;
+    assert!(sealed["grants"].as_array().unwrap().is_empty(), "nothing above the sealed table reaches it: {sealed}");
+
+    let (s, person) = send(&w.app, "GET", "/api/v1/admin/access/people/dean@state.edu", ADMIN, None).await;
+    assert_eq!(s, StatusCode::OK, "{person}");
+    let mine = person["grants"].as_array().unwrap().iter().find(|g| g["grant_id"] == dean).unwrap_or_else(|| panic!("the grant is in the person's review: {person}"));
+    assert_eq!(mine["reaches"]["tables"], 1, "one table, the open one: {mine}");
+    assert_eq!(mine["reaches"]["workspaces"], 2, "both workspaces are under the college: {mine}");
+    assert_eq!(person["by_hierarchy"]["academic"]["tables"], 1, "{person}");
+
+    // Only the people who administer may look.
+    assert_eq!(send(&w.app, "GET", "/api/v1/admin/access/people/dean@state.edu", "dean@state.edu", None).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(send(&w.app, "GET", &format!("/api/v1/admin/access/objects/workspace/{WS}"), "dean@state.edu", None).await.0, StatusCode::FORBIDDEN);
+}
+
+fn changes(impact: &Value, side: &str) -> Vec<(String, Option<String>, Option<String>)> {
+    impact[side].as_array().unwrap().iter().map(|c| (c["person"].as_str().unwrap().to_string(), c["before"].as_str().map(str::to_string), c["after"].as_str().map(str::to_string))).collect()
+}
+
+// 5. The impact of a pending grant lists exactly the people who gain, and changes nothing.
+#[tokio::test]
+async fn the_impact_of_a_pending_grant_lists_exactly_the_people_who_gain() {
+    let w = world().await;
+    let app = format!("app:{}", w.slug);
+    grant(&w, container_grant("dee@state.edu", "admin", &format!("workspace:{WS}"))).await;
+    grant(&w, container_grant("bo@state.edu", "viewer", &app)).await;
+    // Everyone appointed in physics or below would become an editor of the app.
+    let body = json!({ "holder_kind": "unit", "holder_id": w.physics.to_string(), "role": "editor", "anchor_kind": "container", "anchor_id": app, "source": "request", "reason": "Test grant" });
+    let (s, pending) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(body)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{pending}");
+    let change = pending["change_id"].as_str().unwrap().to_string();
+
+    let (s, impact) = send(&w.app, "POST", &format!("/api/v1/admin/access/changes/{change}/impact"), ADMIN, None).await;
+    assert_eq!(s, StatusCode::OK, "{impact}");
+    // By hand: ann is appointed in physics and holds nothing, so she gains editor. bo is in the lab, under physics, and holds
+    // viewer on the app, so he goes from viewer to editor. dee is already an admin, so nothing changes for her. cy is in
+    // chemistry, which is not under physics. The grant is on the app, so it reaches the app and its open table. The sealed
+    // table is below the app, and the app is above the seal.
+    assert_eq!(ids(&impact["gain"], "person"), ["ann@state.edu", "bo@state.edu"], "{impact}");
+    let notes = format!("table:{}/notes", w.slug);
+    let mut gained = changes(&impact, "gain");
+    gained.sort();
+    let editor = Some("editor".to_string());
+    assert_eq!(
+        gained,
+        vec![
+            ("ann@state.edu".to_string(), None, editor.clone()),
+            ("ann@state.edu".to_string(), None, editor.clone()),
+            ("bo@state.edu".to_string(), Some("viewer".to_string()), editor.clone()),
+            ("bo@state.edu".to_string(), Some("viewer".to_string()), editor),
+        ],
+        "{impact}"
+    );
+    assert_eq!(ids(&impact["gain"], "object"), [app.clone(), notes], "{impact}");
+    assert!(impact["lose"].as_array().unwrap().is_empty(), "{impact}");
+    assert_eq!(impact["per_role"]["editor"]["gain"], 4, "{impact}");
+
+    // It changed nothing.
+    assert_eq!(rows_of(&w, "ann@state.edu", "notes").await, 0, "ann has no role yet");
+    let (_, pending_list) = send(&w.app, "GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await;
+    assert_eq!(pending_list["changes"].as_array().unwrap().len(), 1, "the change is still pending");
+    assert_eq!(send(&w.app, "POST", &format!("/api/v1/admin/access/changes/{change}/impact"), "dean@state.edu", None).await.0, StatusCode::FORBIDDEN);
+}
+
+// 5. The impact of a pending unseal lists who the grants above the workspace let back in.
+#[tokio::test]
+async fn the_impact_of_a_pending_unseal_lists_who_gets_back_in() {
+    let w = world().await;
+    grant(&w, unit_grant("dean@state.edu", "viewer", w.science)).await;
+    grant(&w, container_grant("keeper@state.edu", "viewer", &format!("workspace:{WS}"))).await;
+    let (s, body) = coordinates(&w, ADMIN, json!({ "sealed": true, "reason": "Closed for a review" })).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let (s, pending) = coordinates(&w, ADMIN, json!({ "reason": "Review is over" })).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{pending}");
+    let change = pending["change_id"].as_str().unwrap();
+
+    let (s, impact) = send(&w.app, "POST", &format!("/api/v1/admin/access/changes/{change}/impact"), ADMIN, None).await;
+    assert_eq!(s, StatusCode::OK, "{impact}");
+    // The seal stops every grant above the workspace: the dean's, and the college's unit administrator, whose grant comes from
+    // an appointment. The keeper holds a grant at the workspace, which a seal never stops.
+    assert_eq!(ids(&impact["gain"], "person"), ["dean@state.edu", SCIENCE_ADMIN], "{impact}");
+    let roles: Vec<(&str, &str)> = ["dean@state.edu", SCIENCE_ADMIN].iter().map(|p| (*p, impact["gain"].as_array().unwrap().iter().find(|c| c["person"] == *p).unwrap()["after"].as_str().unwrap())).collect();
+    assert_eq!(roles, [("dean@state.edu", "viewer"), (SCIENCE_ADMIN, "admin")], "{impact}");
+    assert!(impact["gain"].as_array().unwrap().iter().all(|c| c["before"].is_null()), "{impact}");
+    assert!(impact["lose"].as_array().unwrap().is_empty(), "{impact}");
 }

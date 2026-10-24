@@ -185,6 +185,26 @@ fn position_of(holder_id: &str) -> (&str, Option<Uuid>) {
 }
 
 impl HolderSet {
+    /// A holder set in which `g` has a holder: the person, group or unit it names, or the position it names at the unit it
+    /// names. A review asks what a grant reaches whoever holds it, and this is the one holder it can ask with. A position
+    /// held at any unit (`key@*`) names no unit, so no holder set stands for it and `is_holder` is false.
+    pub fn holding(g: &Grant) -> HolderSet {
+        let mut set = HolderSet { person: String::new(), positions: Vec::new(), units: BTreeSet::new(), groups: BTreeSet::new() };
+        match g.holder_kind {
+            HolderKind::Person => set.person = g.holder_id.to_lowercase(),
+            HolderKind::Group => {
+                set.groups.insert(g.holder_id.clone());
+            }
+            HolderKind::Unit => set.units.extend(Uuid::parse_str(&g.holder_id)),
+            HolderKind::Position => {
+                if let (key, Some(unit)) = position_of(&g.holder_id) {
+                    set.positions.push((key.to_string(), unit));
+                }
+            }
+        }
+        set
+    }
+
     /// Whether the grant's holder is this person.
     pub fn is_holder(&self, g: &Grant) -> bool {
         match g.holder_kind {
@@ -251,13 +271,12 @@ pub struct Trace {
 /// stopped. A grant anchored above it is: a container grant on an outer container, and any unit grant, which sits above
 /// every container placed in its subtree.
 fn sealed_block(g: &Grant, object: &Object) -> Option<String> {
-    let innermost_first = object.containers.iter().rev();
     match g.anchor_kind {
         AnchorKind::Container => {
             let at = g.anchor_id.as_ref().and_then(|a| object.containers.iter().position(|c| c == a))?;
             object.containers.iter().skip(at + 1).find(|c| object.sealed.contains(*c)).cloned()
         }
-        AnchorKind::Unit | AnchorKind::HolderUnit => innermost_first.rev().find(|c| object.sealed.contains(*c)).cloned(),
+        AnchorKind::Unit | AnchorKind::HolderUnit => object.containers.iter().find(|c| object.sealed.contains(*c)).cloned(),
     }
 }
 

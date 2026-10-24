@@ -65,6 +65,7 @@ pub fn add(m: &mut Entries) {
     exempt(m, "POST /api/v1/governance/ledger/verify", "reads the chain and reports; stores nothing");
     exempt(m, "POST /api/v1/policies/simulate", "asks the policy engine a question; stores nothing");
     exempt(m, "POST /api/v1/formula/preview", "evaluates a formula; stores nothing");
+    exempt(m, "POST /api/v1/admin/access/changes/{id}/impact", "asks role_at what a pending change would do and stores nothing");
     for mcp in ["/api/mcp", "/api/v1/mcp", "/api/apps/{slug}/mcp", "/api/v1/apps/{slug}/mcp"] {
         exempt(m, &format!("POST {mcp}"), "the MCP transport hands each call to a tool; every write tool has its own case");
     }

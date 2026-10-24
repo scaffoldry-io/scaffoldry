@@ -8,7 +8,7 @@ use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::coordinates::{sensitivity_rank, SENSITIVITY_LEVELS};
 use scaffoldry_core::ledger::DecisionType;
-use scaffoldry_core::reach::{AnchorKind, HolderKind};
+use scaffoldry_core::reach::{AnchorKind, Grant, HolderKind};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -267,6 +267,32 @@ fn check_holder(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
         }
     }
     Ok(())
+}
+
+/// A pending change as a grant the reach rule can read, for the impact of deciding it. `None` when no grant change has this
+/// id. The caller needs the right to decide the change, which is the right to see what it would do.
+pub fn pending_grant(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Option<Grant>, ServiceError> {
+    let Some((change, status, _, _)) = state.repository.access_change(id).map_err(internal)? else { return Ok(None) };
+    let g = NewGrant::of_json(&change["grant"]).ok_or_else(|| ServiceError::Internal("The stored change is not a grant".to_string()))?;
+    scope_allows(state, &rights(state, caller), caller, &g).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?;
+    if status != "Pending" {
+        return Err(ServiceError::conflict("That change has already been decided"));
+    }
+    Ok(Some(Grant {
+        id: i64::MAX,
+        holder_kind: g.holder_kind,
+        holder_id: g.holder_id,
+        role: g.role,
+        hierarchy: g.hierarchy,
+        anchor_kind: g.anchor_kind,
+        anchor_id: g.anchor_id,
+        depth: g.depth.and_then(|d| i16::try_from(d).ok()),
+        domain: g.domain,
+        valid_from: 0,
+        valid_until: g.valid_until.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok()).map(|d| d.timestamp()),
+        revoked: false,
+        clearance: g.clearance.as_deref().and_then(sensitivity_rank),
+    }))
 }
 
 /// Stores a new grant as a change that waits for a different person.
