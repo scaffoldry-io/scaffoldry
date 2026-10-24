@@ -35,11 +35,15 @@ pub struct Coordinates {
     pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensitivity: Option<String>,
+    /// A sealed workspace stops every grant anchored above it (access model phase 7). It is not inherited: an app inside
+    /// a sealed workspace is not itself sealed, and says so in its own manifest when it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<bool>,
 }
 
 impl Coordinates {
     pub fn is_empty(&self) -> bool {
-        self.units.is_empty() && self.domain.is_none() && self.sensitivity.is_none()
+        self.units.is_empty() && self.domain.is_none() && self.sensitivity.is_none() && self.sealed.is_none()
     }
 
     /// The stored form: one `(axis, value)` row for each coordinate. An axis is `unit:<hierarchy key>`, `domain`, or
@@ -51,6 +55,9 @@ impl Coordinates {
         }
         if let Some(s) = &self.sensitivity {
             rows.push(("sensitivity".to_string(), s.clone()));
+        }
+        if let Some(sealed) = self.sealed {
+            rows.push(("sealed".to_string(), sealed.to_string()));
         }
         rows
     }
@@ -65,6 +72,8 @@ impl Coordinates {
                 out.domain = Some(value);
             } else if axis == "sensitivity" {
                 out.sensitivity = Some(value);
+            } else if axis == "sealed" {
+                out.sealed = Some(value == "true");
             }
         }
         out

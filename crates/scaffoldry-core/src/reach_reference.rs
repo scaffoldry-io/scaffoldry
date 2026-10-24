@@ -165,17 +165,26 @@ pub fn reference_reaches(
         }
     }
 
+    // A sealed container stops a grant anchored above it. For a container grant that means a sealed container nested inside
+    // its anchor. A unit grant is above every container, so any sealed container stops it.
+    let sealed_above = |anchor_index: Option<usize>| -> bool {
+        object.containers.iter().enumerate().any(|(i, c)| object.sealed.contains(c) && anchor_index.is_none_or(|a| i > a))
+    };
     let placed = g.hierarchy.as_deref().and_then(|h| object.units.get(h)).copied();
     match g.anchor_kind {
-        AnchorKind::Container => g.anchor_id.as_ref().is_some_and(|a| object.containers.contains(a)),
+        AnchorKind::Container => match g.anchor_id.as_ref().and_then(|a| object.containers.iter().position(|c| c == a)) {
+            Some(at) => !sealed_above(Some(at)),
+            None => false,
+        },
         AnchorKind::Unit => match (placed, g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok())) {
-            (Some(unit), Some(anchor)) => reference_unit_within_depth(units, unit, anchor, g.depth, g.hierarchy.as_deref()),
+            (Some(unit), Some(anchor)) => reference_unit_within_depth(units, unit, anchor, g.depth, g.hierarchy.as_deref()) && !sealed_above(None),
             _ => false,
         },
         AnchorKind::HolderUnit => {
             let (key, named) = position_of(&g.holder_id);
             let Some(unit) = placed else { return false };
             g.holder_kind == HolderKind::Position
+                && !sealed_above(None)
                 && holders.positions.iter().filter(|(k, u)| k == key && named.is_none_or(|n| n == *u)).any(|(_, anchor)| {
                     reference_unit_within_depth(units, unit, *anchor, g.depth, g.hierarchy.as_deref())
                 })

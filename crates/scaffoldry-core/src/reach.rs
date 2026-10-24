@@ -151,11 +151,14 @@ pub struct HolderSet {
 }
 
 /// Where an object sits: the containers it is inside, a unit in each hierarchy, and a domain.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Object {
+    /// The containers the object is inside, outermost first: `workspace:<id>`, `app:<slug>`, `table:<slug>/<table id>`.
     pub containers: Vec<String>,
     pub units: BTreeMap<String, Uuid>,
     pub domain: String,
+    /// The containers among `containers` that are sealed. An object that is itself a sealed container lists itself.
+    pub sealed: BTreeSet<String>,
 }
 
 /// The holder set of one person. A holding outside its dates is not counted.
@@ -201,28 +204,124 @@ fn within_depth(tree: &OrgTree, unit: Uuid, anchor: Uuid, depth: Option<i16>) ->
     tree.ancestors(unit).iter().position(|a| *a == anchor).is_some_and(|d| depth.is_none_or(|max| d as i16 <= max))
 }
 
-/// Whether the grant gives its holder a role on the object. Every axis must match within the one grant.
-pub fn reaches(g: &Grant, holders: &HolderSet, object: &Object, tree: &OrgTree, places: &dyn Places, now: i64) -> bool {
-    if g.revoked || g.valid_from > now || g.valid_until.is_some_and(|u| u <= now) || !holders.is_holder(g) {
-        return false;
+/// The first axis a grant failed on, in the order they are checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Miss {
+    Revoked,
+    NotYet,
+    Expired,
+    /// The grant is held by someone else.
+    Holder,
+    Domain,
+    /// The object is not inside the grant's anchor.
+    Anchor,
+    /// The object is inside the anchor's subtree, but below the grant's depth.
+    Depth,
+    /// A sealed container, named here, sits between the anchor and the object.
+    Sealed(String),
+}
+
+impl Miss {
+    /// The name of the axis, for a response.
+    pub fn axis(&self) -> &'static str {
+        match self {
+            Miss::Revoked => "revoked",
+            Miss::NotYet => "not_yet",
+            Miss::Expired => "expired",
+            Miss::Holder => "holder",
+            Miss::Domain => "domain",
+            Miss::Anchor => "anchor",
+            Miss::Depth => "depth",
+            Miss::Sealed(_) => "sealed",
+        }
+    }
+}
+
+/// Why a grant reached an object or did not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trace {
+    /// `None` when the grant reaches the object.
+    pub missed: Option<Miss>,
+    /// When it reached: from the anchor down to the object. For a unit anchor, the unit ids from the anchor to the object's
+    /// unit. For a container anchor, the container ids from the anchor to the object.
+    pub path: Vec<String>,
+}
+
+/// The sealed container that stops a grant, if one does. A grant anchored at a sealed container, or inside it, is not
+/// stopped. A grant anchored above it is: a container grant on an outer container, and any unit grant, which sits above
+/// every container placed in its subtree.
+fn sealed_block(g: &Grant, object: &Object) -> Option<String> {
+    let innermost_first = object.containers.iter().rev();
+    match g.anchor_kind {
+        AnchorKind::Container => {
+            let at = g.anchor_id.as_ref().and_then(|a| object.containers.iter().position(|c| c == a))?;
+            object.containers.iter().skip(at + 1).find(|c| object.sealed.contains(*c)).cloned()
+        }
+        AnchorKind::Unit | AnchorKind::HolderUnit => innermost_first.rev().find(|c| object.sealed.contains(*c)).cloned(),
+    }
+}
+
+/// Whether the grant gives its holder a role on the object, and if not, the first axis that failed. Every axis must match
+/// within the one grant.
+pub fn trace(g: &Grant, holders: &HolderSet, object: &Object, tree: &OrgTree, places: &dyn Places, now: i64) -> Trace {
+    let miss = |m: Miss| Trace { missed: Some(m), path: Vec::new() };
+    if g.revoked {
+        return miss(Miss::Revoked);
+    }
+    if g.valid_from > now {
+        return miss(Miss::NotYet);
+    }
+    if g.valid_until.is_some_and(|u| u <= now) {
+        return miss(Miss::Expired);
+    }
+    if !holders.is_holder(g) {
+        return miss(Miss::Holder);
     }
     if g.domain.as_deref().is_some_and(|d| !places.domain_within(&object.domain, d)) {
-        return false;
+        return miss(Miss::Domain);
     }
     let placed = || g.hierarchy.as_deref().and_then(|h| object.units.get(h)).copied().filter(|u| g.hierarchy.as_deref().is_some_and(|h| tree.hierarchy_of(*u) == Some(h)));
-    match g.anchor_kind {
-        AnchorKind::Container => g.anchor_id.as_ref().is_some_and(|a| object.containers.contains(a)),
+    // The anchors a unit-anchored grant is measured from: the unit it names, or each unit where the holder holds the position.
+    let from_unit = |unit: Uuid, anchor: Uuid| -> Result<Vec<String>, Miss> {
+        let chain = tree.ancestors(unit);
+        match chain.iter().position(|a| *a == anchor) {
+            None => Err(Miss::Anchor),
+            Some(d) if g.depth.is_some_and(|max| d as i16 > max) => Err(Miss::Depth),
+            Some(d) => Ok(chain[..=d].iter().rev().map(|u| u.to_string()).collect()),
+        }
+    };
+    let path = match g.anchor_kind {
+        AnchorKind::Container => match g.anchor_id.as_ref().and_then(|a| object.containers.iter().position(|c| c == a)) {
+            Some(at) => object.containers[at..].to_vec(),
+            None => return miss(Miss::Anchor),
+        },
         AnchorKind::Unit => match (placed(), g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok())) {
-            (Some(unit), Some(anchor)) => within_depth(tree, unit, anchor, g.depth),
-            _ => false,
+            (Some(unit), Some(anchor)) => match from_unit(unit, anchor) {
+                Ok(p) => p,
+                Err(m) => return miss(m),
+            },
+            _ => return miss(Miss::Anchor),
         },
         AnchorKind::HolderUnit => {
             let (key, named) = position_of(&g.holder_id);
-            let Some(unit) = placed() else { return false };
-            g.holder_kind == HolderKind::Position
-                && holders.positions.iter().filter(|(k, u)| k == key && named.is_none_or(|n| n == *u)).any(|(_, anchor)| within_depth(tree, unit, *anchor, g.depth))
+            let Some(unit) = placed().filter(|_| g.holder_kind == HolderKind::Position) else { return miss(Miss::Anchor) };
+            let results: Vec<Result<Vec<String>, Miss>> = holders.positions.iter().filter(|(k, u)| k == key && named.is_none_or(|n| n == *u)).map(|(_, anchor)| from_unit(unit, *anchor)).collect();
+            match results.iter().find_map(|r| r.as_ref().ok()) {
+                Some(p) => p.clone(),
+                None if results.iter().any(|r| matches!(r, Err(Miss::Depth))) => return miss(Miss::Depth),
+                None => return miss(Miss::Anchor),
+            }
         }
+    };
+    if let Some(container) = sealed_block(g, object) {
+        return miss(Miss::Sealed(container));
     }
+    Trace { missed: None, path }
+}
+
+/// Whether the grant gives its holder a role on the object. It is `trace` with no miss, so the two cannot disagree.
+pub fn reaches(g: &Grant, holders: &HolderSet, object: &Object, tree: &OrgTree, places: &dyn Places, now: i64) -> bool {
+    trace(g, holders, object, tree, places, now).missed.is_none()
 }
 
 /// The highest role among the grants that reach the object, and the ids of the grants that gave that role.
@@ -274,6 +373,10 @@ pub fn row_contributions(holders: &HolderSet, grants: &[Grant], table: &Object, 
         }
         // A row has no domain of its own. The table's domain is every row's.
         if g.domain.as_deref().is_some_and(|d| !places.domain_within(&table.domain, d)) {
+            continue;
+        }
+        // A sealed table, app or workspace stops the grants above it, for its rows too.
+        if sealed_block(g, table).is_some() {
             continue;
         }
         let clearance = effective_clearance(g);

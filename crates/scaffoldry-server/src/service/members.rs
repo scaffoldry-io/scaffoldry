@@ -326,7 +326,7 @@ fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) 
                     Some(ws) => crate::service::coordinates::object_place(places, tree, ws, app.and_then(|a| manifests.get(a))),
                     None => (Default::default(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()),
                 };
-                role_at(&holders, &grants, &Object { containers, units, domain }, tree, places, now).map(|(role, _)| role)
+                role_at(&holders, &grants, &Object { containers, units, domain, sealed: Default::default() }, tree, places, now).map(|(role, _)| role)
             })
             .collect()
     })
@@ -501,7 +501,7 @@ pub fn contributions_to(eppn: &str, workspace: &str, app: &str, table_id: &str, 
 
     crate::service::coordinates::with_world(state, |places, tree| {
         let (units, domain) = crate::service::coordinates::table_place(places, tree, &ws, &manifest, table_id);
-        let table = Object { containers: vec![format!("workspace:{workspace}"), format!("app:{app}")], units, domain };
+        let table = Object { containers: vec![format!("workspace:{workspace}"), format!("app:{app}")], units, domain, sealed: Default::default() };
         row_contributions(&holders, &shared, &table, &row_hierarchies, tree, places, now)
     })
     .ok()
