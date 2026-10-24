@@ -38,6 +38,7 @@
         "name": { "type": "string", "minLength": 1, "maxLength": 128 },
         "source": { "type": "string", "maxLength": 128 },
         "protected": { "type": "boolean" },
+        "default_mask": { "$ref": "mask.schema.json", "description": "What a reader who is not cleared sees of a field of this category. Hide when absent." },
         "detectors": { "type": "array", "items": { "$ref": "#/$defs/id" } }
       }
     }

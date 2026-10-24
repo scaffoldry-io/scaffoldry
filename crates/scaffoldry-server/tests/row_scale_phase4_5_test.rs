@@ -443,7 +443,7 @@ async fn phase5_viewer_searching_sensitive_table_is_refused_editor_is_not() {
     let _db = common::TestDb::new();
     let w = world().await;
 
-    // Viewer searching table with sensitive_amount is refused with BadRequest and exact message
+    // Viewer searching table with sensitive_amount is refused as field_hidden (access-model phase 12) with the same message
     let (status, body) = send(
         &w.app,
         "GET",
@@ -452,7 +452,8 @@ async fn phase5_viewer_searching_sensitive_table_is_refused_editor_is_not() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "viewer must be BadRequest: {body}");
+    assert_eq!(status, StatusCode::FORBIDDEN, "viewer must be refused: {body}");
+    assert_eq!(body["code"], "field_hidden", "{body}");
     let err_msg = body["message"].as_str().or_else(|| body["error"].as_str()).unwrap_or("");
     assert!(err_msg.contains("Search is not available on this table for your role"), "{err_msg}");
 

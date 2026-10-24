@@ -135,7 +135,10 @@ pub fn record_agent_read(
         by_table.entry(table).or_default().push(row);
     }
     for (table, group) in by_table {
-        let sensitive = crate::service::records::sensitive_fields_of(app_slug, &table, state);
+        // A field the caller sees as a mask is not released: only a value with no mask is a disclosure.
+        let (fields, canonical) = crate::service::records::table_fields_lenient(app_slug, &table, state);
+        let withheld = crate::service::records::withheld_for(caller, app_slug, &canonical, &fields, state);
+        let sensitive: Vec<String> = crate::service::records::sensitive_fields_of(app_slug, &table, state).into_iter().filter(|f| !withheld.contains_key(f)).collect();
         if sensitive.is_empty() {
             continue;
         }

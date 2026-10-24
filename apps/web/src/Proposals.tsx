@@ -3,7 +3,7 @@ import { apiClient, type ProposalCheck, type ProposalRow } from "./api";
 import { ConfirmAction, DataTable, Drawer, PageHeader, StatusBadge, type DataTableColumn } from "./ui";
 
 /** The checks that need a second person when they fail. */
-const FLAGGED = new Set(["sensitivity", "data_loss", "page_sensitivity", "page_dependencies", "rule_effects", "access_loosened"]);
+const FLAGGED = new Set(["sensitivity", "data_loss", "page_sensitivity", "page_dependencies", "rule_effects", "access_loosened", "coordinates_widened", "mask_weakened"]);
 
 const CHECK_WORDS: Record<string, string> = {
   schema: "Manifest format",
@@ -19,6 +19,8 @@ const CHECK_WORDS: Record<string, string> = {
   rule_approver: "Who decides",
   access_rules: "Access rules",
   access_loosened: "Access loosened",
+  coordinates_widened: "Place widened",
+  mask_weakened: "Mask shows more",
 };
 
 function tone(c: ProposalCheck): "ok" | "warn" | "bad" {

@@ -68,9 +68,8 @@ async fn create_export(
         )));
     }
 
-    let field_vis = crate::service::scope::field_visibility_of(&user, &slug, &target_table_id, &state);
-    let disallowed_fields = field_vis.hidden_names();
-    let sensitive_fields = crate::service::records::sensitive_fields_of(&slug, &target_table_id, &state);
+    let table_fields = manifest.tables.iter().find(|t| t.id == target_table_id).map(|t| t.fields.clone()).unwrap_or_default();
+    let limits = crate::service::records::export_limits(&user, &slug, &target_table_id, &table_fields, &state);
 
     let rules = crate::service::scope::rules_of(&slug, &state);
     let person = crate::service::scope::person_of(&user, &state);
@@ -91,8 +90,9 @@ async fn create_export(
             "caller_affiliation": user.affiliation,
             "caller_person": person,
             "row_rules": rules,
-            "disallowed_fields": disallowed_fields,
-            "sensitive_fields": sensitive_fields,
+            "disallowed_fields": limits.disallowed,
+            "masks": limits.masks,
+            "sensitive_fields": limits.sensitive,
             "mock_row_count": payload.mock_row_count,
         }),
         &user.eppn,

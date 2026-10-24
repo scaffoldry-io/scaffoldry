@@ -4,6 +4,7 @@
     "name": "Payment card data",
     "source": "PCI DSS",
     "protected": true,
+    "default_mask": {"kind": "last4"},
     "detectors": ["payment_card"]
   },
   "detectors": [

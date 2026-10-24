@@ -185,6 +185,12 @@ pub fn export_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         }
     }
 
+    // What the reader sees of a field they are not cleared for: its mask, from the same function a list uses.
+    let masks: std::collections::BTreeMap<String, scaffoldry_core::mask::Mask> = payload
+        .get("masks")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
     let row_rules: Vec<RowRule> = payload.get("row_rules")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
@@ -231,7 +237,11 @@ pub fn export_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         let mut row_map = Map::new();
         for field in &allowed_fields {
             if let Some(v) = map.get(field) {
-                row_map.insert(field.clone(), v.clone());
+                let shown = match masks.get(field) {
+                    Some(m) => scaffoldry_core::mask::mask(v, *m),
+                    None => v.clone(),
+                };
+                row_map.insert(field.clone(), shown);
             } else {
                 row_map.insert(field.clone(), Value::Null);
             }
