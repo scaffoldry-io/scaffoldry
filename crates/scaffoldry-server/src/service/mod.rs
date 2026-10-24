@@ -33,6 +33,7 @@ pub mod agent_kit;
 pub mod clients;
 pub mod oauth;
 pub mod openapi;
+pub mod mcp_ui;
 pub mod client_ts;
 pub mod preview;
 pub mod token_scope;

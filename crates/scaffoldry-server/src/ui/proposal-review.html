@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Review a proposed change</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; color: #0f172a; background: #fff; }
+  main { max-width: 42rem; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.1rem; margin: 0 0 .5rem; }
+  h2 { font-size: .75rem; letter-spacing: .05em; text-transform: uppercase; color: #475569; margin: 1rem 0 .25rem; }
+  dl { display: grid; grid-template-columns: 8rem 1fr; gap: .15rem .5rem; margin: 0; font-size: .9rem; }
+  dt { color: #475569; }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  ul { margin: 0; padding-left: 1.2rem; font-size: .9rem; }
+  .pass { color: #166534; } .warn { color: #92400e; } .fail { color: #991b1b; font-weight: 600; }
+  label { display: block; font-size: .9rem; margin-top: 1rem; }
+  input { width: 100%; box-sizing: border-box; padding: .4rem; margin-top: .25rem; border: 1px solid #94a3b8; border-radius: .25rem; font: inherit; }
+  .row { display: flex; gap: .5rem; margin-top: .75rem; }
+  button { padding: .45rem 1rem; border-radius: .25rem; border: 1px solid #94a3b8; background: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button.go { background: #2563eb; border-color: #2563eb; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #message { margin-top: .75rem; font-size: .9rem; min-height: 1.2rem; }
+</style>
+</head>
+<body>
+<main id="root"><p>Waiting for the proposal.</p></main>
+<script>
+// This file holds no data. The host sends the proposal in `ui/notifications/tool-result`. Every value is placed with
+// textContent, so nothing in the proposal can become markup. MCP Apps, specification 2026-01-26.
+(function () {
+  var root = document.getElementById("root");
+  var pending = {};
+  var next = 1;
+  var ready = false;
+  var handlers = {};
+
+  function post(message) {
+    window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, message), "*");
+  }
+  function request(method, params) {
+    return new Promise(function (resolve, reject) {
+      var id = next++;
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ id: id, method: method, params: params });
+    });
+  }
+  window.addEventListener("message", function (ev) {
+    var msg = ev.data;
+    if (ev.source !== window.parent || !msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id !== undefined && !msg.method) {
+      var p = pending[msg.id];
+      if (!p) return;
+      delete pending[msg.id];
+      return msg.error ? p.reject(new Error(msg.error.message || "The host refused the request")) : p.resolve(msg.result);
+    }
+    if (msg.method && handlers[msg.method]) handlers[msg.method](msg.params || {});
+  });
+
+  function el(tag, text, cls) {
+    var e = document.createElement(tag);
+    if (text !== undefined) e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+  function section(title) {
+    root.appendChild(el("h2", title));
+  }
+
+  function proposalOf(result) {
+    if (result && result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+    var first = result && result.content && result.content[0];
+    try { return first && JSON.parse(first.text); } catch (e) { return null; }
+  }
+
+  function render(p) {
+    root.replaceChildren();
+    root.appendChild(el("h1", "Review a proposed change"));
+    var facts = el("dl");
+    [["Summary", p.summary], ["Status", p.status], ["Proposed by", p.proposed_by], ["App", p.app_slug], ["Workspace", p.workspace_id]].forEach(function (row) {
+      if (row[1] === undefined || row[1] === null) return;
+      facts.appendChild(el("dt", row[0]));
+      facts.appendChild(el("dd", String(row[1])));
+    });
+    root.appendChild(facts);
+
+    section("What changes");
+    var changes = el("ul");
+    (p.changes || []).forEach(function (c) { changes.appendChild(el("li", String(c))); });
+    if (!changes.children.length) changes.appendChild(el("li", "No change is listed."));
+    root.appendChild(changes);
+
+    section("Checks");
+    var checks = el("ul");
+    (p.checks || []).forEach(function (c) {
+      var li = el("li", String(c.name) + ": " + String(c.outcome), String(c.outcome));
+      (c.messages || []).forEach(function (m) { li.appendChild(el("div", String(m))); });
+      checks.appendChild(li);
+    });
+    root.appendChild(checks);
+
+    var label = el("label", "Why are you deciding this?");
+    var why = document.createElement("input");
+    why.type = "text";
+    why.maxLength = 500;
+    label.appendChild(why);
+    root.appendChild(label);
+
+    var message = el("div");
+    message.id = "message";
+    message.setAttribute("role", "status");
+    var row = el("div", undefined, "row");
+    var approve = el("button", "Approve", "go");
+    var reject = el("button", "Reject");
+    approve.type = reject.type = "button";
+    var open = p.status === "Pending";
+    approve.disabled = reject.disabled = !open;
+    if (!open) message.textContent = "This proposal is " + String(p.status) + ".";
+
+    function decide(decision) {
+      var reason = why.value.trim();
+      if (!reason) { message.textContent = "Say why before you decide."; return; }
+      approve.disabled = reject.disabled = true;
+      var args = { proposal_id: p.proposal_id || p.id, decision: decision, rationale: reason };
+      // An approval names the digest of what this screen showed, so a changed proposal is refused.
+      if (decision === "approve") args.digest = p.digest;
+      request("tools/call", { name: "decide_proposal", arguments: args }).then(function (res) {
+        if (res && res.isError) {
+          var first = res.content && res.content[0];
+          message.textContent = (first && first.text) || "The decision was refused.";
+          approve.disabled = reject.disabled = false;
+          return;
+        }
+        var out = res && res.structuredContent;
+        message.textContent = "Done. The proposal is " + String((out && out.status) || decision) + ".";
+      }, function (e) {
+        message.textContent = e.message;
+        approve.disabled = reject.disabled = false;
+      });
+    }
+    approve.addEventListener("click", function () { decide("approve"); });
+    reject.addEventListener("click", function () { decide("reject"); });
+    row.appendChild(approve);
+    row.appendChild(reject);
+    root.appendChild(row);
+    root.appendChild(message);
+  }
+
+  handlers["ui/notifications/tool-result"] = function (params) {
+    var p = proposalOf(params);
+    if (p && typeof p === "object") render(p);
+    else root.replaceChildren(el("p", "There is no proposal to show."));
+  };
+  handlers["ui/notifications/tool-cancelled"] = function () {
+    root.replaceChildren(el("p", "The request was cancelled."));
+  };
+
+  // The handshake comes first. The host sends nothing until it has the `initialized` notification.
+  request("ui/initialize", { protocolVersion: "2026-01-26", appCapabilities: {}, clientInfo: { name: "scaffoldry-proposal-review", version: "1" } }).then(
+    function () {
+      post({ method: "ui/notifications/initialized", params: {} });
+      ready = true;
+    },
+    function (e) { root.replaceChildren(el("p", "This screen needs a host that supports MCP Apps. " + e.message)); }
+  );
+})();
+</script>
+</body>
+</html>

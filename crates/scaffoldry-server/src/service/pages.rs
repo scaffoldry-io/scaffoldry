@@ -135,7 +135,8 @@ pub fn render_page(slug: &str, page_id: &str, state: &SharedState) -> Result<Str
 }
 
 pub fn get_page(slug: &str, page_id: &str, state: &SharedState) -> Result<Value, ServiceError> {
-    Ok(json!({ "html": render_page(slug, page_id, state)? }))
+    // The same document is the MCP Apps resource at `resource_uri`.
+    Ok(json!({ "html": render_page(slug, page_id, state)?, "resource_uri": crate::service::mcp_ui::page_uri(slug, page_id) }))
 }
 
 fn text<'a>(args: &'a Value, key: &str) -> Option<&'a str> {

@@ -217,7 +217,12 @@ async fn handle_mcp_request(
                         let (destructive, idempotent) = crate::service::tool_meta::hints(t.name);
                         json!({ "readOnlyHint": false, "destructiveHint": destructive, "idempotentHint": idempotent })
                     };
-                    json!({ "name": t.name, "description": t.description, "inputSchema": schema, "annotations": annotations })
+                    let mut entry = json!({ "name": t.name, "description": t.description, "inputSchema": schema, "annotations": annotations });
+                    // MCP Apps: a tool links to its screen on its definition. The flat `ui/resourceUri` key is deprecated.
+                    if let Some(screen) = crate::service::mcp_ui::tool_screen(t.name) {
+                        entry["_meta"] = json!({ "ui": { "resourceUri": screen } });
+                    }
+                    entry
                 })
                 .collect();
             rpc(JsonRpcResponse {
@@ -284,7 +289,7 @@ async fn handle_mcp_request(
         }
 
         "resources/list" => {
-            let resources = json!({
+            let mut resources = json!({
                 "resources": [
                     {
                         "uri": "datasets://catalog",
@@ -342,6 +347,9 @@ async fn handle_mcp_request(
                     }
                 ]
             });
+            if let Some(list) = resources["resources"].as_array_mut() {
+                list.extend(crate::service::mcp_ui::listed(&caller, &state));
+            }
             rpc(JsonRpcResponse {
                 jsonrpc: "2.0",
                 id: req_id,
@@ -367,6 +375,24 @@ async fn handle_mcp_request(
         "resources/read" => {
             let params = req.params.unwrap_or(json!({}));
             let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+
+            // The screens of mcp-apps phase 8. A screen the caller may not read is not found, as one that does not exist.
+            if let Some(found) = crate::service::mcp_ui::read(&caller, uri, &state) {
+                return match found {
+                    Some(html) => rpc(JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req_id,
+                        result: Some(json!({ "contents": [{ "uri": uri, "mimeType": crate::service::mcp_ui::MIME, "text": html }] })),
+                        error: None,
+                    }),
+                    None => rpc(JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req_id,
+                        result: None,
+                        error: Some(JsonRpcError { code: -32002, message: "Resource not found".to_string(), data: None }),
+                    }),
+                };
+            }
 
             let result = if uri.starts_with("ui://workspaces/") && uri.ends_with("/settings") {
                 let ws_id = uri

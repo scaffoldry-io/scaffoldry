@@ -39,6 +39,12 @@ export function PageFrame({ appSlug, pageId }: { appSlug: string; pageId: string
       if (!frame.current || event.source !== frame.current.contentWindow) return;
       const request = event.data as { jsonrpc?: string; id?: unknown; method?: string; params?: { name?: string; arguments?: unknown } } | null;
       if (!request || typeof request !== "object" || request.jsonrpc !== "2.0" || request.id === undefined) return;
+      // MCP Apps (specification 2026-01-26): the page says ui/initialize and waits for this answer before it sends a tool
+      // call. The desk offers no host capability. `ui/notifications/initialized` has no id, so it is ignored above.
+      if (request.method === "ui/initialize") {
+        reply({ id: request.id, result: { protocolVersion: "2026-01-26", hostCapabilities: {}, hostInfo: { name: "scaffoldry-desk", version: "1" }, hostContext: {} } });
+        return;
+      }
       if (request.method !== "tools/call") {
         reply({ id: request.id, error: { code: -32601, message: "A page may only call tools." } });
         return;

@@ -29,13 +29,16 @@ function shell(source: string, format: "module" | "bundle" = "module"): string {
 /** Opens the page in jsdom. `reply` plays the host: it answers each `page_call` request. */
 async function open(source: string, reply: (rpc: Rpc) => unknown, format: "module" | "bundle" = "module", extra: Record<string, unknown> = {}) {
   const requests: Rpc[] = [];
+  /** The messages of the MCP Apps handshake (ui/initialize and ui/notifications/initialized), kept apart from the calls. */
+  const handshake: Rpc[] = [];
   const dom = new JSDOM(shell(source, format), {
     runScripts: "dangerously",
     pretendToBeVisual: true,
     beforeParse(win) {
       Object.assign(win, extra);
       win.postMessage = ((rpc: Rpc) => {
-        requests.push(rpc);
+        if (rpc.method !== "tools/call") handshake.push(rpc);
+        else requests.push(rpc);
         queueMicrotask(() => {
           const result = reply(rpc);
           win.dispatchEvent(new win.MessageEvent("message", { data: { jsonrpc: "2.0", id: rpc.id, result: { structuredContent: result } }, source: win }));
@@ -48,7 +51,7 @@ async function open(source: string, reply: (rpc: Rpc) => unknown, format: "modul
     if (dom.window.document.getElementById("root")!.textContent) break;
   }
   await new Promise((r) => setTimeout(r, 50));
-  return { doc: dom.window.document, requests, win: dom.window };
+  return { doc: dom.window.document, requests, handshake, win: dom.window };
 }
 
 const PAGE = `
@@ -62,9 +65,10 @@ export default function Page() {
 
 describe("the loader", () => {
   it("compiles a page that imports react and scaffoldry, and mounts it", async () => {
-    const { doc, requests } = await open(PAGE, () => ({ records: [{ id: "a" }, { id: "b" }], next_cursor: null }));
+    const { doc, requests, handshake } = await open(PAGE, () => ({ records: [{ id: "a" }, { id: "b" }], next_cursor: null }));
     expect(doc.getElementById("out")?.textContent).toBe("rows:2");
     expect(requests).toHaveLength(1);
+    expect(handshake.map((m) => m.method)).toEqual(["ui/initialize", "ui/notifications/initialized"]);
     expect(requests[0].method).toBe("tools/call");
     expect(requests[0].params).toEqual({ name: "page_call", arguments: { app_slug: "scholarships", page_id: "board", op: "list", table_id: "applications" } });
   });
