@@ -151,9 +151,10 @@ async fn handle_mcp_request(
     }
 
     // A view-as session reaches the tools and nothing else here.
-    let held = crate::guard::token_row(&state, &headers);
-    let from_client = held.as_ref().is_some_and(|r| r.kind == "client");
-    let scope = held.and_then(|r| r.scope);
+    let (scope, from_client) = match crate::guard::request_scope(&state, &headers, &caller) {
+        Some((scope, from_client)) => (Some(scope), from_client),
+        None => (None, false),
+    };
     // An AI tool's session reads resources and prompts as its person does. Other limited tokens do not.
     let session = scope.as_ref().is_some_and(|s| s.level.is_some());
     if !session && (scope.is_some() || crate::guard::view_as_token(&state, &headers).is_some()) && !["initialize", "ping", "tools/list", "tools/call"].contains(&req.method.as_str()) {

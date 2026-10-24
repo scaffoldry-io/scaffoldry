@@ -155,7 +155,7 @@ Faculty want quick, custom web apps with interfaces of their own. These rows let
 | 83 | [external-apps.md](external-apps.md) | 4 | A TypeScript client generated for each app, and a guide for building outside Scaffoldry | **COMPLETED** |
 | 84 | [external-apps.md](external-apps.md) | 8 | AI tools sign in through OAuth as themselves, for a person, with the scope the person picked, and every action names the person, the tool and the task | **COMPLETED** |
 | 85 | [foundation.md](foundation.md) | 10 | Tokens from the institution's identity provider are verified. Adds `jsonwebtoken` | **COMPLETED** |
-| 86 | [external-apps.md](external-apps.md) | 7 | An outside app may use tokens from the institution's identity provider | |
+| 86 | [external-apps.md](external-apps.md) | 7 | An outside app may use tokens from the institution's identity provider | **COMPLETED** |
 | 87 | [mcp-apps.md](mcp-apps.md) | 8 | Custom pages and review screens render inside the agent, from the published MCP Apps specification | **COMPLETED** |
 
 ### Wave 1e — explain, audit, and decide
