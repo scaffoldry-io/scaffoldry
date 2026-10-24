@@ -94,6 +94,28 @@ pub struct CodeRow {
     pub redirect_uri: String,
     pub code_challenge: String,
     pub ceiling_digest: String,
+    /// What an agent client's person chose: `read`, `propose` or `write`. None for an app client.
+    pub access: Option<String>,
+}
+
+/// An agent client's sign-in by one person.
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    pub session_id: uuid::Uuid,
+    pub access: String,
+    pub task: Option<String>,
+    /// Not revoked, and not past its end.
+    pub active: bool,
+}
+
+/// What a refresh token turned out to be.
+pub enum RefreshUse {
+    /// Valid, and now used. The session it belongs to, and how many seconds the session has left.
+    Fresh { session_id: uuid::Uuid, client_id: String, eppn: String, access: String, seconds_left: i64 },
+    /// Used before. Its session, and every token of it, has been revoked.
+    Reused,
+    /// Unknown, or its session has ended.
+    Missing,
 }
 
 /// What taking a code found.
@@ -111,9 +133,9 @@ impl PostgresRepository {
         let (code_hash, c) = (code_hash.to_string(), c.clone());
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO oauth_codes (code_hash, client_id, eppn, redirect_uri, code_challenge, ceiling_digest, expires_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '60 seconds')",
-                &[&code_hash, &c.client_id, &c.eppn, &c.redirect_uri, &c.code_challenge, &c.ceiling_digest],
+                "INSERT INTO oauth_codes (code_hash, client_id, eppn, redirect_uri, code_challenge, ceiling_digest, access, expires_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '60 seconds')",
+                &[&code_hash, &c.client_id, &c.eppn, &c.redirect_uri, &c.code_challenge, &c.ceiling_digest, &c.access],
             )?;
             Ok(())
         })
@@ -126,11 +148,11 @@ impl PostgresRepository {
             let mut tx = client.transaction()?;
             let fresh = tx.query_opt(
                 "UPDATE oauth_codes SET used_at = NOW() WHERE code_hash = $1 AND used_at IS NULL AND expires_at > NOW() \
-                 RETURNING client_id, eppn, redirect_uri, code_challenge, ceiling_digest::text",
+                 RETURNING client_id, eppn, redirect_uri, code_challenge, ceiling_digest::text, access",
                 &[&code_hash],
             )?;
             let out = if let Some(r) = fresh {
-                CodeUse::Fresh(CodeRow { client_id: r.get(0), eppn: r.get(1), redirect_uri: r.get(2), code_challenge: r.get(3), ceiling_digest: r.get(4) })
+                CodeUse::Fresh(CodeRow { client_id: r.get(0), eppn: r.get(1), redirect_uri: r.get(2), code_challenge: r.get(3), ceiling_digest: r.get(4), access: r.get(5) })
             } else if tx.query_opt("SELECT 1 FROM oauth_codes WHERE code_hash = $1 AND used_at IS NOT NULL", &[&code_hash])?.is_some() {
                 tx.execute(
                     "UPDATE api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL AND token_hash IN (SELECT token_hash FROM oauth_tokens WHERE code_hash = $1)",
@@ -145,21 +167,39 @@ impl PostgresRepository {
         })
     }
 
-    pub fn insert_oauth_token(&self, token_hash: &str, client_id: &str, eppn: &str, code_hash: &str) -> Result<(), RepositoryError> {
+    pub fn insert_oauth_token(&self, token_hash: &str, client_id: &str, eppn: &str, code_hash: &str, session: Option<uuid::Uuid>) -> Result<(), RepositoryError> {
         let (token_hash, client_id, eppn, code_hash) = (token_hash.to_string(), client_id.to_string(), eppn.to_string(), code_hash.to_string());
         self.with_client(move |client| {
-            client.execute("INSERT INTO oauth_tokens (token_hash, client_id, eppn, code_hash) VALUES ($1, $2, $3, $4)", &[&token_hash, &client_id, &eppn, &code_hash])?;
+            client.execute(
+                "INSERT INTO oauth_tokens (token_hash, client_id, eppn, code_hash, session_id) VALUES ($1, $2, $3, $4, $5)",
+                &[&token_hash, &client_id, &eppn, &code_hash, &session],
+            )?;
             Ok(())
         })
     }
 
-    /// The client a `client` token came from. None when the token has no client.
-    pub fn client_of_token(&self, token_hash: &str) -> Result<Option<ClientRow>, RepositoryError> {
+    /// The client a `client` token came from, and its session when it came from an agent client. None when the token
+    /// has no client.
+    pub fn client_of_token(&self, token_hash: &str) -> Result<Option<(ClientRow, Option<SessionRow>)>, RepositoryError> {
         let token_hash = token_hash.to_string();
         self.with_client(move |client| {
             let columns: Vec<String> = COLUMNS.split(", ").map(|c| format!("c.{c}")).collect();
-            let sql = format!("SELECT {} FROM oauth_tokens t JOIN app_clients c ON c.client_id = t.client_id WHERE t.token_hash = $1", columns.join(", "));
-            Ok(client.query_opt(&sql, &[&token_hash])?.map(|r| row_of(&r)))
+            let sql = format!(
+                "SELECT {}, s.session_id, s.access, s.task, (s.revoked_at IS NULL AND s.expires_at > NOW()) \
+                 FROM oauth_tokens t JOIN app_clients c ON c.client_id = t.client_id LEFT JOIN oauth_sessions s ON s.session_id = t.session_id \
+                 WHERE t.token_hash = $1",
+                columns.join(", ")
+            );
+            Ok(client.query_opt(&sql, &[&token_hash])?.map(|r| {
+                let n = COLUMNS.split(", ").count();
+                let session = r.get::<_, Option<uuid::Uuid>>(n).map(|session_id| SessionRow {
+                    session_id,
+                    access: r.get(n + 1),
+                    task: r.get(n + 2),
+                    active: r.get::<_, Option<bool>>(n + 3).unwrap_or(false),
+                });
+                (row_of(&r), session)
+            }))
         })
     }
 
@@ -219,8 +259,9 @@ impl PostgresRepository {
                 "UPDATE api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL AND token_hash IN (SELECT token_hash FROM oauth_tokens WHERE client_id = $2 AND eppn = $1)",
                 &[&eppn, &client_id],
             )?;
+            let sessions = tx.execute("UPDATE oauth_sessions SET revoked_at = NOW() WHERE revoked_at IS NULL AND client_id = $2 AND eppn = $1", &[&eppn, &client_id])?;
             tx.commit()?;
-            Ok(consents + tokens > 0)
+            Ok(consents + tokens + sessions > 0)
         })
     }
 
@@ -228,4 +269,86 @@ impl PostgresRepository {
     pub fn active_client_redirects(&self) -> Result<Vec<String>, RepositoryError> {
         self.with_client(move |client| Ok(client.query("SELECT unnest(redirect_uris) FROM app_clients WHERE status = 'Active'", &[])?.iter().map(|r| r.get(0)).collect()))
     }
+
+    /// Starts a session. It ends `hours` from now.
+    pub fn create_session(&self, client_id: &str, eppn: &str, access: &str, hours: i64) -> Result<uuid::Uuid, RepositoryError> {
+        let (client_id, eppn, access) = (client_id.to_string(), eppn.to_string(), access.to_string());
+        let id = uuid::Uuid::new_v4();
+        self.with_client(move |client| {
+            client.execute(
+                "INSERT INTO oauth_sessions (session_id, client_id, eppn, access, expires_at) VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5::int))",
+                &[&id, &client_id, &eppn, &access, &(hours as i32)],
+            )?;
+            Ok(id)
+        })
+    }
+
+    /// Seconds a session has left, or None when it was revoked or has ended.
+    pub fn session_seconds_left(&self, session: uuid::Uuid) -> Result<Option<i64>, RepositoryError> {
+        self.with_client(move |client| {
+            Ok(client
+                .query_opt("SELECT EXTRACT(EPOCH FROM (expires_at - NOW()))::float8 FROM oauth_sessions WHERE session_id = $1 AND revoked_at IS NULL AND expires_at > NOW()", &[&session])?
+                .map(|r| r.get::<_, f64>(0) as i64))
+        })
+    }
+
+    pub fn insert_refresh(&self, refresh_hash: &str, session: uuid::Uuid) -> Result<(), RepositoryError> {
+        let refresh_hash = refresh_hash.to_string();
+        self.with_client(move |client| {
+            client.execute("INSERT INTO oauth_refresh (refresh_hash, session_id) VALUES ($1, $2)", &[&refresh_hash, &session])?;
+            Ok(())
+        })
+    }
+
+    /// Uses a refresh token once. A second use ends the session and revokes every token it issued (RFC 9700 4.14).
+    pub fn take_refresh(&self, refresh_hash: &str) -> Result<RefreshUse, RepositoryError> {
+        let refresh_hash = refresh_hash.to_string();
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let fresh = tx.query_opt("UPDATE oauth_refresh SET used_at = NOW() WHERE refresh_hash = $1 AND used_at IS NULL RETURNING session_id", &[&refresh_hash])?;
+            let out = if let Some(r) = fresh {
+                let session: uuid::Uuid = r.get(0);
+                match tx.query_opt(
+                    "SELECT client_id, eppn, access, EXTRACT(EPOCH FROM (expires_at - NOW()))::float8 FROM oauth_sessions WHERE session_id = $1 AND revoked_at IS NULL AND expires_at > NOW()",
+                    &[&session],
+                )? {
+                    Some(s) => RefreshUse::Fresh { session_id: session, client_id: s.get(0), eppn: s.get(1), access: s.get(2), seconds_left: s.get::<_, f64>(3) as i64 },
+                    None => RefreshUse::Missing,
+                }
+            } else if let Some(r) = tx.query_opt("SELECT session_id FROM oauth_refresh WHERE refresh_hash = $1 AND used_at IS NOT NULL", &[&refresh_hash])? {
+                let session: uuid::Uuid = r.get(0);
+                revoke_session_in(&mut tx, session)?;
+                RefreshUse::Reused
+            } else {
+                RefreshUse::Missing
+            };
+            tx.commit()?;
+            Ok(out)
+        })
+    }
+
+    /// Ends a session now.
+    pub fn end_session(&self, session: uuid::Uuid) -> Result<(), RepositoryError> {
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            revoke_session_in(&mut tx, session)?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Records what the tool says it is doing. False when the session is not active.
+    pub fn set_session_task(&self, session: uuid::Uuid, task: &str) -> Result<bool, RepositoryError> {
+        let task = task.to_string();
+        self.with_client(move |client| {
+            Ok(client.execute("UPDATE oauth_sessions SET task = $2 WHERE session_id = $1 AND revoked_at IS NULL AND expires_at > NOW()", &[&session, &task])? == 1)
+        })
+    }
+}
+
+/// Ends a session: its tokens stop and it takes no more refresh tokens.
+fn revoke_session_in(tx: &mut postgres::Transaction<'_>, session: uuid::Uuid) -> Result<(), postgres::Error> {
+    tx.execute("UPDATE oauth_sessions SET revoked_at = NOW() WHERE session_id = $1 AND revoked_at IS NULL", &[&session])?;
+    tx.execute("UPDATE api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL AND token_hash IN (SELECT token_hash FROM oauth_tokens WHERE session_id = $1)", &[&session])?;
+    Ok(())
 }

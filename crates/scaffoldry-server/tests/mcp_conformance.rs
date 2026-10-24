@@ -263,6 +263,7 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("delete_view", false, true, true),
     ("get_job", true, false, false),
     ("cancel_job", false, true, true),
+    ("begin_task", false, false, true),
     ("export_records", false, false, false),
 ];
 

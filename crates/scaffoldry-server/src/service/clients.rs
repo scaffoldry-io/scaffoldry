@@ -40,7 +40,7 @@ pub struct AppCeiling {
     pub tables: Vec<TableCeiling>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ceiling {
     pub apps: Vec<AppCeiling>,
@@ -53,6 +53,8 @@ pub struct Registration {
     pub operator: String,
     pub kind: String,
     pub redirect_uris: Vec<String>,
+    /// An agent client has none: it acts within the person's own rights.
+    #[serde(default)]
     pub ceiling: Ceiling,
 }
 
@@ -214,7 +216,19 @@ pub struct ClientView<'a>(pub &'a ClientRow);
 
 /// The ceiling of a stored client as sentences. The consent screen and the console both call this.
 pub fn ceiling_sentences(client: &ClientView<'_>, state: &SharedState) -> Vec<String> {
-    sentences(&ceiling_of(client.0), state)
+    sentences_of(client.0, state)
+}
+
+/// What an agent client may do is chosen by each person at sign-in, so its sentences say how it works.
+fn sentences_of(row: &ClientRow, state: &SharedState) -> Vec<String> {
+    if row.kind == "agent" {
+        return vec![
+            "Acts as you, within what you may already do. It never has more than you.".to_string(),
+            "You choose what it may do each time it signs in: read, propose changes, or write records.".to_string(),
+            "It may read sensitive fields you may read. Those reads are recorded.".to_string(),
+        ];
+    }
+    sentences(&ceiling_of(row), state)
 }
 
 /// A stored client's ceiling. One that does not parse is empty, which allows nothing.
@@ -227,7 +241,7 @@ pub fn ceiling_of(row: &ClientRow) -> Ceiling {
 /// is left out, so an empty ceiling is a scope that allows nothing.
 pub fn scope_of(ceiling: &Ceiling) -> scaffoldry_core::TokenScope {
     use scaffoldry_core::TokenOp;
-    let mut scope = scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None };
+    let mut scope = scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: None };
     for app in &ceiling.apps {
         for table in &app.tables {
             let ops: Vec<TokenOp> = [
@@ -273,7 +287,7 @@ pub fn view(row: &ClientRow, state: &SharedState) -> Value {
         "kind": row.kind,
         "redirect_uris": row.redirect_uris,
         "ceiling": row.ceiling,
-        "sentences": sentences(&ceiling_of(row), state),
+        "sentences": sentences_of(row, state),
         "status": row.status,
         "proposed_by": row.proposed_by,
         "proposed_at": row.proposed_at,
@@ -321,8 +335,17 @@ pub fn propose(caller: &AuthUser, input: Registration, state: &SharedState) -> R
     if operator.is_empty() || operator.len() > 255 {
         return Err(ServiceError::bad_request("Argument 'operator' must name who runs the app, in 1 to 255 characters"));
     }
-    if !matches!(input.kind.as_str(), "public" | "confidential") {
-        return Err(ServiceError::bad_request("Argument 'kind' must be public or confidential"));
+    if !matches!(input.kind.as_str(), "public" | "confidential" | "agent") {
+        return Err(ServiceError::bad_request("Argument 'kind' must be public, confidential or agent"));
+    }
+    // An AI tool the institution allows. Only a Platform Admin registers one, and it has no ceiling of its own.
+    if input.kind == "agent" {
+        if !is_platform_admin(caller) {
+            return Err(ServiceError::forbidden("Forbidden: only a Platform Admin registers an AI tool as an agent client"));
+        }
+        if !input.ceiling.apps.is_empty() {
+            return Err(ServiceError::bad_request("An agent client has no ceiling: it acts within the person's own rights"));
+        }
     }
     if input.redirect_uris.is_empty() || input.redirect_uris.len() > MAX_REDIRECTS {
         return Err(ServiceError::bad_request(format!("A client needs between 1 and {MAX_REDIRECTS} redirect addresses")));
@@ -331,7 +354,9 @@ pub fn propose(caller: &AuthUser, input: Registration, state: &SharedState) -> R
     for uri in &input.redirect_uris {
         check_redirect(uri, allow_localhost).map_err(ServiceError::bad_request)?;
     }
-    check_ceiling(&input.ceiling, state)?;
+    if input.kind != "agent" {
+        check_ceiling(&input.ceiling, state)?;
+    }
     // The person must be able to propose in every workspace the ceiling names.
     for ws in workspaces_of(&input.ceiling, state) {
         if !matches!(role_in(caller, &ws, state).as_deref(), Some("owner" | "admin" | "editor")) {
@@ -386,11 +411,16 @@ pub fn decide(caller: &AuthUser, id: &str, decision: &str, rationale: &str, stat
     let ceiling = ceiling_of(&row);
     let workspaces = workspaces_of(&ceiling, state);
     let roles: Vec<Option<String>> = workspaces.iter().map(|w| role_in(caller, w, state)).collect();
-    if roles.is_empty() || !roles.iter().all(|r| matches!(r.as_deref(), Some("owner" | "admin"))) {
+    let agent = row.kind == "agent";
+    if agent {
+        if !is_platform_admin(caller) {
+            return Err(ServiceError::forbidden("Forbidden: only a Platform Admin decides an agent client"));
+        }
+    } else if roles.is_empty() || !roles.iter().all(|r| matches!(r.as_deref(), Some("owner" | "admin"))) {
         return Err(ServiceError::forbidden("Forbidden: deciding a client needs the owner or admin role in every workspace it names"));
     }
     let is_proposer = row.proposed_by.eq_ignore_ascii_case(&caller.eppn);
-    if is_proposer {
+    if is_proposer && !agent {
         if needs_second_person(&ceiling, state) {
             return Err(ServiceError::forbidden("Forbidden: a client that writes, or reaches more than one workspace, needs a second person to decide it"));
         }

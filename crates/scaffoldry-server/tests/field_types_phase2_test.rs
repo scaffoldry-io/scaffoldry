@@ -302,6 +302,7 @@ async fn an_import_sets_created_by_to_the_importer_and_the_kind_to_import() {
         kind: scaffoldry_server::repository::ActorKind::Import,
         token_label: Some("CSV Import Job #42".to_string()),
         batch_id: Some(Uuid::new_v4()),
+        session: None,
     };
     let caller = scaffoldry_server::service::identity::resolve_user(OWNER, &w.state).expect("caller");
 

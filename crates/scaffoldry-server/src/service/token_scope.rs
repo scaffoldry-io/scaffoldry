@@ -6,7 +6,7 @@
 use crate::service::ServiceError;
 use crate::state::SharedState;
 use scaffoldry_core::token_scope::{data_tool, TableFrom};
-use scaffoldry_core::{TokenOp, TokenScope};
+use scaffoldry_core::{AgentLevel, TokenOp, TokenScope};
 use scaffoldry_engine::HostRouter;
 use serde_json::Value;
 
@@ -30,8 +30,70 @@ fn check_table(scope: &TokenScope, app: &str, table: &str, op: TokenOp) -> Resul
     Ok(())
 }
 
+/// The level a session needs to call a tool, or None for a tool no session may call: a person does that.
+fn level_needed(name: &str) -> Option<AgentLevel> {
+    match name {
+        "begin_task" => Some(AgentLevel::Read),
+        "propose_app_change" | "preview_proposal" => Some(AgentLevel::Propose),
+        "create_record" | "update_record" | "delete_record" => Some(AgentLevel::Write),
+        _ => crate::service::tools::TOOLS.iter().find(|t| t.name == name).filter(|t| t.read_only).map(|_| AgentLevel::Read),
+    }
+}
+
+fn rank(level: AgentLevel) -> u8 {
+    match level {
+        AgentLevel::Read => 0,
+        AgentLevel::Propose => 1,
+        AgentLevel::Write => 2,
+    }
+}
+
+/// Whether a session at `level` may call the tool.
+fn session_allows_tool(level: AgentLevel, name: &str) -> bool {
+    level_needed(name).is_some_and(|needed| rank(needed) <= rank(level))
+}
+
+/// Whether `tools/list` shows the tool to a token with this scope.
+pub fn lists_tool(scope: &TokenScope, name: &str) -> bool {
+    match scope.level {
+        Some(level) => session_allows_tool(level, name),
+        None => scope.allows_tool(name),
+    }
+}
+
+/// Why a session may not call the tool, in words that tell the AI tool what the person can do.
+fn session_refusal(scope: &TokenScope, level: AgentLevel, name: &str) -> ServiceError {
+    match level_needed(name) {
+        Some(needed) => refuse(
+            scope,
+            &format!(
+                "This session was given '{}'. The tool '{name}' needs '{}'. Ask the person to reconnect this tool and choose that, if they want it.",
+                level.sentence(),
+                needed.sentence()
+            ),
+        ),
+        None => refuse(scope, &format!("A tool may not call '{name}'. A person does that.")),
+    }
+}
+
+/// A session may use the record routes it can read, and write them at the Write level. It reads whatever its person reads.
+fn session_request(scope: &TokenScope, level: AgentLevel, method: &axum::http::Method, path: &str) -> Result<(), ServiceError> {
+    use axum::http::Method;
+    let read = method == Method::GET || method == Method::HEAD;
+    let segments: Vec<&str> = path.trim_start_matches("/api/v1/").trim_matches('/').split('/').collect();
+    let records = matches!(segments.as_slice(), ["apps", _, "records"] | ["apps", _, "tables", _, "records"] | ["apps", _, "tables", _, "records", _] | ["apps", _, "records", _]);
+    if read || segments.as_slice() == ["auth", "logout"] || (records && level == AgentLevel::Write) {
+        Ok(())
+    } else {
+        Err(refuse(scope, &format!("This session was given '{}'. Ask the person to reconnect this tool and choose 'Read, propose, and write records' to change records.", level.sentence())))
+    }
+}
+
 /// Checks a tool call against the scope, and lowers a list limit to the cap. `args` is changed in place.
 pub fn check_tool(scope: &TokenScope, name: &str, args: &mut Value, state: &SharedState) -> Result<(), ServiceError> {
+    if let Some(level) = scope.level {
+        return if session_allows_tool(level, name) { Ok(()) } else { Err(session_refusal(scope, level, name)) };
+    }
     let Some((op, from)) = data_tool(name).filter(|_| scope.allows_tool(name)) else {
         return Err(refuse(scope, &format!("This token may not call the tool '{name}'.")));
     };
@@ -59,6 +121,9 @@ pub fn check_tool(scope: &TokenScope, name: &str, args: &mut Value, state: &Shar
 /// Checks a REST request against the scope. Only the record routes are open to a limited token.
 pub fn check_request(scope: &TokenScope, method: &axum::http::Method, path: &str, state: &SharedState) -> Result<(), ServiceError> {
     use axum::http::Method;
+    if let Some(level) = scope.level {
+        return session_request(scope, level, method, path);
+    }
     let segments: Vec<&str> = path.trim_start_matches("/api/v1/").trim_matches('/').split('/').collect();
     let read = method == Method::GET || method == Method::HEAD;
     match segments.as_slice() {
