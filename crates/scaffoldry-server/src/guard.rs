@@ -63,11 +63,7 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
     // A token shaped like a JWT comes from the institution's identity provider and is verified against the keys in settings.
     // Anything else is a stored row. It names the person and nothing more: roles come from the stored rows.
     if crate::jwt::is_jwt_shaped(token) {
-<<<<<<< HEAD
         return provider_user(token, state);
-=======
-        return resolve_user(&crate::jwt::validate_jwt(token, state)?, state);
->>>>>>> origin/main
     }
     let hash = hash_token(token);
 
