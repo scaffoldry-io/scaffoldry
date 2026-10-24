@@ -256,6 +256,7 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("decide_proposal", false, false, false),
     ("preview_proposal", false, false, false),
     ("get_agent_kit", true, false, false),
+    ("explain_access", true, false, false),
     ("list_waiting_decisions", true, false, false),
     ("decide_process", false, false, false),
     ("list_views", true, false, false),

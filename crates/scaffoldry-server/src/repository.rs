@@ -1659,6 +1659,15 @@ impl PostgresRepository {
         })
     }
 
+    /// One change to a workspace's coordinates, with the workspace it is for and where it stands.
+    pub fn coordinate_change(&self, change: uuid::Uuid) -> Result<Option<(String, scaffoldry_core::coordinates::Coordinates, String)>, RepositoryError> {
+        self.with_client(move |client| {
+            Ok(client
+                .query_opt("SELECT workspace_id, coordinates, status FROM workspace_coordinate_changes WHERE id = $1", &[&change])?
+                .map(|r| (r.get::<_, String>(0), serde_json::from_value(r.get::<_, Value>(1)).unwrap_or_default(), r.get::<_, String>(2))))
+        })
+    }
+
     /// Decides a pending change. The row is locked, so two people deciding at once decide it once. The person who
     /// proposed a change cannot confirm it.
     pub fn decide_coordinate_change(&self, workspace_id: &str, change: uuid::Uuid, decider: &str, confirm: bool) -> Result<CoordinateDecision, RepositoryError> {

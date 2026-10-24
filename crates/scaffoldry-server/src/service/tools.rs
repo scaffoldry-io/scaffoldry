@@ -250,7 +250,7 @@ Tool {
     },
     Tool {
         name: "decide_proposal",
-        description: "Approve or reject a proposal. To approve, send the digest of the proposal you reviewed. A workspace owner or admin only. A change with a failed sensitivity, data loss, or page sensitivity check needs a second person.",
+        description: "Approve or reject a proposal. To approve, send the digest you reviewed. A workspace owner or admin only. A failed sensitivity, data loss, or page sensitivity check needs a second person.",
         input_schema: schema_decide_proposal,
         scope: Scope::Proposal("manage_workspace"),
         read_only: false,
@@ -271,6 +271,14 @@ Tool {
         scope: Scope::SignedIn,
         read_only: true,
         run: run_get_agent_kit,
+    },
+    Tool {
+        name: "explain_access",
+        description: "Show why you have the role you have on a workspace, app or table: the grants that reached it, and those that did not. Your own access only.",
+        input_schema: schema_explain_access,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_explain_access,
     },
     Tool {
         name: "list_waiting_decisions",
@@ -488,7 +496,7 @@ fn schema_create_record() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "data": { "type": "object", "description": "Record field key-value pairs" }
         },
         "required": ["app_slug", "data"]
@@ -694,7 +702,7 @@ fn run_get_framework_spec(_caller: &AuthUser, _origin: &Origin, _args: Value, _s
 fn schema_list_views() -> Value {
     json!({
         "type": "object",
-        "properties": { "app_slug": { "type": "string", "description": "Application slug identifier" } },
+        "properties": { "app_slug": { "type": "string" } },
         "required": ["app_slug"]
     })
 }
@@ -703,7 +711,7 @@ fn schema_save_view() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "view_id": { "type": "string", "description": "The view to change. Leave out to create one" },
             "name": { "type": "string", "description": "1 to 120 characters" },
             "kind": { "type": "string", "enum": ["grid", "kanban", "calendar", "gallery", "form", "summary", "dashboard"], "description": "Required to create" },
@@ -720,7 +728,7 @@ fn schema_delete_view() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "view_id": { "type": "string", "description": "The view to delete" }
         },
         "required": ["app_slug", "view_id"]
@@ -866,7 +874,7 @@ fn schema_list_apps() -> Value {
 fn schema_describe_app() -> Value {
     json!({
         "type": "object",
-        "properties": { "app_slug": { "type": "string", "description": "Application slug identifier" } },
+        "properties": { "app_slug": { "type": "string" } },
         "required": ["app_slug"]
     })
 }
@@ -875,7 +883,7 @@ fn schema_get_page() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "page_id": { "type": "string", "description": "Page id from list_pages. It must be a custom page" }
         },
         "required": ["app_slug", "page_id"]
@@ -886,7 +894,7 @@ fn schema_page_call() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "page_id": { "type": "string", "description": "Page id from list_pages" },
             "op": { "type": "string", "description": "list, get, create, update, remove, settings_get, or settings_set" },
             "table_id": { "type": "string", "description": "The table. The page needs a grant for it" },
@@ -920,7 +928,7 @@ fn schema_list_records() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "table_id": { "type": "string", "description": "Table id or slug from describe_app" },
             "filter": { "type": "object", "description": "{ conjunction: And|Or, clauses: [{ id, field_name, operator, value }] }. Operators: Equals, NotEquals, Contains, NotContains, GreaterThan, LessThan, IsEmpty, IsNotEmpty" },
             "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
@@ -936,7 +944,7 @@ fn schema_get_record() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "record_id": { "type": "string", "description": "Record id" }
         },
         "required": ["app_slug", "record_id"]
@@ -947,7 +955,7 @@ fn schema_update_record() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "record_id": { "type": "string", "description": "Record id" },
             "version": { "type": "integer", "description": "The version you read" },
             "data": { "type": "object", "description": "Fields to change. Set a field to null to clear it" }
@@ -960,7 +968,7 @@ fn schema_delete_record() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "record_id": { "type": "string", "description": "Record id" },
             "version": { "type": "integer", "description": "The version you read" }
         },
@@ -1112,7 +1120,7 @@ fn schema_get_record_history() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "record_id": { "type": "string", "description": "Record id" },
             "limit": { "type": "integer", "description": "Entries per page, 1 to 200. Default 50" },
             "cursor": { "type": "string", "description": "The next_cursor of the previous page" }
@@ -1273,11 +1281,36 @@ fn run_get_agent_kit(_caller: &AuthUser, _origin: &Origin, _args: Value, _state:
     Ok(crate::service::agent_kit::kit())
 }
 
+fn schema_explain_access() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "object": { "type": "string", "description": "workspace:<id>, app:<slug> or table:<slug>/<table id>" },
+            "person": { "type": "string", "description": "Your own address, or leave out" }
+        },
+        "required": ["object"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct ExplainAccessArgs {
+    object: String,
+    person: Option<String>,
+}
+
+fn run_explain_access(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ExplainAccessArgs = parse(args)?;
+    if a.person.as_deref().is_some_and(|p| !p.trim().eq_ignore_ascii_case(&caller.eppn)) {
+        return Err(ServiceError::forbidden("explain_access explains your own access. Ask a Platform Admin or compliance to explain someone else's"));
+    }
+    crate::service::access_review::explain(state, caller, &caller.eppn, &a.object)
+}
+
 fn schema_decide_process() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "instance_id": { "type": "string", "description": "The id of the waiting process instance" },
             "decision": { "type": "string", "description": "approve or reject" }
         },
@@ -1356,7 +1389,7 @@ fn schema_aggregate_records() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "table_id": { "type": "string", "description": "Table id or slug from describe_app" },
             "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "Aggregate function. count_distinct (alias unique), filled and empty work on a field of any type" },
             "field": { "type": "string", "description": "Numeric field to aggregate (required unless function is count)" },
@@ -1418,7 +1451,7 @@ fn schema_export_records() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "app_slug": { "type": "string", "description": "Application slug identifier" },
+            "app_slug": { "type": "string" },
             "table_id": { "type": "string", "description": "Table id or slug to export" },
             "format": { "type": "string", "description": "Export format: csv, xlsx, json, or jsonl (default csv)" },
             "fields": { "type": "array", "items": { "type": "string" }, "description": "Field names to include" }

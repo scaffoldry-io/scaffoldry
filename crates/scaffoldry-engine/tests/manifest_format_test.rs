@@ -162,7 +162,7 @@ fn views_pages_and_links_must_point_at_things_that_exist() {
         fields: vec![field("credits", FieldType::Number)],
         primary_field: None,
         sample_records: vec![],
-        coordinates: None,
+        coordinates: None, sealed: false,
         row_place: Default::default(),
     });
     let mut roll = field("total_credits", FieldType::Rollup);

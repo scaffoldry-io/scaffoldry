@@ -8,7 +8,7 @@ use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::coordinates::{sensitivity_rank, SENSITIVITY_LEVELS};
 use scaffoldry_core::ledger::DecisionType;
-use scaffoldry_core::reach::{AnchorKind, HolderKind};
+use scaffoldry_core::reach::{AnchorKind, Grant, HolderKind};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -80,13 +80,18 @@ fn rights(state: &SharedState, caller: &AuthUser) -> Rights {
     Rights { platform, admin_units }
 }
 
-/// The workspace an anchor names: `workspace:<id>`, or `app:<slug>` through the app's workspace.
+/// The workspace an anchor names: `workspace:<id>`, or `app:<slug>` or `table:<slug>/<table id>` through the app's workspace.
 fn workspace_of_anchor(state: &SharedState, anchor: &str) -> Option<String> {
     if let Some(id) = anchor.strip_prefix("workspace:") {
         return state.workspaces.read().unwrap_or_else(|p| p.into_inner()).contains_key(id).then(|| id.to_string());
     }
-    let slug = anchor.strip_prefix("app:")?;
     use scaffoldry_engine::HostRouter;
+    if let Some(rest) = anchor.strip_prefix("table:") {
+        let (slug, table) = rest.split_once('/')?;
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        return engine.resolve_by_slug(slug).filter(|m| m.tables.iter().any(|t| t.id == table)).and_then(|m| m.workspace_id.clone());
+    }
+    let slug = anchor.strip_prefix("app:")?;
     state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(slug).and_then(|m| m.workspace_id.clone())
 }
 
@@ -205,7 +210,7 @@ fn check_anchor(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
                 return Err(bad("a container anchor has no hierarchy or depth"));
             }
             let anchor = g.anchor_id.as_deref().ok_or_else(|| bad("anchor_id is required for a container anchor"))?;
-            workspace_of_anchor(state, anchor).ok_or_else(|| bad(format!("container '{anchor}' does not exist. Use workspace:<id> or app:<slug>")))?;
+            workspace_of_anchor(state, anchor).ok_or_else(|| bad(format!("container '{anchor}' does not exist. Use workspace:<id>, app:<slug> or table:<slug>/<table id>")))?;
         }
         AnchorKind::Unit | AnchorKind::HolderUnit => {
             let hierarchy = g.hierarchy.as_deref().ok_or_else(|| bad("hierarchy is required for a unit anchor"))?;
@@ -262,6 +267,32 @@ fn check_holder(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
         }
     }
     Ok(())
+}
+
+/// A pending change as a grant the reach rule can read, for the impact of deciding it. `None` when no grant change has this
+/// id. The caller needs the right to decide the change, which is the right to see what it would do.
+pub fn pending_grant(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Option<Grant>, ServiceError> {
+    let Some((change, status, _, _)) = state.repository.access_change(id).map_err(internal)? else { return Ok(None) };
+    let g = NewGrant::of_json(&change["grant"]).ok_or_else(|| ServiceError::Internal("The stored change is not a grant".to_string()))?;
+    scope_allows(state, &rights(state, caller), caller, &g).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?;
+    if status != "Pending" {
+        return Err(ServiceError::conflict("That change has already been decided"));
+    }
+    Ok(Some(Grant {
+        id: i64::MAX,
+        holder_kind: g.holder_kind,
+        holder_id: g.holder_id,
+        role: g.role,
+        hierarchy: g.hierarchy,
+        anchor_kind: g.anchor_kind,
+        anchor_id: g.anchor_id,
+        depth: g.depth.and_then(|d| i16::try_from(d).ok()),
+        domain: g.domain,
+        valid_from: 0,
+        valid_until: g.valid_until.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok()).map(|d| d.timestamp()),
+        revoked: false,
+        clearance: g.clearance.as_deref().and_then(sensitivity_rank),
+    }))
 }
 
 /// Stores a new grant as a change that waits for a different person.

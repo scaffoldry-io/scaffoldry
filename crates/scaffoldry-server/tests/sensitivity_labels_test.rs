@@ -50,7 +50,7 @@ async fn a_label_raises_the_flag_of_a_record_that_holds_the_field() {
             department: "physics".to_string(),
             workspace_id: Some("ws-physics-optics".to_string()),
             herm_capability_id: None,
-            coordinates: None,
+            coordinates: None, sealed: false,
             custom_domain: None,
             custom_domain_verified: false,
             views: vec![AppView::table(
@@ -109,7 +109,7 @@ async fn a_protected_category_flags_a_record_and_an_unprotected_one_does_not() {
             department: "physics".to_string(),
             workspace_id: Some("ws-physics-optics".to_string()),
             herm_capability_id: None,
-            coordinates: None,
+            coordinates: None, sealed: false,
             custom_domain: None,
             custom_domain_verified: false,
             views: vec![AppView::table(

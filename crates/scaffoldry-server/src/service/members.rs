@@ -249,37 +249,14 @@ pub fn member_roles_in_apps(eppn: &str, pairs: &[(String, String)], state: &Shar
     roles_for(eppn, &targets, state)
 }
 
-/// `role_at` for each `(workspace, app)` target. No lock is held while the database is read.
-fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) -> Vec<Option<Role>> {
-    // A preview of a proposal is the person's rights in the live app.
-    let stored: Vec<(&str, Option<&str>)> = targets.iter().map(|(w, a)| (*w, a.map(crate::service::preview::stored_slug))).collect();
-    let targets = stored.as_slice();
-    let none = || vec![None; targets.len()];
+/// Who a person is to the reach rule, and every grant that could name them: the unit-administrator grants derived from their
+/// appointments, and the stored grants held by them or by anything they belong to. Memberships are per workspace and are
+/// added by the caller. `None` when the unit tree cannot be read.
+pub fn standing(eppn: &str, state: &SharedState) -> Option<(HolderSet, Vec<Grant>)> {
     let now = chrono::Utc::now().timestamp();
     let rows = state.repository.holdings_of(eppn).unwrap_or_default();
     let holdings: Vec<Holding> = rows.iter().map(|(h, _)| h.clone()).collect();
     let groups = state.group_ids_of(eppn);
-
-    // A copy of what the targets need, taken under short locks.
-    let (workspaces, memberships) = {
-        let ws = state.workspaces.read().unwrap_or_else(|p| p.into_inner());
-        let collabs = state.collaborators.read().unwrap_or_else(|p| p.into_inner());
-        let mut w = std::collections::HashMap::new();
-        let mut m = std::collections::HashMap::new();
-        for (workspace, _) in targets {
-            if let Some(rec) = ws.get(*workspace) {
-                w.insert(workspace.to_string(), rec.clone());
-            }
-            m.insert(workspace.to_string(), collabs.get(*workspace).cloned().unwrap_or_default());
-        }
-        (w, m)
-    };
-    let manifests: std::collections::HashMap<String, scaffoldry_engine::AppManifest> = {
-        use scaffoldry_engine::HostRouter;
-        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
-        targets.iter().filter_map(|(_, app)| *app).filter_map(|slug| engine.resolve_by_slug(slug).map(|m| (slug.to_string(), m.clone()))).collect()
-    };
-
     // A unit_admin appointment is a grant: the person is admin of the unit's whole subtree. It is derived here, never stored.
     let mut shared: Vec<Grant> = rows
         .iter()
@@ -301,17 +278,52 @@ fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) 
             clearance: None,
         })
         .collect();
-
     // Who the person is, from the unit tree. Then their stored grants, read with no lock held.
-    let Ok(holders) = crate::service::coordinates::with_world(state, |_, tree| {
+    let holders = crate::service::coordinates::with_world(state, |_, tree| {
         for g in shared.iter_mut() {
             g.hierarchy = g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok()).and_then(|u| tree.hierarchy_of(u)).map(str::to_string);
         }
-        holder_set(eppn, &holdings, tree, groups, now)
-    }) else {
-        return none();
-    };
+        holder_set(eppn, &holdings, tree, groups.clone(), now)
+    })
+    .ok()?;
     shared.extend(state.repository.grants_held_by(&holder_pairs(&holders)).unwrap_or_default());
+    Some((holders, shared))
+}
+
+/// Every membership of a workspace as a container grant. Indexes start below the derived grants' ids.
+pub fn membership_grants(workspace: &str, state: &SharedState) -> Vec<Grant> {
+    memberships(workspace, state).iter().enumerate().filter_map(|(i, c)| membership_grant(c, i)).collect()
+}
+
+/// `role_at` for each `(workspace, app)` target. No lock is held while the database is read.
+fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) -> Vec<Option<Role>> {
+    // A preview of a proposal is the person's rights in the live app.
+    let stored: Vec<(&str, Option<&str>)> = targets.iter().map(|(w, a)| (*w, a.map(crate::service::preview::stored_slug))).collect();
+    let targets = stored.as_slice();
+    let none = || vec![None; targets.len()];
+    let now = chrono::Utc::now().timestamp();
+
+    // A copy of what the targets need, taken under short locks.
+    let (workspaces, memberships) = {
+        let ws = state.workspaces.read().unwrap_or_else(|p| p.into_inner());
+        let collabs = state.collaborators.read().unwrap_or_else(|p| p.into_inner());
+        let mut w = std::collections::HashMap::new();
+        let mut m = std::collections::HashMap::new();
+        for (workspace, _) in targets {
+            if let Some(rec) = ws.get(*workspace) {
+                w.insert(workspace.to_string(), rec.clone());
+            }
+            m.insert(workspace.to_string(), collabs.get(*workspace).cloned().unwrap_or_default());
+        }
+        (w, m)
+    };
+    let manifests: std::collections::HashMap<String, scaffoldry_engine::AppManifest> = {
+        use scaffoldry_engine::HostRouter;
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        targets.iter().filter_map(|(_, app)| *app).filter_map(|slug| engine.resolve_by_slug(slug).map(|m| (slug.to_string(), m.clone()))).collect()
+    };
+
+    let Some((holders, shared)) = standing(eppn, state) else { return none() };
 
     crate::service::coordinates::with_world(state, |places, tree| {
         targets
@@ -320,13 +332,11 @@ fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) 
                 let mut grants = shared.clone();
                 let members = memberships.get(*workspace).map(Vec::as_slice).unwrap_or_default();
                 grants.extend(members.iter().filter(|c| c.app_slug.is_empty() || Some(c.app_slug.as_str()) == *app).enumerate().filter_map(|(i, c)| membership_grant(c, i)));
-                let mut containers = vec![format!("workspace:{workspace}")];
-                containers.extend(app.map(|a| format!("app:{a}")));
-                let (units, domain) = match workspaces.get(*workspace) {
-                    Some(ws) => crate::service::coordinates::object_place(places, tree, ws, app.and_then(|a| manifests.get(a))),
-                    None => (Default::default(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()),
+                let object = match workspaces.get(*workspace) {
+                    Some(ws) => crate::service::coordinates::object_for(places, tree, ws, app.map(|a| (a, manifests.get(a))), None),
+                    None => Object { containers: vec![format!("workspace:{workspace}")], units: Default::default(), domain: scaffoldry_core::coordinates::ROOT_DOMAIN.to_string(), sealed: Default::default() },
                 };
-                role_at(&holders, &grants, &Object { containers, units, domain }, tree, places, now).map(|(role, _)| role)
+                role_at(&holders, &grants, &object, tree, places, now).map(|(role, _)| role)
             })
             .collect()
     })
@@ -458,9 +468,6 @@ pub fn rows_reach(eppn: &str, workspace: &str, app: &str, table_id: &str, state:
 pub fn contributions_to(eppn: &str, workspace: &str, app: &str, table_id: &str, state: &SharedState) -> Option<Vec<Contribution>> {
     let app = crate::service::preview::stored_slug(app);
     let now = chrono::Utc::now().timestamp();
-    let rows = state.repository.holdings_of(eppn).unwrap_or_default();
-    let holdings: Vec<Holding> = rows.iter().map(|(h, _)| h.clone()).collect();
-    let groups = state.group_ids_of(eppn);
     let ws = state.workspaces.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned()?;
     let memberships: Vec<CollaboratorRecord> = state.collaborators.read().unwrap_or_else(|p| p.into_inner()).get(workspace).cloned().unwrap_or_default();
     let manifest = {
@@ -469,39 +476,11 @@ pub fn contributions_to(eppn: &str, workspace: &str, app: &str, table_id: &str, 
     };
     let row_hierarchies: std::collections::BTreeSet<String> = manifest.tables.iter().find(|t| t.id == table_id).map(|t| t.row_place.keys().cloned().collect()).unwrap_or_default();
 
-    let mut shared: Vec<Grant> = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, (_, affiliation))| affiliation == "unit_admin")
-        .map(|(i, (h, _))| Grant {
-            id: -1_000_000 - i as i64,
-            holder_kind: HolderKind::Person,
-            holder_id: eppn.to_string(),
-            role: Role::Admin,
-            hierarchy: None,
-            anchor_kind: AnchorKind::Unit,
-            anchor_id: Some(h.unit.to_string()),
-            depth: None,
-            domain: None,
-            valid_from: h.effective.unwrap_or(0),
-            valid_until: h.end,
-            revoked: false,
-            clearance: None,
-        })
-        .collect();
-    let holders = crate::service::coordinates::with_world(state, |_, tree| {
-        for g in shared.iter_mut() {
-            g.hierarchy = g.anchor_id.as_deref().and_then(|a| Uuid::parse_str(a).ok()).and_then(|u| tree.hierarchy_of(u)).map(str::to_string);
-        }
-        holder_set(eppn, &holdings, tree, groups, now)
-    })
-    .ok()?;
-    shared.extend(state.repository.grants_held_by(&holder_pairs(&holders)).unwrap_or_default());
+    let (holders, mut shared) = standing(eppn, state)?;
     shared.extend(memberships.iter().filter(|c| c.app_slug.is_empty() || c.app_slug == app).enumerate().filter_map(|(i, c)| membership_grant(c, i)));
 
     crate::service::coordinates::with_world(state, |places, tree| {
-        let (units, domain) = crate::service::coordinates::table_place(places, tree, &ws, &manifest, table_id);
-        let table = Object { containers: vec![format!("workspace:{workspace}"), format!("app:{app}")], units, domain };
+        let table = crate::service::coordinates::object_for(places, tree, &ws, Some((app, Some(&manifest))), Some(table_id));
         row_contributions(&holders, &shared, &table, &row_hierarchies, tree, places, now)
     })
     .ok()

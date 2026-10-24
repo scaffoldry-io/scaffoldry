@@ -40,6 +40,7 @@ pub fn example(name: &str) -> Value {
         "delete_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "version": 3 }),
         "propose_app_change" => json!({ "workspace_id": "ws-physics-optics", "app_slug": "scholarships", "summary": "Add an amount column" }),
         "get_agent_kit" => json!({}),
+        "explain_access" => json!({ "object": "app:scholarships" }),
         "begin_task" => json!({ "task": "Enter the spring grant proposals" }),
         "preview_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11" }),
         "get_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11" }),

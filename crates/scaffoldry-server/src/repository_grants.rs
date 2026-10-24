@@ -144,6 +144,20 @@ impl PostgresRepository {
         })
     }
 
+    /// The addresses, lowercase, of the people with this position today, at one unit or at any.
+    pub fn appointed_to_position(&self, key: &str, unit: Option<uuid::Uuid>) -> Result<Vec<String>, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT DISTINCT lower(p.eppn) FROM roles r JOIN persons p ON p.id = r.person_id \
+                 WHERE r.position_key = $1 AND ($2::uuid IS NULL OR r.organization_id = $2) \
+                 AND r.effective_date <= CURRENT_DATE AND (r.end_date IS NULL OR r.end_date >= CURRENT_DATE) ORDER BY 1",
+                &[&key, &unit],
+            )?;
+            Ok(rows.iter().map(|r| r.get(0)).collect())
+        })
+    }
+
     pub fn list_grant_rows(&self, f: &GrantFilter) -> Result<Vec<GrantRow>, RepositoryError> {
         let f = f.clone();
         self.with_client(move |c| {

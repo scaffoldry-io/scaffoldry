@@ -212,7 +212,7 @@ fn test_differential_20_worlds_and_properties() {
             revoked: false,
             clearance: None,
         };
-        let inside = Object { containers: vec![], units: [("academic".to_string(), moved)].into(), domain: "institution".to_string() };
+        let inside = Object { containers: vec![], units: [("academic".to_string(), moved)].into(), domain: "institution".to_string(), sealed: Default::default() };
         let reader = holder_set("reader@synthetic.invalid", &[], &moved_tree, vec![], now);
         assert!(role_at(&reader, std::slice::from_ref(&old_ancestor_grant), &inside, &tree, &places, now).is_some(), "before the move the old ancestor reaches the unit");
         assert!(role_at(&reader, std::slice::from_ref(&old_ancestor_grant), &inside, &moved_tree, &moved_places, now).is_none(), "after the move the old ancestor does not");
@@ -270,7 +270,7 @@ fn test_differential_20_worlds_and_properties() {
             let holders = holder_set(&person.eppn, &holdings_of(&person.eppn), &tree, groups_of(&person.eppn), now);
             let fetched = grants_held_by(&holders, &world.grants);
             for ((containers, domain), rows) in &tables {
-                let table = Object { containers: containers.clone(), units: Default::default(), domain: domain.clone() };
+                let table = Object { containers: containers.clone(), units: Default::default(), domain: domain.clone(), sealed: Default::default() };
                 let reach = scaffoldry_core::reach::row_reach(&holders, &fetched, &table, &row_hierarchies, &tree, &places, now);
                 match &reach {
                     scaffoldry_core::reach::RowReach::All => by_all += 1,

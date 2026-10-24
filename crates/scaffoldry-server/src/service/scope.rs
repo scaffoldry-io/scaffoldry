@@ -165,8 +165,8 @@ pub fn row_place_of(app_slug: &str, table: &str, state: &SharedState) -> std::co
     engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table)).map(|t| t.row_place.clone()).unwrap_or_default()
 }
 
-/// The rows of a table that places its rows (`row_place`) which the caller's grants reach. A table that places no rows
-/// is not narrowed. A container grant, a workspace membership and a Platform Admin reach every row. Rows reached by any
+/// The rows of a table that places its rows (`row_place`), or is sealed, which the caller's grants reach. Any other table
+/// that places no rows is not narrowed. A container grant, a workspace membership and a Platform Admin reach every row. Rows reached by any
 /// grant are the union, and a row with no place is reached only by a container grant.
 fn reach_scope(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> RowScope {
     use scaffoldry_core::reach::RowReach;
@@ -174,7 +174,8 @@ fn reach_scope(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedSta
         use scaffoldry_engine::HostRouter;
         let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
         match engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table)) {
-            Some(t) if !t.row_place.is_empty() => t.row_place.clone(),
+            // A sealed table is narrowed even when it places no rows: only a grant at the table reaches them.
+            Some(t) if !t.row_place.is_empty() || t.sealed => t.row_place.clone(),
             _ => return RowScope::AllowAll,
         }
     };
