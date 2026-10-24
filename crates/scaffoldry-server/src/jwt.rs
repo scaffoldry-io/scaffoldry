@@ -18,6 +18,16 @@ const LEEWAY_SECONDS: u64 = 30;
 struct Claims {
     sub: Option<String>,
     eppn: Option<String>,
+    /// RFC 9068: the client the token was issued to.
+    client_id: Option<String>,
+    /// OpenID Connect: the party the token was issued to.
+    azp: Option<String>,
+}
+
+/// What a valid provider token says: who the person is and, when it names one, which client it was issued to.
+pub struct Verified {
+    pub person: String,
+    pub client: Option<String>,
 }
 
 fn setting(state: &SharedState, key: &str) -> Option<Value> {
@@ -39,9 +49,9 @@ pub fn configured_issuer(state: &SharedState) -> Option<String> {
     text(state, "oidc.issuer")
 }
 
-/// The person a provider token names, when the token is valid. None when it is not, or when any of the three settings is
+/// The person (and client) a provider token names, when the token is valid. None when it is not, or when any of the three settings is
 /// missing.
-pub fn validate_jwt(token: &str, state: &SharedState) -> Option<String> {
+pub fn validate_jwt(token: &str, state: &SharedState) -> Option<Verified> {
     let (issuer, audience) = (text(state, "oidc.issuer")?, text(state, "oidc.audience")?);
     let jwks: JwkSet = serde_json::from_value(setting(state, "oidc.jwks").filter(|v| v.is_object())?).ok()?;
     let header = decode_header(token).ok()?;
@@ -65,7 +75,9 @@ pub fn validate_jwt(token: &str, state: &SharedState) -> Option<String> {
         }
         let Ok(key) = DecodingKey::from_jwk(jwk) else { continue };
         if let Ok(data) = decode::<Claims>(token, &key, &validation) {
-            return data.claims.eppn.or(data.claims.sub).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            let person = data.claims.eppn.or(data.claims.sub).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())?;
+            let client = data.claims.client_id.or(data.claims.azp).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            return Some(Verified { person, client });
         }
     }
     None
