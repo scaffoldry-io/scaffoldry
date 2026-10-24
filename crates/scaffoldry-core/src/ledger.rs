@@ -78,6 +78,7 @@ pub enum DecisionType {
     AccessGrantChanged,
     CoordinatesChanged,
     HierarchyChanged,
+    AccessReceiptsSealed,
 }
 
 impl DecisionType {
@@ -120,6 +121,7 @@ impl DecisionType {
         DecisionType::AccessGrantChanged,
         DecisionType::CoordinatesChanged,
         DecisionType::HierarchyChanged,
+        DecisionType::AccessReceiptsSealed,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -162,6 +164,7 @@ impl DecisionType {
             DecisionType::AccessGrantChanged => "AccessGrantChanged",
             DecisionType::CoordinatesChanged => "CoordinatesChanged",
             DecisionType::HierarchyChanged => "HierarchyChanged",
+            DecisionType::AccessReceiptsSealed => "AccessReceiptsSealed",
         }
     }
 
