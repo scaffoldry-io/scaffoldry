@@ -150,6 +150,16 @@ jobs:
           restore-keys: |
             cargo-${{ matrix.group }}-${{ runner.os }}-
 
+      # The generated TypeScript client is compiled with tsc --strict and run with node 22 in client_ts_test.
+      - name: Set up Node.js for the client tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install web dependencies (the TypeScript compiler)
+        run: npm ci --ignore-scripts
+
       - name: Install cargo-nextest
         run: |
           # Pinned. The binary is the project's own release build (Apache-2.0 or MIT).

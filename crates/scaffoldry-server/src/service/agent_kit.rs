@@ -3,7 +3,7 @@
 //! The kit is text for the server's current version. It writes nothing. The AI tool shows the person which files it
 //! would create or change, asks, and then writes them. The kit holds no token, address or record value.
 
-use crate::service::prompts::GUIDE;
+use crate::service::prompts::{GUIDE, OUTSIDE_GUIDE};
 use serde_json::{json, Value};
 
 pub const BEGIN: &str = "<!-- scaffoldry:begin -->";
@@ -11,13 +11,13 @@ pub const END: &str = "<!-- scaffoldry:end -->";
 
 /// The date the guides below were last changed. Change it with them: an agent compares it with its copy to see that the
 /// copy is stale.
-pub const GUIDES_DATE: &str = "2026-10-23";
+pub const GUIDES_DATE: &str = "2026-10-24";
 
 /// Where a skill folder goes, for Claude Code and for Codex.
 pub const SKILL_PATHS: [&str; 2] = [".claude/skills/scaffoldry/", ".agents/skills/scaffoldry/"];
 
 /// The guides the skill carries, as `(file name, text)`.
-const GUIDES: &[(&str, &str)] = &[("building-apps.md", GUIDE)];
+const GUIDES: &[(&str, &str)] = &[("building-apps.md", GUIDE), ("outside-apps.md", OUTSIDE_GUIDE)];
 
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -54,7 +54,8 @@ Use this skill when the person asks for an app, a form, a table of records, or a
 1. Read `references/building-apps.md` once.\n\
 2. Call `list_workspaces`, `list_apps` and `describe_app`.\n\
 3. Propose changes with `propose_app_change`. Never say a change is live before it is approved.\n\
-4. Never copy records into files. Report counts, not values.\n",
+4. Never copy records into files. Report counts, not values.\n\
+5. For a page that runs outside Scaffoldry, read `references/outside-apps.md` instead of reaching for a token.\n",
         header()
     )
 }
