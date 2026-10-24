@@ -351,6 +351,7 @@ fn client_visibility(client: &crate::state::ViaClient, app_slug: &str, table: &s
     FieldVisibility {
         hidden: unread.into_iter().map(|f| denial(f, &format!("The app '{}' is not allowed to read this field.", client.name))).collect(),
         read_only: unwritten.into_iter().map(|f| denial(f, &format!("The app '{}' is not allowed to change this field.", client.name))).collect(),
+        masked: Vec::new(),
     }
 }
 

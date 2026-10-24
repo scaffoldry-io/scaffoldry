@@ -4,6 +4,7 @@
     "name": "Protected health information",
     "source": "HIPAA Privacy Rule, 45 CFR Part 164",
     "protected": true,
+    "default_mask": {"kind": "hide"},
     "detectors": ["phi_mrn_example"]
   },
   "detectors": [

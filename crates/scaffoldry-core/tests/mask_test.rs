@@ -125,3 +125,17 @@ fn a_mask_reads_and_writes_as_json() {
     }
     assert!(serde_json::from_str::<Mask>(r#"{"kind":"rot13"}"#).is_err(), "the list is closed");
 }
+
+// 3. A column rule may mask a field for those it does not name.
+#[test]
+fn a_column_rule_can_mask_a_field() {
+    use scaffoldry_core::access::{field_visibility, ColumnMode, ColumnRule, Person, Who};
+    let rule = ColumnRule { id: "dob".into(), table_id: "people".into(), fields: vec!["dob".into()], mode: ColumnMode::Masked { mask: Mask::Year }, unless: Who { roles: vec!["editor".into()], ..Who::default() }, message: None };
+    let person = Person::default();
+    let seen = field_visibility(&person, Some("viewer"), false, std::slice::from_ref(&rule), "people");
+    assert!(seen.hidden.is_empty());
+    assert_eq!(seen.masked_names().get("dob"), Some(&Mask::Year));
+    let editor = field_visibility(&person, Some("editor"), false, std::slice::from_ref(&rule), "people");
+    assert!(editor.masked.is_empty(), "a person the rule excepts sees the value");
+    assert_eq!(serde_json::to_value(rule.mode).unwrap(), json!({ "masked": { "mask": { "kind": "year" } } }));
+}

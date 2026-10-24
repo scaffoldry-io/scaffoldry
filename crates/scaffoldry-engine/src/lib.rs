@@ -511,6 +511,9 @@ pub struct FieldSpec {
     /// A `Unit` field: the key of the hierarchy whose units it holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hierarchy: Option<String>,
+    /// What a reader who is not cleared for this field sees of it. When absent, the default of the field's categories.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<scaffoldry_core::mask::Mask>,
 }
 
 /// How many records a link field holds.
@@ -577,6 +580,21 @@ pub fn effective_ferpa_sensitive(
     sensitivity::Sensitivity { protected, categories: carried }
 }
 
+/// What a reader who is not cleared for the field sees of it when the field names no mask: the strongest default among the
+/// categories it carries. A category that settings do not list, and a field with none, give `hide`.
+pub fn default_mask(field: &FieldSpec, categories: &[sensitivity::Category]) -> scaffoldry_core::mask::Mask {
+    let mut carried: Vec<&str> = field.categories.iter().map(String::as_str).collect();
+    if field.ferpa_sensitive {
+        carried.push(LEGACY_FLAG_CATEGORY);
+    }
+    carried.iter().map(|id| categories.iter().find(|c| c.id == *id).map_or(scaffoldry_core::mask::Mask::Hide, |c| c.default_mask)).reduce(|a, b| a.stronger(b)).unwrap_or_default()
+}
+
+/// What a reader who is not cleared sees of the field: its own mask, or its categories' default.
+pub fn effective_mask(field: &FieldSpec, categories: &[sensitivity::Category]) -> scaffoldry_core::mask::Mask {
+    field.mask.unwrap_or_else(|| default_mask(field, categories))
+}
+
 impl FieldSpec {
     pub fn simple(
         name: impl Into<String>,
@@ -619,6 +637,7 @@ impl FieldSpec {
             notify_on_assign: false,
             sensitivity: None,
             hierarchy: None,
+            mask: None,
         }
     }
 }

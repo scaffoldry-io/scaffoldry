@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/mask.schema.json",
+  "title": "Mask",
+  "description": "What a reader who is not cleared for a field sees of it. The list is closed. hide leaves the field out. last4 replaces all but the last four characters with *. initials keeps the first letter of each word. year and month reduce a date. band reduces a number to the band it falls in, with the band's width.",
+  "oneOf": [
+    { "type": "object", "required": ["kind"], "additionalProperties": false, "properties": { "kind": { "enum": ["hide", "last4", "initials", "year", "month"] } } },
+    { "type": "object", "required": ["kind", "width"], "additionalProperties": false, "properties": { "kind": { "const": "band" }, "width": { "type": "integer", "minimum": 1 } } }
+  ]
+}

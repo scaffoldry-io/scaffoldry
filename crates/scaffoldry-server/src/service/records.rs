@@ -813,7 +813,7 @@ fn check_read_only(caller: &AuthUser, app_slug: &str, table: &str, new_data: &Va
 /// A copy of the manifest without the fields the caller may not see, so nothing tells them they exist.
 pub fn without_hidden_fields(caller: &AuthUser, app_slug: &str, manifest: &mut AppManifest, state: &SharedState) {
     for table in &mut manifest.tables {
-        let hidden = hidden_fields(caller, app_slug, &table.id, &table.fields, state);
+        let hidden = left_out_fields(caller, app_slug, &table.id, &table.fields, state);
         if hidden.is_empty() {
             continue;
         }
@@ -1419,29 +1419,75 @@ fn hidden_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[Field
     hidden_fields_on(caller, app_slug, table, fields, None, state)
 }
 
-/// The fields a caller may not read in one table. The app's column rules hold a field back from any member they name.
-/// A protected field is held back unless every grant that contributes rows clears it. `page` is the unit of each row
-/// shown in each hierarchy, or `None` for every row the caller reaches, which is what a filter or a sort works on.
-/// A field either rule hides is hidden. The effective flag decides what is protected, so a label counts.
-fn hidden_fields_on(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], page: Option<&[std::collections::BTreeMap<String, uuid::Uuid>]>, state: &SharedState) -> Vec<String> {
-    let mut hidden = crate::service::scope::field_visibility_of(caller, app_slug, table, state).hidden_names();
-    let protected: Vec<String> = {
+/// The fields a caller may not read in full in one table, and what they see of each: `Hide` leaves the field out, any
+/// other mask replaces its value. The app's column rules withhold a field from any member they name. A protected field
+/// is withheld unless every grant that contributes rows clears it, and then it is shown as the field's mask, or its
+/// category's default. A field two rules withhold is shown as whichever shows less. `page` is the unit of each row shown in
+/// each hierarchy, or `None` for every row the caller reaches, which is what a filter or a sort works on. The effective
+/// flag decides what is protected, so a label counts.
+fn withheld_on(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], page: Option<&[std::collections::BTreeMap<String, uuid::Uuid>]>, state: &SharedState) -> std::collections::BTreeMap<String, scaffoldry_core::mask::Mask> {
+    use scaffoldry_core::mask::Mask;
+    let visibility = crate::service::scope::field_visibility_of(caller, app_slug, table, state);
+    let mut out: std::collections::BTreeMap<String, Mask> = std::collections::BTreeMap::new();
+    let mut add = |name: String, mask: Mask| {
+        let kept = out.get(&name).map_or(mask, |m| m.stronger(mask));
+        out.insert(name, kept);
+    };
+    for name in visibility.hidden_names() {
+        add(name, Mask::Hide);
+    }
+    for (name, mask) in visibility.masked_names() {
+        add(name, mask);
+    }
+    let protected: Vec<(String, Mask)> = {
         let categories = state.sensitivity_categories();
         let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
         fields
             .iter()
             .filter(|f| scaffoldry_engine::effective_ferpa_sensitive(f, labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone())), &categories).protected)
-            .map(|f| f.name.clone())
+            .map(|f| (f.name.clone(), scaffoldry_engine::effective_mask(f, &categories)))
             .collect()
     };
     if !protected.is_empty() && protected_withheld(caller, app_slug, table, page, state) {
-        for name in protected {
-            if !hidden.contains(&name) {
-                hidden.push(name);
-            }
+        for (name, mask) in protected {
+            add(name, mask);
         }
     }
-    hidden
+    out
+}
+
+/// Every field the caller may not read in full: the ones left out and the ones shown as a mask. A filter, a sort, a search
+/// or a total on any of them is refused, so a mask cannot leak order or a sum.
+fn hidden_fields_on(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], page: Option<&[std::collections::BTreeMap<String, uuid::Uuid>]>, state: &SharedState) -> Vec<String> {
+    withheld_on(caller, app_slug, table, fields, page, state).into_keys().collect()
+}
+
+/// The fields the caller does not see at all. A masked field is still in the schema, with its mask.
+fn left_out_fields(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
+    withheld_on(caller, app_slug, table, fields, None, state).into_iter().filter(|(_, m)| m.is_hide()).map(|(n, _)| n).collect()
+}
+
+/// What an export may carry for one caller: the fields left out, the masks to apply, and the fields that count as released
+/// to the disclosure log. A masked field is not a disclosure of its value.
+pub struct ExportLimits {
+    pub disallowed: Vec<String>,
+    pub masks: Value,
+    pub sensitive: Vec<String>,
+}
+
+pub fn export_limits(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> ExportLimits {
+    let withheld = withheld_on(caller, app_slug, table, fields, None, state);
+    let masks: serde_json::Map<String, Value> = withheld.iter().filter(|(_, m)| !m.is_hide()).map(|(n, m)| (n.clone(), serde_json::to_value(m).unwrap_or(Value::Null))).collect();
+    ExportLimits {
+        disallowed: withheld.iter().filter(|(_, m)| m.is_hide()).map(|(n, _)| n.clone()).collect(),
+        masks: Value::Object(masks),
+        sensitive: sensitive_fields_of(app_slug, table, state).into_iter().filter(|f| !withheld.contains_key(f)).collect(),
+    }
+}
+
+/// What the caller sees of each field they may not read in full, for a response that is not a page of records.
+pub(crate) fn withheld_for(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> std::collections::BTreeMap<String, scaffoldry_core::mask::Mask> {
+    withheld_on(caller, app_slug, table, fields, None, state)
 }
 
 /// Whether the caller's grants withhold protected fields. A Platform Admin is never held back. A person with no grant
@@ -1482,11 +1528,20 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
     for (table, indices) in by_table {
         let Ok((fields, canonical)) = table_fields(app_slug, &table, false, state) else { continue };
         let page = units_of_rows(app_slug, &canonical, &indices.iter().map(|i| &rows[*i]).collect::<Vec<_>>(), state);
-        let hidden = hidden_fields_on(caller, app_slug, &canonical, &fields, Some(&page), state);
+        let withheld = withheld_on(caller, app_slug, &canonical, &fields, Some(&page), state);
         for i in indices {
             if let Some(map) = rows[i].data.as_object_mut() {
-                for name in &hidden {
-                    map.remove(name);
+                for (name, mask) in &withheld {
+                    // The one place a value is replaced by its mask. A field with no value stays without one.
+                    match map.get(name) {
+                        Some(value) if !mask.is_hide() => {
+                            let shown = scaffoldry_core::mask::mask(value, *mask);
+                            map.insert(name.clone(), shown);
+                        }
+                        _ => {
+                            map.remove(name);
+                        }
+                    }
                 }
                 // A preview shows the proposed table: a field the proposal removes is not there.
                 if crate::service::preview::is_preview(app_slug) {
@@ -1693,7 +1748,11 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             })
         };
         if sensitive_hidden {
-            return Err(ServiceError::BadRequest("Search is not available on this table for your role.".to_string()));
+            return Err(ServiceError::FieldHidden {
+                message: "Search is not available on this table for your role.".to_string(),
+                reason: "The table has protected fields you may not read in full, and a search would match on them.".to_string(),
+                remedy: "Filter on a field you can see, or ask an owner of the workspace for a grant that clears you.".to_string(),
+            });
         }
     }
 
@@ -2016,14 +2075,6 @@ pub fn aggregate_records(
         if !fields.iter().any(|s| s.name == *f) {
             return Err(ServiceError::BadRequest(format!("'{f}' is not a field of this table")));
         }
-        if !indexed.contains(f) {
-            return Err(ServiceError::BadRequest(format!("'{f}' is not in the indexed set")));
-        }
-        let spec = fields.iter().find(|s| s.name == *f).unwrap();
-        let any_type = matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty | AggregateFunction::Unique);
-        if !any_type && scaffoldry_engine::index_column(spec.field_type) != scaffoldry_engine::IndexColumn::Num {
-            return Err(ServiceError::BadRequest(format!("'{f}' is not a numeric field (must be stored in num)")));
-        }
         if hidden.iter().any(|h| h == f) {
             let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *f);
             return Err(ServiceError::FieldHidden {
@@ -2031,6 +2082,14 @@ pub fn aggregate_records(
                 reason: rule.as_ref().map_or_else(|| format!("'{f}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
             });
+        }
+        if !indexed.contains(f) {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not in the indexed set")));
+        }
+        let spec = fields.iter().find(|s| s.name == *f).unwrap();
+        let any_type = matches!(query.function, AggregateFunction::Filled | AggregateFunction::Empty | AggregateFunction::Unique);
+        if !any_type && scaffoldry_engine::index_column(spec.field_type) != scaffoldry_engine::IndexColumn::Num {
+            return Err(ServiceError::BadRequest(format!("'{f}' is not a numeric field (must be stored in num)")));
         }
     }
 
@@ -2042,9 +2101,6 @@ pub fn aggregate_records(
         if !fields.iter().any(|s| s.name == *g) {
             return Err(ServiceError::BadRequest(format!("'{g}' is not a field of this table")));
         }
-        if !indexed.contains(g) {
-            return Err(ServiceError::BadRequest(format!("'{g}' is not in the indexed set")));
-        }
         if hidden.iter().any(|h| h == g) {
             let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *g);
             return Err(ServiceError::FieldHidden {
@@ -2052,6 +2108,9 @@ pub fn aggregate_records(
                 reason: rule.as_ref().map_or_else(|| format!("'{g}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
             });
+        }
+        if !indexed.contains(g) {
+            return Err(ServiceError::BadRequest(format!("'{g}' is not in the indexed set")));
         }
     }
 
@@ -2065,9 +2124,6 @@ pub fn aggregate_records(
         if !fields.iter().any(|s| s.name == *g2) {
             return Err(ServiceError::BadRequest(format!("'{g2}' is not a field of this table")));
         }
-        if !indexed.contains(g2) {
-            return Err(ServiceError::BadRequest(format!("'{g2}' is not in the indexed set")));
-        }
         if hidden.iter().any(|h| h == g2) {
             let rule = crate::service::scope::field_visibility_of(caller, app_slug, &table, state).hidden.into_iter().find(|d| d.field == *g2);
             return Err(ServiceError::FieldHidden {
@@ -2075,6 +2131,9 @@ pub fn aggregate_records(
                 reason: rule.as_ref().map_or_else(|| format!("'{g2}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
             });
+        }
+        if !indexed.contains(g2) {
+            return Err(ServiceError::BadRequest(format!("'{g2}' is not in the indexed set")));
         }
     }
     let bucket = match (&query.bucket, &query.group_by) {

@@ -26,7 +26,7 @@ fn label(sensitive: bool) -> DataLabel {
 }
 
 fn category(id: &str, protected: bool) -> Category {
-    Category { id: id.to_string(), name: id.to_string(), source: String::new(), protected, detectors: vec![] }
+    Category { id: id.to_string(), name: id.to_string(), source: String::new(), protected, detectors: vec![], default_mask: Default::default() }
 }
 
 #[test]

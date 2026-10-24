@@ -189,6 +189,8 @@ async fn a_masked_field_cannot_be_sorted_filtered_or_totalled() {
     assert_eq!(filtered.0, "field_hidden", "{filtered:?}");
     let totalled = tool(&w, &w.viewer, "aggregate_records", with(json!({ "function": "Sum", "field": "salary" }))).await.unwrap_err();
     assert_eq!(totalled.0, "field_hidden", "{totalled:?}");
+    let searched = tool(&w, &w.viewer, "list_records", with(json!({ "search": "2004-12-31" }))).await.unwrap_err();
+    assert_eq!(searched.0, "field_hidden", "{searched:?}");
     // The owner is cleared, so the same calls work.
     tool(&w, &w.owner, "list_records", with(json!({ "sort": { "field_name": "dob", "direction": "Asc" } }))).await.expect("the owner may sort");
 }
@@ -256,5 +258,28 @@ async fn a_masked_export_is_not_a_disclosure_and_an_unmasked_one_is() {
     run_export(&w, &w.owner).await;
     let after = logged(&w);
     assert_eq!(after.len(), 1);
-    assert_eq!(after[0].fields, vec!["dob".to_string(), "salary".to_string(), "ssn".to_string()]);
+    let mut fields = after[0].fields.clone();
+    fields.sort();
+    assert_eq!(fields, vec!["dob".to_string(), "salary".to_string(), "ssn".to_string()]);
+}
+
+// History shows a masked field's old and new values as masks, and a reader who is cleared sees them.
+#[tokio::test]
+async fn history_shows_masks_to_a_reader_who_is_not_cleared() {
+    let w = world().await;
+    let page = tool(&w, &w.owner, "list_records", json!({ "app_slug": w.slug, "table_id": "people" })).await.unwrap();
+    let id = page["records"][0]["id"].as_str().unwrap().to_string();
+    let version = page["records"][0]["version"].clone();
+    tool(&w, &w.owner, "update_record", json!({ "app_slug": w.slug, "record_id": id, "version": version, "data": { "dob": "2005-06-15" } })).await.expect("an update");
+    let entries = |token: String| {
+        let w = &w;
+        let id = id.clone();
+        async move { tool(w, &token, "get_record_history", json!({ "app_slug": w.slug, "record_id": id })).await.expect("history") }
+    };
+    let mine = entries(w.viewer.clone()).await;
+    let change = mine["entries"].as_array().unwrap().iter().find_map(|e| e["changes"].get("dob").cloned()).unwrap_or_else(|| panic!("a change to dob in {mine}"));
+    assert_eq!((change["old"].as_str(), change["new"].as_str()), (Some("2004"), Some("2005")), "{change}");
+    let theirs = entries(w.owner.clone()).await;
+    let change = theirs["entries"].as_array().unwrap().iter().find_map(|e| e["changes"].get("dob").cloned()).unwrap();
+    assert_eq!(change["new"], "2005-06-15", "{change}");
 }

@@ -4,6 +4,7 @@
     "name": "Personally identifiable information",
     "source": "NIST SP 800-122",
     "protected": true,
+    "default_mask": {"kind": "last4"},
     "detectors": ["us_ssn", "email"]
   },
   "detectors": [

@@ -98,6 +98,9 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
             problems.push(format!("table '{}' indexes {} fields, the limit is {MAX_INDEXED_FIELDS}", table.id, indexed.len()));
         }
         for f in &table.fields {
+            if let Some(problem) = f.mask.and_then(|m| m.problem()) {
+                problems.push(format!("table '{}': field '{}' mask: {problem}", table.id, f.name));
+            }
             match (f.field_type == FieldType::Unit, &f.hierarchy) {
                 (true, None) => problems.push(format!("table '{}': Unit field '{}' must name its hierarchy", table.id, f.name)),
                 (false, Some(_)) => problems.push(format!("table '{}': field '{}' names a hierarchy but is not a Unit field", table.id, f.name)),

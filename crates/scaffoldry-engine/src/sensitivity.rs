@@ -6,6 +6,7 @@
 //! `governance/schema/sensitivity-settings.schema.json`, and these checks enforce it.
 
 use crate::detect::{validate_shape, DetectorKind, DetectorSpec};
+use scaffoldry_core::mask::Mask;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -41,6 +42,9 @@ pub struct Category {
     pub protected: bool,
     /// Detector ids.
     pub detectors: Vec<String>,
+    /// What a reader who is not cleared for a field of this category sees of it. `hide` when the settings say nothing.
+    #[serde(default)]
+    pub default_mask: Mask,
 }
 
 /// A category and its detectors, as shipped in a release and copied into settings when switched on.
@@ -139,6 +143,9 @@ pub fn validate_categories(value: &Value, detectors: &[DetectorSpec]) -> Result<
         }
         if c.source.chars().count() > MAX_TEXT_LEN {
             return Err(SettingsError::at(format!("[{i}].source"), "a source is at most 128 characters"));
+        }
+        if let Some(problem) = c.default_mask.problem() {
+            return Err(SettingsError::at(format!("[{i}].default_mask"), problem));
         }
         for (j, d) in c.detectors.iter().enumerate() {
             if !detectors.iter().any(|x| &x.id == d) {

@@ -4,6 +4,7 @@
     "name": "Student education records",
     "source": "FERPA, 34 CFR Part 99",
     "protected": true,
+    "default_mask": {"kind": "hide"},
     "detectors": ["ferpa_student_id_example"]
   },
   "detectors": [

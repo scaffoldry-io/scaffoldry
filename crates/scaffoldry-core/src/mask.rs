@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// How a value is reduced. `Hide` is what a hidden field has always done.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Mask {
+    /// The value is not shown and the field is not in the response.
+    #[default]
     Hide,
     /// All but the last four characters replaced with `*`. A value of four or fewer characters is replaced whole.
     Last4,
@@ -102,6 +104,27 @@ fn band(value: &Value, width: u64) -> Value {
 }
 
 impl Mask {
+    /// Whether the field is left out of a response altogether.
+    pub fn is_hide(&self) -> bool {
+        *self == Mask::Hide
+    }
+
+    /// Whether the mask can be applied: a band needs a width.
+    pub fn problem(&self) -> Option<&'static str> {
+        matches!(self, Mask::Band { width: 0 }).then_some("a band needs a width of at least 1")
+    }
+
+    /// Whichever of the two shows less. Two masks that cannot be put in order give `Hide`.
+    pub fn stronger(self, other: Mask) -> Mask {
+        if self == other || other.weaker_than(self) {
+            self
+        } else if self.weaker_than(other) && !other.weaker_than(self) {
+            other
+        } else {
+            Mask::Hide
+        }
+    }
+
     /// One plain sentence for a reader and for an owner choosing a mask.
     pub fn sentence(&self) -> String {
         match self {
