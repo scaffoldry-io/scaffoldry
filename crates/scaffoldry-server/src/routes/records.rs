@@ -36,6 +36,7 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/schema", get(get_app_schema))
         .route("/apps/{slug}/tables/{table_id}/schema", get(get_table_schema))
         .route("/apps/{slug}/openapi.json", get(get_openapi))
+        .route("/apps/{slug}/client.ts", get(get_client_ts))
         // Table Records
         .route(
             "/apps/{slug}/tables/{table_id}/aggregate",
@@ -545,6 +546,25 @@ async fn aggregate_table_records(
 
 /// The app's API description for the caller. `ETag` changes when the app or the caller's view of it changes, and
 /// `If-None-Match` is honored.
+/// The TypeScript module for an outside app, built for the caller and, with a client token, for its ceiling.
+async fn get_client_ts(State(state): State<SharedState>, headers: HeaderMap, Path(slug): Path<String>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(user) = session_user(&state, &headers) else { return ServiceError::unauthorized("Unauthorized").into_pair().into_response() };
+    let built = tokio::task::spawn_blocking(move || crate::service::client_ts::generate(&user, &slug, &state)).await;
+    match built {
+        Ok(Ok(module)) => {
+            let mut response = module.into_response();
+            let h = response.headers_mut();
+            h.insert(axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("text/typescript; charset=utf-8"));
+            h.insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("private, no-cache"));
+            h.insert(axum::http::header::VARY, axum::http::HeaderValue::from_static("Authorization"));
+            response
+        }
+        Ok(Err(e)) => e.into_pair().into_response(),
+        Err(_) => ServiceError::internal("The client could not be built").into_pair().into_response(),
+    }
+}
+
 async fn get_openapi(State(state): State<SharedState>, headers: HeaderMap, Path(slug): Path<String>) -> axum::response::Response {
     use axum::response::IntoResponse;
     let Some(user) = session_user(&state, &headers) else { return ServiceError::unauthorized("Unauthorized").into_pair().into_response() };

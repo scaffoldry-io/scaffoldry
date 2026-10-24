@@ -313,6 +313,12 @@ async fn handle_mcp_request(
                         "mimeType": "text/markdown"
                     },
                     {
+                        "uri": crate::service::prompts::OUTSIDE_GUIDE_URI,
+                        "name": "Guide: building outside Scaffoldry",
+                        "description": "How an app hosted elsewhere gets institutional data: register a client, sign in with PKCE, use the generated module, keep calls small",
+                        "mimeType": "text/markdown"
+                    },
+                    {
                         "uri": "scaffoldry://schema/app-manifest",
                         "name": "App Manifest Schema",
                         "description": "JSON Schema 2020-12 for the app manifest an agent builds against",
@@ -478,6 +484,15 @@ async fn handle_mcp_request(
                                 "uri": uri,
                                 "mimeType": "text/markdown",
                                 "text": crate::service::prompts::GUIDE
+                            }
+                        ]
+                    }),
+                    crate::service::prompts::OUTSIDE_GUIDE_URI => json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "text/markdown",
+                                "text": crate::service::prompts::OUTSIDE_GUIDE
                             }
                         ]
                     }),

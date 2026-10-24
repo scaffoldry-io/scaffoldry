@@ -226,6 +226,10 @@ pub fn describe(caller: &AuthUser, slug: &str, state: &SharedState) -> Result<Va
         (manifest, engine.versions().get(slug).copied().unwrap_or(1))
     };
     crate::service::records::without_hidden_fields(caller, slug, &mut manifest, state);
+    // An outside app is told only of the tables its ceiling names.
+    if let Some(client) = &caller.via_client {
+        manifest.tables.retain(|t| client.ceiling.apps.iter().any(|a| a.app_slug == slug && a.tables.iter().any(|c| c.table_id == t.id)));
+    }
 
     let mut paths = Map::new();
     let mut schemas = Map::new();
