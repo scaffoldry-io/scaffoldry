@@ -876,7 +876,7 @@ async fn a_person_carries_each_position_as_key_at_unit_beside_the_bare_key() {
         role_title: String::new(),
         affiliation: "faculty".to_string(),
         department: "x".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
     };
     let chem = scaffoldry_server::service::scope::person_of(&user("chair.chem@state.edu"), &state);
     let phys = scaffoldry_server::service::scope::person_of(&user("chair.phys@state.edu"), &state);

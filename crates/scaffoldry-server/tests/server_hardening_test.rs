@@ -214,7 +214,7 @@ async fn test_workspace_update_fails_when_ledger_fails() {
             role_title: "Central Admin".to_string(),
             affiliation: "central_admin".to_string(),
             department: "Central IT".to_string(),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
         };
 
         let initial_ws = state

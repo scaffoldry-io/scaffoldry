@@ -211,11 +211,11 @@ async fn a_full_flow_issues_a_token_and_a_second_use_of_the_code_revokes_it() {
     assert_eq!(again.body["error"], "invalid_grant");
     assert_eq!(me(&w, &access).await, StatusCode::UNAUTHORIZED, "the first token was revoked");
 
-    // Until phase 3 a client token can do nothing but say who it is.
+    // A client token reaches only the record routes its ceiling covers. Everything else says `client_scope`.
     let second = token_for(&w, &w.owner, &id).await;
     let apps = rest(&w.app, "GET", "/api/v1/me/apps", &second, None).await;
     assert_eq!(apps.status, StatusCode::FORBIDDEN, "{}", apps.body);
-    assert_eq!(apps.body["code"], "token_scope");
+    assert_eq!(apps.body["code"], "client_scope");
 }
 
 // 2. A wrong verifier, a mismatched redirect address, a missing state or `plain` is refused.

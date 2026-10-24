@@ -146,6 +146,8 @@ pub enum ServiceError {
     PreviewReadOnly(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
     TokenScope(String),
+    /// An outside app asked for something its ceiling does not cover.
+    ClientScope(String),
     /// A client's ceiling names a field that is sensitive. Sensitive data stays inside the platform.
     ClientSensitiveField(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
@@ -196,7 +198,7 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
@@ -228,6 +230,7 @@ impl ServiceError {
             Self::ViewAsReadOnly(_) => "view_as_read_only",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::TokenScope(_) => "token_scope",
+            Self::ClientScope(_) => "client_scope",
             Self::ClientSensitiveField(_) => "client_sensitive_field",
             Self::FieldHidden { .. } => "field_hidden",
             Self::TooManyIndexes { .. } => "too_many_indexes",
@@ -258,6 +261,7 @@ impl ServiceError {
             | Self::ViewAsReadOnly(msg)
             | Self::PreviewReadOnly(msg)
             | Self::TokenScope(msg)
+            | Self::ClientScope(msg)
             | Self::ClientSensitiveField(msg)
             | Self::ConstraintViolated(msg)
             | Self::GrantOutsideScope(msg)

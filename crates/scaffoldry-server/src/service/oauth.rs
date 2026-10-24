@@ -4,8 +4,7 @@
 //! the desk sees the client, its operator and its ceiling, and allows or denies. The client trades a single-use code
 //! for an opaque one-hour token. The token is stored as a hash like every other token. Scaffoldry signs nothing.
 //!
-//! Until phase 3 a client token is limited to saying who it is: it carries a scope that allows no app, no table and no
-//! tool, so it can do nothing else.
+//! A client token carries the scope its ceiling comes to (`clients::scope_of`). Phase 3 enforces it.
 
 use crate::repository_clients::{ClientRow, CodeRow, CodeUse};
 use crate::service::clients::{ceiling_sentences, ClientView};
@@ -13,7 +12,7 @@ use crate::service::identity::{generate_raw_token, hash_token, resolve_user};
 use crate::service::ServiceError;
 use crate::state::{ApiToken, AuthUser, RecordDecisionInput, SharedState};
 use base64::Engine;
-use scaffoldry_core::{DecisionType, TokenScope};
+use scaffoldry_core::DecisionType;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -212,11 +211,6 @@ pub struct TokenForm {
     pub code_verifier: String,
 }
 
-fn no_scope() -> TokenScope {
-    // A scope that allows no app, no table and no tool. Phase 3 replaces it with one built from the ceiling.
-    TokenScope { apps: Vec::new(), tables: Default::default(), tools: Some(Vec::new()), max_rows_per_call: Some(1) }
-}
-
 /// Trades a code for a token.
 pub fn token(basic: Option<(String, String)>, form: &TokenForm, state: &SharedState) -> Result<Value, OAuthError> {
     if form.grant_type != "authorization_code" {
@@ -255,14 +249,15 @@ pub fn token(basic: Option<(String, String)>, form: &TokenForm, state: &SharedSt
         id: uuid::Uuid::new_v4(),
         kind: "client".to_string(),
         eppn: row.eppn.clone(),
-        label: format!("Client {}", client.name),
+        // The label is what the history shows for a write made through this app, so it names the client id.
+        label: format!("Client {} [{}]", client.name, client.client_id),
         original_admin: None,
         created_at: now,
         expires_at: now + chrono::Duration::seconds(TOKEN_SECONDS),
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
-        scope: Some(no_scope()),
+        scope: Some(crate::service::clients::scope_of(&crate::service::clients::ceiling_of(&client))),
     };
     let server_error = |e: &dyn std::fmt::Display| OAuthError::new(500, "server_error", e.to_string());
     state.persist_api_token(&token).map_err(|e| server_error(&e))?;
@@ -279,9 +274,9 @@ pub fn revoke(basic: Option<(String, String)>, client_id: Option<&str>, token: &
     Ok(())
 }
 
-/// Whether a token of kind `client` may be used now: its client is still active.
-pub fn client_token_allowed(token_hash: &str, state: &SharedState) -> bool {
-    matches!(state.repository.client_status_of_token(token_hash), Ok(Some(status)) if status == "Active")
+/// The client behind a token of kind `client`, when that client is still active.
+pub fn active_client_of(token_hash: &str, state: &SharedState) -> Option<ClientRow> {
+    state.repository.client_of_token(token_hash).ok().flatten().filter(|c| c.status == "Active")
 }
 
 /// The clients a person has agreed to.

@@ -2291,7 +2291,7 @@ impl PostgresRepository {
                     role_title: r.get(3),
                     affiliation: r.get(4),
                     department: r.get(5),
-        view_as_by: None,
+        view_as_by: None, via_client: None,
                 };
                 let original_admin = orig_admin.and_then(|v| serde_json::from_value(v).ok());
                 let session = AuthSession {

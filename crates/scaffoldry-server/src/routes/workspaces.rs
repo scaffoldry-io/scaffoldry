@@ -583,7 +583,7 @@ async fn impact_workspace_guards(
                     .unwrap_or("member")
                     .to_string(),
                 department: collab.department.clone(),
-                view_as_by: None,
+                view_as_by: None, via_client: None,
             });
         let princ = crate::service::access::principal_of(&state, &collab_user);
 
@@ -693,7 +693,7 @@ async fn test_workspace_guards(
             role_title: "Member".to_string(),
             affiliation: "member".to_string(),
             department: ws.department.clone(),
-            view_as_by: None,
+            view_as_by: None, via_client: None,
         });
     let princ = crate::service::access::principal_of(&state, &target_user);
 

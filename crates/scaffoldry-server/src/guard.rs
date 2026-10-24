@@ -68,8 +68,13 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
         user.view_as_by = Some(Box::new(viewer));
     }
     // A token an outside app holds works while its client is active.
-    if row.kind == "client" && !crate::service::oauth::client_token_allowed(&hash, state) {
-        return None;
+    if row.kind == "client" {
+        let client = crate::service::oauth::active_client_of(&hash, state)?;
+        user.via_client = Some(Box::new(crate::state::ViaClient {
+            ceiling: crate::service::clients::ceiling_of(&client),
+            client_id: client.client_id,
+            name: client.name,
+        }));
     }
     // A preview works while its proposal is pending, and builds the preview app in this server.
     if row.kind == "preview" && !crate::service::preview::admit(&row, state) {
@@ -151,6 +156,9 @@ pub fn read_origin(state: &SharedState, headers: &HeaderMap) -> crate::service::
         if row.kind == "agent" {
             origin.kind = ActorKind::Agent;
             origin.token_label = Some(row.label);
+        } else if row.kind == "client" {
+            // The person acts, through an app. The history says which one.
+            origin.token_label = Some(row.label);
         }
     }
     origin
@@ -183,6 +191,15 @@ pub fn unauthorized() -> Response {
     resp
 }
 
+/// A refusal for a token an outside app holds says `client_scope`, so the app can tell its ceiling from a limit on a
+/// token a person made.
+pub fn as_client_refusal(refusal: ServiceError, client: bool) -> ServiceError {
+    match refusal {
+        ServiceError::TokenScope(msg) if client => ServiceError::ClientScope(msg),
+        other => other,
+    }
+}
+
 pub async fn require_session(
     State(state): State<SharedState>,
     mut req: Request,
@@ -200,12 +217,13 @@ pub async fn require_session(
                 }
             }
             // A limited token reaches the record routes its scope allows and the tool endpoint, where each tool is checked.
-            if let Some(scope) = token_row(&state, req.headers()).and_then(|r| r.scope) {
+            let held = token_row(&state, req.headers());
+            if let Some(scope) = held.as_ref().and_then(|r| r.scope.clone()) {
                 let path = req.uri().path().to_string();
                 let tool_endpoint = req.method() == axum::http::Method::POST && matches!(path.as_str(), "/api/v1/mcp" | "/api/mcp");
                 if !tool_endpoint {
                     if let Err(refusal) = crate::service::token_scope::check_request(&scope, req.method(), &path, &state) {
-                        return refusal.into_response();
+                        return as_client_refusal(refusal, held.as_ref().is_some_and(|r| r.kind == "client")).into_response();
                     }
                     if let Some(query) = crate::service::token_scope::capped_query(&scope, req.method(), &path, req.uri().query()) {
                         if let Ok(uri) = format!("{path}?{query}").parse::<axum::http::Uri>() {

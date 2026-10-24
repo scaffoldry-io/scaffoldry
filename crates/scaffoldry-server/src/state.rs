@@ -218,6 +218,18 @@ pub struct AuthUser {
     /// Set on a view-as request: the administrator looking. Rights are the intersection of both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_as_by: Option<Box<AuthUser>>,
+    /// Set on a request made through an outside app's token: the app and its ceiling. Rights are the person's own,
+    /// narrowed by the ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via_client: Option<Box<ViaClient>>,
+}
+
+/// The outside app a request came through.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViaClient {
+    pub client_id: String,
+    pub name: String,
+    pub ceiling: crate::service::clients::Ceiling,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

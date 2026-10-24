@@ -200,6 +200,8 @@ async fn handle_mcp_request(
         "tools/list" => {
             let listed: Vec<Value> = tools::TOOLS
                 .iter()
+                // A limited token sees the tools its scope allows and no others.
+                .filter(|t| scope.as_ref().is_none_or(|s| s.allows_tool(t.name)))
                 .map(|t| {
                     // The schema is closed (`validate_args` refuses an unknown argument) and carries one valid call.
                     let mut schema = (t.input_schema)();
@@ -230,6 +232,7 @@ async fn handle_mcp_request(
             // A limited token calls the data tools its scope names. The person's own rights are checked by the tool.
             if let Some(scope) = &scope {
                 if let Err(err) = crate::service::token_scope::check_tool(scope, &tool_name, &mut args, &state) {
+                    let err = crate::guard::as_client_refusal(err, caller.via_client.is_some());
                     return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(service_tool_error(&err)), error: None });
                 }
             }
