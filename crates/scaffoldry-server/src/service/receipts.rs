@@ -143,6 +143,27 @@ pub fn record_tool_denial(state: &SharedState, user: &AuthUser, tool: &str, args
     record(state, &receipt);
 }
 
+/// The receipt of a disclosure: who, what kind, which table. No record and no field value.
+pub fn disclosure_receipt(actor: &str, kind: &str, app_slug: &str, table_id: Option<&str>) -> NewReceipt {
+    NewReceipt {
+        actor: actor.to_string(),
+        acting_as: None,
+        action: format!("disclosure:{kind}"),
+        object_kind: "table".to_string(),
+        object_id: match table_id {
+            Some(t) => format!("{app_slug}/{t}"),
+            None => app_slug.to_string(),
+        }
+        .chars()
+        .take(255)
+        .collect(),
+        outcome: "allow",
+        grant_ids: Vec::new(),
+        policy_ids: Vec::new(),
+        narrowed_by: Vec::new(),
+    }
+}
+
 /// A read that returned a protected field in full: one receipt for the call, naming the table and no rows.
 pub fn record_protected_read(state: &SharedState, user: &AuthUser, app_slug: &str, table: &str) {
     let receipt = NewReceipt::of(user, "read_protected", ("table", &format!("{app_slug}/{table}")), "allow");

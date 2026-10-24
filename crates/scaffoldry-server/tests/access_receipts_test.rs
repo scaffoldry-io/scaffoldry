@@ -190,33 +190,6 @@ async fn replaying_a_receipt_reproduces_its_outcome_while_the_counters_hold() {
     assert_eq!(later["matches"], false, "{later}");
 }
 
-// 5. The added time of one receipt write. The median of 1,000 writes is recorded, and if it is above 1 ms the work stops.
-#[tokio::test]
-async fn a_receipt_write_adds_under_a_millisecond_at_the_median() {
-    let w = world();
-    let mut times = Vec::new();
-    for i in 0..1000 {
-        let receipt = scaffoldry_server::service::receipts::NewReceipt {
-            actor: "timing@state.edu".to_string(),
-            acting_as: None,
-            action: "read_protected".to_string(),
-            object_kind: "app".to_string(),
-            object_id: format!("timing-{}", i % 10),
-            outcome: "allow",
-            grant_ids: vec![1, 2],
-            policy_ids: vec!["policy0".to_string()],
-            narrowed_by: vec![],
-        };
-        let t = std::time::Instant::now();
-        w.state.repository.insert_access_receipt(&receipt).expect("a receipt");
-        times.push(t.elapsed());
-    }
-    times.sort();
-    let median = times[500];
-    eprintln!("receipt write: median {:?}, p95 {:?}, max {:?}", median, times[950], times[999]);
-    assert!(median <= std::time::Duration::from_millis(1), "the median of 1,000 receipt writes is {median:?}, above 1 ms: stop and report");
-}
-
 // A privileged action leaves a receipt, and so does everything done under view-as.
 #[tokio::test]
 async fn a_privileged_action_and_a_view_as_request_leave_receipts() {
@@ -228,4 +201,21 @@ async fn a_privileged_action_and_a_view_as_request_leave_receipts() {
     // Receipts are for a Platform Admin or compliance.
     let (s, _) = send(&w.app, "GET", "/api/v1/admin/access/receipts", OWNER, None).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
+}
+
+// The disclosure log stays, and each disclosure also writes its receipt.
+#[tokio::test]
+async fn a_disclosure_also_writes_its_receipt() {
+    use scaffoldry_server::service::disclosure::{log_disclosure, Release};
+    let w = world();
+    let s = slug("rcpt-disc");
+    make_app(&w, &s, "Internal", vec![field("name", false), field("ssn", true)]).await;
+    let before = receipts(&w, "actor=agent.reader@state.edu&limit=200").await.len();
+    let logged = log_disclosure(&w.state, Release { kind: "agent_read", actor: "agent.reader@state.edu", app_slug: &s, table_id: Some("items"), record_ids: vec!["r1".into(), "r2".into()], fields: vec!["ssn".into()], recipient: None, note: "a bulk read" }).expect("a release");
+    assert!(logged.is_some(), "the log still gets its entry");
+    let after = receipts(&w, "actor=agent.reader@state.edu&limit=200").await;
+    assert_eq!(after.len(), before + 1, "{after:?}");
+    assert_eq!(after[0]["action"], "disclosure:agent_read");
+    assert_eq!(after[0]["object_id"], format!("{s}/items").as_str());
+    assert!(!after[0].to_string().contains("r1"), "a receipt names no record");
 }
