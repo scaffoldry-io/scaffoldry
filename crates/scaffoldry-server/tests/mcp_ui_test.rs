@@ -219,6 +219,7 @@ async fn the_bridge_finishes_the_handshake_before_a_page_calls_a_tool() {
     assert_eq!(out["initialize"]["params"]["protocolVersion"], "2026-01-26", "{out}");
     assert!(out["initialize"]["params"]["appCapabilities"].is_object(), "the capabilities are declared: {out}");
     assert_eq!(out["callsBeforeHandshake"], 0, "no tools/call before the handshake: {out}");
+    assert_eq!(out["errors"], 0, "a method or id named like an object member reaches nothing (CodeQL: unvalidated dynamic method call): {out}");
     assert_eq!(out["initializedSent"], true, "{out}");
     let calls = out["callsAfterHandshake"].as_array().unwrap();
     assert_eq!(calls.len(), 1, "the waiting call goes out once the handshake is over: {out}");
@@ -258,6 +259,8 @@ async fn the_proposal_review_screen_shows_the_proposal_as_text_and_approves_with
     assert_eq!(call["arguments"]["digest"], proposal["digest"], "the digest it was shown: {out}");
     assert_eq!(call["arguments"]["rationale"], "Checked the page grants");
     assert!(out["textAfter"].as_str().unwrap().contains("Approved"), "{out}");
+    assert_eq!(out["errors"], 0, "a method or id named like an object member reaches nothing: {out}");
+    assert_eq!(out["textAfterHostile"], out["textAfter"], "and changes nothing on the screen: {out}");
 
     // Reject names no digest. An approval with no reason is not sent.
     let rejected = node(&scenario(vec!["Reject"], "Not now")).expect("harness");
@@ -286,6 +289,7 @@ async fn the_decision_screen_shows_the_prompt_and_record_and_decides_the_step() 
     assert!(text.contains("Approve <b>this</b> award?"), "the prompt is text: {text}");
     assert!(text.contains("Ada <i>Lovelace</i>") && text.contains("4000"), "the record's fields: {text}");
     assert_eq!(out["imgCount"], 0);
+    assert_eq!(out["errors"], 0, "a method or id named like an object member reaches nothing: {out}");
     let reads: Vec<&Value> = out["calls"].as_array().unwrap().iter().filter(|c| c["name"] == "get_record").collect();
     assert_eq!(reads.len(), 1, "it reads the record once: {out}");
     assert_eq!(reads[0]["arguments"]["record_id"], "rec-9");

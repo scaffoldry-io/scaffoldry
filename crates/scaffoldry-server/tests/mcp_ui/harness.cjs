@@ -6,7 +6,7 @@ const path = require("path");
 const { JSDOM } = require(path.join(process.argv[3], "node_modules", "jsdom"));
 
 const scenario = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const tick = (ms = 15) => new Promise((r) => setTimeout(r, ms));
+const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   const html = scenario.html;
@@ -16,7 +16,12 @@ async function main() {
   w.addEventListener("message", (e) => {
     if (e.source === null && e.data && e.data.jsonrpc === "2.0") outgoing.push(e.data);
   });
-  const send = (data) => w.dispatchEvent(new w.MessageEvent("message", { data: Object.assign({ jsonrpc: "2.0" }, data), source: w }));
+  let errors = 0;
+  w.addEventListener("error", () => { errors += 1; });
+  // A listener that throws is an error of the view, so it is counted, not allowed to stop the harness.
+  const send = (data) => {
+    try { w.dispatchEvent(new w.MessageEvent("message", { data: Object.assign({ jsonrpc: "2.0" }, data), source: w })); } catch (e) { errors += 1; }
+  };
   const find = (method) => outgoing.find((m) => m.method === method);
   const out = { steps: {} };
 
@@ -33,6 +38,11 @@ async function main() {
     await tick();
     out.initializedSent = !!find("ui/notifications/initialized");
     out.callsAfterHandshake = outgoing.filter((m) => m.method === "tools/call").map((m) => m.params);
+    // Names and ids that belong to every object must not reach a function or a waiting call.
+    for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) send({ method: name, params: {} });
+    for (const id of ["constructor", "__proto__", "toString"]) send({ id, result: {} });
+    await tick();
+    out.errors = errors;
     return out;
   }
 
@@ -75,6 +85,11 @@ async function main() {
   out.clicks = clicks;
   out.textAfter = doc.body.textContent;
   out.calls = outgoing.filter((m) => m.method === "tools/call").map((m) => m.params);
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) send({ method: name, params: {} });
+  for (const id of ["constructor", "__proto__", "toString"]) send({ id, result: {} });
+  await tick();
+  out.errors = errors;
+  out.textAfterHostile = doc.body.textContent;
   return out;
 }
 

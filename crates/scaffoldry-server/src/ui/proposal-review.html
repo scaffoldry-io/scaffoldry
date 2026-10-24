@@ -30,10 +30,11 @@
 // textContent, so nothing in the proposal can become markup. MCP Apps, specification 2026-01-26.
 (function () {
   var root = document.getElementById("root");
-  var pending = {};
+  // Tables with no prototype: a method or id such as "constructor" finds nothing in them.
+  var pending = Object.create(null);
   var next = 1;
   var ready = false;
-  var handlers = {};
+  var handlers = Object.create(null);
 
   function post(message) {
     window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, message), "*");
@@ -49,12 +50,12 @@
     var msg = ev.data;
     if (ev.source !== window.parent || !msg || msg.jsonrpc !== "2.0") return;
     if (msg.id !== undefined && !msg.method) {
-      var p = pending[msg.id];
+      var p = typeof msg.id === "number" ? pending[msg.id] : undefined;
       if (!p) return;
       delete pending[msg.id];
       return msg.error ? p.reject(new Error(msg.error.message || "The host refused the request")) : p.resolve(msg.result);
     }
-    if (msg.method && handlers[msg.method]) handlers[msg.method](msg.params || {});
+    if (typeof msg.method === "string" && Object.prototype.hasOwnProperty.call(handlers, msg.method)) handlers[msg.method](msg.params || {});
   });
 
   function el(tag, text, cls) {
