@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Decisions waiting for you</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; color: #0f172a; background: #fff; }
+  main { max-width: 42rem; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.1rem; margin: 0 0 .5rem; }
+  article { border: 1px solid #cbd5e1; border-radius: .5rem; padding: .75rem; margin-top: .75rem; }
+  .prompt { font-weight: 600; margin: 0 0 .4rem; overflow-wrap: anywhere; }
+  .meta { font-size: .8rem; color: #475569; margin: 0 0 .4rem; }
+  dl { display: grid; grid-template-columns: 8rem 1fr; gap: .1rem .5rem; margin: 0 0 .5rem; font-size: .9rem; }
+  dt { color: #475569; } dd { margin: 0; overflow-wrap: anywhere; }
+  .row { display: flex; gap: .5rem; }
+  button { padding: .4rem .9rem; border-radius: .25rem; border: 1px solid #94a3b8; background: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button.go { background: #2563eb; border-color: #2563eb; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .note { font-size: .9rem; margin-top: .4rem; min-height: 1.1rem; }
+</style>
+</head>
+<body>
+<main id="root"><p>Waiting for the list.</p></main>
+<script>
+// This file holds no data. The host sends the waiting decisions in `ui/notifications/tool-result`, and the screen reads
+// each record with `tools/call get_record`. Every value is placed with textContent. MCP Apps, specification 2026-01-26.
+(function () {
+  var root = document.getElementById("root");
+  // Tables with no prototype: a method or id such as "constructor" finds nothing in them.
+  var pending = Object.create(null);
+  var next = 1;
+
+  function post(message) {
+    window.parent.postMessage(Object.assign({ jsonrpc: "2.0" }, message), "*");
+  }
+  function request(method, params) {
+    return new Promise(function (resolve, reject) {
+      var id = next++;
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ id: id, method: method, params: params });
+    });
+  }
+  window.addEventListener("message", function (ev) {
+    var msg = ev.data;
+    if (ev.source !== window.parent || !msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id !== undefined && !msg.method) {
+      var p = typeof msg.id === "number" ? pending[msg.id] : undefined;
+      if (!p) return;
+      delete pending[msg.id];
+      return msg.error ? p.reject(new Error(msg.error.message || "The host refused the request")) : p.resolve(msg.result);
+    }
+    if (msg.method === "ui/notifications/tool-result") onToolResult(msg.params || {});
+    else if (msg.method === "ui/notifications/tool-cancelled") onToolCancelled();
+  });
+
+  function el(tag, text, cls) {
+    var e = document.createElement(tag);
+    if (text !== undefined) e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+
+  function itemsOf(result) {
+    var s = result && result.structuredContent;
+    if (Array.isArray(s)) return s;
+    if (s && Array.isArray(s.items)) return s.items;
+    var first = result && result.content && result.content[0];
+    try {
+      var parsed = first && JSON.parse(first.text);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && Array.isArray(parsed.items)) return parsed.items;
+    } catch (e) { /* no text to read */ }
+    return [];
+  }
+
+  function show(item) {
+    var card = el("article");
+    card.appendChild(el("p", String(item.prompt || "A step is waiting for a decision."), "prompt"));
+    var who = (item.approvers || []).map(function (a) { return a.display_name || a.eppn; }).join(", ");
+    card.appendChild(el("p", [item.app_slug, item.role ? "role: " + item.role : "", who ? "for: " + who : ""].filter(Boolean).join(" · "), "meta"));
+    var fields = el("dl");
+    card.appendChild(fields);
+
+    var note = el("div", undefined, "note");
+    note.setAttribute("role", "status");
+    var row = el("div", undefined, "row");
+    var approve = el("button", "Approve", "go");
+    var reject = el("button", "Reject");
+    approve.type = reject.type = "button";
+    function decide(decision) {
+      approve.disabled = reject.disabled = true;
+      request("tools/call", { name: "decide_process", arguments: { app_slug: item.app_slug, instance_id: item.id, decision: decision } }).then(
+        function (res) {
+          if (res && res.isError) {
+            var first = res.content && res.content[0];
+            note.textContent = (first && first.text) || "The decision was refused.";
+            approve.disabled = reject.disabled = false;
+            return;
+          }
+          var out = res && res.structuredContent;
+          note.textContent = "Done. The step is " + String((out && out.status) || decision) + ".";
+        },
+        function (e) { note.textContent = e.message; approve.disabled = reject.disabled = false; }
+      );
+    }
+    approve.addEventListener("click", function () { decide("approve"); });
+    reject.addEventListener("click", function () { decide("reject"); });
+    row.appendChild(approve);
+    row.appendChild(reject);
+    card.appendChild(row);
+    card.appendChild(note);
+    root.appendChild(card);
+
+    // The record the step is about. Only its fields are shown, as text.
+    request("tools/call", { name: "get_record", arguments: { app_slug: item.app_slug, record_id: item.record_id } }).then(function (res) {
+      var rec = res && res.structuredContent;
+      var data = rec && (rec.data || rec);
+      if (!data || typeof data !== "object") return;
+      Object.keys(data).filter(function (k) { return k.charAt(0) !== "_"; }).forEach(function (k) {
+        fields.appendChild(el("dt", k));
+        var v = data[k];
+        fields.appendChild(el("dd", v !== null && typeof v === "object" ? JSON.stringify(v) : String(v)));
+      });
+    }, function () { /* the record may not be readable. The prompt is still shown. */ });
+  }
+
+  function onToolResult(params) {
+    var items = itemsOf(params);
+    root.replaceChildren(el("h1", "Decisions waiting for you"));
+    if (!items.length) { root.appendChild(el("p", "Nothing is waiting for your decision.")); return; }
+    items.forEach(show);
+  }
+  function onToolCancelled() {
+    root.replaceChildren(el("p", "The request was cancelled."));
+  }
+
+  // The handshake comes first. The host sends nothing until it has the `initialized` notification.
+  request("ui/initialize", { protocolVersion: "2026-01-26", appCapabilities: {}, clientInfo: { name: "scaffoldry-decision", version: "1" } }).then(
+    function () { post({ method: "ui/notifications/initialized", params: {} }); },
+    function (e) { root.replaceChildren(el("p", "This screen needs a host that supports MCP Apps. " + e.message)); }
+  );
+})();
+</script>
+</body>
+</html>
