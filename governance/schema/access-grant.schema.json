@@ -13,7 +13,7 @@
     "role": { "enum": ["viewer", "commenter", "editor", "admin", "owner"] },
     "hierarchy": { "type": ["string", "null"], "description": "The hierarchy key the anchor is in. Null for a container anchor." },
     "anchor_kind": { "enum": ["container", "unit", "holder_unit"] },
-    "anchor_id": { "type": ["string", "null"], "description": "workspace:<id>, app:<slug> or a unit id. Null for holder_unit." },
+    "anchor_id": { "type": ["string", "null"], "description": "workspace:<id>, app:<slug>, table:<slug>/<table id>, or a unit id. Null for holder_unit." },
     "depth": { "type": ["integer", "null"], "minimum": 0, "description": "0 is the anchor only. Null is the whole subtree." },
     "domain": { "type": ["string", "null"] },
     "clearance": { "type": ["string", "null"], "enum": ["Public", "Directory", "Internal", "Restricted", null] },

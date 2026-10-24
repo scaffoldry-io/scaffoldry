@@ -80,13 +80,18 @@ fn rights(state: &SharedState, caller: &AuthUser) -> Rights {
     Rights { platform, admin_units }
 }
 
-/// The workspace an anchor names: `workspace:<id>`, or `app:<slug>` through the app's workspace.
+/// The workspace an anchor names: `workspace:<id>`, or `app:<slug>` or `table:<slug>/<table id>` through the app's workspace.
 fn workspace_of_anchor(state: &SharedState, anchor: &str) -> Option<String> {
     if let Some(id) = anchor.strip_prefix("workspace:") {
         return state.workspaces.read().unwrap_or_else(|p| p.into_inner()).contains_key(id).then(|| id.to_string());
     }
-    let slug = anchor.strip_prefix("app:")?;
     use scaffoldry_engine::HostRouter;
+    if let Some(rest) = anchor.strip_prefix("table:") {
+        let (slug, table) = rest.split_once('/')?;
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        return engine.resolve_by_slug(slug).filter(|m| m.tables.iter().any(|t| t.id == table)).and_then(|m| m.workspace_id.clone());
+    }
+    let slug = anchor.strip_prefix("app:")?;
     state.engine.read().unwrap_or_else(|p| p.into_inner()).resolve_by_slug(slug).and_then(|m| m.workspace_id.clone())
 }
 
@@ -205,7 +210,7 @@ fn check_anchor(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
                 return Err(bad("a container anchor has no hierarchy or depth"));
             }
             let anchor = g.anchor_id.as_deref().ok_or_else(|| bad("anchor_id is required for a container anchor"))?;
-            workspace_of_anchor(state, anchor).ok_or_else(|| bad(format!("container '{anchor}' does not exist. Use workspace:<id> or app:<slug>")))?;
+            workspace_of_anchor(state, anchor).ok_or_else(|| bad(format!("container '{anchor}' does not exist. Use workspace:<id>, app:<slug> or table:<slug>/<table id>")))?;
         }
         AnchorKind::Unit | AnchorKind::HolderUnit => {
             let hierarchy = g.hierarchy.as_deref().ok_or_else(|| bad("hierarchy is required for a unit anchor"))?;

@@ -812,6 +812,9 @@ async fn put_workspace_coordinates(
                     Ok(now) => !crate::service::coordinates::looser(&now, &next, p).is_empty(),
                     Err(_) => false,
                 };
+                // Taking the seal off lets the grants above the workspace in again.
+                let unseals = current.is_some_and(|c| c.sealed == Some(true)) && proposed.sealed != Some(true);
+                let widens = widens || unseals;
                 (Vec::new(), widens)
             }
         }

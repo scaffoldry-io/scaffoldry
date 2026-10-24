@@ -94,7 +94,7 @@ fn manifest_with_fields(slug: &str, fields: Vec<FieldSpec>) -> AppManifest {
         department: "biology".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
-        coordinates: None,
+        coordinates: None, sealed: false,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
@@ -106,7 +106,7 @@ fn manifest_with_fields(slug: &str, fields: Vec<FieldSpec>) -> AppManifest {
             fields,
             primary_field: Some("title".to_string()),
             sample_records: vec![],
-            coordinates: None,
+            coordinates: None, sealed: false,
             row_place: Default::default(),
         }],
         views: vec![],

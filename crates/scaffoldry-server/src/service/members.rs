@@ -320,13 +320,11 @@ fn roles_for(eppn: &str, targets: &[(&str, Option<&str>)], state: &SharedState) 
                 let mut grants = shared.clone();
                 let members = memberships.get(*workspace).map(Vec::as_slice).unwrap_or_default();
                 grants.extend(members.iter().filter(|c| c.app_slug.is_empty() || Some(c.app_slug.as_str()) == *app).enumerate().filter_map(|(i, c)| membership_grant(c, i)));
-                let mut containers = vec![format!("workspace:{workspace}")];
-                containers.extend(app.map(|a| format!("app:{a}")));
-                let (units, domain) = match workspaces.get(*workspace) {
-                    Some(ws) => crate::service::coordinates::object_place(places, tree, ws, app.and_then(|a| manifests.get(a))),
-                    None => (Default::default(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()),
+                let object = match workspaces.get(*workspace) {
+                    Some(ws) => crate::service::coordinates::object_for(places, tree, ws, app.map(|a| (a, manifests.get(a))), None),
+                    None => Object { containers: vec![format!("workspace:{workspace}")], units: Default::default(), domain: scaffoldry_core::coordinates::ROOT_DOMAIN.to_string(), sealed: Default::default() },
                 };
-                role_at(&holders, &grants, &Object { containers, units, domain, sealed: Default::default() }, tree, places, now).map(|(role, _)| role)
+                role_at(&holders, &grants, &object, tree, places, now).map(|(role, _)| role)
             })
             .collect()
     })
@@ -500,8 +498,7 @@ pub fn contributions_to(eppn: &str, workspace: &str, app: &str, table_id: &str, 
     shared.extend(memberships.iter().filter(|c| c.app_slug.is_empty() || c.app_slug == app).enumerate().filter_map(|(i, c)| membership_grant(c, i)));
 
     crate::service::coordinates::with_world(state, |places, tree| {
-        let (units, domain) = crate::service::coordinates::table_place(places, tree, &ws, &manifest, table_id);
-        let table = Object { containers: vec![format!("workspace:{workspace}"), format!("app:{app}")], units, domain, sealed: Default::default() };
+        let table = crate::service::coordinates::object_for(places, tree, &ws, Some((app, Some(&manifest))), Some(table_id));
         row_contributions(&holders, &shared, &table, &row_hierarchies, tree, places, now)
     })
     .ok()

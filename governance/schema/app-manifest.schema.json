@@ -78,6 +78,7 @@
         "type": "string"
       }
     },
+    "sealed": { "type": "boolean", "description": "A sealed app stops every grant anchored above it. Grants at the app or inside it still reach. Unsealing needs a second person." },
     "pages": {
       "type": "array",
       "maxItems": 50,
@@ -343,6 +344,10 @@
         "id": {
           "type": "string",
           "minLength": 1
+        },
+        "sealed": {
+          "type": "boolean",
+          "description": "A sealed table stops every grant anchored above it, for its rows too. Grants at the table reach. Unsealing needs a second person."
         },
         "name": {
           "type": "string"

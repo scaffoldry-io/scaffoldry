@@ -34,7 +34,7 @@ fn table(id: &str, fields: Vec<FieldSpec>) -> AppTable {
         fields,
         primary_field: None,
         sample_records: vec![],
-        coordinates: None,
+        coordinates: None, sealed: false,
         row_place: Default::default(),
     }
 }
@@ -53,7 +53,7 @@ fn manifest(parent_extra: Vec<FieldSpec>, child_extra: Vec<FieldSpec>) -> AppMan
         department: "x".into(),
         workspace_id: None,
         herm_capability_id: None,
-        coordinates: None,
+        coordinates: None, sealed: false,
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![table("parents", parent_fields), table("children", child_fields)],

@@ -728,6 +728,9 @@ pub struct AppTable {
     /// field for a hierarchy of people. Changing it is a manifest change.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub row_place: std::collections::BTreeMap<String, String>,
+    /// A sealed table stops every grant anchored above it. Unsealing is a widening change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sealed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1080,6 +1083,9 @@ pub struct AppManifest {
     /// Where the app sits, narrower than its workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinates: Option<scaffoldry_core::coordinates::Coordinates>,
+    /// A sealed app stops every grant anchored above it. Unsealing is a widening change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sealed: bool,
 }
 
 /// A screen of an app: a built-in view, or a custom page an agent wrote.
