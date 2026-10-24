@@ -176,7 +176,7 @@ pub fn seal(state: &SharedState) -> Result<Option<i64>, ServiceError> {
 
 /// The job that seals every minute.
 pub fn seal_job(ctx: &crate::jobs::JobCtx, _payload: Value) -> Result<Value, crate::jobs::JobError> {
-    match seal_repository(&ctx.repository()) {
+    match seal_repository(ctx.repository()) {
         Ok(batch) => Ok(json!({ "batch_id": batch })),
         Err(e) => Err(crate::jobs::JobError::Retry(e.message().to_string())),
     }

@@ -105,7 +105,7 @@ pub enum ServiceError {
         reasons: Vec<String>,
         diagnostics: Vec<String>,
         /// The policy that decided, when a Cedar `forbid` did.
-        policy: Option<PolicyRef>,
+        policy: Option<Box<PolicyRef>>,
         /// The Cedar action that was refused, when a Cedar decision refused it. A receipt keeps it so the decision can be asked again.
         action: Option<String>,
     },

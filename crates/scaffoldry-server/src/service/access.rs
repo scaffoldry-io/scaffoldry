@@ -292,7 +292,7 @@ pub fn require_for(
         message: denied.to_string(),
         reasons: decision.reasons,
         diagnostics: decision.diagnostics,
-        policy: decision.policy,
+        policy: decision.policy.map(Box::new),
         action: Some(action.to_string()),
     })
 }
