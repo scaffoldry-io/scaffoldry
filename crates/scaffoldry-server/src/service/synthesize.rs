@@ -513,6 +513,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
             containers: vec![format!("workspace:{}", ws.id)],
             units: ws_units(ws),
             domain: ws.coordinates.domain.clone().unwrap_or_else(|| ROOT_DOMAIN.to_string()),
+            sealed: Default::default(),
         });
     }
     for app in &apps {
@@ -521,6 +522,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
             containers: vec![format!("workspace:{}", app.workspace_id), format!("app:{}", app.slug)],
             units: ws_units(ws),
             domain: app.domain.clone(),
+            sealed: Default::default(),
         });
     }
     for rec in &records {
@@ -529,6 +531,7 @@ pub fn generate_world(opts: &SynthesizeOptions) -> SyntheticWorld {
             containers: vec![format!("workspace:{}", app.workspace_id), format!("app:{}", app.slug)],
             units: rec.units.clone(),
             domain: app.domain.clone(),
+            sealed: Default::default(),
         });
     }
 

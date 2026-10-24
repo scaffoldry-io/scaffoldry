@@ -76,7 +76,7 @@ fn grant(id: i64, holder: (HolderKind, &str), role: Role, anchor: (AnchorKind, O
 }
 
 fn object_in(unit: Uuid, domain: &str) -> Object {
-    Object { containers: vec!["workspace:ws".to_string()], units: BTreeMap::from([("academic".to_string(), unit)]), domain: domain.to_string() }
+    Object { containers: vec!["workspace:ws".to_string()], units: BTreeMap::from([("academic".to_string(), unit)]), domain: domain.to_string(), sealed: Default::default() }
 }
 
 fn holding(unit: Uuid, position: Option<&str>) -> Holding {
@@ -134,7 +134,7 @@ fn a_grant_with_a_domain_reaches_that_domain_and_below() {
     assert_eq!(at("finance"), None);
     assert_eq!(at("institution"), None, "the domain above does not narrow into research");
     // An object with no unit in the grant's hierarchy is not reached.
-    let nowhere = Object { containers: vec![], units: BTreeMap::new(), domain: "research".to_string() };
+    let nowhere = Object { containers: vec![], units: BTreeMap::new(), domain: "research".to_string(), sealed: Default::default() };
     assert_eq!(role_at(&ada, &[g], &nowhere, &w.tree, &Domains, NOW), None);
 }
 

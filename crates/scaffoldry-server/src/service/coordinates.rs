@@ -4,9 +4,10 @@
 use crate::service::ServiceError;
 use crate::state::{OrganizationNode, SharedState, WorkspaceRecord};
 use scaffoldry_core::coordinates::{narrow, sensitivity_rank, workspace_effective, Coordinates, Effective, Places};
+use scaffoldry_core::reach::Object;
 use scaffoldry_core::tree::OrgTree;
 use scaffoldry_engine::AppManifest;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use uuid::Uuid;
 
 struct ServerPlaces<'a> {
@@ -94,12 +95,58 @@ pub fn table_place(places: &dyn Places, tree: &OrgTree, ws: &WorkspaceRecord, ap
     let Some((app_effective, tables)) = walk(ws_coords, app, places).0 else { return (BTreeMap::new(), scaffoldry_core::coordinates::ROOT_DOMAIN.to_string()) };
     let e = tables.get(table_id).cloned().unwrap_or(app_effective);
     let mut units: BTreeMap<String, Uuid> = e.units.iter().filter_map(|(h, u)| Uuid::parse_str(u).ok().map(|u| (h.clone(), u))).collect();
+    // The workspace sits at its own unit, as an app does, unless the app or the table named a narrower one itself.
+    // Otherwise a table would sit at the root of the hierarchy and no unit grant would reach it.
     if let Some(own) = ws.organization_id {
         if let Some(h) = tree.hierarchy_of(own) {
-            units.entry(h.to_string()).or_insert(own);
+            let named = [app.coordinates.as_ref(), app.tables.iter().find(|t| t.id == table_id).and_then(|t| t.coordinates.as_ref())].into_iter().flatten().any(|c| c.units.contains_key(h));
+            if !named {
+                units.insert(h.to_string(), own);
+            }
         }
     }
     (units, e.domain)
+}
+
+/// The container id of a table, as a grant anchors on it.
+pub fn table_container(app_slug: &str, table_id: &str) -> String {
+    format!("table:{app_slug}/{table_id}")
+}
+
+/// A workspace, one app in it, or one table of that app, as the reach rule sees it: the containers it is inside (outermost
+/// first), the unit it sits at in each hierarchy, its domain, and which of the containers are sealed.
+pub fn object_for(places: &dyn Places, tree: &OrgTree, ws: &WorkspaceRecord, app: Option<(&str, Option<&AppManifest>)>, table: Option<&str>) -> Object {
+    let mut containers = vec![format!("workspace:{}", ws.id)];
+    let mut sealed = BTreeSet::new();
+    if ws.coordinates.sealed == Some(true) {
+        sealed.insert(containers[0].clone());
+    }
+    let (units, domain) = match (app, table) {
+        (None, _) => object_place(places, tree, ws, None),
+        // An app the engine does not hold sits where its workspace sits and is not sealed.
+        (Some((slug, None)), _) => {
+            containers.push(format!("app:{slug}"));
+            object_place(places, tree, ws, None)
+        }
+        (Some((slug, Some(m))), table) => {
+            containers.push(format!("app:{slug}"));
+            if m.sealed {
+                sealed.insert(containers[1].clone());
+            }
+            match table {
+                None => object_place(places, tree, ws, Some(m)),
+                Some(id) => {
+                    let container = table_container(slug, id);
+                    if m.tables.iter().any(|t| t.id == id && t.sealed) {
+                        sealed.insert(container.clone());
+                    }
+                    containers.push(container);
+                    table_place(places, tree, ws, m, id)
+                }
+            }
+        }
+    };
+    Object { containers, units, domain, sealed }
 }
 
 /// Names every coordinate that points at a hierarchy, unit, or domain that is not there.
@@ -178,6 +225,12 @@ pub fn manifest_problems(state: &SharedState, ws: &WorkspaceRecord, m: &AppManif
     with_places(state, |places| {
         let mut problems = walk(ws_coords, m, places).1;
         let hierarchies = places.hierarchies();
+        if m.coordinates.as_ref().is_some_and(|c| c.sealed.is_some()) {
+            problems.push("app coordinates: seal an app with `sealed: true` on the app, not in its coordinates".to_string());
+        }
+        for t in m.tables.iter().filter(|t| t.coordinates.as_ref().is_some_and(|c| c.sealed.is_some())) {
+            problems.push(format!("table '{}' coordinates: seal a table with `sealed: true` on the table, not in its coordinates", t.id));
+        }
         for t in &m.tables {
             for f in &t.fields {
                 if let Some(h) = &f.hierarchy {
@@ -222,10 +275,16 @@ pub fn widened(state: &SharedState, ws: &WorkspaceRecord, old: &AppManifest, new
         let (Some((old_app, old_tables)), _) = walk(ws_coords, old, places) else { return Vec::new() };
         let (Some((new_app, new_tables)), _) = walk(ws_coords, new, places) else { return Vec::new() };
         let mut out: Vec<String> = looser(&old_app, &new_app, places).into_iter().map(|p| format!("app {p}")).collect();
+        if old.sealed && !new.sealed {
+            out.push("app was unsealed".to_string());
+        }
         for t in &new.tables {
             let (Some(was), Some(now)) = (old_tables.get(&t.id), new_tables.get(&t.id)) else { continue };
             out.extend(looser(was, now, places).into_iter().map(|p| format!("table '{}' {p}", t.id)));
             let Some(old_table) = old.tables.iter().find(|o| o.id == t.id) else { continue };
+            if old_table.sealed && !t.sealed {
+                out.push(format!("table '{}' was unsealed", t.id));
+            }
             for f in &t.fields {
                 let Some(old_field) = old_table.fields.iter().find(|o| o.name == f.name) else { continue };
                 let rank = |table: &Effective, own: &Option<String>| own.as_deref().and_then(sensitivity_rank).max(sensitivity_rank(&table.sensitivity));
