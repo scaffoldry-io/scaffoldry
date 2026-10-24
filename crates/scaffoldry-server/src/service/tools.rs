@@ -98,7 +98,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "record_governance_decision",
-        description: "Append a governance decision to the immutable SHA-256 ledger with NIST OSCAL control mapping, in the name of the signed-in caller.",
+        description: "Append a governance decision to the SHA-256 ledger, mapped to a NIST OSCAL control. It is recorded in the name of the signed-in caller.",
         input_schema: schema_record_governance_decision,
         scope: Scope::SignedIn,
         read_only: false,
@@ -122,7 +122,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "get_framework_spec",
-        description: "Retrieve the JSON Schema specification for the TanStack-extended component catalog, institutional theme tokens, and data classification boundaries.",
+        description: "Retrieve the JSON Schema of the component catalog, the approved institutional theme tokens, and the data classification boundaries.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,

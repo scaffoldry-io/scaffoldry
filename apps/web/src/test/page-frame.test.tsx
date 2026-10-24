@@ -45,6 +45,27 @@ const call = (name: string, args: Record<string, unknown>, id = 7) => ({ jsonrpc
 const posts = () => fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST");
 
 describe("PageFrame", () => {
+  // MCP apps phase 8: the page now says ui/initialize first (MCP Apps, specification 2026-01-26). The desk is its host.
+  it("answers ui/initialize with the host's result and accepts ui/notifications/initialized", async () => {
+    const el = await frame();
+    const spy = listen(el);
+    fromFrame(el, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appCapabilities: {}, clientInfo: { name: "scaffoldry-page", version: "1" } } });
+    const answer = spy.mock.calls[0][0] as { id: number; result: Record<string, unknown>; error?: unknown };
+    expect(answer.error).toBeUndefined();
+    expect(answer.id).toBe(1);
+    expect(answer.result.protocolVersion).toBe("2026-01-26");
+    expect(answer.result).toHaveProperty("hostCapabilities");
+    expect(answer.result).toHaveProperty("hostInfo");
+    expect(answer.result).toHaveProperty("hostContext");
+    // The notification has no id. It is accepted and answered with nothing, and it calls no route.
+    fromFrame(el, { jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(posts()).toHaveLength(0);
+    // A tool call after the handshake still goes through, and only page_call does.
+    fromFrame(el, call("page_call", { op: "list", table_id: "grants" }, 2));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+  });
+
   it("loads the page document from the page route and shows it in a frame", async () => {
     const el = await frame();
     expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/apps/scholarships/pages/board");
