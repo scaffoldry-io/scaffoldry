@@ -24,6 +24,32 @@ const PUBLIC_PATHS: [&str; 9] = [
     "/oauth/revoke",
 ];
 
+/// The person a provider token names. When it also names a client, that client must be registered and active, and the
+/// token is treated as a phase 2 token: the person's rights, narrowed by the client's ceiling (external apps phase 7).
+/// A client with no ceiling of its own, an agent client, signs in through OAuth sessions and cannot use this path.
+fn provider_user(token: &str, state: &SharedState) -> Option<AuthUser> {
+    let verified = crate::jwt::validate_jwt(token, state)?;
+    let mut user = resolve_user(&verified.person, state)?;
+    if let Some(client_id) = verified.client {
+        let client = state.repository.get_client(&client_id).ok().flatten().filter(|c| c.status == "Active" && c.kind != "agent")?;
+        user.via_client = Some(Box::new(crate::state::ViaClient {
+            ceiling: crate::service::clients::ceiling_of(&client),
+            client_id: client.client_id,
+            name: client.name,
+        }));
+    }
+    Some(user)
+}
+
+/// The scope that limits this request: the one on a stored token, or the ceiling of the client a provider token names.
+/// The flag says the limit comes from an outside app.
+pub fn request_scope(state: &SharedState, headers: &HeaderMap, user: &AuthUser) -> Option<(scaffoldry_core::TokenScope, bool)> {
+    if let Some(row) = token_row(state, headers) {
+        return row.scope.clone().map(|scope| (scope, row.kind == "client"));
+    }
+    user.via_client.as_ref().map(|client| (crate::service::clients::scope_of(&client.ceiling), true))
+}
+
 pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get("authorization")
@@ -37,7 +63,7 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
     // A token shaped like a JWT comes from the institution's identity provider and is verified against the keys in settings.
     // Anything else is a stored row. It names the person and nothing more: roles come from the stored rows.
     if crate::jwt::is_jwt_shaped(token) {
-        return resolve_user(&crate::jwt::validate_jwt(token, state)?, state);
+        return provider_user(token, state);
     }
     let hash = hash_token(token);
 
@@ -160,6 +186,12 @@ pub fn view_as_tool_gate(row: &crate::state::ApiToken, name: &str, args: &serde_
 pub fn read_origin(state: &SharedState, headers: &HeaderMap) -> crate::service::history::Origin {
     use crate::repository::ActorKind;
     let mut origin = crate::service::history::Origin::user();
+    // A provider token that names a client: the history says which one.
+    if let Some(token) = bearer_token(headers).filter(|t| crate::jwt::is_jwt_shaped(t)) {
+        let client = crate::jwt::validate_jwt(token, state).and_then(|v| v.client).and_then(|id| state.repository.get_client(&id).ok().flatten());
+        origin.token_label = client.map(|c| format!("Client {} [{}]", c.name, c.client_id));
+        return origin;
+    }
     if let Some(row) = bearer_token(headers).and_then(|t| state.get_api_token(&hash_token(t))) {
         if row.kind == "agent" {
             origin.kind = ActorKind::Agent;
@@ -231,13 +263,12 @@ pub async fn require_session(
                 }
             }
             // A limited token reaches the record routes its scope allows and the tool endpoint, where each tool is checked.
-            let held = token_row(&state, req.headers());
-            if let Some(scope) = held.as_ref().and_then(|r| r.scope.clone()) {
+            if let Some((scope, from_client)) = request_scope(&state, req.headers(), &user) {
                 let path = req.uri().path().to_string();
                 let tool_endpoint = req.method() == axum::http::Method::POST && matches!(path.as_str(), "/api/v1/mcp" | "/api/mcp");
                 if !tool_endpoint {
                     if let Err(refusal) = crate::service::token_scope::check_request(&scope, req.method(), &path, &state) {
-                        return as_client_refusal(refusal, held.as_ref().is_some_and(|r| r.kind == "client")).into_response();
+                        return as_client_refusal(refusal, from_client).into_response();
                     }
                     if let Some(query) = crate::service::token_scope::capped_query(&scope, req.method(), &path, req.uri().query()) {
                         if let Ok(uri) = format!("{path}?{query}").parse::<axum::http::Uri>() {
