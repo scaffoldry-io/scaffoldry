@@ -34,6 +34,11 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser> {
     let token = bearer_token(headers)?;
+    // A `scf_` token is a stored row. Anything else is a token from the institution's identity provider, verified against
+    // the keys in settings. It names the person and nothing more: roles come from the stored rows.
+    if !token.starts_with("scf_") {
+        return resolve_user(&crate::jwt::validate_jwt(token, state)?, state);
+    }
     let hash = hash_token(token);
 
     let row = match state.get_api_token(&hash) {

@@ -1,7 +1,7 @@
 //! RFC 9728 OAuth 2.0 Protected Resource Metadata
 //! Enables zero-configuration discovery for MCP clients.
 
-use crate::jwt::get_jwt_issuer;
+use crate::jwt::configured_issuer;
 use crate::state::SharedState;
 use axum::{
     response::IntoResponse,
@@ -15,12 +15,12 @@ pub fn router() -> Router<SharedState> {
         .route("/.well-known/oauth-protected-resource", get(get_oauth_protected_resource))
 }
 
-async fn get_oauth_protected_resource(headers: axum::http::HeaderMap) -> impl IntoResponse {
+async fn get_oauth_protected_resource(axum::extract::State(state): axum::extract::State<SharedState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
     // This server issues tokens for outside apps, and the institution's identity provider issues the others.
     let own = crate::service::oauth::issuer_of(&headers);
     let mut servers = vec![own.clone()];
-    let idp = get_jwt_issuer();
-    if idp != own {
+    // The institution's identity provider, when a Platform Admin has set it. There is no built-in default.
+    if let Some(idp) = configured_issuer(&state).filter(|idp| *idp != own) {
         servers.push(idp);
     }
     Json(json!({
