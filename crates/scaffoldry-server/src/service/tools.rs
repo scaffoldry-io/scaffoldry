@@ -321,6 +321,14 @@ Tool {
         run: run_get_job,
     },
     Tool {
+        name: "begin_task",
+        description: "Add one sentence, 200 characters at most, naming what you are doing for the person. Call it first.",
+        input_schema: schema_begin_task,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_begin_task,
+    },
+    Tool {
         name: "cancel_job",
         description: "Cancel a running or queued job (only creator or Platform Admin).",
         input_schema: schema_cancel_job,
@@ -754,6 +762,28 @@ fn schema_get_job() -> Value {
         },
         "required": ["job_id"]
     })
+}
+
+fn schema_begin_task() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "task": { "type": "string", "maxLength": 200 } },
+        "required": ["task"]
+    })
+}
+
+/// Records the task on the AI tool's session. Every history entry, disclosure and receipt made in the session carries it.
+fn run_begin_task(_caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let task = required_str(&args, "task")?.trim();
+    if task.is_empty() || task.chars().count() > 200 {
+        return Err(ServiceError::BadRequest("Argument 'task' must be one sentence of 1 to 200 characters".to_string()));
+    }
+    let session = origin.session.ok_or_else(|| ServiceError::BadRequest("begin_task is for an AI tool that signed in through OAuth".to_string()))?;
+    let stored = state.repository.set_session_task(session, task).map_err(|e| ServiceError::Internal(e.to_string()))?;
+    if !stored {
+        return Err(ServiceError::unauthorized("This session has ended. Sign in again."));
+    }
+    Ok(json!({ "status": "recorded", "task": task }))
 }
 
 fn schema_cancel_job() -> Value {

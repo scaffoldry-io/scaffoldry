@@ -18,12 +18,20 @@ pub struct Origin {
     pub token_label: Option<String>,
     /// A caller who writes several records as one action names the batch.
     pub batch_id: Option<uuid::Uuid>,
+    /// The AI tool session behind the request, when there is one.
+    pub session: Option<uuid::Uuid>,
 }
 
 impl Origin {
     pub fn user() -> Self {
-        Self { kind: ActorKind::User, token_label: None, batch_id: None }
+        Self { kind: ActorKind::User, token_label: None, batch_id: None, session: None }
     }
+}
+
+/// The token label with the task a tool named, cut to the 255 characters a history row holds.
+pub fn label_with_task(label: &str, task: &str) -> String {
+    let full = format!("{label} - {task}");
+    full.chars().take(255).collect()
 }
 
 /// The page size of a history read.

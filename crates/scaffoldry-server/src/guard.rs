@@ -74,12 +74,15 @@ pub fn session_user(state: &SharedState, headers: &HeaderMap) -> Option<AuthUser
     }
     // A token an outside app holds works while its client is active.
     if row.kind == "client" {
-        let client = crate::service::oauth::active_client_of(&hash, state)?;
-        user.via_client = Some(Box::new(crate::state::ViaClient {
-            ceiling: crate::service::clients::ceiling_of(&client),
-            client_id: client.client_id,
-            name: client.name,
-        }));
+        let (client, _) = crate::service::oauth::active_client_of(&hash, state)?;
+        // An agent client has no ceiling of its own. It acts within the person's rights, limited by the session's level.
+        if client.kind != "agent" {
+            user.via_client = Some(Box::new(crate::state::ViaClient {
+                ceiling: crate::service::clients::ceiling_of(&client),
+                client_id: client.client_id,
+                name: client.name,
+            }));
+        }
     }
     // A preview works while its proposal is pending, and builds the preview app in this server.
     if row.kind == "preview" && !crate::service::preview::admit(&row, state) {
@@ -162,8 +165,14 @@ pub fn read_origin(state: &SharedState, headers: &HeaderMap) -> crate::service::
             origin.kind = ActorKind::Agent;
             origin.token_label = Some(row.label);
         } else if row.kind == "client" {
-            // The person acts, through an app. The history says which one.
-            origin.token_label = Some(row.label);
+            // The person acts, through an app. The history says which one, and for an AI tool, the task it named.
+            let session = crate::service::oauth::active_client_of(&row.token_hash, state).and_then(|(_, s)| s);
+            let task = session.as_ref().and_then(|s| s.task.clone());
+            origin.session = session.map(|s| s.session_id);
+            origin.token_label = Some(match task {
+                Some(t) => crate::service::history::label_with_task(&row.label, &t),
+                None => row.label,
+            });
         }
     }
     origin

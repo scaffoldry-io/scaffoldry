@@ -151,8 +151,12 @@ async fn handle_mcp_request(
     }
 
     // A view-as session reaches the tools and nothing else here.
-    let scope = crate::guard::token_row(&state, &headers).and_then(|r| r.scope);
-    if (scope.is_some() || crate::guard::view_as_token(&state, &headers).is_some()) && !["initialize", "ping", "tools/list", "tools/call"].contains(&req.method.as_str()) {
+    let held = crate::guard::token_row(&state, &headers);
+    let from_client = held.as_ref().is_some_and(|r| r.kind == "client");
+    let scope = held.and_then(|r| r.scope);
+    // An AI tool's session reads resources and prompts as its person does. Other limited tokens do not.
+    let session = scope.as_ref().is_some_and(|s| s.level.is_some());
+    if !session && (scope.is_some() || crate::guard::view_as_token(&state, &headers).is_some()) && !["initialize", "ping", "tools/list", "tools/call"].contains(&req.method.as_str()) {
         let err = crate::service::ServiceError::forbidden("This view reaches one app only. Exit it to open anything else.");
         return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: None, error: Some(JsonRpcError { code: -32001, message: err.message().to_string(), data: None }) });
     }
@@ -201,7 +205,7 @@ async fn handle_mcp_request(
             let listed: Vec<Value> = tools::TOOLS
                 .iter()
                 // A limited token sees the tools its scope allows and no others.
-                .filter(|t| scope.as_ref().is_none_or(|s| s.allows_tool(t.name)))
+                .filter(|t| scope.as_ref().is_none_or(|s| crate::service::token_scope::lists_tool(s, t.name)))
                 .map(|t| {
                     // The schema is closed (`validate_args` refuses an unknown argument) and carries one valid call.
                     let mut schema = (t.input_schema)();
@@ -232,7 +236,7 @@ async fn handle_mcp_request(
             // A limited token calls the data tools its scope names. The person's own rights are checked by the tool.
             if let Some(scope) = &scope {
                 if let Err(err) = crate::service::token_scope::check_tool(scope, &tool_name, &mut args, &state) {
-                    let err = crate::guard::as_client_refusal(err, caller.via_client.is_some());
+                    let err = crate::guard::as_client_refusal(err, from_client);
                     return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(service_tool_error(&err)), error: None });
                 }
             }

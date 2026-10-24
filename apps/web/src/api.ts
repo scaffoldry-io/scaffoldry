@@ -726,7 +726,11 @@ export const callPage = (appSlug: string, pageId: string, args: Record<string, u
 
 /** What an outside app's sign-in request asks the person to agree to. */
 export interface OAuthConsent {
-  client: { client_id: string; name: string; operator: string; callback_origin: string };
+  client: { client_id: string; name: string; operator: string; callback_origin: string; kind?: string };
+  /** An AI tool's choices of what it may do, when the app is one. */
+  choices?: { id: string; sentence: string }[];
+  /** How long an AI tool's session lasts, in hours. */
+  session_hours?: number;
   /** The ceiling, in sentences. */
   sentences: string[];
   /** The person already agreed to exactly this. */
@@ -1050,8 +1054,8 @@ export const apiClient = {
     request<OAuthConsent>(`/oauth/authorize?${new URLSearchParams(params).toString()}`),
 
   /** The person's answer. The reply is the address to send them to. */
-  oauthDecide: (params: Record<string, string>, decision: "allow" | "deny") =>
-    request<{ redirect_to: string }>("/oauth/authorize", { method: "POST", body: JSON.stringify({ ...params, decision }) }),
+  oauthDecide: (params: Record<string, string>, decision: "allow" | "deny", access?: string) =>
+    request<{ redirect_to: string }>("/oauth/authorize", { method: "POST", body: JSON.stringify({ ...params, decision, ...(access ? { access } : {}) }) }),
 
   /** The outside apps the signed-in person has agreed to. */
   listConnections: async (): Promise<Connection[]> => {

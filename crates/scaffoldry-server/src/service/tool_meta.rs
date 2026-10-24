@@ -11,7 +11,7 @@ pub fn hints(name: &str) -> (bool, bool) {
         "delete_record" | "delete_view" | "cancel_job" => (true, true),
         // A page may remove a record when its grant allows it.
         "page_call" => (true, false),
-        "update_workspace" | "update_record" | "save_view" => (false, true),
+        "update_workspace" | "update_record" | "save_view" | "begin_task" => (false, true),
         _ => (false, false),
     }
 }
@@ -40,6 +40,7 @@ pub fn example(name: &str) -> Value {
         "delete_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "version": 3 }),
         "propose_app_change" => json!({ "workspace_id": "ws-physics-optics", "app_slug": "scholarships", "summary": "Add an amount column" }),
         "get_agent_kit" => json!({}),
+        "begin_task" => json!({ "task": "Enter the spring grant proposals" }),
         "preview_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11" }),
         "get_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11" }),
         "decide_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11", "decision": "approve", "rationale": "Checks passed and the chair agrees", "digest": "9f2c4b7a1e6d3058b4a9c2e7d1f0a36b5c8e9d4f7a2b1c0e3d6f8a9b4c7e2d51" }),

@@ -78,7 +78,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
   const handleSaveSetting = async (key: string) => {
     try {
       let val = settingsInputs[key];
-      if (key === "tokens.max_days" || key === "process.stale_days") {
+      if (key === "tokens.max_days" || key === "process.stale_days" || key === "access.agent_session_hours") {
         val = parseInt(String(val), 10);
       } else if (key === "tokens.agent_enabled" || key === "oauth.allow_localhost") {
         val = Boolean(val);
@@ -744,6 +744,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
             {[
               { key: "tokens.max_days", desc: "Longest life of an agent token in days (1 to 365)", type: "number" },
               { key: "tokens.agent_enabled", desc: "Allow users to mint agent tokens", type: "boolean" },
+              { key: "access.agent_session_hours", desc: "Longest an AI tool's session lasts, in hours (1 to 24)", type: "number" },
               { key: "oauth.allow_localhost", desc: "Allow outside apps to register a localhost redirect address (for development)", type: "boolean" },
               { key: "cors.allowed_origins", desc: "Allowed CORS origins (comma-separated)", type: "string_array" },
               { key: "oidc.issuer", desc: "Exact OIDC issuer URI to accept", type: "text" },

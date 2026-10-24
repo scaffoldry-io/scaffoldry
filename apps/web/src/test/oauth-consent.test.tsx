@@ -69,6 +69,39 @@ describe("External apps phase 2: the consent screen", () => {
     await waitFor(() => expect(assign).toHaveBeenCalled());
   });
 
+  it("an AI tool's sign-in asks the person to pick what it may do, and sends the pick", async () => {
+    const AGENT = {
+      ...CONSENT,
+      client: { ...CONSENT.client, name: "Desk assistant", kind: "agent" },
+      sentences: ["Acts as you, within what you may already do. It never has more than you."],
+      choices: [
+        { id: "read", sentence: "Read" },
+        { id: "propose", sentence: "Read and propose changes" },
+        { id: "write", sentence: "Read, propose, and write records" },
+      ],
+      session_hours: 12,
+    };
+    const posts = mock(AGENT);
+    render(<OAuthConsent />);
+    const read = await screen.findByRole("radio", { name: "Read" });
+    expect(read).toBeChecked();
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
+    expect(screen.getByText(/up to 12 hours/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Read and propose changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(posts[0]?.access).toBe("propose"));
+  });
+
+  it("an app that is not an AI tool shows no choice of access", async () => {
+    const posts = mock(CONSENT);
+    render(<OAuthConsent />);
+    await screen.findByRole("button", { name: "Allow" });
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(posts[0]).toBeDefined());
+    expect(posts[0].access).toBeUndefined();
+  });
+
   it("a request the server refuses is an error page and never a redirect", async () => {
     mock({ error: "The return address does not match one this app registered.", code: "bad_request" }, 400);
     render(<OAuthConsent />);

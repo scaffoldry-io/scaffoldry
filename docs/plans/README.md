@@ -153,7 +153,7 @@ Faculty want quick, custom web apps with interfaces of their own. These rows let
 | 81 | [external-apps.md](external-apps.md) | 2 | Sign-in with OAuth 2.1 and PKCE, consent naming the client and its operator, one-hour tokens, and revocation | **COMPLETED** |
 | 82 | [external-apps.md](external-apps.md) | 3 | An outside app calls as the signed-in person, within its ceiling, and every call records the client | **COMPLETED** |
 | 83 | [external-apps.md](external-apps.md) | 4 | A TypeScript client generated for each app, and a guide for building outside Scaffoldry | **COMPLETED** |
-| 84 | [external-apps.md](external-apps.md) | 8 | AI tools sign in through OAuth as themselves, for a person, with the scope the person picked, and every action names the person, the tool and the task | |
+| 84 | [external-apps.md](external-apps.md) | 8 | AI tools sign in through OAuth as themselves, for a person, with the scope the person picked, and every action names the person, the tool and the task | **COMPLETED** |
 | 85 | [foundation.md](foundation.md) | 10 | Tokens from the institution's identity provider are verified. Adds `jsonwebtoken` **COMPLETED** |
 | 86 | [external-apps.md](external-apps.md) | 7 | An outside app may use tokens from the institution's identity provider | |
 | 87 | [mcp-apps.md](mcp-apps.md) | 8 | Custom pages and review screens render inside the agent, from the published MCP Apps specification |

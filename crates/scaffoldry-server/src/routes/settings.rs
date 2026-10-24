@@ -22,6 +22,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "mcp.disabled_tools",
     "pages.disabled",
     "oauth.allow_localhost",
+    "access.agent_session_hours",
     "jobs.schedules_disabled",
     "sensitivity.categories",
     "sensitivity.detectors",
@@ -49,6 +50,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "cors.allowed_origins" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
+        "access.agent_session_hours" => value.as_i64().is_some_and(|n| (1..=24).contains(&n)),
         "tokens.max_days" | "process.stale_days" => {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }

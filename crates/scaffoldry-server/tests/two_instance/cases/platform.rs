@@ -53,6 +53,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /oauth/token".into(), case!(oauth_token));
     m.insert("POST /oauth/revoke".into(), case!(oauth_revoke));
     m.insert("DELETE /api/v1/me/connections/{client_id}".into(), case!(connection_delete));
+    m.insert("tool:begin_task".into(), case!(begin_task));
 
     m.insert("POST /api/v1/auth/tokens".into(), case!(token_create));
     m.insert("DELETE /api/v1/auth/tokens/{id}".into(), case!(token_revoke));
@@ -513,6 +514,50 @@ async fn connection_delete(w: World) -> Outcome {
     ensure(!token_works(&w.a, &token).await, "A refuses the token after B disconnected")?;
     let listed = status(World::call(&w.a, "GET", "/api/v1/me/connections", OWNER, None).await, StatusCode::OK, "A lists connections")?;
     ensure(!has(&listed, &id), format!("A no longer lists it: {listed}"))
+}
+
+/// An AI tool's session is in the database. A signs the person in, B takes the task, and A shows it in the history of a write B made.
+async fn begin_task(w: World) -> Outcome {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let made = status(
+        w.wa("POST", "/api/v1/clients", ADMIN, Some(json!({ "name": unique("p8agent"), "operator": "Academic Computing", "kind": "agent", "redirect_uris": [CALLBACK] }))).await,
+        StatusCode::CREATED,
+        "register an agent client",
+    )?;
+    let id = made["client_id"].as_str().ok_or("a client id")?.to_string();
+    status(w.wa("POST", &format!("/api/v1/clients/{id}/decide"), ADMIN, Some(json!({ "decision": "approve", "rationale": "An allowed tool" }))).await, StatusCode::OK, "approve it")?;
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()));
+    let allowed = status(
+        World::call(&w.b, "POST", "/oauth/authorize", OWNER, Some(json!({
+            "client_id": id, "redirect_uri": CALLBACK, "response_type": "code", "state": "s1", "code_challenge": challenge,
+            "code_challenge_method": "S256", "resource": "https://localhost", "decision": "allow", "access": "write"
+        }))).await,
+        StatusCode::OK,
+        "B takes the choice",
+    )?;
+    let code = allowed["redirect_to"].as_str().and_then(|r| r.split_once("code=")).and_then(|(_, rest)| rest.split('&').next()).ok_or("a code")?.to_string();
+    let (s, issued) = form_post(&w.a, "/oauth/token", token_form(&id, &code)).await;
+    ensure(s == StatusCode::OK && issued["refresh_token"].is_string(), format!("A starts the session: {s} {issued}"))?;
+    let token = issued["access_token"].as_str().ok_or("a token")?.to_string();
+
+    let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "begin_task", "arguments": { "task": "Enter the lab equipment" } } });
+    let (s, told) = World::call_with(&w.a, "POST", "/api/mcp", &token, Some(call)).await;
+    ensure(s == StatusCode::OK && told["result"]["isError"] != true, format!("A records the task: {s} {told}"))?;
+
+    let slug = make_app(&w).await?;
+    let (s, made) = World::call_with(&w.b, "POST", &format!("/api/v1/apps/{slug}/records"), &token, Some(json!({ "data": { "_table_id": "apps", "name": unique("session"), "gpa": 3.2 } }))).await;
+    ensure(s == StatusCode::CREATED, format!("B writes in the session: {s} {made}"))?;
+    let record = made["id"].as_str().ok_or("a record id")?.to_string();
+    let history = status(w.wa("GET", &format!("/api/v1/apps/{slug}/records/{record}/history"), OWNER, None).await, StatusCode::OK, "A reads the history")?;
+    ensure(has(&history, "Enter the lab equipment") && has(&history, &id), format!("the history names the task and the client: {history}"))?;
+
+    // The refresh token works on either instance, once.
+    let (s, next) = form_post(&w.b, "/oauth/token", format!("grant_type=refresh_token&refresh_token={}&client_id={id}", issued["refresh_token"].as_str().unwrap_or_default())).await;
+    ensure(s == StatusCode::OK, format!("B refreshes what A issued: {s} {next}"))?;
+    let (s, _) = form_post(&w.a, "/oauth/token", format!("grant_type=refresh_token&refresh_token={}&client_id={id}", issued["refresh_token"].as_str().unwrap_or_default())).await;
+    ensure(s == StatusCode::BAD_REQUEST, "A refuses the refresh token B used")?;
+    ensure(!token_works(&w.b, next["access_token"].as_str().unwrap_or_default()).await, "and the session B refreshed is over on B")
 }
 
 // --- sessions ------------------------------------------------------------------------------------------------------------
