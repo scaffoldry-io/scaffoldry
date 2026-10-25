@@ -343,9 +343,18 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
     if status != "Pending" {
         return Err(ServiceError::conflict("That change has already been decided"));
     }
-    let g = NewGrant::of_json(&change["grant"]).ok_or_else(|| ServiceError::Internal("The stored change is not a grant".to_string()))?;
+    let hierarchy_change = change["kind"] == "hierarchy";
+    let g = if hierarchy_change {
+        None
+    } else {
+        Some(NewGrant::of_json(&change["grant"]).ok_or_else(|| ServiceError::Internal("The stored change is not a grant".to_string()))?)
+    };
     let r = rights(state, caller);
-    scope_allows(state, &r, caller, &g).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?;
+    match &g {
+        Some(g) => scope_allows(state, &r, caller, g).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?,
+        None if r.platform => {}
+        None => return Err(ServiceError::forbidden("You do not hold the right to decide this change")),
+    }
     let confirm = match body.get("decision").and_then(Value::as_str) {
         Some("confirm") => true,
         Some("reject") => false,
@@ -354,15 +363,27 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
     let reason = reason_of(body)?;
     if confirm {
         // The pair may have been declared, or the person may have gained the other side, since the proposal.
-        check_grant_conflict(state, &g)?;
+        if let Some(g) = &g {
+            check_grant_conflict(state, g)?;
+        }
     }
     if confirm && proposed_by.eq_ignore_ascii_case(&caller.eppn) {
         return Err(ServiceError::forbidden("The person who proposed a change cannot confirm it"));
     }
     let decide = || state.repository.decide_access_change(id, &caller.eppn, confirm).map_err(internal);
     let outcome = if confirm {
-        let payload = json!({ "action": "grant_confirmed", "change_id": id, "grant": g.json(), "proposed_by": proposed_by });
-        admin_write(state, caller, DecisionType::AccessGrantChanged, "AC-02", &reason, &payload, decide)?
+        match &g {
+            Some(g) => {
+                let payload = json!({ "action": "grant_confirmed", "change_id": id, "grant": g.json(), "proposed_by": proposed_by });
+                admin_write(state, caller, DecisionType::AccessGrantChanged, "AC-02", &reason, &payload, decide)?
+            }
+            None => {
+                let payload = json!({ "action": "hierarchy_created", "change_id": id, "hierarchy": change["hierarchy"], "proposed_by": proposed_by });
+                let outcome = admin_write(state, caller, DecisionType::HierarchyChanged, "AC-02", &reason, &payload, decide)?;
+                let _ = state.refresh();
+                outcome
+            }
+        }
     } else {
         decide()?
     };
@@ -445,6 +466,9 @@ pub fn list(state: &SharedState, caller: &AuthUser, q: &ListQuery) -> Result<Val
             .map_err(internal)?
             .into_iter()
             .filter(|c| {
+                if c["kind"] == "hierarchy" {
+                    return r.platform;
+                }
                 let g = &c["grant"];
                 AnchorKind::parse(g["anchor_kind"].as_str().unwrap_or_default()).is_some_and(|k| in_scope(k, g["anchor_id"].as_str()))
             })
@@ -529,22 +553,29 @@ fn existing_conflicts(state: &SharedState) -> Vec<Value> {
 
 /// Grants nobody has reviewed for `access.review_days`, and conflicts that exist now. A Platform Admin or compliance sees
 /// all. An Org Unit Admin sees the due grants inside their subtree.
-pub fn reviews(state: &SharedState, caller: &AuthUser) -> Result<Value, ServiceError> {
+pub fn reviews(state: &SharedState, caller: &AuthUser, cursor: Option<&str>, limit: Option<i64>) -> Result<Value, ServiceError> {
     let r = rights(state, caller);
     if !r.platform && r.admin_units.is_empty() {
         return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
     }
     let days = setting_days(state, "access.review_days", 365);
-    let due: Vec<Value> = state
-        .repository
-        .due_grant_rows(days, 500)
-        .map_err(internal)?
+    let after = match cursor {
+        Some(c) => c.parse::<i64>().map_err(|_| bad("Invalid cursor"))?,
+        None => 0,
+    };
+    let limit = limit.unwrap_or(50).clamp(1, 200);
+    let rows = state.repository.due_grant_rows(days, after, limit + 1).map_err(internal)?;
+    let more = rows.len() as i64 > limit;
+    let last = rows.iter().take(limit as usize).last().map(|row| row.grant.id);
+    let due: Vec<Value> = rows
         .into_iter()
-        .filter(|row| NewGrant::of_json(&row.json()).is_some_and(|g| scope_allows(state, &r, caller, &g).is_ok()))
+        .take(limit as usize)
+        .filter(|row| r.platform || NewGrant::of_json(&row.json()).is_some_and(|g| scope_allows(state, &r, caller, &g).is_ok()))
         .map(|row| row.json())
         .collect();
-    let found = if r.platform { existing_conflicts(state) } else { Vec::new() };
-    Ok(json!({ "review_days": days, "due": due, "conflicts": found }))
+    // The conflicts are listed with the first page only.
+    let found = if r.platform && after == 0 { existing_conflicts(state) } else { Vec::new() };
+    Ok(json!({ "review_days": days, "due": due, "conflicts": found, "next_cursor": if more { last.map(|i| i.to_string()) } else { None } }))
 }
 
 /// Keeps or revokes a grant that is due. Keeping resets the clock. A person cannot review a grant they hold.
@@ -572,4 +603,45 @@ pub fn review_grant(state: &SharedState, caller: &AuthUser, id: i64, body: &Valu
         }
         _ => Err(bad("decision must be 'keep' or 'revoke'")),
     }
+}
+
+/// What a grant would do, before it is proposed. The same checks as a proposal run, and nothing is stored.
+pub fn preview_grant(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+    let r = rights(state, caller);
+    if !r.platform && r.admin_units.is_empty() && body.get("anchor_kind").and_then(Value::as_str) != Some("container") {
+        return Err(ServiceError::GrantOutsideScope("You may not give access here".to_string()));
+    }
+    let g = parse_new_grant(state, body)?;
+    scope_allows(state, &r, caller, &g)?;
+    let grant = Grant {
+        id: i64::MAX,
+        holder_kind: g.holder_kind,
+        holder_id: g.holder_id.clone(),
+        role: g.role,
+        hierarchy: g.hierarchy.clone(),
+        anchor_kind: g.anchor_kind,
+        anchor_id: g.anchor_id.clone(),
+        depth: g.depth.and_then(|d| i16::try_from(d).ok()),
+        domain: g.domain.clone(),
+        valid_from: 0,
+        valid_until: g.valid_until.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok()).map(|d| d.timestamp()),
+        revoked: false,
+        clearance: g.clearance.as_deref().and_then(sensitivity_rank),
+    };
+    let impact = crate::service::access_review::impact_of_new_grant(state, &grant)?;
+    Ok(json!({ "grant": g.json(), "impact": impact }))
+}
+
+/// People whose address or name holds `q`, a page at a time. For a Platform Admin, compliance or an Org Unit Admin.
+pub fn search_people(state: &SharedState, caller: &AuthUser, q: &str, cursor: Option<&str>, limit: Option<i64>) -> Result<Value, ServiceError> {
+    let r = rights(state, caller);
+    if !r.platform && r.admin_units.is_empty() {
+        return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
+    }
+    let limit = limit.unwrap_or(50).clamp(1, 200);
+    let rows = state.repository.search_people(q.trim(), cursor.unwrap_or(""), limit + 1).map_err(internal)?;
+    let more = rows.len() as i64 > limit;
+    let people: Vec<Value> = rows.iter().take(limit as usize).map(|(eppn, name)| json!({ "eppn": eppn, "name": name })).collect();
+    let next = if more { people.last().and_then(|p| p["eppn"].as_str().map(str::to_string)) } else { None };
+    Ok(json!({ "people": people, "next_cursor": next }))
 }

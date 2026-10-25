@@ -24,6 +24,9 @@ pub fn add(m: &mut Entries) {
         m.insert(k("POST", "/access/grants/{id}/revoke"), case!(grant_revoke, root));
         m.insert(k("POST", "/access/grants/{id}/review"), case!(grant_review, root));
         m.insert(k("POST", "/access/changes/{id}/decide"), case!(grant_decide, root));
+        m.insert(k("POST", "/hierarchies"), case!(hierarchy_propose, root));
+        m.insert(k("POST", "/hierarchies/{key}/retire"), case!(hierarchy_retire, root));
+        exempt(m, &k("POST", "/access/grants/preview"), "works out what a grant would do and stores nothing");
         m.insert(k("PATCH", "/workspaces/{id}"), case!(admin_ws_move, root));
         m.insert(k("POST", "/workspaces/{id}/transfer-ownership"), case!(admin_ws_transfer, root));
     }
@@ -196,6 +199,40 @@ async fn grant_revoke(w: World, root: &'static str) -> Outcome {
     status(w.wa("POST", &format!("{root}/access/grants/{id}/revoke"), ADMIN, Some(json!({ "reason": "Done" }))).await, StatusCode::OK, "A revokes")?;
     let seen = status(w.rb("GET", &format!("/api/v1/admin/access/grants?state=revoked&holder={holder}"), ADMIN, None).await, StatusCode::OK, "B lists the revoked grants")?;
     ensure(seen["grants"].as_array().is_some_and(|g| g.len() == 1), format!("B shows the grant A revoked: {seen}"))
+}
+
+async fn hierarchy_body(prefix: &str) -> (String, serde_json::Value) {
+    let key = format!("h{}", unique(prefix).chars().filter(|c| c.is_ascii_alphanumeric()).take(10).collect::<String>().to_lowercase());
+    let body = json!({ "key": key, "name": "A second tree", "kind": "units", "source": "api", "reason": "Fixture hierarchy" });
+    (key, body)
+}
+
+async fn hierarchy_propose(w: World, root: &'static str) -> Outcome {
+    let (key, body) = hierarchy_body("p11hp").await;
+    let pending = status(w.wa("POST", &format!("{root}/hierarchies"), ADMIN, Some(body)).await, StatusCode::ACCEPTED, "A proposes the hierarchy")?;
+    let change = pending["change_id"].as_str().ok_or("a change id")?.to_string();
+    let seen = status(w.rb("GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
+    ensure(has(&seen["changes"], &change), format!("B shows the change A stored: {seen}"))?;
+    status(w.rb("POST", &format!("{root}/access/changes/{change}/decide"), ADMIN, Some(json!({ "decision": "confirm", "reason": "Reviewed" }))).await, StatusCode::FORBIDDEN, "the proposer cannot confirm, on B either")?;
+    ensure(!has(&status(w.wa("GET", "/api/v1/admin/hierarchies", ADMIN, None).await, StatusCode::OK, "A lists hierarchies")?, &key), "it does not exist yet")
+}
+
+async fn hierarchy_retire(w: World, root: &'static str) -> Outcome {
+    let (key, body) = hierarchy_body("p11hr").await;
+    let pending = status(w.wa("POST", &format!("{root}/hierarchies"), ADMIN, Some(body)).await, StatusCode::ACCEPTED, "A proposes the hierarchy")?;
+    let change = pending["change_id"].as_str().ok_or("a change id")?.to_string();
+    // A different Platform Admin confirms. The fixture makes one.
+    let other = person("p11admin");
+    make_user(&w, &other).await?;
+    status(
+        w.wa("POST", &format!("/api/v1/orgs/{}/appointments", "00000000-0000-0000-0000-000000000001"), ADMIN, Some(json!({ "eppn": other, "scoped_affiliation": "platform_admin", "reason": "Fixture" }))).await,
+        StatusCode::CREATED,
+        "appoint a second Platform Admin",
+    )?;
+    status(w.rb("POST", &format!("{root}/access/changes/{change}/decide"), &other, Some(json!({ "decision": "confirm", "reason": "Reviewed" }))).await, StatusCode::OK, "B confirms")?;
+    status(w.wa("POST", &format!("{root}/hierarchies/{key}/retire"), ADMIN, Some(json!({ "reason": "Done" }))).await, StatusCode::OK, "A retires it")?;
+    let seen = status(w.rb("GET", "/api/v1/admin/hierarchies", ADMIN, None).await, StatusCode::OK, "B lists hierarchies")?;
+    ensure(seen.as_array().is_some_and(|l| l.iter().any(|h| h["key"] == key.as_str() && h["status"] == "Retired")), format!("B shows it retired: {seen}"))
 }
 
 async fn grant_review(w: World, root: &'static str) -> Outcome {
