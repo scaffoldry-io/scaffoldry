@@ -340,3 +340,97 @@ pub fn validate_rule(state: &SharedState, rule: &AutomationRule) -> Result<(), S
     }
     Ok(())
 }
+
+/// Whether `who` is one of the people `spec` resolves to today, for a thing that belongs to `unit` and has no submitter.
+/// The policy library uses it to ask whether a person owns a policy.
+pub fn resolves_to(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, who: &str) -> bool {
+    let units: Vec<Unit> = state
+        .organizations
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .map(|o| Unit {
+            id: o.id.to_string(),
+            parent_id: o.parent_id.map(|p| p.to_string()),
+            org_type: o.org_type.clone(),
+            name: o.name.clone(),
+        })
+        .collect();
+    let mut named: Vec<String> = vec![who.to_string()];
+    if let ApproverSpec::Person { eppn } = spec {
+        named.push(eppn.clone());
+    }
+    let holdings = path_holdings(state, &[unit], &[]);
+    let mut wanted: HashSet<String> = holdings.iter().map(|h| h.eppn.clone()).collect();
+    wanted.extend(named);
+    let wanted: Vec<String> = wanted.into_iter().collect();
+    let mut people: Vec<Person> = state
+        .repository
+        .users_by_names(&wanted)
+        .unwrap_or_default()
+        .iter()
+        .map(|u| Person {
+            eppn: u.user_name.clone(),
+            display_name: crate::service::people::display_name(u),
+            active: u.active,
+            on_hold: u.admin_hold,
+        })
+        .collect();
+    for e in wanted {
+        if !people.iter().any(|p| p.eppn.eq_ignore_ascii_case(&e)) {
+            people.push(Person {
+                eppn: e.clone(),
+                display_name: e,
+                active: true,
+                on_hold: false,
+            });
+        }
+    }
+    let ctx = ResolveCtx {
+        units,
+        holdings,
+        people,
+        delegations: vec![],
+        collaborators: vec![],
+        now: Utc::now().timestamp(),
+        submitter: None,
+        starter: None,
+        workspace_unit: Some(unit.to_string()),
+    };
+    resolve_approvers(spec, &ctx)
+        .approvers
+        .iter()
+        .any(|a| a.eppn.eq_ignore_ascii_case(who))
+}
+
+/// A spec the platform knows how to resolve: its position exists and is in use, or its person exists.
+pub fn check_spec(state: &SharedState, spec: &ApproverSpec) -> Result<(), String> {
+    let types = state
+        .position_types
+        .read()
+        .unwrap_or_else(|p| p.into_inner());
+    let named: Vec<String> = match spec {
+        ApproverSpec::Person { eppn } => vec![eppn.clone()],
+        _ => Vec::new(),
+    };
+    let known = KnownSets {
+        position_keys: types
+            .values()
+            .filter(|p| p.retired_at.is_none())
+            .map(|p| p.key.clone())
+            .collect(),
+        retired_keys: types
+            .values()
+            .filter(|p| p.retired_at.is_some())
+            .map(|p| p.key.clone())
+            .collect(),
+        eppns: state
+            .repository
+            .users_by_names(&named)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|u| u.user_name)
+            .collect(),
+    };
+    validate_approver(spec, &known)
+}

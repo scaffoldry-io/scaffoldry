@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/policy-library.schema.json",
+  "title": "PolicyLibraryBodies",
+  "description": "The body of every policy library write route. The server checks the same limits and names the field that failed.",
+  "$defs": {
+    "key": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "citation": {
+      "type": "object",
+      "required": ["snapshot_id", "passage"],
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": { "type": "string", "format": "uuid" },
+        "passage": { "type": "string", "minLength": 20, "maxLength": 2000 },
+        "locator": { "type": "string", "maxLength": 255 }
+      }
+    },
+    "policy_create": {
+      "type": "object",
+      "required": ["key", "title", "organization_id", "owner", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "summary": { "type": "string", "maxLength": 5000 },
+        "organization_id": { "type": "string", "format": "uuid" },
+        "owner": { "$ref": "approver-spec.schema.json" },
+        "review_every_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
+        "reason": { "$ref": "#/$defs/reason" }
+      }
+    },
+    "policy_patch": {
+      "type": "object",
+      "required": ["reason"],
+      "minProperties": 2,
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "summary": { "type": "string", "maxLength": 5000 },
+        "owner": { "$ref": "approver-spec.schema.json" },
+        "review_every_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
+        "status": { "enum": ["Active", "Retired"] },
+        "reason": { "$ref": "#/$defs/reason" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["title", "kind", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "kind": { "enum": ["url", "text"] },
+        "href": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 2000 },
+        "reason": { "$ref": "#/$defs/reason" }
+      },
+      "if": { "properties": { "kind": { "const": "url" } } },
+      "then": { "required": ["href"] },
+      "else": { "not": { "required": ["href"] } }
+    },
+    "snapshot": {
+      "type": "object",
+      "required": ["text", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 2097152 },
+        "reason": { "$ref": "#/$defs/reason" }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["key", "statement", "citations", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "statement": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "applies_to": { "type": "string", "maxLength": 1000 },
+        "citations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/citation" } },
+        "reason": { "$ref": "#/$defs/reason" }
+      }
+    }
+  }
+}

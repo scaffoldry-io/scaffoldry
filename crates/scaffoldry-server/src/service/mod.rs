@@ -5,6 +5,7 @@
 //! to this service layer.
 
 pub mod governance;
+pub mod library;
 pub mod history;
 pub mod organizations;
 pub mod records;
@@ -99,6 +100,7 @@ pub const ERROR_CODES: &[&str] = &[
     "client_scope",
     "impersonation_not_synthetic",
     "grant_conflict",
+    "citation_not_found",
 ];
 
 /// What a person who tried to act as a real person should do instead.
@@ -160,6 +162,8 @@ pub enum ServiceError {
     GrantConflict(String),
     /// Full impersonation was asked for a real person. Only synthetic people can be acted as.
     ImpersonationNotSynthetic(String),
+    /// A cited passage is not in the snapshot it names. A passage is copied word for word.
+    CitationNotFound(String),
     /// A preview of a proposal tried to change something. A preview only reads.
     PreviewReadOnly(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
@@ -219,7 +223,7 @@ impl ServiceError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -249,6 +253,7 @@ impl ServiceError {
             Self::ViewAsReadOnly(_) => "view_as_read_only",
             Self::ImpersonationNotSynthetic(_) => "impersonation_not_synthetic",
             Self::GrantConflict(_) => "grant_conflict",
+            Self::CitationNotFound(_) => "citation_not_found",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
@@ -282,6 +287,7 @@ impl ServiceError {
             | Self::ViewAsReadOnly(msg)
             | Self::ImpersonationNotSynthetic(msg)
             | Self::GrantConflict(msg)
+            | Self::CitationNotFound(msg)
             | Self::PreviewReadOnly(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)

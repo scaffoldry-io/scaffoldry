@@ -31,6 +31,30 @@ pub fn add(m: &mut Entries) {
         m.insert(k("POST", "/workspaces/{id}/transfer-ownership"), case!(admin_ws_transfer, root));
     }
 
+    // The admin routes are mounted at the root and under /api/v1: two paths, one handler, a case for each.
+    for (root, prefix) in [("/api/v1", "/api/v1"), ("", "")] {
+        let k = |method: &str, path: &str| format!("{method} {prefix}{path}");
+        m.insert(
+            k("POST", "/admin/library/policies"),
+            case!(library_policy_create, root),
+        );
+        m.insert(
+            k("PATCH", "/admin/library/policies/{id}"),
+            case!(library_policy_patch, root),
+        );
+        m.insert(
+            k("POST", "/admin/library/policies/{id}/sources"),
+            case!(library_source_add, root),
+        );
+        m.insert(
+            k("POST", "/admin/library/sources/{id}/snapshots"),
+            case!(library_snapshot_add, root),
+        );
+        m.insert(
+            k("POST", "/admin/library/policies/{id}/rules"),
+            case!(library_rule_draft, root),
+        );
+    }
     m.insert("POST /api/v1/orgs".into(), case!(org_create));
     m.insert("PATCH /api/v1/orgs/{id}".into(), case!(org_patch));
     m.insert("POST /api/v1/orgs/{id}/appointments".into(), case!(appoint));
@@ -682,4 +706,179 @@ async fn ledger_append(w: World) -> Outcome {
     )?;
     let after = status(w.rb("GET", "/api/v1/governance/ledger?limit=1", ADMIN, None).await, StatusCode::OK, "B reads the ledger again")?;
     ensure(after["total_entries"].as_i64() > before["total_entries"].as_i64() && has(&after, &rationale), format!("B shows the entry A appended: {after}"))
+}
+
+const LIBRARY_PASSAGE: &str = "Student records are kept for seven years after the student leaves.";
+
+/// A policy written on A, with a text source and a snapshot of it.
+async fn library_fixture(w: &World, root: &str) -> Result<(String, String, String), String> {
+    let owner = person("p7owner");
+    make_user(w, &owner).await?;
+    let body = json!({ "key": unique("p7pol").to_lowercase(), "title": "Records retention", "organization_id": ROOT, "owner": { "Person": { "eppn": owner } }, "reason": "Fixture" });
+    let made = status(
+        w.wa(
+            "POST",
+            &format!("{root}/admin/library/policies"),
+            ADMIN,
+            Some(body),
+        )
+        .await,
+        StatusCode::CREATED,
+        "A creates a policy",
+    )?;
+    let policy = made["policy"]["id"]
+        .as_str()
+        .ok_or("a policy id")?
+        .to_string();
+    let source = status(
+        w.wa(
+            "POST",
+            &format!("{root}/admin/library/policies/{policy}/sources"),
+            ADMIN,
+            Some(json!({ "title": "Schedule", "kind": "text", "reason": "Fixture" })),
+        )
+        .await,
+        StatusCode::CREATED,
+        "A adds a source",
+    )?;
+    let source = source["source"]["id"]
+        .as_str()
+        .ok_or("a source id")?
+        .to_string();
+    let snap = status(
+        w.wa(
+            "POST",
+            &format!("{root}/admin/library/sources/{source}/snapshots"),
+            ADMIN,
+            Some(json!({ "text": LIBRARY_PASSAGE, "reason": "Fixture" })),
+        )
+        .await,
+        StatusCode::CREATED,
+        "A takes a snapshot",
+    )?;
+    let snap = snap["snapshot"]["id"]
+        .as_str()
+        .ok_or("a snapshot id")?
+        .to_string();
+    Ok((policy, source, snap))
+}
+
+async fn library_policy_create(w: World, root: &'static str) -> Outcome {
+    let (policy, _, _) = library_fixture(&w, root).await?;
+    let seen = status(
+        w.rb(
+            "GET",
+            &format!("{root}/admin/library/policies/{policy}"),
+            ADMIN,
+            None,
+        )
+        .await,
+        StatusCode::OK,
+        "B reads the policy",
+    )?;
+    ensure(
+        seen["policy"]["title"] == "Records retention",
+        format!("B shows the policy A stored: {seen}"),
+    )
+}
+
+async fn library_policy_patch(w: World, root: &'static str) -> Outcome {
+    let (policy, _, _) = library_fixture(&w, root).await?;
+    status(
+        w.wa(
+            "PATCH",
+            &format!("{root}/admin/library/policies/{policy}"),
+            ADMIN,
+            Some(json!({ "title": "Retention schedule", "reason": "Renamed" })),
+        )
+        .await,
+        StatusCode::OK,
+        "A renames it",
+    )?;
+    let seen = status(
+        w.rb(
+            "GET",
+            &format!("{root}/admin/library/policies/{policy}"),
+            ADMIN,
+            None,
+        )
+        .await,
+        StatusCode::OK,
+        "B reads the policy",
+    )?;
+    ensure(
+        seen["policy"]["title"] == "Retention schedule",
+        format!("B shows the title A wrote: {seen}"),
+    )
+}
+
+async fn library_source_add(w: World, root: &'static str) -> Outcome {
+    let (policy, source, _) = library_fixture(&w, root).await?;
+    let seen = status(
+        w.rb(
+            "GET",
+            &format!("{root}/admin/library/policies/{policy}"),
+            ADMIN,
+            None,
+        )
+        .await,
+        StatusCode::OK,
+        "B reads the policy",
+    )?;
+    ensure(
+        has(&seen["sources"], &source),
+        format!("B lists the source A stored: {seen}"),
+    )
+}
+
+async fn library_snapshot_add(w: World, root: &'static str) -> Outcome {
+    let (_, _, snap) = library_fixture(&w, root).await?;
+    let seen = status(
+        w.rb(
+            "GET",
+            &format!("{root}/admin/library/snapshots/{snap}"),
+            ADMIN,
+            None,
+        )
+        .await,
+        StatusCode::OK,
+        "B reads the snapshot",
+    )?;
+    ensure(
+        seen["snapshot"]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("seven years")),
+        format!("B shows the text A stored: {seen}"),
+    )
+}
+
+async fn library_rule_draft(w: World, root: &'static str) -> Outcome {
+    let (policy, _, snap) = library_fixture(&w, root).await?;
+    let body = json!({ "key": "retention", "statement": "Student records are kept for seven years.", "citations": [{ "snapshot_id": snap, "passage": LIBRARY_PASSAGE }], "reason": "Read from the schedule" });
+    status(
+        w.wa(
+            "POST",
+            &format!("{root}/admin/library/policies/{policy}/rules"),
+            ADMIN,
+            Some(body),
+        )
+        .await,
+        StatusCode::CREATED,
+        "A drafts a rule",
+    )?;
+    let seen = status(
+        w.rb(
+            "GET",
+            &format!("{root}/admin/library/policies/{policy}"),
+            ADMIN,
+            None,
+        )
+        .await,
+        StatusCode::OK,
+        "B reads the policy",
+    )?;
+    ensure(
+        seen["rule_counts"].to_string().contains('1'),
+        format!("B counts the rule A drafted: {seen}"),
+    )
 }
