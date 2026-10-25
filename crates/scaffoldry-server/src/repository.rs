@@ -3760,7 +3760,7 @@ impl PostgresRepository {
         let name = user_name.to_string();
         self.with_client(move |client| {
             let row_opt = client.query_opt(
-                "SELECT payload, active FROM scim_users WHERE LOWER(user_name) = LOWER($1) ORDER BY updated_at DESC LIMIT 1",
+                "SELECT payload, active, synthetic FROM scim_users WHERE LOWER(user_name) = LOWER($1) ORDER BY updated_at DESC LIMIT 1",
                 &[&name],
             )?;
             match row_opt {
@@ -3768,6 +3768,7 @@ impl PostgresRepository {
                     let val: serde_json::Value = r.get(0);
                     let mut user: crate::state::ScimUser = serde_json::from_value(val)?;
                     user.active = r.get(1);
+                    user.synthetic = r.get(2);
                     Ok(Some(user))
                 }
                 None => Ok(None),

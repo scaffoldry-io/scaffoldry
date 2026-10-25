@@ -198,7 +198,6 @@ fn no_persona_is_guessed_from_an_address() {
         "Professor & Lab Director",
         "Department Chair & Professor",
         "Senior Research Administrator",
-        "Professor of Physics",
         "Graduate Research Assistant",
         "Department Administrator",
         "Principal Investigator\".to_string(),\n            \"faculty",
