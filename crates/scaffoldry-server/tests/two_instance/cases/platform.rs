@@ -598,7 +598,7 @@ async fn logout(w: World) -> Outcome {
 }
 
 async fn impersonate(w: World) -> Outcome {
-    let who = person("p6imp");
+    let who = format!("{}@synthetic.invalid", unique("p6imp"));
     make_user(&w, &who).await?;
     let made = status(w.wa("POST", "/api/v1/auth/impersonate", ADMIN, Some(json!({ "target_eppn": who }))).await, StatusCode::OK, "impersonate")?;
     let token = made["token"].as_str().ok_or("a token")?.to_string();
@@ -607,7 +607,7 @@ async fn impersonate(w: World) -> Outcome {
 }
 
 async fn stop_impersonate(w: World) -> Outcome {
-    let who = person("p6stop");
+    let who = format!("{}@synthetic.invalid", unique("p6stop"));
     make_user(&w, &who).await?;
     let made = status(w.wa("POST", "/api/v1/auth/impersonate", ADMIN, Some(json!({ "target_eppn": who }))).await, StatusCode::OK, "impersonate")?;
     let token = made["token"].as_str().ok_or("a token")?.to_string();

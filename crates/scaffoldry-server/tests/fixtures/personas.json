@@ -1,0 +1,85 @@
+{
+  "$schema": "../../../../governance/schema/test-personas.schema.json",
+  "personas": [
+    {
+      "match": "exact",
+      "address": "jordan.lee@state.edu",
+      "name": "Jordan Lee",
+      "role_title": "Central Enterprise Administrator",
+      "affiliation": "central_admin",
+      "department": "Central IT & Institutional Governance"
+    },
+    {
+      "match": "contains",
+      "address": "curie",
+      "name": "Dr. Marie Curie",
+      "role_title": "Professor & Lab Director",
+      "affiliation": "faculty",
+      "department": "biology"
+    },
+    {
+      "match": "contains",
+      "address": "connor",
+      "name": "Dr. Sarah Connor",
+      "role_title": "Department Chair & Professor",
+      "affiliation": "faculty",
+      "department": "Computer Science"
+    },
+    {
+      "match": "contains",
+      "address": "sarah",
+      "name": "Dr. Sarah Connor",
+      "role_title": "Department Chair & Professor",
+      "affiliation": "faculty",
+      "department": "Computer Science"
+    },
+    {
+      "match": "contains",
+      "address": "vance",
+      "name": "Marcus Vance",
+      "role_title": "Senior Research Administrator",
+      "affiliation": "staff",
+      "department": "Office of Sponsored Programs"
+    },
+    {
+      "match": "contains",
+      "address": "einstein",
+      "name": "Albert Einstein",
+      "role_title": "Professor of Physics",
+      "affiliation": "faculty",
+      "department": "physics"
+    },
+    {
+      "match": "contains",
+      "address": "student",
+      "name": "Alice Smith",
+      "role_title": "Graduate Research Assistant",
+      "affiliation": "student",
+      "department": "biology"
+    },
+    {
+      "match": "contains",
+      "address": "admin",
+      "name": "Admin User",
+      "role_title": "Department Administrator",
+      "affiliation": "staff",
+      "department": "biology"
+    },
+    {
+      "match": "contains",
+      "address": "editor",
+      "name": "Editor User",
+      "role_title": "Research Assistant",
+      "affiliation": "staff",
+      "department": "biology"
+    },
+    {
+      "match": "contains",
+      "address": "owner",
+      "name": "Owner User",
+      "role_title": "Principal Investigator",
+      "affiliation": "faculty",
+      "department": "biology"
+    }
+  ]
+}

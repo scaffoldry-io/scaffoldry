@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/test-personas.schema.json",
+  "title": "Test personas",
+  "description": "Directory records a test gives to people it names by address. Tests only. Production never reads this file.",
+  "type": "object",
+  "required": ["personas"],
+  "additionalProperties": false,
+  "properties": {
+    "personas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["match", "address", "name", "role_title", "affiliation", "department"],
+        "additionalProperties": false,
+        "properties": {
+          "match": { "enum": ["exact", "contains"] },
+          "address": { "type": "string", "minLength": 1 },
+          "name": { "type": "string" },
+          "role_title": { "type": "string" },
+          "affiliation": { "type": "string" },
+          "department": { "type": "string" }
+        }
+      }
+    }
+  }
+}

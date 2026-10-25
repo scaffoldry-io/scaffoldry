@@ -200,7 +200,9 @@ pub fn read_origin(state: &SharedState, headers: &HeaderMap) -> crate::service::
         return origin;
     }
     if let Some(row) = bearer_token(headers).and_then(|t| state.get_api_token(&hash_token(t))) {
-        if row.kind == "agent" {
+        if row.kind == "impersonation" {
+            origin.acted_by = row.original_admin.clone();
+        } else if row.kind == "agent" {
             origin.kind = ActorKind::Agent;
             origin.token_label = Some(row.label);
         } else if row.kind == "client" {

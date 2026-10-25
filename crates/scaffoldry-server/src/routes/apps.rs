@@ -121,7 +121,8 @@ async fn call_app_page(State(state): State<SharedState>, headers: HeaderMap, Pat
 
 async fn run_page_tool(state: SharedState, headers: HeaderMap, tool: &'static str, args: Value) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
-    tokio::task::spawn_blocking(move || crate::service::tools::call(&user, &crate::service::history::Origin::user(), tool, args, &state))
+    let origin = crate::guard::read_origin(&state, &headers);
+    tokio::task::spawn_blocking(move || crate::service::tools::call(&user, &origin, tool, args, &state))
         .await
         .map_err(|_| ServiceError::internal("The call stopped").into_pair())?
         .map(Json)
