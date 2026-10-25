@@ -748,6 +748,128 @@ export interface Connection {
   connected_at: string;
 }
 
+
+// ---- Access (access-model phase 11) ----------------------------------------------------------------------------------
+
+export interface AccessHierarchy {
+  key: string;
+  name: string;
+  kind: string;
+  source: string;
+  status: string;
+  created_by: string;
+  created_at: string;
+  retired_at: string | null;
+}
+
+export interface AccessGrantRow {
+  id: number;
+  holder_kind: string;
+  holder_id: string;
+  role: string;
+  hierarchy: string | null;
+  anchor_kind: string;
+  anchor_id: string | null;
+  anchor_name?: string;
+  depth: number | null;
+  domain: string | null;
+  clearance: string | null;
+  valid_from: string;
+  valid_until: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  source: string;
+  reason: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface AccessChange {
+  change_id: string;
+  kind: "grant" | "hierarchy";
+  grant: Record<string, unknown> | null;
+  hierarchy: { key: string; name: string; kind: string; source: string } | null;
+  widens: boolean;
+  reason: string;
+  status: string;
+  proposed_by: string;
+  proposed_at: string;
+}
+
+export interface AccessGrantsPage {
+  grants: AccessGrantRow[];
+  changes: AccessChange[];
+  next_cursor: string | null;
+}
+
+export interface AccessImpact {
+  change_id: string;
+  kind: string;
+  gain: { person: string; container: string; to: string }[];
+  lose: { person: string; container: string; from: string }[];
+  per_role: Record<string, { gain: number; lose: number }>;
+  people_considered: number;
+  truncated: boolean;
+}
+
+export interface NewAccessGrant {
+  holder_kind: string;
+  holder_id: string;
+  role: string;
+  hierarchy?: string;
+  anchor_kind: string;
+  anchor_id?: string;
+  depth?: number | null;
+  domain?: string;
+  clearance?: string;
+  source: string;
+  valid_until?: string;
+  reason: string;
+}
+
+export interface AccessExplainGrant {
+  grant_id: number | null;
+  source: string;
+  holder: string;
+  role: string;
+  anchor: string;
+  anchor_name?: string;
+  depth: number | null;
+  domain: string | null;
+  clearance?: string | null;
+  path?: string[];
+  path_names?: string[];
+  axis?: string;
+  sealed_by?: string;
+}
+
+export interface AccessExplanation {
+  person: string;
+  object: string;
+  role: string | null;
+  platform_admin: boolean;
+  reached: AccessExplainGrant[];
+  missed: AccessExplainGrant[];
+  sealed_by: string[];
+  policy: unknown;
+  guards: unknown[];
+  rules: unknown[];
+}
+
+export interface AccessReceiptRow {
+  id: number;
+  at: string;
+  actor: string;
+  acting_as: string | null;
+  action: string;
+  object_kind: string;
+  object_id: string;
+  outcome: string;
+  grant_ids: number[];
+  policy_ids: string[];
+  narrowed_by: string[];
+}
+
 export const apiClient = {
   // Authentication & Sessions
   listTokens: async () => {
@@ -893,6 +1015,93 @@ export const apiClient = {
       body: JSON.stringify(body),
     });
   },
+
+
+  accessHierarchies: async () => request<AccessHierarchy[]>("/admin/hierarchies"),
+
+  accessCreateHierarchy: async (body: { key: string; name: string; kind: string; source: string; reason: string }) =>
+    request<{ change_id: string; status: string; message: string }>("/admin/hierarchies", { method: "POST", body: JSON.stringify(body) }),
+
+  accessRetireHierarchy: async (key: string, reason: string) =>
+    request<{ key: string; status: string }>(`/admin/hierarchies/${encodeURIComponent(key)}/retire`, { method: "POST", body: JSON.stringify({ reason }) }),
+
+  accessDecideChange: async (id: string, decision: "confirm" | "reject", reason: string) =>
+    request<{ change_id: string; status: string; grant_id: number | null }>(`/admin/access/changes/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ decision, reason }),
+    }),
+
+  accessGrants: async (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, v);
+    const qs = q.toString();
+    return request<AccessGrantsPage>(`/admin/access/grants${qs ? `?${qs}` : ""}`);
+  },
+
+  accessPreviewGrant: async (body: NewAccessGrant) =>
+    request<{ grant: NewAccessGrant; impact: AccessImpact }>("/admin/access/grants/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  accessProposeGrant: async (body: NewAccessGrant) =>
+    request<{ change_id: string; status: string; widens: boolean; message: string }>("/admin/access/grants", { method: "POST", body: JSON.stringify(body) }),
+
+  accessRevokeGrant: async (id: number, reason: string) =>
+    request<{ id: number; status: string }>(`/admin/access/grants/${id}/revoke`, { method: "POST", body: JSON.stringify({ reason }) }),
+
+  /** The units and domains the grant form offers. Units come from the ones the person can reach. */
+  accessGrantAnchors: async () => {
+    const [units, domains] = await Promise.all([
+      request<{ id: string; name: string; hierarchy_key?: string }[]>("/orgs"),
+      request<{ domains: { key: string; name: string }[] }>("/admin/access/domains").catch(() => ({ domains: [] })),
+    ]);
+    return {
+      units: units.map((u) => ({ id: u.id, name: u.name, hierarchy: u.hierarchy_key ?? "academic" })),
+      domains: domains.domains,
+    };
+  },
+
+  accessChangeImpact: async (id: string) =>
+    request<AccessImpact>(`/admin/access/changes/${encodeURIComponent(id)}/impact`, { method: "POST" }),
+
+  accessSearchPeople: async (q: string, cursor?: string) => {
+    const p = new URLSearchParams({ q });
+    if (cursor) p.set("cursor", cursor);
+    return request<{ people: { eppn: string; name: string }[]; next_cursor: string | null }>(`/admin/access/people?${p}`);
+  },
+
+  accessSearchObjects: async (q: string, cursor?: string) => {
+    const p = new URLSearchParams({ q });
+    if (cursor) p.set("cursor", cursor);
+    return request<{ objects: { container: string; kind: string; title: string }[]; next_cursor: string | null }>(`/admin/access/objects?${p}`);
+  },
+
+  accessReviewPerson: async (eppn: string) =>
+    request<{ person: string; holder_set: unknown; grants: unknown[]; by_hierarchy: Record<string, unknown> }>(`/admin/access/people/${encodeURIComponent(eppn)}`),
+
+  accessReviewObject: async (container: string) => {
+    const [kind, ...rest] = container.split(":");
+    return request<Record<string, unknown>>(`/admin/access/objects/${encodeURIComponent(kind)}/${rest.join(":").split("/").map(encodeURIComponent).join("/")}`);
+  },
+
+  accessExplain: async (person: string, object: string) =>
+    request<AccessExplanation>(`/access/explain?person=${encodeURIComponent(person)}&object=${encodeURIComponent(object)}`),
+
+  accessReviews: async (cursor?: string) =>
+    request<{ review_days: number; due: AccessGrantRow[]; conflicts: { person: string; pair: string }[]; next_cursor: string | null }>(
+      `/admin/access/reviews${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`
+    ),
+
+  accessReviewGrant: async (id: number, decision: "keep" | "revoke", reason: string) =>
+    request<{ id: number; status: string }>(`/admin/access/grants/${id}/review`, { method: "POST", body: JSON.stringify({ decision, reason }) }),
+
+  accessReceipts: async (params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, v);
+    const qs = q.toString();
+    return request<{ receipts: AccessReceiptRow[]; next_cursor: string | null }>(`/admin/access/receipts${qs ? `?${qs}` : ""}`);
+  },
+
+  accessVerifyReceipts: async () =>
+    request<{ ok: boolean; batches_checked: number; failed_batch: number | null; reason: string | null }>("/admin/access/receipts/verify", { method: "POST" }),
 
   adminPositionVacancies: async () => {
     return request<{ vacancies: VacancyRow[] }>("/admin/positions/vacancies");

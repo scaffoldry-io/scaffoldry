@@ -22,6 +22,10 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/access/grants/{id}/revoke", post(revoke_grant))
         .route("/admin/access/grants/{id}/review", post(review_grant))
         .route("/admin/access/reviews", get(list_reviews))
+        .route("/admin/access/grants/preview", post(preview_grant))
+        .route("/admin/access/people", get(search_people))
+        .route("/admin/hierarchies", post(create_hierarchy))
+        .route("/admin/hierarchies/{key}/retire", post(retire_hierarchy))
         .route("/admin/access/changes/{id}/decide", post(decide_change))
 }
 
@@ -85,9 +89,51 @@ async fn review_grant(State(state): State<SharedState>, headers: HeaderMap, Path
         .map(Json)
 }
 
-async fn list_reviews(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
+#[derive(Debug, Deserialize)]
+struct PageParams {
+    q: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn list_reviews(State(state): State<SharedState>, headers: HeaderMap, Query(p): Query<PageParams>) -> Result<Json<Value>, ServiceError> {
     let c = caller(&state, &headers)?;
-    tokio::task::spawn_blocking(move || grants::reviews(&state, &c))
+    tokio::task::spawn_blocking(move || grants::reviews(&state, &c, p.cursor.as_deref(), p.limit))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
+        .map(Json)
+}
+
+async fn preview_grant(State(state): State<SharedState>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body)?;
+    tokio::task::spawn_blocking(move || grants::preview_grant(&state, &c, &body))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
+        .map(Json)
+}
+
+async fn search_people(State(state): State<SharedState>, headers: HeaderMap, Query(p): Query<PageParams>) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    tokio::task::spawn_blocking(move || grants::search_people(&state, &c, p.q.as_deref().unwrap_or(""), p.cursor.as_deref(), p.limit))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
+        .map(Json)
+}
+
+async fn create_hierarchy(State(state): State<SharedState>, headers: HeaderMap, body: Bytes) -> Result<(StatusCode, Json<Value>), ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body)?;
+    let out = tokio::task::spawn_blocking(move || crate::service::hierarchies::propose(&state, &c, &body))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))??;
+    Ok((StatusCode::ACCEPTED, Json(out)))
+}
+
+async fn retire_hierarchy(State(state): State<SharedState>, headers: HeaderMap, Path(key): Path<String>, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body)?;
+    tokio::task::spawn_blocking(move || crate::service::hierarchies::retire(&state, &c, &key, &body))
         .await
         .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
         .map(Json)
