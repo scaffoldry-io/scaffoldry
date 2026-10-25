@@ -215,6 +215,14 @@ impl PostgresRepository {
         })
     }
 
+    /// Every domain a grant can be limited to, with its name.
+    pub fn domain_names(&self) -> Result<Vec<(String, String)>, RepositoryError> {
+        self.with_client(|c| {
+            let rows = c.query("SELECT key, name FROM access_domains WHERE status = 'Active' ORDER BY name, key", &[])?;
+            Ok(rows.iter().map(|r| (r.get(0), r.get(1))).collect())
+        })
+    }
+
     /// People whose address or name holds `q`, by address, a page after `after`.
     pub fn search_people(&self, q: &str, after: &str, limit: i64) -> Result<Vec<(String, String)>, RepositoryError> {
         let pattern = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));

@@ -264,7 +264,7 @@ describe("Access section: reviews and receipts", () => {
       receipts: [{ id: 3, at: "2026-10-25T00:00:00Z", actor: "dana@state.edu", acting_as: null, action: "read_app", object_kind: "app", object_id: "tickets", outcome: "deny", grant_ids: [], policy_ids: [], narrowed_by: [] }],
       next_cursor: null,
     });
-    const verify = vi.spyOn(apiClient, "accessVerifyReceipts").mockResolvedValue({ ok: true, batches: 4, receipts: 120, failed_batch: null } as never);
+    const verify = vi.spyOn(apiClient, "accessVerifyReceipts").mockResolvedValue({ ok: true, batches_checked: 4, failed_batch: null, reason: null });
     render(<Access />);
     fireEvent.click(await screen.findByRole("tab", { name: /receipts/i }));
     expect(await screen.findByText("dana@state.edu")).toBeInTheDocument();

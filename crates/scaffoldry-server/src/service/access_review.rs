@@ -552,6 +552,9 @@ fn impact_of_coordinates(state: &SharedState, id: Uuid, ws: &WorkspaceRecord, co
 /// Workspaces, apps and tables whose name holds `q`, in order, a page at a time. The cursor is the container text of the last
 /// one returned. The objects live in memory, so this pages there.
 pub fn search_objects(state: &SharedState, caller: &AuthUser, q: &str, cursor: Option<&str>, limit: Option<i64>) -> Result<Value, ServiceError> {
+    if crate::service::admin::require_platform_admin_or_compliance(caller, state).is_err() && state.roles_of(&caller.eppn).iter().all(|r| r.scoped_affiliation != "unit_admin") {
+        return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
+    }
     let limit = limit.unwrap_or(50).clamp(1, 200) as usize;
     let needle = q.trim().to_lowercase();
     let mut found: Vec<(String, String, String)> = all_targets(state)
@@ -574,4 +577,13 @@ pub fn search_objects(state: &SharedState, caller: &AuthUser, q: &str, cursor: O
     let objects: Vec<Value> = page.iter().take(limit).map(|(container, kind, title)| json!({ "container": container, "kind": kind, "title": title })).collect();
     let next = if more { objects.last().and_then(|o| o["container"].as_str().map(str::to_string)) } else { None };
     Ok(json!({ "objects": objects, "next_cursor": next }))
+}
+
+/// The domains a grant can be limited to, for the form that makes one.
+pub fn domains(state: &SharedState, caller: &AuthUser) -> Result<Value, ServiceError> {
+    if crate::service::admin::require_platform_admin_or_compliance(caller, state).is_err() && state.roles_of(&caller.eppn).iter().all(|r| r.scoped_affiliation != "unit_admin") {
+        return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
+    }
+    let list = state.repository.domain_names().map_err(|e| ServiceError::Internal(e.to_string()))?;
+    Ok(json!({ "domains": list.into_iter().map(|(key, name)| json!({ "key": key, "name": name })).collect::<Vec<_>>() }))
 }
