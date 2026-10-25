@@ -76,6 +76,14 @@ pub struct JobKind {
 /// Every kind of job this server can run. Later briefs add one entry each.
 pub static JOB_KINDS: &[JobKind] = &[
     JobKind {
+        name: "seal_receipts",
+        title: "Sealing access receipts",
+        description: "Hashes the access receipts written since the last batch into one sealed batch and writes one ledger entry for it.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::receipts::seal_job,
+    },
+    JobKind {
         name: "build_index",
         title: "Preparing a sort or filter",
         description: "Builds the lookup that makes sorting and filtering this field fast.",

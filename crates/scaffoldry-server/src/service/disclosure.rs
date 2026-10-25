@@ -100,18 +100,22 @@ pub fn log_disclosure(state: &SharedState, release: Release<'_>) -> Result<Optio
         return Ok(None);
     }
     let repo = &state.repository;
-    repo.insert_disclosure(NewDisclosure {
-        kind: release.kind.to_string(),
-        actor: release.actor.to_string(),
-        app_slug: release.app_slug.to_string(),
-        table_id: release.table_id.map(str::to_string),
-        record_ids: release.record_ids,
-        fields: kept,
-        recipient: release.recipient.map(str::to_string),
-        note: release.note.to_string(),
-    })
-    .map(Some)
-    .map_err(|e| ServiceError::Internal(format!("The release could not be recorded in the disclosure log: {e}")))
+    let receipt = crate::service::receipts::disclosure_receipt(release.actor, release.kind, release.app_slug, release.table_id);
+    let entry = repo
+        .insert_disclosure(NewDisclosure {
+            kind: release.kind.to_string(),
+            actor: release.actor.to_string(),
+            app_slug: release.app_slug.to_string(),
+            table_id: release.table_id.map(str::to_string),
+            record_ids: release.record_ids,
+            fields: kept,
+            recipient: release.recipient.map(str::to_string),
+            note: release.note.to_string(),
+        })
+        .map_err(|e| ServiceError::Internal(format!("The release could not be recorded in the disclosure log: {e}")))?;
+    // Each disclosure also writes its receipt. The two stay separate: the log answers a student, the receipt joins the trail.
+    crate::service::receipts::record(state, &receipt);
+    Ok(Some(entry))
 }
 
 /// Called by every function that returns a list of records to a caller who may be an agent, with the

@@ -311,6 +311,9 @@ pub fn export_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
             recipient: None,
             note: format!("Exported {} records from table '{}'", export_maps.len(), table.id),
         }).map_err(|e| JobError::Permanent(format!("Failed to write disclosure log: {e}")))?;
+        // Each disclosure also writes its receipt.
+        let receipt = crate::service::receipts::disclosure_receipt(&caller_eppn, "export", &app_slug, Some(&table.id));
+        repo.insert_access_receipt(&receipt).map_err(|e| JobError::Retry(format!("Failed to write the receipt: {e}")))?;
 
         let org_code = if manifest.organization_code.is_empty() {
             "SCI".to_string()

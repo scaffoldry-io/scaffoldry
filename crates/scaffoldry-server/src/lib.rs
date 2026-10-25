@@ -11,6 +11,7 @@ pub mod repository;
 pub mod repository_clients;
 pub mod repository_comments;
 pub mod repository_disclosure;
+pub mod repository_receipts;
 pub mod repository_files;
 pub mod repository_grants;
 pub mod repository_calc;

@@ -704,6 +704,7 @@ pub fn create_record(
                     reasons: vec![msg],
                     diagnostics: Vec::new(),
                     policy: None,
+                    action: None,
                 },
                 other => ServiceError::BadRequest(other.to_string()),
             })?
@@ -1529,6 +1530,21 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
         let Ok((fields, canonical)) = table_fields(app_slug, &table, false, state) else { continue };
         let page = units_of_rows(app_slug, &canonical, &indices.iter().map(|i| &rows[*i]).collect::<Vec<_>>(), state);
         let withheld = withheld_on(caller, app_slug, &canonical, &fields, Some(&page), state);
+        // A read that returns a protected field in full leaves one receipt for the call, not one for each row. A field shown
+        // as a mask is not in full.
+        let protected: Vec<String> = {
+            let categories = state.sensitivity_categories();
+            let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
+            fields
+                .iter()
+                .filter(|f| scaffoldry_engine::effective_ferpa_sensitive(f, labels.get(&(app_slug.to_string(), canonical.clone(), f.name.clone())), &categories).protected)
+                .map(|f| f.name.clone())
+                .filter(|n| !withheld.contains_key(n))
+                .collect()
+        };
+        if !protected.is_empty() && indices.iter().any(|i| protected.iter().any(|n| rows[*i].data.get(n).is_some_and(|v| !v.is_null()))) {
+            crate::service::receipts::record_protected_read(state, caller, crate::service::preview::stored_slug(app_slug), &canonical);
+        }
         for i in indices {
             if let Some(map) = rows[i].data.as_object_mut() {
                 for (name, mask) in &withheld {

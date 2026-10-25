@@ -11,6 +11,7 @@ pub mod records;
 pub mod access;
 pub mod access_grants;
 pub mod access_review;
+pub mod receipts;
 pub mod coordinates;
 pub mod catalog;
 pub mod guidance;
@@ -104,7 +105,9 @@ pub enum ServiceError {
         reasons: Vec<String>,
         diagnostics: Vec<String>,
         /// The policy that decided, when a Cedar `forbid` did.
-        policy: Option<PolicyRef>,
+        policy: Option<Box<PolicyRef>>,
+        /// The Cedar action that was refused, when a Cedar decision refused it. A receipt keeps it so the decision can be asked again.
+        action: Option<String>,
     },
     NotFound(String),
     BadRequest(String),
@@ -180,6 +183,7 @@ impl ServiceError {
             reasons: Vec::new(),
             diagnostics: Vec::new(),
             policy: None,
+            action: None,
         }
     }
 
@@ -282,7 +286,10 @@ impl ServiceError {
         body.insert("error".to_string(), Value::String(self.message().to_string()));
         body.insert("code".to_string(), Value::String(self.code().to_string()));
         match self {
-            Self::Forbidden { reasons, diagnostics, policy, .. } => {
+            Self::Forbidden { reasons, diagnostics, policy, action, .. } => {
+                if let Some(action) = action {
+                    body.insert("action".to_string(), Value::String(action.clone()));
+                }
                 body.insert("reasons".to_string(), serde_json::to_value(reasons).unwrap_or(Value::Null));
                 body.insert("diagnostics".to_string(), serde_json::to_value(diagnostics).unwrap_or(Value::Null));
                 if let Some(policy) = policy {

@@ -166,7 +166,7 @@ The rest of the access model, then the rules behind a decision and who decides. 
 | --- | --- | --- | --- | --- |
 | 88 | [access-model.md](access-model.md) | 7 | Sealed containers, an explanation of any decision, review per person and per object, and impact before a change | **COMPLETED** |
 | 89 | [access-model.md](access-model.md) | 12 | A field a person is not cleared for is masked by its category's default, such as a birth year, instead of removed | **COMPLETED** |
-| 90 | [access-model.md](access-model.md) | 8 | Receipts for denials, privileged actions and protected reads, sealed into the ledger in batches | |
+| 90 | [access-model.md](access-model.md) | 8 | Receipts for denials, privileged actions and protected reads, sealed into the ledger in batches || **COMPLETED** |
 | 91 | [access-model.md](access-model.md) | 9 | Full impersonation of synthetic people only. Writes under it record both people. No persona guessed from an address | |
 | 92 | [access-model.md](access-model.md) | 10 | Supervision from the directory's manager field, expiring grants, scheduled review, and separation of duties | |
 | 93 | [access-model.md](access-model.md) | 11 | An Access section in the console: hierarchies, grants, objects, people, reviews and receipts | |

@@ -7,6 +7,7 @@ pub mod positions;
 pub mod proposals;
 pub mod access_grants;
 pub mod access_review;
+pub mod receipts;
 pub mod admin_workspaces;
 pub mod apps;
 pub mod auth;
@@ -47,6 +48,7 @@ use axum::{
 use serde_json::json;
 
 pub fn api_router(state: SharedState) -> Router {
+    let state_for_receipts = state.clone();
     let api_v1 = Router::new()
         .merge(auth::router())
         .merge(formula::router())
@@ -57,6 +59,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(admin_workspaces::router())
         .merge(access_grants::router())
         .merge(access_review::router())
+        .merge(receipts::router())
         .merge(workspaces::router())
         .merge(organizations::router())
         .merge(apps::router())
@@ -105,6 +108,8 @@ pub fn api_router(state: SharedState) -> Router {
         .nest("/api/v1", api_v1)
         .nest("/api", mcp_root)
         .nest("/scim/v2", scim_v2)
+        // Last, so it sees every route's answer. It writes a receipt for a denial, a privileged action and a request under view-as.
+        .layer(axum::middleware::from_fn_with_state(state_for_receipts, crate::service::receipts::layer))
 }
 
 /// Ready when this instance can read its database: `refresh` succeeds. A load balancer sends traffic only to a ready

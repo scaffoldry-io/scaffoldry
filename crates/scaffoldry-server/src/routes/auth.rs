@@ -308,7 +308,8 @@ async fn impersonate_user(
             message: "Forbidden: Cedar policy denies Action::impersonate to non-central_admin principals".to_string(),
             reasons: vec![],
             diagnostics: vec![],
-            policy: dec.policy,
+            policy: dec.policy.map(Box::new),
+            action: Some("impersonate".to_string()),
         }
         .into_response();
     }
