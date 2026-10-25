@@ -1,5 +1,6 @@
 //! The write tools in `TOOLS`. Each is called through A's `/api/mcp` and read through B.
 
+use super::platform::{library_fixture, LIBRARY_PASSAGE};
 use super::apps::{enqueue_job, job_state, read_record, waiting_instance};
 use super::*;
 
@@ -18,6 +19,7 @@ pub fn add(m: &mut Entries) {
     m.insert("tool:save_view".into(), case!(save_view));
     m.insert("tool:delete_view".into(), case!(delete_view));
     m.insert("tool:cancel_job".into(), case!(cancel_job));
+    m.insert("tool:propose_library_rules".into(), case!(propose_library_rules));
     m.insert("tool:export_records".into(), files_case!(export_records));
 }
 
@@ -166,4 +168,13 @@ async fn page_call(w: World) -> Outcome {
     ensure(has(&seen, "Through a page"), format!("B shows the change made through the page: {seen}"))?;
     let setting = w.tool_b(OWNER, "page_call", json!({ "app_slug": slug, "page_id": "board", "op": "settings_get", "key": "k" })).await?;
     ensure(has(&setting, "kept"), format!("B reads the setting A wrote: {setting}"))
+}
+
+async fn propose_library_rules(w: World) -> Outcome {
+    let (policy, _, snap) = library_fixture(&w, "/api/v1").await?;
+    let rule = json!({ "key": "retention", "statement": "Student records are kept for seven years.", "citations": [{ "snapshot_id": snap, "passage": LIBRARY_PASSAGE }] });
+    let out = w.tool_a(ADMIN, "propose_library_rules", json!({ "policy_id": policy, "rules": [rule] })).await?;
+    ensure(out["rules"][0]["stored"] == true, format!("A stores the rule: {out}"))?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/library/policies/{policy}"), ADMIN, None).await, StatusCode::OK, "B reads the policy")?;
+    ensure(seen["rule_counts"]["Draft"] == 1, format!("B counts the draft the tool stored: {seen}"))
 }

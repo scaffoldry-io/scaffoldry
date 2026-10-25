@@ -6,6 +6,7 @@
 
 pub mod governance;
 pub mod library;
+pub mod library_tools;
 pub mod history;
 pub mod organizations;
 pub mod records;

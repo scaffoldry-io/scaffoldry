@@ -169,14 +169,28 @@ fn may_write(state: &SharedState, caller: &AuthUser, policy: &Value) -> bool {
     resolves_to(state, &spec, unit, &caller.eppn)
 }
 
+/// The owner of a policy in words a person can act on.
+fn owner_text(owner: &Value) -> String {
+    if let Some(e) = owner["Person"]["eppn"].as_str() {
+        return e.to_string();
+    }
+    if let Some(k) = owner["Position"]["key"].as_str() {
+        return format!("the {k} position");
+    }
+    if let Some(n) = owner["Role"]["name"].as_str() {
+        return format!("the {n} role");
+    }
+    "not set".to_string()
+}
+
 fn forbidden(policy: Option<&Value>) -> ServiceError {
-    let owner = policy.map(|p| p["owner"].to_string()).unwrap_or_default();
-    let why = if owner.is_empty() {
-        "Only a Platform Admin or compliance may do this".to_string()
-    } else {
-        "Only a Platform Admin, compliance, or the policy's owner may do this".to_string()
-    };
-    ServiceError::forbidden(why)
+    ServiceError::forbidden(match policy {
+        Some(p) => format!(
+            "Only a Platform Admin, compliance, or the policy's owner may do this. The owner is {}",
+            owner_text(&p["owner"])
+        ),
+        None => "Only a Platform Admin or compliance may do this".to_string(),
+    })
 }
 
 /// The policy, when the caller may write it. Someone who may not is told so whether or not the id exists.
@@ -623,6 +637,17 @@ pub fn draft_rule(
     policy_id: &str,
     body: &Value,
 ) -> Result<Value, ServiceError> {
+    draft_rule_via(state, caller, policy_id, body, "person")
+}
+
+/// `via` is `person` for a route and `agent` for a tool. Both run every check and write one ledger entry.
+pub fn draft_rule_via(
+    state: &SharedState,
+    caller: &AuthUser,
+    policy_id: &str,
+    body: &Value,
+    via: &str,
+) -> Result<Value, ServiceError> {
     let policy_id = parse_id(policy_id, "Policy")?;
     let policy = writable(state, caller, policy_id)?;
     let mut p = Problems::default();
@@ -646,7 +671,7 @@ pub fn draft_rule(
             "A policy has at most {MAX_RULE_KEYS} rule keys"
         )));
     }
-    let payload = json!({ "action": "rule_drafted", "policy_key": policy["key"], "rule_key": key, "citations": citations.len(), "submitted_via": "person" });
+    let payload = json!({ "action": "rule_drafted", "policy_key": policy["key"], "rule_key": key, "citations": citations.len(), "submitted_via": via });
     let rule = admin_write(
         state,
         caller,
@@ -663,11 +688,164 @@ pub fn draft_rule(
                     &statement,
                     &applies_to,
                     &caller.eppn,
-                    "person",
+                    via,
                     citations,
                 )
                 .map_err(internal)
         },
     )?;
     Ok(json!({ "rule": rule }))
+}
+
+// --- what the MCP tools call --------------------------------------------------------------------------------------
+
+const MAX_READ_CHARS: usize = 20_000;
+const AGENT_REASON: &str = "Proposed by the person's AI tool";
+
+/// Every policy, as the summary a person or an agent picks from.
+pub fn policy_summaries(state: &SharedState) -> Result<Value, ServiceError> {
+    let mut out = Vec::new();
+    for p in state.repository.library_policies().map_err(internal)? {
+        let id = p["id"].as_str().and_then(|u| Uuid::parse_str(u).ok());
+        let counts = match id {
+            Some(id) => state.repository.library_rule_counts(id).map_err(internal)?,
+            None => json!({}),
+        };
+        out.push(json!({ "id": p["id"], "key": p["key"], "title": p["title"], "owner": p["owner"], "review_every_days": p["review_every_days"], "status": p["status"], "rule_counts": counts }));
+    }
+    Ok(json!({ "policies": out }))
+}
+
+/// One page of a snapshot's text, for a caller who may write its policy. The text is returned only as `untrusted_text`.
+pub fn read_snapshot_page(
+    state: &SharedState,
+    caller: &AuthUser,
+    id: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<Value, ServiceError> {
+    let id = parse_id(id, "Snapshot")?;
+    let Some((policy_id, snapshot)) = state.repository.library_snapshot(id).map_err(internal)? else {
+        return Err(if is_admin(state, caller) {
+            ServiceError::NotFound("Snapshot not found".to_string())
+        } else {
+            forbidden(None)
+        });
+    };
+    writable(state, caller, policy_id)?;
+    let limit = limit.clamp(1, MAX_READ_CHARS);
+    let text = snapshot["text"].as_str().unwrap_or_default();
+    let total = text.chars().count();
+    let page: String = text.chars().skip(offset).take(limit).collect();
+    let end = offset.saturating_add(page.chars().count());
+    Ok(json!({
+        "snapshot_id": snapshot["id"],
+        "source_title": snapshot["source_title"],
+        "taken_at": snapshot["taken_at"],
+        "untrusted_text": page,
+        "next_offset": if end < total { json!(end) } else { Value::Null },
+    }))
+}
+
+/// Published rules that match, each with its policy and whether anything enforces it.
+pub fn find_rules(state: &SharedState, query: &str, applies_to: &str) -> Result<Value, ServiceError> {
+    let mut rules = state.repository.library_published_rules(query, applies_to).map_err(internal)?;
+    for r in &mut rules {
+        let page = format!("/library/policies/{}", r["policy_id"].as_str().unwrap_or_default());
+        // Nothing is evaluated as a binding target until phase 3, so every rule is Guidance.
+        r["enforcement"] = json!("Guidance");
+        r["page"] = json!(page);
+    }
+    Ok(json!({ "rules": rules }))
+}
+
+fn outcome(key: &str, result: Result<Value, ServiceError>) -> Value {
+    match result {
+        Ok(_) => json!({ "key": key, "stored": true }),
+        Err(e) => json!({ "key": key, "stored": false, "code": e.code(), "reason": e.message() }),
+    }
+}
+
+/// Stores each proposed rule as a draft and each question, in the caller's name. One bad item does not stop the others.
+pub fn propose_rules(
+    state: &SharedState,
+    caller: &AuthUser,
+    policy_id: &str,
+    rules: &[Value],
+    questions: &[Value],
+) -> Result<Value, ServiceError> {
+    let id = parse_id(policy_id, "Policy")?;
+    let policy = writable(state, caller, id)?;
+    let mut rule_out = Vec::new();
+    for r in rules {
+        let mut body = r.clone();
+        if let Some(o) = body.as_object_mut() {
+            o.insert("reason".to_string(), json!(AGENT_REASON));
+        }
+        let key = r["key"].as_str().unwrap_or_default().to_string();
+        rule_out.push(outcome(&key, draft_rule_via(state, caller, policy_id, &body, "agent")));
+    }
+    let mut question_out = Vec::new();
+    for (i, q) in questions.iter().enumerate() {
+        let label = format!("question {}", i + 1);
+        question_out.push(outcome(&label, ask_question(state, caller, id, &policy, q)));
+    }
+    Ok(json!({ "rules": rule_out, "questions": question_out }))
+}
+
+fn ask_question(
+    state: &SharedState,
+    caller: &AuthUser,
+    policy_id: Uuid,
+    policy: &Value,
+    q: &Value,
+) -> Result<Value, ServiceError> {
+    let mut p = Problems::default();
+    let question = p.text(q, "question", 2000, true);
+    let context = p.text(q, "context_passage", 2000, false).unwrap_or_default();
+    let snapshot = match q.get("snapshot_id") {
+        None | Some(Value::Null) => None,
+        Some(_) => p.uuid(q, "snapshot_id"),
+    };
+    if let Some(s) = snapshot {
+        match state.repository.library_snapshot(s).map_err(internal)? {
+            Some((owner, _)) if owner == policy_id => {}
+            _ => p.add("snapshot_id", "no such snapshot in this policy"),
+        }
+    }
+    p.done()?;
+    let question = question.unwrap_or_default();
+    let payload = json!({ "action": "question_asked", "policy_key": policy["key"], "asked_via": "agent" });
+    admin_write(
+        state,
+        caller,
+        DecisionType::PolicyLibraryChanged,
+        OSCAL_CONTROL,
+        AGENT_REASON,
+        &payload,
+        || {
+            state
+                .repository
+                .library_add_question(policy_id, &question, &context, snapshot, &caller.eppn, "agent")
+                .map_err(internal)
+        },
+    )
+}
+
+/// Open questions for the policies the caller may write.
+pub fn open_questions(state: &SharedState, caller: &AuthUser) -> Result<Value, ServiceError> {
+    let admin = is_admin(state, caller);
+    let mut out = Vec::new();
+    for q in state.repository.library_open_questions_all().map_err(internal)? {
+        let allowed = admin
+            || q["policy_id"]
+                .as_str()
+                .and_then(|u| Uuid::parse_str(u).ok())
+                .and_then(|id| state.repository.library_policy(id).ok().flatten())
+                .is_some_and(|p| may_write(state, caller, &p));
+        if allowed {
+            out.push(q);
+        }
+    }
+    Ok(json!({ "questions": out }))
 }
