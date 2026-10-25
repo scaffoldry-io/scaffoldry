@@ -18,6 +18,8 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/access/explain", get(explain))
         .route("/admin/access/people/{eppn}", get(person))
+        .route("/admin/access/domains", get(domains))
+        .route("/admin/access/objects", get(search_objects))
         .route("/admin/access/objects/{kind}/{*id}", get(object))
         .route("/admin/access/changes/{id}/impact", post(impact))
 }
@@ -53,6 +55,23 @@ async fn person(State(state): State<SharedState>, headers: HeaderMap, Path(eppn)
 async fn object(State(state): State<SharedState>, headers: HeaderMap, Path((kind, id)): Path<(String, String)>) -> Result<Json<Value>, ServiceError> {
     let c = caller(&state, &headers)?;
     blocking(move || review::review_object(&state, &c, &format!("{kind}:{id}"))).await
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchParams {
+    q: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn search_objects(State(state): State<SharedState>, headers: HeaderMap, Query(p): Query<SearchParams>) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    blocking(move || review::search_objects(&state, &c, p.q.as_deref().unwrap_or(""), p.cursor.as_deref(), p.limit)).await
+}
+
+async fn domains(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    blocking(move || review::domains(&state, &c)).await
 }
 
 async fn impact(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<Value>, ServiceError> {

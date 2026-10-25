@@ -95,6 +95,13 @@ pub enum ChangeDecision {
     OwnChange,
 }
 
+pub enum RetireOutcome {
+    Done,
+    Missing,
+    Protected,
+    AlreadyRetired,
+}
+
 pub enum RevokeOutcome {
     Done,
     Missing,
@@ -109,7 +116,11 @@ impl PostgresRepository {
         }
         let (kinds, ids): (Vec<String>, Vec<String>) = pairs.iter().cloned().unzip();
         self.with_client(move |c| {
-            let sql = format!("{GRANT_SELECT} WHERE revoked_at IS NULL AND (holder_kind, holder_id) IN (SELECT * FROM unnest($1::text[], $2::text[]))");
+            // A grant in a retired hierarchy stays on record and reaches nothing.
+            let sql = format!(
+                "{GRANT_SELECT} WHERE revoked_at IS NULL AND (holder_kind, holder_id) IN (SELECT * FROM unnest($1::text[], $2::text[])) \
+                 AND (hierarchy_key IS NULL OR hierarchy_key IN (SELECT key FROM hierarchies WHERE status = 'Active'))"
+            );
             Ok(c.query(&sql, &[&kinds, &ids])?.iter().filter_map(GrantRow::of).map(|r| r.grant).collect())
         })
     }
@@ -175,15 +186,54 @@ impl PostgresRepository {
         })
     }
 
-    /// Active grants nobody has reviewed for `days` days, oldest first.
-    pub fn due_grant_rows(&self, days: i64, limit: i64) -> Result<Vec<GrantRow>, RepositoryError> {
+    /// Active grants nobody has reviewed for `days` days, by id, a page after `after`.
+    pub fn due_grant_rows(&self, days: i64, after: i64, limit: i64) -> Result<Vec<GrantRow>, RepositoryError> {
         let days = i32::try_from(days).unwrap_or(i32::MAX);
         self.with_client(move |c| {
             let sql = format!(
-                "{GRANT_SELECT} WHERE revoked_at IS NULL AND (valid_until IS NULL OR valid_until > NOW()) \
-                 AND COALESCE(reviewed_at, created_at) < NOW() - make_interval(days => $1) ORDER BY COALESCE(reviewed_at, created_at), id LIMIT $2"
+                "{GRANT_SELECT} WHERE id > $3 AND revoked_at IS NULL AND (valid_until IS NULL OR valid_until > NOW()) \
+                 AND COALESCE(reviewed_at, created_at) < NOW() - make_interval(days => $1) ORDER BY id LIMIT $2"
             );
-            Ok(c.query(&sql, &[&days, &limit])?.iter().filter_map(GrantRow::of).collect())
+            Ok(c.query(&sql, &[&days, &limit, &after])?.iter().filter_map(GrantRow::of).collect())
+        })
+    }
+
+    /// Retires a hierarchy. Its grants stop reaching, and its units stay. The academic hierarchy and one already retired are refused.
+    pub fn retire_hierarchy(&self, key: &str) -> Result<RetireOutcome, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |c| {
+            let Some(row) = c.query_opt("SELECT status FROM hierarchies WHERE key = $1 FOR UPDATE", &[&key])? else { return Ok(RetireOutcome::Missing) };
+            let status: String = row.get(0);
+            if key == "academic" {
+                return Ok(RetireOutcome::Protected);
+            }
+            if status != "Active" {
+                return Ok(RetireOutcome::AlreadyRetired);
+            }
+            c.execute("UPDATE hierarchies SET status = 'Retired', retired_at = NOW() WHERE key = $1", &[&key])?;
+            Ok(RetireOutcome::Done)
+        })
+    }
+
+    /// Every domain a grant can be limited to, with its name.
+    pub fn domain_names(&self) -> Result<Vec<(String, String)>, RepositoryError> {
+        self.with_client(|c| {
+            let rows = c.query("SELECT key, name FROM access_domains WHERE status = 'Active' ORDER BY name, key", &[])?;
+            Ok(rows.iter().map(|r| (r.get(0), r.get(1))).collect())
+        })
+    }
+
+    /// People whose address or name holds `q`, by address, a page after `after`.
+    pub fn search_people(&self, q: &str, after: &str, limit: i64) -> Result<Vec<(String, String)>, RepositoryError> {
+        let pattern = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let after = after.to_lowercase();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT lower(user_name), COALESCE(payload->'name'->>'formatted', user_name) FROM scim_users \
+                 WHERE lower(user_name) > $2 AND active AND (user_name ILIKE $1 OR payload->'name'->>'formatted' ILIKE $1) ORDER BY lower(user_name) LIMIT $3",
+                &[&pattern, &after, &limit],
+            )?;
+            Ok(rows.iter().map(|r| (r.get(0), r.get(1))).collect())
         })
     }
 
@@ -238,7 +288,9 @@ impl PostgresRepository {
                 .iter()
                 .map(|r| {
                     let id: Uuid = r.get(0);
-                    json!({ "change_id": id, "grant": r.get::<_, Value>(1)["grant"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6) })
+                    let change: Value = r.get(1);
+                    let kind = change["kind"].as_str().unwrap_or("grant").to_string();
+                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6) })
                 })
                 .collect())
         })
@@ -261,7 +313,25 @@ impl PostgresRepository {
                 return Ok(ChangeDecision::OwnChange);
             }
             let mut grant_id = None;
-            if confirm {
+            if confirm && change["kind"] == "hierarchy" {
+                let h = &change["hierarchy"];
+                let text = |k: &str| h[k].as_str().unwrap_or_default().to_string();
+                let key = text("key");
+                // The same lock every writer of the tree takes.
+                tx.query_one("SELECT pg_advisory_xact_lock($1)", &[&0x5343_4f52_4754_5245_i64])?;
+                if tx.query_opt("SELECT 1 FROM hierarchies WHERE key = $1", &[&key])?.is_some() {
+                    return Ok(ChangeDecision::Missing);
+                }
+                tx.execute("INSERT INTO hierarchies (key, name, kind, source, created_by) VALUES ($1, $2, $3, $4, $5)", &[&key, &text("name"), &text("kind"), &text("source"), &proposed_by])?;
+                // A hierarchy begins with its root unit, so it can be used the moment it exists.
+                let root = Uuid::new_v4();
+                tx.execute(
+                    "INSERT INTO organizations (id, parent_id, name, code, org_type, hierarchy_key) VALUES ($1, NULL, $2, $3, 'Institution', $4)",
+                    &[&root, &text("name"), &format!("ROOT-{}", key.to_uppercase()), &key],
+                )?;
+                tx.execute("INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) VALUES ($1, $2, $2, 0)", &[&key, &root])?;
+                crate::cache::bump(&mut tx, "organizations")?;
+            } else if confirm {
                 let g = &change["grant"];
                 let text = |k: &str| g[k].as_str().map(str::to_string);
                 let depth = g["depth"].as_i64().map(|d| d as i16);

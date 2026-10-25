@@ -169,7 +169,7 @@ The rest of the access model, then the rules behind a decision and who decides. 
 | 90 | [access-model.md](access-model.md) | 8 | Receipts for denials, privileged actions and protected reads, sealed into the ledger in batches | **COMPLETED** |
 | 91 | [access-model.md](access-model.md) | 9 | Full impersonation of synthetic people only. Writes under it record both people. No persona guessed from an address | **COMPLETED** |
 | 92 | [access-model.md](access-model.md) | 10 | Supervision from the directory's manager field, expiring grants, scheduled review, and separation of duties | **COMPLETED** |
-| 93 | [access-model.md](access-model.md) | 11 | An Access section in the console: hierarchies, grants, objects, people, reviews and receipts | |
+| 93 | [access-model.md](access-model.md) | 11 | An Access section in the console: hierarchies, grants, objects, people, reviews and receipts | **COMPLETED** |
 | 94 | [policy-library.md](policy-library.md) | 1 | Policies, their sources, and rules that cite a passage word for word | **COMPLETED** |
 | 95 | [policy-library.md](policy-library.md) | 2 | A person's agent reads a policy and proposes rules and questions. It cannot publish | |
 | 96 | [policy-library.md](policy-library.md) | 3 | A person who did not submit a rule reviews it against its passage and publishes it | |

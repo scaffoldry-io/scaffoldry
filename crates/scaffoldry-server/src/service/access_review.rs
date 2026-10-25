@@ -88,6 +88,29 @@ pub fn all_targets(state: &SharedState) -> Vec<Target> {
     out
 }
 
+/// A unit's name, or a workspace's, app's or table's title, for an id that a path names. An id nobody knows is returned as it is.
+fn name_of(state: &SharedState, id: &str) -> String {
+    if let Some(unit) = Uuid::parse_str(id).ok().and_then(|u| state.organizations.read().unwrap_or_else(|p| p.into_inner()).get(&u).map(|o| o.name.clone())) {
+        return unit;
+    }
+    match parse_target(state, id) {
+        Ok(t) => match (&t.app, &t.table) {
+            (None, _) => t.workspace.name.clone(),
+            (Some(m), None) => m.title.clone(),
+            (Some(m), Some(table)) => format!("{} / {}", m.title, m.tables.iter().find(|x| &x.id == table).map(|x| x.name.clone()).unwrap_or_else(|| table.clone())),
+        },
+        Err(_) => id.to_string(),
+    }
+}
+
+/// Where a grant is anchored, in words: the unit's name, the container's title, or "the holder's own unit".
+fn anchor_name(state: &SharedState, g: &Grant) -> String {
+    match g.anchor_kind {
+        AnchorKind::HolderUnit => "the holder's own unit".to_string(),
+        _ => g.anchor_id.as_deref().map(|a| name_of(state, a)).unwrap_or_default(),
+    }
+}
+
 /// One grant in words: who holds it and where it is anchored.
 fn grant_json(g: &Grant) -> Value {
     let anchor = match g.anchor_kind {
@@ -202,10 +225,13 @@ pub fn explain(state: &SharedState, caller: &AuthUser, person: &str, object_text
         match &t.missed {
             None => {
                 j["path"] = json!(t.path);
+                j["path_names"] = json!(t.path.iter().map(|id| name_of(state, id)).collect::<Vec<_>>());
+                j["anchor_name"] = json!(anchor_name(state, g));
                 reached.push(j);
             }
             Some(m) => {
                 j["axis"] = json!(m.axis());
+                j["anchor_name"] = json!(anchor_name(state, g));
                 if let Miss::Sealed(container) = m {
                     j["sealed_by"] = json!(container);
                     if !sealed_by.contains(container) {
@@ -262,6 +288,8 @@ fn active_grants(state: &SharedState) -> Result<Vec<crate::repository_grants::Gr
 /// workspace. A grant is asked what it reaches whoever holds it. A position held at any unit has no one holder to ask with,
 /// so it is listed apart.
 pub fn review_object(state: &SharedState, caller: &AuthUser, object_text: &str) -> Result<Value, ServiceError> {
+    // Someone who could not review any object is refused before the object is looked up, so the answer does not say what exists.
+    require_access_admin(state, caller)?;
     let target = parse_target(state, object_text)?;
     let object = target.object(state).ok_or_else(|| ServiceError::Internal("The unit tree could not be read".to_string()))?;
     if !may_review_object(state, caller, &object) {
@@ -455,6 +483,11 @@ pub fn impact(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Value,
     impact_of_coordinates(state, id, &ws, coordinates)
 }
 
+/// The impact of a grant that is not stored yet, for the form that proposes it.
+pub fn impact_of_new_grant(state: &SharedState, grant: &Grant) -> Result<Value, ServiceError> {
+    impact_of_grant(state, Uuid::nil(), grant)
+}
+
 fn impact_of_grant(state: &SharedState, id: Uuid, grant: &Grant) -> Result<Value, ServiceError> {
     let now = chrono::Utc::now().timestamp();
     let mut people = people_of_holder(state, grant.holder_kind, &grant.holder_id);
@@ -516,4 +549,48 @@ fn impact_of_coordinates(state: &SharedState, id: Uuid, ws: &WorkspaceRecord, co
         }
     }
     Ok(cmp.finish(id, "coordinates", people.len().min(MOST_PEOPLE), truncated))
+}
+
+/// Workspaces, apps and tables whose name holds `q`, in order, a page at a time. The cursor is the container text of the last
+/// one returned. The objects live in memory, so this pages there.
+pub fn search_objects(state: &SharedState, caller: &AuthUser, q: &str, cursor: Option<&str>, limit: Option<i64>) -> Result<Value, ServiceError> {
+    require_access_admin(state, caller)?;
+    let limit = limit.unwrap_or(50).clamp(1, 200) as usize;
+    let needle = q.trim().to_lowercase();
+    let mut found: Vec<(String, String, String)> = all_targets(state)
+        .into_iter()
+        .filter(|t| t.object(state).is_some_and(|o| may_review_object(state, caller, &o)))
+        .map(|t| {
+            let (kind, title) = match (&t.app, &t.table) {
+                (None, _) => ("workspace", t.workspace.name.clone()),
+                (Some(m), None) => ("app", m.title.clone()),
+                (Some(m), Some(table)) => ("table", format!("{} / {}", m.title, m.tables.iter().find(|x| &x.id == table).map(|x| x.name.clone()).unwrap_or_else(|| table.clone()))),
+            };
+            (t.container, kind.to_string(), title)
+        })
+        .filter(|(container, _, title)| needle.is_empty() || container.to_lowercase().contains(&needle) || title.to_lowercase().contains(&needle))
+        .collect();
+    found.sort();
+    let start = cursor.map(|c| found.partition_point(|(container, _, _)| container.as_str() <= c)).unwrap_or(0);
+    let page: Vec<&(String, String, String)> = found.iter().skip(start).take(limit + 1).collect();
+    let more = page.len() > limit;
+    let objects: Vec<Value> = page.iter().take(limit).map(|(container, kind, title)| json!({ "container": container, "kind": kind, "title": title })).collect();
+    let next = if more { objects.last().and_then(|o| o["container"].as_str().map(str::to_string)) } else { None };
+    Ok(json!({ "objects": objects, "next_cursor": next }))
+}
+
+/// The domains a grant can be limited to, for the form that makes one.
+pub fn domains(state: &SharedState, caller: &AuthUser) -> Result<Value, ServiceError> {
+    require_access_admin(state, caller)?;
+    let list = state.repository.domain_names().map_err(|e| ServiceError::Internal(e.to_string()))?;
+    Ok(json!({ "domains": list.into_iter().map(|(key, name)| json!({ "key": key, "name": name })).collect::<Vec<_>>() }))
+}
+
+/// A Platform Admin, compliance, or an Org Unit Admin: the people who may look at access across objects.
+fn require_access_admin(state: &SharedState, caller: &AuthUser) -> Result<(), ServiceError> {
+    if crate::service::admin::require_platform_admin_or_compliance(caller, state).is_ok() || state.roles_of(&caller.eppn).iter().any(|r| r.scoped_affiliation == "unit_admin") {
+        Ok(())
+    } else {
+        Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"))
+    }
 }
