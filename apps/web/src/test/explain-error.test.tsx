@@ -157,6 +157,11 @@ describe("UX standards phase 2: errors that explain", () => {
         },
       ],
       [
+        "grant_conflict",
+        new ApiError(409, "Dean and auditor may not be held together.", { code: "grant_conflict" }),
+        { message: "Dean and auditor may not be held together.", next: "Give this to someone else, or ask a Platform Admin whether the conflict should stand." },
+      ],
+      [
         "impersonation_not_synthetic",
         new ApiError(403, "That is a real person.", { code: "impersonation_not_synthetic" }),
         { message: "Only synthetic people can be acted as.", next: "Use view-as to see what this person sees. View-as is read-only." },

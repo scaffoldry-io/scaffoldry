@@ -183,6 +183,7 @@ async fn test_3_synthetic_person_grant_anchored_in_real_unit_is_refused() {
         "hierarchy": "academic",
         "anchor_kind": "unit",
         "anchor_id": real_unit.to_string(),
+        "source": "appointment",
         "reason": "Testing synthetic grant isolation in real unit",
     });
 
@@ -202,6 +203,7 @@ async fn test_3_synthetic_person_grant_anchored_in_real_unit_is_refused() {
         "hierarchy": "academic",
         "anchor_kind": "unit",
         "anchor_id": synth_unit.to_string(),
+        "source": "appointment",
         "reason": "Testing synthetic grant in synthetic unit",
     });
 

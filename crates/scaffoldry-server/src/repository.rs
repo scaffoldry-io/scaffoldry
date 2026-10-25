@@ -74,6 +74,7 @@ const SCHEMA_0059: &str = include_str!("../../scaffoldry-core/migrations/0059_ac
 const SCHEMA_0060: &str = include_str!("../../scaffoldry-core/migrations/0060_synthetic.sql");
 const SCHEMA_0061: &str = include_str!("../../scaffoldry-core/migrations/0061_page_settings.sql");
 const SCHEMA_0068: &str = include_str!("../../scaffoldry-core/migrations/0068_acted_by.sql");
+const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
 const SCHEMA_0064: &str = include_str!("../../scaffoldry-core/migrations/0064_app_clients.sql");
@@ -633,7 +634,7 @@ impl ScopePlan {
         first_param: usize,
     ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::to_sql;
-        Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param))
+        Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param), first_param)
     }
 
     /// The same, for a statement that reads records in order and stops after a page. An OR of memberships is probed
@@ -647,16 +648,22 @@ impl ScopePlan {
     ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::to_sql_probes;
         match to_sql_probes(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
-            Ok(Some(compiled)) => Self::wrap(Ok(compiled)),
+            Ok(Some(compiled)) => Self::wrap(Ok(compiled), first_param),
             Ok(None) => self.clause_at(id_expr, app_slug, table_id, first_param),
-            Err(e) => Self::wrap(Err(e)),
+            Err(e) => Self::wrap(Err(e), first_param),
         }
     }
 
-    fn wrap(compiled: Result<(String, Vec<scaffoldry_engine::access::Param>), scaffoldry_engine::access::CompileError>) -> (String, Vec<SqlParam>) {
+    fn wrap(
+        compiled: Result<(String, Vec<scaffoldry_engine::access::Param>), scaffoldry_engine::access::CompileError>,
+        first_param: usize,
+    ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::Param;
         match compiled {
             Ok((sql, added)) => {
+                // A scope that selects nothing names no placeholder. Postgres refuses a parameter it cannot give a type, so
+                // a statement that carries parameters nothing refers to fails. Those parameters go.
+                let added = if sql.contains(&format!("${first_param}")) { added } else { Vec::new() };
                 let params = added
                     .into_iter()
                     .map(|p| match p {
@@ -1100,6 +1107,7 @@ impl PostgresRepository {
                             ("0066_agent_sessions.sql", SCHEMA_0066),
                             ("0067_access_receipts.sql", SCHEMA_0067),
                             ("0068_acted_by.sql", SCHEMA_0068),
+                            ("0069_grant_review.sql", SCHEMA_0069),
                         ];
 
                         let mut fresh_install = false;

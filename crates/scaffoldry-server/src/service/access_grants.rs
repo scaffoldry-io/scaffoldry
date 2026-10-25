@@ -6,6 +6,7 @@ use crate::service::admin::admin_write;
 use crate::service::members::{self, Role};
 use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
+use scaffoldry_core::conflicts::{self, Holder};
 use scaffoldry_core::coordinates::{sensitivity_rank, SENSITIVITY_LEVELS};
 use scaffoldry_core::ledger::DecisionType;
 use scaffoldry_core::reach::{AnchorKind, Grant, HolderKind};
@@ -152,6 +153,17 @@ fn parse_new_grant(state: &SharedState, body: &Value) -> Result<NewGrant, Servic
         }
         g.valid_until = Some(parsed.to_utc().to_rfc3339());
     }
+    if g.source == "request" {
+        let max = setting_days(state, "access.person_grant_max_days", 180);
+        let until = g.valid_until.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok());
+        match until {
+            None => return Err(bad(format!("A requested grant needs valid_until, at most {max} days from now"))),
+            Some(u) if u > chrono::Utc::now() + chrono::Duration::days(max) => {
+                return Err(bad(format!("valid_until may be at most {max} days from now (the setting access.person_grant_max_days)")));
+            }
+            Some(_) => {}
+        }
+    }
     if let Some(c) = &g.clearance {
         if sensitivity_rank(c).is_none() {
             return Err(bad(format!("clearance must be one of {}", SENSITIVITY_LEVELS.join(", "))));
@@ -165,6 +177,7 @@ fn parse_new_grant(state: &SharedState, body: &Value) -> Result<NewGrant, Servic
     check_anchor(state, &g)?;
     check_holder(state, &g)?;
     check_synthetic_grant(state, &g)?;
+    check_grant_conflict(state, &g)?;
     Ok(g)
 }
 
@@ -339,6 +352,10 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
         _ => return Err(bad("decision must be 'confirm' or 'reject'")),
     };
     let reason = reason_of(body)?;
+    if confirm {
+        // The pair may have been declared, or the person may have gained the other side, since the proposal.
+        check_grant_conflict(state, &g)?;
+    }
     if confirm && proposed_by.eq_ignore_ascii_case(&caller.eppn) {
         return Err(ServiceError::forbidden("The person who proposed a change cannot confirm it"));
     }
@@ -436,4 +453,123 @@ pub fn list(state: &SharedState, caller: &AuthUser, q: &ListQuery) -> Result<Val
         Vec::new()
     };
     Ok(json!({ "grants": grants, "changes": changes, "next_cursor": next }))
+}
+
+// --- Phase 10: validity, review and separation of duties ---------------------------------------------------------------
+
+/// A whole-number setting, or `default` when it is not set.
+fn setting_days(state: &SharedState, key: &str, default: i64) -> i64 {
+    state.settings.read().ok().and_then(|s| s.get(key).and_then(Value::as_i64)).unwrap_or(default)
+}
+
+/// The pairs in `access.conflicts`. A bad stored value is no pairs: the setting was checked when it was saved.
+fn conflict_pairs(state: &SharedState) -> Vec<conflicts::Pair> {
+    state.settings.read().ok().and_then(|s| s.get("access.conflicts").and_then(|v| conflicts::parse(v).ok())).unwrap_or_default()
+}
+
+/// What a person holds that a conflict can name: their positions and the roles of their active person grants.
+fn held_by(state: &SharedState, eppn: &str) -> Vec<Holder> {
+    let mut held: Vec<Holder> = state.roles_of(eppn).into_iter().filter_map(|r| r.position_key).map(Holder::Position).collect();
+    let now = chrono::Utc::now().timestamp();
+    let grants = state.repository.grants_held_by(&[("person".to_string(), eppn.to_lowercase())]).unwrap_or_default();
+    held.extend(grants.into_iter().filter(|g| g.valid_until.is_none_or(|u| u > now)).map(|g| Holder::Role { role: g.role.as_str().to_string(), domain: g.domain }));
+    held
+}
+
+fn refuse_pair(pair: &conflicts::Pair, eppn: &str) -> ServiceError {
+    ServiceError::GrantConflict(format!("{eppn} would hold {}. One person may not hold both (the setting access.conflicts).", pair.words()))
+}
+
+fn check_grant_conflict(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
+    if g.holder_kind != HolderKind::Person {
+        return Ok(());
+    }
+    let pairs = conflict_pairs(state);
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    let new = Holder::Role { role: g.role.as_str().to_string(), domain: g.domain.clone() };
+    match conflicts::completes(&pairs, &held_by(state, &g.holder_id), &new) {
+        Some(pair) => Err(refuse_pair(pair, &g.holder_id)),
+        None => Ok(()),
+    }
+}
+
+/// Refuses an appointment to `position` that would complete a declared pair for `eppn`.
+pub fn check_appointment_conflict(state: &SharedState, eppn: &str, position: &str) -> Result<(), ServiceError> {
+    let pairs = conflict_pairs(state);
+    match conflicts::completes(&pairs, &held_by(state, eppn), &Holder::Position(position.to_string())) {
+        Some(pair) => Err(refuse_pair(pair, eppn)),
+        None => Ok(()),
+    }
+}
+
+/// The people who hold both sides of a declared pair today.
+fn existing_conflicts(state: &SharedState) -> Vec<Value> {
+    let pairs = conflict_pairs(state);
+    if pairs.is_empty() {
+        return Vec::new();
+    }
+    let mut people: std::collections::BTreeSet<String> = state.repository.person_grant_holders().unwrap_or_default().into_iter().collect();
+    for p in &pairs {
+        for side in [&p.a, &p.b] {
+            if let Holder::Position(key) = side {
+                people.extend(state.repository.appointed_to_position(key, None).unwrap_or_default());
+            }
+        }
+    }
+    people
+        .into_iter()
+        .flat_map(|person| {
+            let held = held_by(state, &person);
+            conflicts::existing(&pairs, &held).into_iter().map(|p| json!({ "person": person, "pair": p.words() })).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Grants nobody has reviewed for `access.review_days`, and conflicts that exist now. A Platform Admin or compliance sees
+/// all. An Org Unit Admin sees the due grants inside their subtree.
+pub fn reviews(state: &SharedState, caller: &AuthUser) -> Result<Value, ServiceError> {
+    let r = rights(state, caller);
+    if !r.platform && r.admin_units.is_empty() {
+        return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
+    }
+    let days = setting_days(state, "access.review_days", 365);
+    let due: Vec<Value> = state
+        .repository
+        .due_grant_rows(days, 500)
+        .map_err(internal)?
+        .into_iter()
+        .filter(|row| NewGrant::of_json(&row.json()).is_some_and(|g| scope_allows(state, &r, caller, &g).is_ok()))
+        .map(|row| row.json())
+        .collect();
+    let found = if r.platform { existing_conflicts(state) } else { Vec::new() };
+    Ok(json!({ "review_days": days, "due": due, "conflicts": found }))
+}
+
+/// Keeps or revokes a grant that is due. Keeping resets the clock. A person cannot review a grant they hold.
+pub fn review_grant(state: &SharedState, caller: &AuthUser, id: i64, body: &Value) -> Result<Value, ServiceError> {
+    let row = state.repository.grant_row(id).map_err(internal)?.ok_or_else(|| missing(state, caller, "Grant"))?;
+    let as_new = NewGrant::of_json(&row.json()).ok_or_else(|| ServiceError::Internal("The stored grant is not a grant".to_string()))?;
+    scope_allows(state, &rights(state, caller), caller, &as_new)?;
+    if row.grant.holder_kind == HolderKind::Person && row.grant.holder_id.eq_ignore_ascii_case(&caller.eppn) {
+        return Err(ServiceError::forbidden("A person cannot review a grant they hold"));
+    }
+    if row.grant.revoked {
+        return Err(ServiceError::conflict("That grant is already revoked"));
+    }
+    match body.get("decision").and_then(Value::as_str) {
+        Some("revoke") => revoke_grant(state, caller, id, body),
+        Some("keep") => {
+            let reason = reason_of(body)?;
+            let payload = json!({ "action": "grant_kept", "grant": row.json() });
+            let kept = admin_write(state, caller, DecisionType::AccessGrantReviewed, "AC-02", &reason, &payload, || state.repository.mark_grant_reviewed(id, &caller.eppn).map_err(internal))?;
+            if kept {
+                Ok(json!({ "id": id, "status": "Kept" }))
+            } else {
+                Err(ServiceError::conflict("That grant is already revoked"))
+            }
+        }
+        _ => Err(bad("decision must be 'keep' or 'revoke'")),
+    }
 }

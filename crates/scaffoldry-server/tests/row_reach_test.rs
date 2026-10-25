@@ -148,7 +148,7 @@ async fn world() -> World {
 }
 
 fn unit_grant(who: &str, anchor: Uuid, depth: Option<i64>) -> Value {
-    json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "depth": depth, "source": "request", "reason": "Test grant" })
+    json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "depth": depth, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" })
 }
 
 async fn grant(w: &World, body: Value) {
@@ -197,7 +197,7 @@ async fn a_unit_grant_shows_the_rows_in_its_subtree_and_a_depth_limits_it() {
 #[tokio::test]
 async fn a_container_grant_and_a_platform_admin_see_every_row() {
     let w = world().await;
-    grant(&w, json!({ "holder_kind": "person", "holder_id": "dee@state.edu", "role": "viewer", "anchor_kind": "container", "anchor_id": format!("workspace:{WS}"), "source": "request", "reason": "Test grant" })).await;
+    grant(&w, json!({ "holder_kind": "person", "holder_id": "dee@state.edu", "role": "viewer", "anchor_kind": "container", "anchor_id": format!("workspace:{WS}"), "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" })).await;
     assert_eq!(listed(&w, "dee@state.edu").await, set(&["science", "physics", "lab", "chemistry"]));
     assert_eq!(listed(&w, ADMIN).await, set(&["science", "physics", "lab", "chemistry"]));
 }
@@ -244,7 +244,7 @@ async fn a_grant_below_the_workspace_does_not_open_the_app() {
 // ---------------------------------------------------------------------------------------------------------------------
 
 fn cleared_grant(who: &str, role: &str, anchor: Uuid, clearance: Option<&str>) -> Value {
-    json!({ "holder_kind": "person", "holder_id": who, "role": role, "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "clearance": clearance, "source": "request", "reason": "Test grant" })
+    json!({ "holder_kind": "person", "holder_id": who, "role": role, "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "clearance": clearance, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" })
 }
 
 /// The `ssn` values a list shows, by title. A title with no `ssn` key shows `None`.
@@ -376,7 +376,7 @@ async fn a_people_hierarchy_reaches_the_rows_placed_by_the_people_appointed_in_t
     let w = World { _db: db, state, app, science, physics, lab: physics, chemistry: physics, slug };
 
     grant(&w, unit_grant("zed@state.edu", science, Some(0))).await;
-    let sup = |who: &str, anchor: Uuid, depth: Option<i64>| json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "hierarchy": "supervisory", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "depth": depth, "source": "request", "reason": "Test grant" });
+    let sup = |who: &str, anchor: Uuid, depth: Option<i64>| json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "hierarchy": "supervisory", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "depth": depth, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" });
     grant(&w, sup("zed@state.edu", team_one, None)).await;
     grant(&w, sup("amy@state.edu", boss, None)).await;
     grant(&w, unit_grant("amy@state.edu", science, Some(0))).await;

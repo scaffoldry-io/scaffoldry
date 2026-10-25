@@ -194,7 +194,7 @@ async fn replaying_a_receipt_reproduces_its_outcome_while_the_counters_hold() {
 #[tokio::test]
 async fn a_privileged_action_and_a_view_as_request_leave_receipts() {
     let w = world();
-    let (s, body) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(json!({ "holder_kind": "person", "holder_id": "x@state.edu", "role": "viewer", "anchor_kind": "container", "anchor_id": format!("workspace:{WORKSPACE}"), "source": "request", "reason": "Test grant" }))).await;
+    let (s, body) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(json!({ "holder_kind": "person", "holder_id": "x@state.edu", "role": "viewer", "anchor_kind": "container", "anchor_id": format!("workspace:{WORKSPACE}"), "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" }))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{body}");
     let mine = receipts(&w, &format!("actor={ADMIN}&outcome=allow")).await;
     assert!(mine.iter().any(|r| r["action"].as_str().unwrap().contains("admin") && r["action"].as_str().unwrap().contains("grants")), "{mine:?}");

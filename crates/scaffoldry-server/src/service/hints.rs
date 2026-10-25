@@ -74,6 +74,7 @@ pub fn hint_for(err: &ServiceError) -> String {
         "undo_conflict" => "Call get_record_history to see what changed since, then decide what to keep.",
         "position_full" => "Call list_workspaces to find the unit, then ask a Platform Admin to replace the holder.",
         "impersonation_not_synthetic" => "Open the app and use view-as to see what that person sees. Only synthetic people can be acted as.",
+        "grant_conflict" => "One person may not hold both. Give it to someone else, or ask a Platform Admin to change the setting access.conflicts.",
         "view_as_read_only" => "Exit the view to make changes. Call list_records to keep reading in the meantime.",
         "client_sensitive_field" => "Remove the sensitive field from the client's ceiling. Sensitive data stays inside Scaffoldry's own pages.",
         "client_scope" => "The app's ceiling does not cover this. Ask its owners to widen the ceiling, or do it in Scaffoldry yourself.",

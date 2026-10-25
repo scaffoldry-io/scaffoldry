@@ -10,6 +10,7 @@ pub mod organizations;
 pub mod records;
 pub mod access;
 pub mod access_grants;
+pub mod supervision;
 pub mod access_review;
 pub mod receipts;
 pub mod coordinates;
@@ -96,6 +97,7 @@ pub const ERROR_CODES: &[&str] = &[
     "client_sensitive_field",
     "client_scope",
     "impersonation_not_synthetic",
+    "grant_conflict",
 ];
 
 /// What a person who tried to act as a real person should do instead.
@@ -153,6 +155,8 @@ pub enum ServiceError {
     QuotaExceeded(String),
     /// A view-as session tried to change something. View-as only reads.
     ViewAsReadOnly(String),
+    /// A grant or an appointment would give one person both sides of a declared conflict.
+    GrantConflict(String),
     /// Full impersonation was asked for a real person. Only synthetic people can be acted as.
     ImpersonationNotSynthetic(String),
     /// A preview of a proposal tried to change something. A preview only reads.
@@ -215,7 +219,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -243,6 +247,7 @@ impl ServiceError {
             Self::QuotaExceeded(_) => "quota_exceeded",
             Self::ViewAsReadOnly(_) => "view_as_read_only",
             Self::ImpersonationNotSynthetic(_) => "impersonation_not_synthetic",
+            Self::GrantConflict(_) => "grant_conflict",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
@@ -275,6 +280,7 @@ impl ServiceError {
             | Self::QuotaExceeded(msg)
             | Self::ViewAsReadOnly(msg)
             | Self::ImpersonationNotSynthetic(msg)
+            | Self::GrantConflict(msg)
             | Self::PreviewReadOnly(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)

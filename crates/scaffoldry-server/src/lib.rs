@@ -14,6 +14,7 @@ pub mod repository_disclosure;
 pub mod repository_receipts;
 pub mod repository_files;
 pub mod repository_grants;
+pub mod repository_supervision;
 pub mod repository_calc;
 pub mod repository_index;
 pub mod repository_links;

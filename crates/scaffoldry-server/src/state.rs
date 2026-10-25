@@ -492,6 +492,9 @@ impl ServerState {
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
         settings_map.insert("oauth.allow_localhost".to_string(), serde_json::json!(false));
         settings_map.insert("access.agent_session_hours".to_string(), serde_json::json!(12));
+        settings_map.insert("access.person_grant_max_days".to_string(), serde_json::json!(180));
+        settings_map.insert("access.review_days".to_string(), serde_json::json!(365));
+        settings_map.insert("access.conflicts".to_string(), serde_json::json!([]));
         settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
         add_sensitivity_defaults(&mut settings_map);
 
