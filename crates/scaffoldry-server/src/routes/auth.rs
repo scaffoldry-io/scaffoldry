@@ -322,6 +322,13 @@ async fn impersonate_user(
         }
     };
 
+    // Acting as a person is for synthetic people only. A real person is seen through view-as, which cannot write.
+    let synthetic = state.repository.get_scim_user_by_username(&target_user.eppn).ok().flatten().is_some_and(|u| u.synthetic);
+    if !synthetic {
+        return ServiceError::ImpersonationNotSynthetic(format!("{} is a real person. Only synthetic people can be acted as.", target_user.eppn))
+            .into_response();
+    }
+
     let raw_token = generate_raw_token();
     let token_hash = hash_token(&raw_token);
     let id = Uuid::new_v4();

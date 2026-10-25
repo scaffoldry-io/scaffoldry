@@ -157,6 +157,11 @@ describe("UX standards phase 2: errors that explain", () => {
         },
       ],
       [
+        "impersonation_not_synthetic",
+        new ApiError(403, "That is a real person.", { code: "impersonation_not_synthetic" }),
+        { message: "Only synthetic people can be acted as.", next: "Use view-as to see what this person sees. View-as is read-only." },
+      ],
+      [
         "view_as_read_only",
         new ApiError(403, "You are viewing as someone else. This view is read-only.", { code: "view_as_read_only" }),
         { message: "You are viewing as someone else. This view is read-only.", next: "Exit the view to make changes." },

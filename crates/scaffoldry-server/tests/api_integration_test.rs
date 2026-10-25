@@ -1493,9 +1493,10 @@ async fn test_authentication_authorization_and_impersonation() {
     });
     assert_eq!(admin_auth["user"]["affiliation"], "central_admin");
 
-    // 6. Central Admin initiates impersonation of Dr. Sarah Connor
+    // 6. Central Admin initiates impersonation of a synthetic person
+    login_user(&app, "synth_7@synthetic.invalid").await;
     let imp_payload = json!({
-        "target_eppn": "sarah.connor@state.edu"
+        "target_eppn": "synth_7@synthetic.invalid"
     });
     let resp = app
         .clone()
@@ -1515,7 +1516,7 @@ async fn test_authentication_authorization_and_impersonation() {
     let imp_res: Value = serde_json::from_slice(&body).unwrap();
     let imp_token = imp_res["token"].as_str().unwrap().to_string();
     assert_eq!(imp_res["is_impersonating"], true);
-    assert_eq!(imp_res["user"]["eppn"], "sarah.connor@state.edu");
+    assert_eq!(imp_res["user"]["eppn"], "synth_7@synthetic.invalid");
     assert_eq!(imp_res["original_admin"]["eppn"], "jordan.lee@state.edu");
 
     // 7. GET /api/v1/auth/me during active impersonation
@@ -1534,7 +1535,7 @@ async fn test_authentication_authorization_and_impersonation() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let active_imp: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(active_imp["is_impersonating"], true);
-    assert_eq!(active_imp["user"]["eppn"], "sarah.connor@state.edu");
+    assert_eq!(active_imp["user"]["eppn"], "synth_7@synthetic.invalid");
 
     // 8. Stop impersonation and restore original admin session
     let resp = app

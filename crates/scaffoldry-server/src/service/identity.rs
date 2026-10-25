@@ -99,8 +99,6 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
         }
     }
 
-    let (def_name, def_role, def_aff, def_dept) = default_persona_attributes(eppn);
-
     // Resolve name
     let name = scim_user.as_ref().and_then(|u| {
         u.name.get("formatted").and_then(|v| v.as_str()).map(String::from).or_else(|| {
@@ -109,7 +107,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
             let full = format!("{} {}", given, family).trim().to_string();
             if full.is_empty() { None } else { Some(full) }
         })
-    }).unwrap_or(def_name);
+    }).unwrap_or_else(|| eppn.to_string());
 
     // Resolve department
     let department = scim_user.as_ref().and_then(|u| {
@@ -117,10 +115,10 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
             .and_then(|e| e.get("department"))
             .and_then(|v| v.as_str())
             .map(String::from)
-    }).unwrap_or(def_dept);
+    }).unwrap_or_default();
 
     // Resolve role_title
-    let role_title = scim_user.as_ref().and_then(|u| u.title.clone()).unwrap_or(def_role);
+    let role_title = scim_user.as_ref().and_then(|u| u.title.clone()).unwrap_or_else(|| "Member".to_string());
 
     // Resolve affiliation. Two roles on the root unit decide it, and both are granted here, never by the
     // registry: a Platform Admin is central_admin, and a compliance officer is compliance. A SCIM record
@@ -134,7 +132,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
     } else if let Some(ref u) = scim_user {
         scim_affiliation(u)
     } else {
-        if def_aff == "central_admin" { "member".to_string() } else { def_aff }
+        "member".to_string()
     };
 
     Some(AuthUser {
@@ -195,80 +193,6 @@ pub fn create_setup_token(state: &ServerState) -> Result<String, Box<dyn std::er
     Ok(raw_token)
 }
 
-pub fn default_persona_attributes(eppn: &str) -> (String, String, String, String) {
-    if eppn == "jordan.lee@state.edu" {
-        (
-            "Jordan Lee".to_string(),
-            "Central Enterprise Administrator".to_string(),
-            "central_admin".to_string(),
-            "Central IT & Institutional Governance".to_string(),
-        )
-    } else if eppn.contains("curie") {
-        (
-            "Dr. Marie Curie".to_string(),
-            "Professor & Lab Director".to_string(),
-            "faculty".to_string(),
-            "biology".to_string(),
-        )
-    } else if eppn.contains("connor") || eppn.contains("sarah") {
-        (
-            "Dr. Sarah Connor".to_string(),
-            "Department Chair & Professor".to_string(),
-            "faculty".to_string(),
-            "Computer Science".to_string(),
-        )
-    } else if eppn.contains("vance") {
-        (
-            "Marcus Vance".to_string(),
-            "Senior Research Administrator".to_string(),
-            "staff".to_string(),
-            "Office of Sponsored Programs".to_string(),
-        )
-    } else if eppn.contains("einstein") {
-        (
-            "Albert Einstein".to_string(),
-            "Professor of Physics".to_string(),
-            "faculty".to_string(),
-            "physics".to_string(),
-        )
-    } else if eppn.contains("student") {
-        (
-            "Alice Smith".to_string(),
-            "Graduate Research Assistant".to_string(),
-            "student".to_string(),
-            "biology".to_string(),
-        )
-    } else if eppn.contains("admin") {
-        (
-            "Admin User".to_string(),
-            "Department Administrator".to_string(),
-            "staff".to_string(),
-            "biology".to_string(),
-        )
-    } else if eppn.contains("editor") {
-        (
-            "Editor User".to_string(),
-            "Research Assistant".to_string(),
-            "staff".to_string(),
-            "biology".to_string(),
-        )
-    } else if eppn.contains("owner") {
-        (
-            "Owner User".to_string(),
-            "Principal Investigator".to_string(),
-            "faculty".to_string(),
-            "biology".to_string(),
-        )
-    } else {
-        (
-            eppn.to_string(),
-            "Member".to_string(),
-            "member".to_string(),
-            "general".to_string(),
-        )
-    }
-}
-
 /// Helper for tests to create a valid API token and ensure SCIM persona exists in DB.
 pub fn issue_test_token_and_user(eppn: &str) -> String {
     let eppn_owned = eppn.to_string();
@@ -295,7 +219,7 @@ pub fn issue_test_token_and_user(eppn: &str) -> String {
             &[&root_org_id],
         );
 
-        let (name, role_title, aff, dept) = default_persona_attributes(eppn);
+        let (name, role_title, aff, dept) = crate::testing::fixture_persona(eppn);
 
         let (first_name, last_name) = match name.split_once(' ') {
             Some((f, l)) => (f, l),
@@ -345,7 +269,7 @@ pub fn issue_test_token_and_user(eppn: &str) -> String {
         });
 
         let _ = client.execute(
-            "INSERT INTO scim_users (id, user_name, active, payload, updated_at)              SELECT $1::text, $2::text, true, $3::jsonb, NOW()              WHERE NOT EXISTS (SELECT 1 FROM scim_users WHERE lower(user_name) = lower($2::text) AND id <> $1::text)              ON CONFLICT (id) DO UPDATE SET active = true, payload = $3, updated_at = NOW()",
+            "INSERT INTO scim_users (id, user_name, active, payload, synthetic, updated_at)              SELECT $1::text, $2::text, true, $3::jsonb, lower($2::text) LIKE '%@synthetic.invalid', NOW()              WHERE NOT EXISTS (SELECT 1 FROM scim_users WHERE lower(user_name) = lower($2::text) AND id <> $1::text)              ON CONFLICT (id) DO UPDATE SET active = true, payload = $3, updated_at = NOW()",
             &[&scim_id, &eppn, &payload],
         );
 

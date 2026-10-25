@@ -125,7 +125,7 @@ pub async fn layer(State(state): State<SharedState>, req: Request, next: Next) -
 
 /// A denial inside a tool call. A tool call answers 200 with the error inside, so the layer above does not see it.
 pub fn record_tool_denial(state: &SharedState, user: &AuthUser, tool: &str, args: &Value, error: &ServiceError) {
-    if !matches!(error, ServiceError::Forbidden { .. } | ServiceError::FieldHidden { .. } | ServiceError::TokenScope(_) | ServiceError::ClientScope(_) | ServiceError::ViewAsReadOnly(_)) {
+    if !matches!(error, ServiceError::Forbidden { .. } | ServiceError::FieldHidden { .. } | ServiceError::TokenScope(_) | ServiceError::ClientScope(_) | ServiceError::ViewAsReadOnly(_) | ServiceError::ImpersonationNotSynthetic(_)) {
         return;
     }
     let object = if let Some(slug) = args["app_slug"].as_str() {

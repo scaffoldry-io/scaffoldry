@@ -95,7 +95,11 @@ pub const ERROR_CODES: &[&str] = &[
     "preview_read_only",
     "client_sensitive_field",
     "client_scope",
+    "impersonation_not_synthetic",
 ];
+
+/// What a person who tried to act as a real person should do instead.
+pub const IMPERSONATION_REMEDY: &str = "Use view-as to see what they see. View-as is read-only and works for real people.";
 
 #[derive(Debug, Clone)]
 pub enum ServiceError {
@@ -149,6 +153,8 @@ pub enum ServiceError {
     QuotaExceeded(String),
     /// A view-as session tried to change something. View-as only reads.
     ViewAsReadOnly(String),
+    /// Full impersonation was asked for a real person. Only synthetic people can be acted as.
+    ImpersonationNotSynthetic(String),
     /// A preview of a proposal tried to change something. A preview only reads.
     PreviewReadOnly(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
@@ -206,7 +212,7 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
@@ -236,6 +242,7 @@ impl ServiceError {
             Self::ConstraintViolation { .. } | Self::ConstraintViolated(_) => "constraint_violated",
             Self::QuotaExceeded(_) => "quota_exceeded",
             Self::ViewAsReadOnly(_) => "view_as_read_only",
+            Self::ImpersonationNotSynthetic(_) => "impersonation_not_synthetic",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
@@ -267,6 +274,7 @@ impl ServiceError {
             | Self::Calculating(msg)
             | Self::QuotaExceeded(msg)
             | Self::ViewAsReadOnly(msg)
+            | Self::ImpersonationNotSynthetic(msg)
             | Self::PreviewReadOnly(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)
@@ -311,6 +319,9 @@ impl ServiceError {
             }
             Self::TooManyIndexes { unused, .. } => {
                 body.insert("unused".to_string(), serde_json::to_value(unused).unwrap_or(Value::Null));
+            }
+            Self::ImpersonationNotSynthetic(_) => {
+                body.insert("remedy".to_string(), Value::String(IMPERSONATION_REMEDY.to_string()));
             }
             Self::FieldHidden { reason, remedy, .. } => {
                 body.insert("reason".to_string(), Value::String(reason.clone()));
