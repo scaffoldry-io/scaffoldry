@@ -93,6 +93,7 @@ fn workspace(state: &ServerState, id: &str, unit: Uuid) {
 
 struct World {
     _db: TestDb,
+    state: scaffoldry_server::state::SharedState,
     app: axum::Router,
     science: Uuid,
     physics: Uuid,
@@ -112,7 +113,7 @@ async fn world() -> World {
     let chemistry = unit(&state, "chemistry", science);
     workspace(&state, WS, science);
     appoint(&state, ADMIN_TWO, root, "platform_admin");
-    let app = build_app_with_state(state).expect("router");
+    let app = build_app_with_state(state.clone()).expect("router");
     let slug = format!("cases-{}", &Uuid::new_v4().to_string()[..8]);
     let manifest = json!({
         "slug": slug, "title": "Cases", "description": "d", "organization_code": "INST", "department": "science", "views": [],
@@ -143,7 +144,7 @@ async fn world() -> World {
     // fields are ready to filter and sort on.
     let slug_for_db = slug.clone();
     db.run(move |c| c.execute("UPDATE index_status SET state = 'ready' WHERE app_slug = $1", &[&slug_for_db]).unwrap());
-    World { _db: db, app, science, physics, lab, chemistry, slug }
+    World { _db: db, state, app, science, physics, lab, chemistry, slug }
 }
 
 fn unit_grant(who: &str, anchor: Uuid, depth: Option<i64>) -> Value {
@@ -348,7 +349,7 @@ async fn a_people_hierarchy_reaches_the_rows_placed_by_the_people_appointed_in_t
     appoint(&state, "p1@state.edu", team_one, "staff");
     appoint(&state, "p2@state.edu", team_two, "staff");
     appoint(&state, "p3@state.edu", boss, "staff");
-    let app = build_app_with_state(state).expect("router");
+    let app = build_app_with_state(state.clone()).expect("router");
     let slug = format!("tickets-{}", &Uuid::new_v4().to_string()[..8]);
     // The table sits in physics. Zed's grant at science reaches the workspace and not the table, so only his supervisory
     // grants decide which rows he sees.
@@ -372,7 +373,7 @@ async fn a_people_hierarchy_reaches_the_rows_placed_by_the_people_appointed_in_t
     }
     let slug_for_db = slug.clone();
     db.run(move |c| c.execute("UPDATE index_status SET state = 'ready' WHERE app_slug = $1", &[&slug_for_db]).unwrap());
-    let w = World { _db: db, app, science, physics, lab: physics, chemistry: physics, slug };
+    let w = World { _db: db, state, app, science, physics, lab: physics, chemistry: physics, slug };
 
     grant(&w, unit_grant("zed@state.edu", science, Some(0))).await;
     let sup = |who: &str, anchor: Uuid, depth: Option<i64>| json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "hierarchy": "supervisory", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "depth": depth, "source": "request", "reason": "Test grant" });
@@ -408,14 +409,6 @@ fn a_scope_with_many_units_is_large_and_a_small_or_empty_one_is_not() {
     assert!(!plan(Pred::True).is_large());
 }
 
-/// Statements the database has run for this test's database so far: committed transactions, which is one per statement here.
-fn statements(w: &World) -> i64 {
-    w._db.run(|c| {
-        c.batch_execute("SELECT pg_stat_clear_snapshot()").unwrap();
-        c.query_one("SELECT (xact_commit + xact_rollback)::bigint FROM pg_stat_database WHERE datname = current_database()", &[]).unwrap().get(0)
-    })
-}
-
 // The statements a list runs do not grow with the number of grants the caller holds.
 #[tokio::test]
 async fn a_list_runs_the_same_statements_for_one_grant_and_for_four() {
@@ -424,15 +417,13 @@ async fn a_list_runs_the_same_statements_for_one_grant_and_for_four() {
     for anchor in [w.science, w.physics, w.chemistry, w.lab] {
         grant(&w, unit_grant("four@state.edu", anchor, None)).await;
     }
+    // The repository counts each statement it runs, so the count is exact and needs no waiting for the database's own counters.
     let mut used = Vec::new();
     for who in ["one@state.edu", "four@state.edu"] {
         let _ = listed(&w, who).await;
-        // The database counts a session's transactions when the session ends, so let the pooled connections settle.
-        std::thread::sleep(std::time::Duration::from_millis(1500));
-        let before = statements(&w);
+        let before = w.state.repository.statements();
         let _ = listed(&w, who).await;
-        std::thread::sleep(std::time::Duration::from_millis(1500));
-        used.push(statements(&w) - before);
+        used.push(w.state.repository.statements() - before);
     }
     assert!(used[1] <= used[0] + 2, "one grant ran {} statements, four ran {}", used[0], used[1]);
 }
