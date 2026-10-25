@@ -157,6 +157,11 @@ describe("UX standards phase 2: errors that explain", () => {
         },
       ],
       [
+        "citation_not_found",
+        new ApiError(400, "That passage is not in the source.", { code: "citation_not_found" }),
+        { message: "That passage is not in the source.", next: "Copy the passage word for word from the stored text of the source." },
+      ],
+      [
         "grant_conflict",
         new ApiError(409, "Dean and auditor may not be held together.", { code: "grant_conflict" }),
         { message: "Dean and auditor may not be held together.", next: "Give this to someone else, or ask a Platform Admin whether the conflict should stand." },
