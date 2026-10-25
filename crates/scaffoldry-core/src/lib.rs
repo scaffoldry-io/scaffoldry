@@ -7,6 +7,7 @@ pub mod approver;
 pub mod dataset;
 pub mod guards;
 pub mod ledger;
+pub mod library;
 pub mod mask;
 pub mod reach;
 pub mod reach_reference;
