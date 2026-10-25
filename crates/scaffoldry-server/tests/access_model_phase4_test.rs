@@ -111,7 +111,7 @@ fn world() -> World {
 }
 
 fn person_grant(who: &str, role: &str, anchor_kind: &str, anchor_id: &str) -> Value {
-    json!({ "holder_kind": "person", "holder_id": who, "role": role, "hierarchy": "academic", "anchor_kind": anchor_kind, "anchor_id": anchor_id, "source": "request", "reason": "Test grant" })
+    json!({ "holder_kind": "person", "holder_id": who, "role": role, "hierarchy": "academic", "anchor_kind": anchor_kind, "anchor_id": anchor_id, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" })
 }
 
 /// Proposes a grant as one platform admin and confirms it as the other.
@@ -206,7 +206,7 @@ async fn a_grant_to_a_whole_hierarchy_is_too_broad_unless_it_is_one_container_vi
     let w = world();
     let to_root = |role: &str, anchor_kind: &str, anchor_id: &str| {
         let hierarchy = if anchor_kind == "container" { Value::Null } else { json!("academic") };
-        json!({ "holder_kind": "unit", "holder_id": ROOT, "role": role, "hierarchy": hierarchy, "anchor_kind": anchor_kind, "anchor_id": anchor_id, "source": "request", "reason": "All" })
+        json!({ "holder_kind": "unit", "holder_id": ROOT, "role": role, "hierarchy": hierarchy, "anchor_kind": anchor_kind, "anchor_id": anchor_id, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "All" })
     };
     let (s, body) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(to_root("viewer", "unit", &w.physics.to_string()))).await;
     assert_eq!((s, body["code"].as_str()), (StatusCode::BAD_REQUEST, Some("grant_too_broad")), "{body}");

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/access-conflicts.schema.json",
+  "title": "Access conflicts",
+  "description": "The setting access.conflicts. Pairs of holders that one person may not hold at once.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["a", "b"],
+    "additionalProperties": false,
+    "properties": { "a": { "$ref": "#/$defs/holder" }, "b": { "$ref": "#/$defs/holder" } }
+  },
+  "$defs": {
+    "holder": {
+      "oneOf": [
+        { "type": "object", "required": ["position"], "additionalProperties": false, "properties": { "position": { "type": "string", "minLength": 1 } } },
+        { "type": "object", "required": ["role"], "additionalProperties": false, "properties": { "role": { "type": "string", "minLength": 1 }, "domain": { "type": "string", "minLength": 1 } } }
+      ]
+    }
+  }
+}

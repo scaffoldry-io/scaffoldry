@@ -402,6 +402,8 @@ pub fn assign_holder(
         ));
     }
 
+    crate::service::access_grants::check_appointment_conflict(state, &user.user_name, key)?;
+
     // A first look, so the usual refusals cost no ledger entry. The write below decides again under a row lock.
     let current = state
         .repository

@@ -20,6 +20,8 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/admin/access/grants", get(list_grants).post(create_grant))
         .route("/admin/access/grants/{id}/revoke", post(revoke_grant))
+        .route("/admin/access/grants/{id}/review", post(review_grant))
+        .route("/admin/access/reviews", get(list_reviews))
         .route("/admin/access/changes/{id}/decide", post(decide_change))
 }
 
@@ -68,6 +70,24 @@ async fn revoke_grant(State(state): State<SharedState>, headers: HeaderMap, Path
     let body = parse(&body)?;
     let id: i64 = id.parse().map_err(|_| grants::missing(&state, &c, "Grant"))?;
     tokio::task::spawn_blocking(move || grants::revoke_grant(&state, &c, id, &body))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
+        .map(Json)
+}
+
+async fn review_grant(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body)?;
+    let id: i64 = id.parse().map_err(|_| grants::missing(&state, &c, "Grant"))?;
+    tokio::task::spawn_blocking(move || grants::review_grant(&state, &c, id, &body))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
+        .map(Json)
+}
+
+async fn list_reviews(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    tokio::task::spawn_blocking(move || grants::reviews(&state, &c))
         .await
         .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
         .map(Json)

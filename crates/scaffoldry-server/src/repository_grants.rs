@@ -175,6 +175,32 @@ impl PostgresRepository {
         })
     }
 
+    /// Active grants nobody has reviewed for `days` days, oldest first.
+    pub fn due_grant_rows(&self, days: i64, limit: i64) -> Result<Vec<GrantRow>, RepositoryError> {
+        let days = i32::try_from(days).unwrap_or(i32::MAX);
+        self.with_client(move |c| {
+            let sql = format!(
+                "{GRANT_SELECT} WHERE revoked_at IS NULL AND (valid_until IS NULL OR valid_until > NOW()) \
+                 AND COALESCE(reviewed_at, created_at) < NOW() - make_interval(days => $1) ORDER BY COALESCE(reviewed_at, created_at), id LIMIT $2"
+            );
+            Ok(c.query(&sql, &[&days, &limit])?.iter().filter_map(GrantRow::of).collect())
+        })
+    }
+
+    /// Resets the review clock of an active grant. False when there is no such active grant.
+    pub fn mark_grant_reviewed(&self, id: i64, by: &str) -> Result<bool, RepositoryError> {
+        let by = by.to_string();
+        self.with_client(move |c| Ok(c.execute("UPDATE access_grants SET reviewed_at = NOW(), reviewed_by = $2 WHERE id = $1 AND revoked_at IS NULL", &[&id, &by])? == 1))
+    }
+
+    /// The addresses, lowercase, of everyone who holds an active grant as a person.
+    pub fn person_grant_holders(&self) -> Result<Vec<String>, RepositoryError> {
+        self.with_client(|c| {
+            let rows = c.query("SELECT DISTINCT lower(holder_id) FROM access_grants WHERE holder_kind = 'person' AND revoked_at IS NULL ORDER BY 1", &[])?;
+            Ok(rows.iter().map(|r| r.get(0)).collect())
+        })
+    }
+
     pub fn grant_row(&self, id: i64) -> Result<Option<GrantRow>, RepositoryError> {
         self.with_client(move |c| Ok(c.query_opt(&format!("{GRANT_SELECT} WHERE id = $1"), &[&id])?.as_ref().and_then(GrantRow::of)))
     }

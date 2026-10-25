@@ -36,7 +36,7 @@ async fn send(app: &axum::Router, method: &str, uri: &str, who: &str, body: Opti
 fn unit(state: &ServerState, name: &str, parent: Option<Uuid>) -> Uuid {
     let root = Uuid::parse_str(ROOT).unwrap();
     let id = Uuid::new_v4();
-    let node = OrganizationNode { id, parent_id: Some(parent.unwrap_or(root)), name: name.to_string(), code: name.to_uppercase(), org_type: "Unit".to_string(), hierarchy_key: "academic".to_string(), synthetic: false };
+    let node = OrganizationNode { id, parent_id: Some(parent.unwrap_or(root)), name: name.to_string(), code: name.to_uppercase(), org_type: "Department".to_string(), hierarchy_key: "academic".to_string(), synthetic: false };
     state.organizations.write().unwrap().insert(id, node.clone());
     state.persist_organization(&node).unwrap();
     id
@@ -182,7 +182,7 @@ async fn the_review_days_setting_moves_the_line() {
 
 // 4. Completing a conflicting pair is 409 grant_conflict, and an existing conflict is listed in the review.
 async fn make_position(w: &World, key: &str) {
-    let (s, body) = send(&w.app, "POST", "/api/v1/admin/positions", ADMIN, Some(json!({ "key": key, "name": format!("Position {key}"), "description": "Test", "org_types": ["Unit"], "max_holders": 5, "reason": "Define" }))).await;
+    let (s, body) = send(&w.app, "POST", "/api/v1/admin/positions", ADMIN, Some(json!({ "key": key, "name": format!("Position {key}"), "description": "Test", "org_types": ["Department"], "max_holders": 5, "reason": "Define" }))).await;
     assert_eq!(s, StatusCode::CREATED, "{body}");
 }
 
@@ -209,7 +209,7 @@ async fn completing_a_conflicting_pair_is_refused() {
         }
     };
     let (s, body) = assign("dean").await;
-    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(s, StatusCode::CREATED, "{body}");
     // Two positions.
     let (s, body) = assign("auditor").await;
     assert_eq!(s, StatusCode::CONFLICT, "{body}");
@@ -237,7 +237,7 @@ async fn an_existing_conflict_is_listed_in_the_review() {
     issue_test_token_and_user(READER);
     let unit = w.science.to_string();
     let (s, body) = send(&w.app, "POST", &format!("/api/v1/orgs/{unit}/positions/dean/holders"), ADMIN, Some(json!({ "eppn": READER, "replace": false, "reason": "Assignment" }))).await;
-    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(s, StatusCode::CREATED, "{body}");
     let mut g = grant_body(&w, READER, "appointment", None);
     g["role"] = json!("admin");
     g["domain"] = json!("research");

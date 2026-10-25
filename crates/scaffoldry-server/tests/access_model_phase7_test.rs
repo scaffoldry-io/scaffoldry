@@ -143,11 +143,11 @@ async fn world() -> World {
 }
 
 fn unit_grant(who: &str, role: &str, anchor: Uuid) -> Value {
-    json!({ "holder_kind": "person", "holder_id": who, "role": role, "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "source": "request", "reason": "Test grant" })
+    json!({ "holder_kind": "person", "holder_id": who, "role": role, "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": anchor.to_string(), "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" })
 }
 
 fn container_grant(who: &str, role: &str, anchor: &str) -> Value {
-    json!({ "holder_kind": "person", "holder_id": who, "role": role, "anchor_kind": "container", "anchor_id": anchor, "source": "request", "reason": "Test grant" })
+    json!({ "holder_kind": "person", "holder_id": who, "role": role, "anchor_kind": "container", "anchor_id": anchor, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" })
 }
 
 async fn grant(w: &World, body: Value) -> i64 {
@@ -382,7 +382,7 @@ async fn the_impact_of_a_pending_grant_lists_exactly_the_people_who_gain() {
     grant(&w, container_grant("dee@state.edu", "admin", &format!("workspace:{WS}"))).await;
     grant(&w, container_grant("bo@state.edu", "viewer", &app)).await;
     // Everyone appointed in physics or below would become an editor of the app.
-    let body = json!({ "holder_kind": "unit", "holder_id": w.physics.to_string(), "role": "editor", "anchor_kind": "container", "anchor_id": app, "source": "request", "reason": "Test grant" });
+    let body = json!({ "holder_kind": "unit", "holder_id": w.physics.to_string(), "role": "editor", "anchor_kind": "container", "anchor_id": app, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Test grant" });
     let (s, pending) = send(&w.app, "POST", "/api/v1/admin/access/grants", ADMIN, Some(body)).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{pending}");
     let change = pending["change_id"].as_str().unwrap().to_string();

@@ -169,7 +169,7 @@ async fn grant_fixture(w: &World, root: &str) -> Result<(String, String, String,
         "appoint the unit admin",
     )?;
     let holder = person("p6holder");
-    let body = json!({ "holder_kind": "person", "holder_id": holder, "role": "viewer", "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": unit, "source": "request", "reason": "Fixture grant" });
+    let body = json!({ "holder_kind": "person", "holder_id": holder, "role": "viewer", "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": unit, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339(), "reason": "Fixture grant" });
     let pending = status(w.wa("POST", &format!("{root}/access/grants"), ADMIN, Some(body)).await, StatusCode::ACCEPTED, "propose the grant")?;
     let change = pending["change_id"].as_str().ok_or("a change id")?.to_string();
     Ok((unit, boss, holder, change))
