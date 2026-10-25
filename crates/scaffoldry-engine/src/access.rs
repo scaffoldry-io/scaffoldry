@@ -278,7 +278,8 @@ pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str,
         Set::Pos(set) => format!("{id_expr} IN ({set})"),
         Set::Neg(set) => format!("{id_expr} NOT IN ({set})"),
     };
-    Ok((sql, used(&sql, c.params)))
+    let params = used(&sql, c.params);
+    Ok((sql, params))
 }
 
 /// A scope that selects nothing names no placeholder. Postgres refuses a parameter whose type it cannot infer, so a
@@ -319,5 +320,6 @@ pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug
         }
     }
     let sql = if probes.is_empty() { "FALSE".to_string() } else { format!("({})", probes.join(" OR ")) };
-    Ok(Some((sql.clone(), used(&sql, c.params))))
+    let params = used(&sql, c.params);
+    Ok(Some((sql, params)))
 }
