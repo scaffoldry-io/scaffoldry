@@ -10,6 +10,7 @@ pub mod organizations;
 pub mod records;
 pub mod access;
 pub mod access_grants;
+pub mod supervision;
 pub mod access_review;
 pub mod receipts;
 pub mod coordinates;

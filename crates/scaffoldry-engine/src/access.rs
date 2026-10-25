@@ -278,7 +278,17 @@ pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str,
         Set::Pos(set) => format!("{id_expr} IN ({set})"),
         Set::Neg(set) => format!("{id_expr} NOT IN ({set})"),
     };
-    Ok((sql, c.params))
+    Ok((sql, used(&sql, c.params)))
+}
+
+/// A scope that selects nothing names no placeholder. Postgres refuses a parameter whose type it cannot infer, so a
+/// statement that carries the app and the table for a subquery that is not there fails. Those parameters go.
+fn used(sql: &str, params: Vec<Param>) -> Vec<Param> {
+    if sql.contains('$') {
+        params
+    } else {
+        Vec::new()
+    }
 }
 
 /// The same predicate as `to_sql`, for a statement that reads records in order and stops after a page. An OR of
@@ -309,5 +319,5 @@ pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug
         }
     }
     let sql = if probes.is_empty() { "FALSE".to_string() } else { format!("({})", probes.join(" OR ")) };
-    Ok(Some((sql, c.params)))
+    Ok(Some((sql.clone(), used(&sql, c.params))))
 }

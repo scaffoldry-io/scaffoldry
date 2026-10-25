@@ -298,6 +298,7 @@ async fn create_user(
     };
     let (scim_user, created) = crate::service::people::upsert_user(&state, fields).map_err(|e| e.into_pair())?;
     crate::service::people::sync_roles(&state, &scim_user);
+    crate::service::supervision::sync_user(&state, &scim_user);
     let (id, user_name, name, active) = (scim_user.id.clone(), scim_user.user_name.clone(), scim_user.name.clone(), scim_user.active);
     let (emails, roles, enterprise) = (scim_user.emails.clone(), scim_user.roles.clone(), scim_user.enterprise_extension.clone());
 
@@ -382,6 +383,7 @@ async fn update_user(
     for r in new_roles {
         let _ = state.persist_role(&r);
     }
+    crate::service::supervision::sync_user(&state, &updated_user);
 
     Ok(Json(json!({
         "schemas": [
@@ -405,6 +407,7 @@ async fn delete_user(
     let u = state.user_by_id(&id).ok_or(StatusCode::NOT_FOUND)?;
     state.repository.delete_scim_user(&id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let _ = state.delete_scim_roles(&u.user_name, false);
+    crate::service::supervision::sync_user(&state, &ScimUser { active: false, ..u });
     Ok(StatusCode::NO_CONTENT)
 }
 
