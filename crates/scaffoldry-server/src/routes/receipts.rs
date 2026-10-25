@@ -55,7 +55,13 @@ async fn verify(State(state): State<SharedState>, headers: HeaderMap) -> Result<
     .await
 }
 
-async fn replay(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<i64>) -> Result<Json<Value>, ServiceError> {
+async fn replay(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<Value>, ServiceError> {
     let c = caller(&state, &headers)?;
-    blocking(move || receipts::replay(&state, &c, id)).await
+    blocking(move || {
+        // Refused before the id is read, so a person who may not replay learns nothing about which ids are receipts.
+        crate::service::admin::require_platform_admin_or_compliance(&c, &state)?;
+        let id: i64 = id.parse().map_err(|_| ServiceError::NotFound("Receipt not found".to_string()))?;
+        receipts::replay(&state, &c, id)
+    })
+    .await
 }

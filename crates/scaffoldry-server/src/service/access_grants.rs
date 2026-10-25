@@ -566,7 +566,7 @@ pub fn reviews(state: &SharedState, caller: &AuthUser, cursor: Option<&str>, lim
     let limit = limit.unwrap_or(50).clamp(1, 200);
     let rows = state.repository.due_grant_rows(days, after, limit + 1).map_err(internal)?;
     let more = rows.len() as i64 > limit;
-    let last = rows.iter().take(limit as usize).last().map(|row| row.grant.id);
+    let last = rows.iter().take(limit as usize).next_back().map(|row| row.grant.id);
     let due: Vec<Value> = rows
         .into_iter()
         .take(limit as usize)

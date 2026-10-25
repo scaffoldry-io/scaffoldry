@@ -288,6 +288,8 @@ fn active_grants(state: &SharedState) -> Result<Vec<crate::repository_grants::Gr
 /// workspace. A grant is asked what it reaches whoever holds it. A position held at any unit has no one holder to ask with,
 /// so it is listed apart.
 pub fn review_object(state: &SharedState, caller: &AuthUser, object_text: &str) -> Result<Value, ServiceError> {
+    // Someone who could not review any object is refused before the object is looked up, so the answer does not say what exists.
+    require_access_admin(state, caller)?;
     let target = parse_target(state, object_text)?;
     let object = target.object(state).ok_or_else(|| ServiceError::Internal("The unit tree could not be read".to_string()))?;
     if !may_review_object(state, caller, &object) {
@@ -552,9 +554,7 @@ fn impact_of_coordinates(state: &SharedState, id: Uuid, ws: &WorkspaceRecord, co
 /// Workspaces, apps and tables whose name holds `q`, in order, a page at a time. The cursor is the container text of the last
 /// one returned. The objects live in memory, so this pages there.
 pub fn search_objects(state: &SharedState, caller: &AuthUser, q: &str, cursor: Option<&str>, limit: Option<i64>) -> Result<Value, ServiceError> {
-    if crate::service::admin::require_platform_admin_or_compliance(caller, state).is_err() && state.roles_of(&caller.eppn).iter().all(|r| r.scoped_affiliation != "unit_admin") {
-        return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
-    }
+    require_access_admin(state, caller)?;
     let limit = limit.unwrap_or(50).clamp(1, 200) as usize;
     let needle = q.trim().to_lowercase();
     let mut found: Vec<(String, String, String)> = all_targets(state)
@@ -581,9 +581,16 @@ pub fn search_objects(state: &SharedState, caller: &AuthUser, q: &str, cursor: O
 
 /// The domains a grant can be limited to, for the form that makes one.
 pub fn domains(state: &SharedState, caller: &AuthUser) -> Result<Value, ServiceError> {
-    if crate::service::admin::require_platform_admin_or_compliance(caller, state).is_err() && state.roles_of(&caller.eppn).iter().all(|r| r.scoped_affiliation != "unit_admin") {
-        return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
-    }
+    require_access_admin(state, caller)?;
     let list = state.repository.domain_names().map_err(|e| ServiceError::Internal(e.to_string()))?;
     Ok(json!({ "domains": list.into_iter().map(|(key, name)| json!({ "key": key, "name": name })).collect::<Vec<_>>() }))
+}
+
+/// A Platform Admin, compliance, or an Org Unit Admin: the people who may look at access across objects.
+fn require_access_admin(state: &SharedState, caller: &AuthUser) -> Result<(), ServiceError> {
+    if crate::service::admin::require_platform_admin_or_compliance(caller, state).is_ok() || state.roles_of(&caller.eppn).iter().any(|r| r.scoped_affiliation == "unit_admin") {
+        Ok(())
+    } else {
+        Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"))
+    }
 }
