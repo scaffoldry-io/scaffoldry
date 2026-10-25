@@ -634,7 +634,7 @@ impl ScopePlan {
         first_param: usize,
     ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::to_sql;
-        Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param))
+        Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param), first_param)
     }
 
     /// The same, for a statement that reads records in order and stops after a page. An OR of memberships is probed
@@ -648,16 +648,22 @@ impl ScopePlan {
     ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::to_sql_probes;
         match to_sql_probes(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
-            Ok(Some(compiled)) => Self::wrap(Ok(compiled)),
+            Ok(Some(compiled)) => Self::wrap(Ok(compiled), first_param),
             Ok(None) => self.clause_at(id_expr, app_slug, table_id, first_param),
-            Err(e) => Self::wrap(Err(e)),
+            Err(e) => Self::wrap(Err(e), first_param),
         }
     }
 
-    fn wrap(compiled: Result<(String, Vec<scaffoldry_engine::access::Param>), scaffoldry_engine::access::CompileError>) -> (String, Vec<SqlParam>) {
+    fn wrap(
+        compiled: Result<(String, Vec<scaffoldry_engine::access::Param>), scaffoldry_engine::access::CompileError>,
+        first_param: usize,
+    ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::Param;
         match compiled {
             Ok((sql, added)) => {
+                // A scope that selects nothing names no placeholder. Postgres refuses a parameter it cannot give a type, so
+                // a statement that carries parameters nothing refers to fails. Those parameters go.
+                let added = if sql.contains(&format!("${first_param}")) { added } else { Vec::new() };
                 let params = added
                     .into_iter()
                     .map(|p| match p {

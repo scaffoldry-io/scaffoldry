@@ -40,7 +40,7 @@ pub fn sync_user(state: &SharedState, user: &ScimUser) {
     let chain = if user.active { chain_of(state, user) } else { Vec::new() };
     for key in hierarchies {
         if let Err(e) = state.repository.apply_supervision(&key, &user.user_name, &chain, user.active) {
-            eprintln!("supervision sync for {} in {key} failed: {e:?}", user.user_name);
+            eprintln!("supervision sync in {key} failed: {e:?}");
         }
     }
     if let Err(e) = state.refresh() {
