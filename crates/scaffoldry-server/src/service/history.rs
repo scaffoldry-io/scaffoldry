@@ -20,11 +20,13 @@ pub struct Origin {
     pub batch_id: Option<uuid::Uuid>,
     /// The AI tool session behind the request, when there is one.
     pub session: Option<uuid::Uuid>,
+    /// The administrator behind an impersonated session. The person acted as is the actor.
+    pub acted_by: Option<String>,
 }
 
 impl Origin {
     pub fn user() -> Self {
-        Self { kind: ActorKind::User, token_label: None, batch_id: None, session: None }
+        Self { kind: ActorKind::User, token_label: None, batch_id: None, session: None, acted_by: None }
     }
 }
 
@@ -42,6 +44,7 @@ pub const MAX_PAGE: usize = 200;
 pub fn write_ctx(actor: &str, origin: &Origin, app_slug: &str, data: &Value, state: &SharedState) -> WriteCtx {
     let mut ctx = ctx_for(actor, origin.kind, app_slug, data, state);
     ctx.token_label = origin.token_label.clone();
+    ctx.acted_by = origin.acted_by.clone();
     if let Some(batch) = origin.batch_id {
         ctx.batch_id = batch;
     }
@@ -206,6 +209,7 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
             "actor_name": name,
             "actor_kind": row.actor_kind,
             "token_label": row.token_label,
+            "acted_by": row.acted_by,
             "batch_id": row.batch_id,
             "reverts_batch": row.reverts_batch,
             "proposal_id": row.proposal_id,

@@ -50,6 +50,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::QuotaExceeded("Busy".into()), "quota_exceeded", StatusCode::TOO_MANY_REQUESTS),
         (ServiceError::TooManyIndexes { message: "Too many".into(), unused: vec!["a".into()] }, "too_many_indexes", StatusCode::BAD_REQUEST),
         (ServiceError::ViewAsReadOnly("Read only".into()), "view_as_read_only", StatusCode::FORBIDDEN),
+        (ServiceError::ImpersonationNotSynthetic("Real".into()), "impersonation_not_synthetic", StatusCode::FORBIDDEN),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
         (
             ServiceError::ConstraintViolation {
@@ -105,6 +106,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::IndexBuilding(_)
             | ServiceError::Calculating(_)
             | ServiceError::ViewAsReadOnly(_)
+            | ServiceError::ImpersonationNotSynthetic(_)
             | ServiceError::QuotaExceeded(_)
             | ServiceError::TooManyIndexes { .. }
             | ServiceError::ConstraintViolated(_)

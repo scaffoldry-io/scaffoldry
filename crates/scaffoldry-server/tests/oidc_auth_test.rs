@@ -248,7 +248,8 @@ async fn test_impersonation_remains_cedar_guarded_and_ledger_recorded() {
         "Faculty must be forbidden from administrative impersonation"
     );
 
-    // 2. Central Admin trying to impersonate is ALLOWED
+    // 2. Central Admin trying to impersonate a synthetic person is ALLOWED
+    issue_test_token_and_user("student_1@synthetic.invalid");
     let admin_token = issue_test_token_and_user("jordan.lee@state.edu");
 
     let resp = app
@@ -259,7 +260,7 @@ async fn test_impersonation_remains_cedar_guarded_and_ledger_recorded() {
                 .uri("/api/v1/auth/impersonate")
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"target_eppn": "student.smith@science.state.edu"}"#))
+                .body(Body::from(r#"{"target_eppn": "student_1@synthetic.invalid"}"#))
                 .unwrap(),
         )
         .await

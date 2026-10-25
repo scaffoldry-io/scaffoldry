@@ -73,6 +73,7 @@ const SCHEMA_0058: &str = include_str!("../../scaffoldry-core/migrations/0058_co
 const SCHEMA_0059: &str = include_str!("../../scaffoldry-core/migrations/0059_access_grants.sql");
 const SCHEMA_0060: &str = include_str!("../../scaffoldry-core/migrations/0060_synthetic.sql");
 const SCHEMA_0061: &str = include_str!("../../scaffoldry-core/migrations/0061_page_settings.sql");
+const SCHEMA_0068: &str = include_str!("../../scaffoldry-core/migrations/0068_acted_by.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
 const SCHEMA_0064: &str = include_str!("../../scaffoldry-core/migrations/0064_app_clients.sql");
@@ -175,6 +176,8 @@ pub struct WriteCtx {
     pub actor: String,
     pub kind: ActorKind,
     pub token_label: Option<String>,
+    /// The administrator who held the keyboard, when the actor was impersonated.
+    pub acted_by: Option<String>,
     /// Groups the records written by one action: a paste, an import batch, an automation run.
     pub batch_id: uuid::Uuid,
     /// Fields a person cannot write. A computed value follows from the others, so it is not recorded.
@@ -202,6 +205,7 @@ impl WriteCtx {
             actor: actor.into(),
             kind,
             token_label: None,
+            acted_by: None,
             batch_id: uuid::Uuid::new_v4(),
             computed_fields: Vec::new(),
             reverts_batch: None,
@@ -233,6 +237,7 @@ pub struct HistoryEntry {
     pub actor: String,
     pub actor_kind: String,
     pub token_label: Option<String>,
+    pub acted_by: Option<String>,
     pub batch_id: String,
     pub reverts_batch: Option<String>,
     pub proposal_id: Option<String>,
@@ -530,8 +535,8 @@ pub(crate) fn write_history(
     ctx: &WriteCtx,
 ) -> Result<(), postgres::Error> {
     tx.execute(
-        "INSERT INTO record_history (app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, batch_id, reverts_batch) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        "INSERT INTO record_history (app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, batch_id, reverts_batch, acted_by) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         &[
             &at.app_slug,
             &at.table_id,
@@ -544,6 +549,7 @@ pub(crate) fn write_history(
             &ctx.token_label,
             &ctx.batch_id,
             &ctx.reverts_batch,
+            &ctx.acted_by,
         ],
     )?;
     Ok(())
@@ -1093,6 +1099,7 @@ impl PostgresRepository {
                             ("0065_oauth.sql", SCHEMA_0065),
                             ("0066_agent_sessions.sql", SCHEMA_0066),
                             ("0067_access_receipts.sql", SCHEMA_0067),
+                            ("0068_acted_by.sql", SCHEMA_0068),
                         ];
 
                         let mut fresh_install = false;
@@ -2225,7 +2232,7 @@ impl PostgresRepository {
             let rows = client.query(
                 "SELECT id, app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, \
                         batch_id::text, reverts_batch::text, proposal_id::text, \
-                        to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
+                        to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), acted_by \
                  FROM record_history WHERE app_slug = $1 \
                    AND ($2::text IS NULL OR record_id = $2) \
                    AND ($3::text IS NULL OR table_id = $3) \
@@ -2254,6 +2261,7 @@ impl PostgresRepository {
                     reverts_batch: r.get(11),
                     proposal_id: r.get(12),
                     at: r.get(13),
+                    acted_by: r.get(14),
                 })
                 .collect())
         })
