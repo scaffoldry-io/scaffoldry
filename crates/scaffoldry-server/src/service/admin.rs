@@ -44,6 +44,8 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/admin/workspaces/{id}/transfer-ownership"),
     ("GET", "/admin/apps"),
     ("GET", "/admin/direct-grants"),
+    ("GET", "/admin/access/request-rules"),
+    ("POST", "/admin/access/request-rules"),
     ("GET", "/admin/access/grants"),
     ("POST", "/admin/access/grants"),
     ("POST", "/admin/access/grants/{id}/revoke"),

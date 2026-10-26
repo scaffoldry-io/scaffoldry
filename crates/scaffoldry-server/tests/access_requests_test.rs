@@ -360,13 +360,14 @@ async fn a_unit_rule_that_removes_a_condition_is_refused_and_one_that_adds_one_i
 
     // A stricter rule waits for a second person, then holds. The college now approves for 7 days at most.
     let (s, proposed) = w.rest("POST", "/api/v1/admin/access/request-rules", ADMIN, Some(body(true, 7))).await;
-    assert_eq!(s, StatusCode::CREATED, "{proposed}");
+    assert_eq!(s, StatusCode::ACCEPTED, "{proposed}");
     let change = proposed["change_id"].as_str().unwrap();
     let decide = Some(json!({ "decision": "confirm", "reason": "Second person" }));
     assert_eq!(w.rest("POST", &format!("/api/v1/admin/access/changes/{change}/decide"), ADMIN, decide.clone()).await.0, StatusCode::FORBIDDEN, "the proposer cannot confirm");
     let second = "second.admin@state.edu";
     issue_test_token_and_user(second);
-    w.sql(format!("INSERT INTO roles (id, person_id, eppn, organization_id, role_title, scoped_affiliation, is_primary, source) SELECT gen_random_uuid(), id, '{second}', '{ROOT}', 'Platform Admin', 'platform_admin', false, 'manual' FROM users WHERE user_name = '{second}'"));
+    let (s, b) = w.rest("POST", &format!("/api/v1/orgs/{ROOT}/appointments"), ADMIN, Some(json!({ "eppn": second, "scoped_affiliation": "platform_admin", "reason": "A second administrator" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
     let (s, done) = w.rest("POST", &format!("/api/v1/admin/access/changes/{change}/decide"), second, decide).await;
     assert_eq!(s, StatusCode::OK, "{done}");
     let (_, now) = w.rest("GET", "/api/v1/admin/access/request-rules", ADMIN, None).await;

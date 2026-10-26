@@ -705,6 +705,7 @@ pub fn create_record(
                     diagnostics: Vec::new(),
                     policy: None,
                     action: None,
+                    request: None,
                 },
                 other => ServiceError::BadRequest(other.to_string()),
             })?

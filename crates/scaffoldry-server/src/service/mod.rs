@@ -16,6 +16,7 @@ pub mod organizations;
 pub mod records;
 pub mod access;
 pub mod access_grants;
+pub mod access_requests;
 pub mod hierarchies;
 pub mod supervision;
 pub mod access_review;
@@ -123,6 +124,8 @@ pub enum ServiceError {
         policy: Option<Box<PolicyRef>>,
         /// The Cedar action that was refused, when a Cedar decision refused it. A receipt keeps it so the decision can be asked again.
         action: Option<String>,
+        /// What to send to `POST /access/requests` to ask for the access that was refused, filled in.
+        request: Option<Value>,
     },
     NotFound(String),
     BadRequest(String),
@@ -207,6 +210,7 @@ impl ServiceError {
             diagnostics: Vec::new(),
             policy: None,
             action: None,
+            request: None,
         }
     }
 
@@ -317,7 +321,10 @@ impl ServiceError {
         body.insert("error".to_string(), Value::String(self.message().to_string()));
         body.insert("code".to_string(), Value::String(self.code().to_string()));
         match self {
-            Self::Forbidden { reasons, diagnostics, policy, action, .. } => {
+            Self::Forbidden { reasons, diagnostics, policy, action, request, .. } => {
+                if let Some(request) = request {
+                    body.insert("request".to_string(), request.clone());
+                }
                 if let Some(action) = action {
                     body.insert("action".to_string(), Value::String(action.clone()));
                 }

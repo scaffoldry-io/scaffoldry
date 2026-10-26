@@ -310,6 +310,7 @@ async fn impersonate_user(
             diagnostics: vec![],
             policy: dec.policy.map(Box::new),
             action: Some("impersonate".to_string()),
+            request: None,
         }
         .into_response();
     }

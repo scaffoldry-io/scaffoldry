@@ -42,6 +42,7 @@ pub fn example(name: &str) -> Value {
         "get_agent_kit" => json!({}),
         "explain_access" => json!({ "object": "app:scholarships" }),
         "begin_task" => json!({ "task": "Enter the spring grant proposals" }),
+        "request_access" => json!({ "object_kind": "app", "object_id": "scholarships", "role": "viewer", "reason": "Check the award totals for the audit", "days": 14 }),
         "preview_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11" }),
         "get_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11" }),
         "decide_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11", "decision": "approve", "rationale": "Checks passed", "digest": "9f2c4b7a1e6d3058b4a9c2e7d1f0a36b5c8e9d4f7a2b1c0e3d6f8a9b4c7e2d51" }),

@@ -233,6 +233,14 @@ Tool {
         run: run_propose_app_change,
     },
     Tool {
+        name: "request_access",
+        description: "Ask for access you were refused. Waits for the person to confirm. A rule or an approver then decides.",
+        input_schema: schema_request_access,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_request_access,
+    },
+    Tool {
         name: "list_proposals",
         description: "List the proposals of a workspace, pending first.",
         input_schema: schema_list_proposals,
@@ -1214,6 +1222,21 @@ fn schema_propose_app_change() -> Value {
     })
 }
 
+fn schema_request_access() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "object_kind": { "type": "string", "description": "app or workspace" },
+            "object_id": { "type": "string", "description": "App slug or workspace id" },
+            "role": { "type": "string", "description": "viewer, commenter, editor, admin or owner" },
+            "clearance": { "type": "string", "description": "Sensitivity level asked for" },
+            "reason": { "type": "string" },
+            "days": { "type": "integer", "description": "How long, in days" }
+        },
+        "required": ["object_kind", "object_id", "role", "reason", "days"]
+    })
+}
+
 fn schema_list_proposals() -> Value {
     json!({
         "type": "object",
@@ -1285,6 +1308,10 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
         },
         state,
     )
+}
+
+fn run_request_access(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::access_requests::file(state, caller, origin, &args)
 }
 
 fn run_list_proposals(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {

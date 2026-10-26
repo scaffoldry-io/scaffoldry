@@ -85,22 +85,38 @@ pub fn problems(rule: &Rule) -> Vec<String> {
     out
 }
 
-/// Whether `unit` asks for at least everything `institution` does, so it only adds conditions.
-pub fn only_adds_conditions(institution: &Rule, unit: &Rule) -> bool {
-    let (Some(ir), Some(ur), Some(is), Some(us)) = (Role::parse(&institution.max_role), Role::parse(&unit.max_role), sensitivity_rank(&institution.max_sensitivity), sensitivity_rank(&unit.max_sensitivity)) else {
-        return false;
-    };
+/// The conditions on which `unit` asks for less than `institution` does. Empty when it only adds conditions.
+pub fn loosened(institution: &Rule, unit: &Rule) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if Role::parse(&unit.max_role) > Role::parse(&institution.max_role) || Role::parse(&unit.max_role).is_none() {
+        out.push("max_role");
+    }
+    if sensitivity_rank(&unit.max_sensitivity) > sensitivity_rank(&institution.max_sensitivity) || sensitivity_rank(&unit.max_sensitivity).is_none() {
+        out.push("max_sensitivity");
+    }
+    if !unit.visibilities.iter().all(|v| institution.visibilities.contains(v)) {
+        out.push("visibilities");
+    }
+    if institution.own_unit && !unit.own_unit {
+        out.push("own_unit");
+    }
+    if unit.max_days > institution.max_days {
+        out.push("max_days");
+    }
     let affiliations = match (&institution.affiliations, &unit.affiliations) {
         (None, _) => true,
         (Some(_), None) => false,
         (Some(a), Some(b)) => b.iter().all(|x| a.contains(x)),
     };
-    ur <= ir
-        && us <= is
-        && unit.visibilities.iter().all(|v| institution.visibilities.contains(v))
-        && (unit.own_unit || !institution.own_unit)
-        && unit.max_days <= institution.max_days
-        && affiliations
+    if !affiliations {
+        out.push("affiliations");
+    }
+    out
+}
+
+/// Whether `unit` asks for at least everything `institution` does, so it only adds conditions.
+pub fn only_adds_conditions(institution: &Rule, unit: &Rule) -> bool {
+    loosened(institution, unit).is_empty()
 }
 
 fn list(words: &[String]) -> String {

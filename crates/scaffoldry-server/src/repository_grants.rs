@@ -331,6 +331,16 @@ impl PostgresRepository {
                 )?;
                 tx.execute("INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) VALUES ($1, $2, $2, 0)", &[&key, &root])?;
                 crate::cache::bump(&mut tx, "organizations")?;
+            } else if confirm && change["kind"] == "request_rule" {
+                let org: Uuid = change["organization_id"].as_str().and_then(|u| Uuid::parse_str(u).ok()).unwrap_or_default();
+                if change["op"] == "retire" {
+                    let rule: Uuid = change["rule_id"].as_str().and_then(|u| Uuid::parse_str(u).ok()).unwrap_or_default();
+                    if tx.execute("UPDATE access_request_rules SET retired_at = NOW() WHERE id = $1 AND organization_id = $2 AND retired_at IS NULL", &[&rule, &org])? == 0 {
+                        return Ok(ChangeDecision::Missing);
+                    }
+                } else {
+                    tx.execute("INSERT INTO access_request_rules (id, organization_id, rule, created_by) VALUES ($1, $2, $3, $4)", &[&Uuid::new_v4(), &org, &change["rule"], &proposed_by])?;
+                }
             } else if confirm {
                 let g = &change["grant"];
                 let text = |k: &str| g[k].as_str().map(str::to_string);

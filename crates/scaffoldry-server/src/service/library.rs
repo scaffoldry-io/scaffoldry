@@ -79,6 +79,10 @@ impl Problems {
         Some(key)
     }
 
+    pub(crate) fn uuid_field(&mut self, body: &Value, field: &str) -> Option<Uuid> {
+        self.uuid(body, field)
+    }
+
     fn uuid(&mut self, body: &Value, field: &str) -> Option<Uuid> {
         let text = self.text(body, field, 64, true)?;
         match Uuid::parse_str(&text) {

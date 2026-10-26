@@ -70,12 +70,12 @@ fn internal(e: impl ToString) -> ServiceError {
 
 /// What a caller may do with grants: anything (a Platform Admin or compliance), or inside the subtree of each unit they
 /// administer, or on a workspace they own or administer.
-struct Rights {
-    platform: bool,
-    admin_units: Vec<Uuid>,
+pub(crate) struct Rights {
+    pub(crate) platform: bool,
+    pub(crate) admin_units: Vec<Uuid>,
 }
 
-fn rights(state: &SharedState, caller: &AuthUser) -> Rights {
+pub(crate) fn rights(state: &SharedState, caller: &AuthUser) -> Rights {
     let platform = crate::service::admin::require_platform_admin_or_compliance(caller, state).is_ok();
     let admin_units = state.roles_of(&caller.eppn).iter().filter(|r| r.scoped_affiliation == "unit_admin").map(|r| r.organization_id).collect();
     Rights { platform, admin_units }
@@ -342,6 +342,15 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
     let (change, status, proposed_by, _) = state.repository.access_change(id).map_err(internal)?.ok_or_else(|| missing(state, caller, "Change"))?;
     if status != "Pending" {
         return Err(ServiceError::conflict("That change has already been decided"));
+    }
+    if change["kind"] == "request_rule" {
+        let confirm = match body.get("decision").and_then(Value::as_str) {
+            Some("confirm") => true,
+            Some("reject") => false,
+            _ => return Err(bad("decision must be 'confirm' or 'reject'")),
+        };
+        let reason = reason_of(body)?;
+        return crate::service::access_requests::decide_rule_change(state, caller, id, &change, &proposed_by, confirm, &reason);
     }
     let hierarchy_change = change["kind"] == "hierarchy";
     let g = if hierarchy_change {
@@ -644,4 +653,23 @@ pub fn search_people(state: &SharedState, caller: &AuthUser, q: &str, cursor: Op
     let people: Vec<Value> = rows.iter().take(limit as usize).map(|(eppn, name)| json!({ "eppn": eppn, "name": name })).collect();
     let next = if more { people.last().and_then(|p| p["eppn"].as_str().map(str::to_string)) } else { None };
     Ok(json!({ "people": people, "next_cursor": next }))
+}
+
+/// A grant that approving a request would make, checked against the declared conflicts like any other grant.
+pub(crate) fn check_request_conflict(state: &SharedState, eppn: &str, role: Role, anchor: &str) -> Result<(), ServiceError> {
+    let g = NewGrant {
+        holder_kind: HolderKind::Person,
+        holder_id: eppn.to_string(),
+        role,
+        hierarchy: None,
+        anchor_kind: AnchorKind::Container,
+        anchor_id: Some(anchor.to_string()),
+        depth: None,
+        domain: None,
+        clearance: None,
+        valid_until: None,
+        source: "request".to_string(),
+        reason: String::new(),
+    };
+    check_grant_conflict(state, &g)
 }

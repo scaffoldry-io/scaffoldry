@@ -3,6 +3,7 @@ use crate::state::{AuthUser, SharedState, WorkspaceRecord};
 use scaffoldry_engine::HostRouter;
 use scaffoldry_policy::entities::{PrincipalCtx, Resource, WorkspaceCtx};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,6 +301,7 @@ pub fn require_for(
         diagnostics: decision.diagnostics,
         policy: decision.policy.map(Box::new),
         action: Some(action.to_string()),
+        request: None,
     })
 }
 
@@ -439,7 +441,30 @@ pub fn authorize_workspace_denying(
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     let resource = workspace_resource(state, caller, ws, None, None);
-    require(state, caller, cedar_action, &resource, denied)
+    require(state, caller, cedar_action, &resource, denied).map_err(|e| with_request(e, "workspace", &ws.id))
+}
+
+/// What a person sends to ask for the access a refusal withheld. `None` for an action no role answers.
+fn request_for(kind: &str, id: &str, action: &str) -> Option<Value> {
+    let (role, verb) = match action {
+        "access_workspace" | "read_app" => ("viewer", "read"),
+        "comment" => ("commenter", "comment on"),
+        "write_record" => ("editor", "change"),
+        "manage_workspace" | "manage_app" => ("admin", "manage"),
+        _ => return None,
+    };
+    Some(json!({ "object_kind": kind, "object_id": id, "role": role, "reason": format!("I need to {verb} this {kind}."), "days": 14 }))
+}
+
+/// A refusal that names a Cedar action carries the request that would ask for what it withheld.
+fn with_request(e: ServiceError, kind: &str, id: &str) -> ServiceError {
+    match e {
+        ServiceError::Forbidden { message, reasons, diagnostics, policy, action, request: None } => {
+            let request = action.as_deref().and_then(|a| request_for(kind, id, a));
+            ServiceError::Forbidden { message, reasons, diagnostics, policy, action, request }
+        }
+        other => other,
+    }
 }
 
 /// Whether the caller may take `cedar_action` on a workspace, for a list that filters. A decision that cannot be made
@@ -544,4 +569,5 @@ pub fn authorize_app_with_role(
         Some(k) => require_for(state, k.principal, action_name, &resource, denied),
         None => require(state, caller, action_name, &resource, denied),
     }
+    .map_err(|e| with_request(e, "app", slug))
 }
