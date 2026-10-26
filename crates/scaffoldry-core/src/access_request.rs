@@ -50,7 +50,7 @@ pub fn fits(rule: &Rule, facts: &Facts) -> bool {
     facts.visibility != NEVER_AUTO
         && facts.role <= max_role
         && rank <= max_rank
-        && rule.visibilities.iter().any(|v| *v == facts.visibility)
+        && rule.visibilities.contains(&facts.visibility)
         && (!rule.own_unit || facts.in_own_unit)
         && facts.days >= 1
         && facts.days <= rule.max_days

@@ -5,7 +5,7 @@
 //! `authority::required` names (`approver`). The requester never decides their own request, and a request an AI tool
 //! filed waits for the person first.
 
-use crate::repository_access_requests::{Approved, RequestGrant, RequestRow, RuleRow};
+use crate::repository_access_requests::{Approved, Effects, RequestGrant, RequestRow, RuleRow};
 use crate::service::admin::admin_write;
 use crate::service::authority;
 use crate::service::history::Origin;
@@ -248,7 +248,16 @@ fn ledger_payload(req: &RequestRow, outcome: &str, route: &str, rule: Option<Uui
 }
 
 /// Approves `req` through `route`. The ledger entry is written first.
-fn approve(state: &SharedState, actor: &AuthUser, req: &RequestRow, obj: &Object, from: &[&str], route: &str, rule: Option<Uuid>, note: &str) -> Result<Value, ServiceError> {
+/// How an approval comes about: the states it may leave, the route, the rule behind it, and the note for the ledger.
+struct Way<'a> {
+    from: &'a [&'a str],
+    route: &'a str,
+    rule: Option<Uuid>,
+    note: &'a str,
+}
+
+fn approve(state: &SharedState, actor: &AuthUser, req: &RequestRow, obj: &Object, way: Way<'_>) -> Result<Value, ServiceError> {
+    let Way { from, route, rule, note } = way;
     let input = input_of(req)?;
     let (grant, widen) = if route == "self" {
         // The person already holds the role. Only a session that was limited below writing needs widening.
@@ -264,7 +273,7 @@ fn approve(state: &SharedState, actor: &AuthUser, req: &RequestRow, obj: &Object
     };
     let payload = ledger_payload(req, "Approved", route, rule, &actor.eppn, grant.as_ref());
     let outcome = admin_write(state, actor, DecisionType::AccessRequestDecided, OSCAL_CONTROL, note, &payload, || {
-        state.repository.approve_request(req.id, from, route, rule, &actor.eppn, grant.as_ref(), widen).map_err(internal)
+        state.repository.approve_request(req.id, from, route, rule, &actor.eppn, Effects { grant: grant.as_ref(), widen }).map_err(internal)
     })?;
     match outcome {
         Approved::Done { .. } => {
@@ -327,7 +336,7 @@ fn row_of(state: &SharedState, id: Uuid) -> Result<RequestRow, ServiceError> {
 fn settle(state: &SharedState, caller: &AuthUser, req: &RequestRow, obj: &Object, a: &Assessed) -> Result<Value, ServiceError> {
     let from = [req.status.as_str()];
     match approving_rule(state, obj, &a.facts)? {
-        Some(rule) => approve(state, caller, req, obj, &from, "auto", Some(rule), &format!("Approved by rule {rule}: {}", req.reason)),
+        Some(rule) => approve(state, caller, req, obj, Way { from: &from, route: "auto", rule: Some(rule), note: &format!("Approved by rule {rule}: {}", req.reason) }),
         None => {
             if req.status == WAITING {
                 state.repository.confirm_request(req.id, "approver", "Pending").map_err(internal)?;
@@ -351,7 +360,7 @@ pub fn confirm(state: &SharedState, caller: &AuthUser, origin: &Origin, id: Uuid
     if req.route == "self" {
         // The role may have gone since the tool asked. If it has, the request is an ordinary one.
         if held_role(state, caller, &obj, &input).is_some_and(|mine| mine >= input.role) {
-            return approve(state, caller, &req, &obj, &[WAITING], "self", None, &format!("Confirmed by the person: {}", req.reason));
+            return approve(state, caller, &req, &obj, Way { from: &[WAITING], route: "self", rule: None, note: &format!("Confirmed by the person: {}", req.reason) });
         }
     }
     let a = assess(state, &caller.eppn, &caller.affiliation, &obj, input.role, input.clearance.as_deref(), input.days);
@@ -385,7 +394,7 @@ pub fn decide(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Value) ->
         return Err(ServiceError::conflict(format!("That request is {}", req.status)));
     }
     if decision {
-        return approve(state, caller, &req, &obj, &["Pending"], "approver", None, &note);
+        return approve(state, caller, &req, &obj, Way { from: &["Pending"], route: "approver", rule: None, note: &note });
     }
     let payload = ledger_payload(&req, "Rejected", "approver", None, &caller.eppn, None);
     admin_write(state, caller, DecisionType::AccessRequestDecided, OSCAL_CONTROL, &note, &payload, || {

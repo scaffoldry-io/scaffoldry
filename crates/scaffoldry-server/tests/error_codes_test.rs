@@ -65,7 +65,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             StatusCode::BAD_REQUEST,
         ),
         (
-            ServiceError::FieldHidden { message: "Hidden".into(), reason: "A rule hides it".into(), remedy: "Ask an owner".into() },
+            ServiceError::FieldHidden { message: "Hidden".into(), reason: "A rule hides it".into(), remedy: "Ask an owner".into(), request: None },
             "field_hidden",
             StatusCode::FORBIDDEN,
         ),

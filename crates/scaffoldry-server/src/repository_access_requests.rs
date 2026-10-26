@@ -120,6 +120,13 @@ pub struct RequestGrant {
     pub created_by: String,
 }
 
+/// What an approval changes besides the request: a grant it makes, or the session it widens to a level.
+#[derive(Default)]
+pub struct Effects<'a> {
+    pub grant: Option<&'a RequestGrant>,
+    pub widen: Option<(Uuid, &'a str)>,
+}
+
 /// What an approval did.
 pub enum Approved {
     Done { grant_id: Option<i64> },
@@ -196,10 +203,10 @@ impl PostgresRepository {
 
     /// Approves a request in one transaction. With a grant, the grant is stored and named. With a session, that session is
     /// widened to `level`: its record and every token of it. Nothing else is.
-    pub fn approve_request(&self, id: Uuid, from: &[&str], route: &str, rule: Option<Uuid>, by: &str, grant: Option<&RequestGrant>, widen: Option<(Uuid, &str)>) -> Result<Approved, RepositoryError> {
+    pub fn approve_request(&self, id: Uuid, from: &[&str], route: &str, rule: Option<Uuid>, by: &str, effects: Effects<'_>) -> Result<Approved, RepositoryError> {
         let (from, route, by): (Vec<String>, String, String) = (from.iter().map(|s| s.to_string()).collect(), route.to_string(), by.to_string());
-        let grant = grant.map(|g| (g.holder.clone(), g.role.clone(), g.anchor_id.clone(), g.clearance.clone(), g.days, g.reason.clone(), g.created_by.clone()));
-        let widen = widen.map(|(s, l)| (s, l.to_string()));
+        let grant = effects.grant.map(|g| (g.holder.clone(), g.role.clone(), g.anchor_id.clone(), g.clearance.clone(), g.days, g.reason.clone(), g.created_by.clone()));
+        let widen = effects.widen.map(|(s, l)| (s, l.to_string()));
         self.with_client(move |c| {
             let mut tx = c.transaction()?;
             let Some(row) = tx.query_opt("SELECT status FROM access_requests WHERE id = $1 FOR UPDATE", &[&id])? else { return Ok(Approved::Missing) };

@@ -60,8 +60,7 @@ struct World {
     /// A departmental workspace in D, and the slug of its app.
     wd: String,
     app_d: String,
-    /// A restricted workspace in D, and the slug of its app.
-    wr: String,
+    /// The slug of the app in a restricted workspace in D.
     app_r: String,
     /// A departmental workspace in E, which the requester's unit does not contain.
     app_e: String,
@@ -136,9 +135,9 @@ async fn world() -> World {
         assert_eq!(s, StatusCode::CREATED, "{b}");
     }
     let (wd, app_d) = make_app(&app, "departmental", &unit_d).await;
-    let (wr, app_r) = make_app(&app, "restricted", &unit_d).await;
+    let (_, app_r) = make_app(&app, "restricted", &unit_d).await;
     let (_, app_e) = make_app(&app, "departmental", &unit_e).await;
-    World { db, app, unit_c, unit_d, unit_e, wd, app_d, wr, app_r, app_e, officer_position: position }
+    World { db, app, unit_c, unit_d, unit_e, wd, app_d, app_r, app_e, officer_position: position }
 }
 
 fn agent_sign_in_body(client_id: &str, access: &str) -> Value {

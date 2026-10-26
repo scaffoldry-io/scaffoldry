@@ -458,15 +458,15 @@ fn request_for(kind: &str, id: &str, action: &str) -> Option<Value> {
 
 /// What to send to ask for access to an app whose field a person cannot see. The clearance a field needs is not known
 /// where it is refused, so the request asks for the app and an approver decides what clears the person.
-pub fn hidden_request(app_slug: &str) -> Value {
-    json!({ "object_kind": "app", "object_id": app_slug, "role": "viewer", "reason": "I need to see a field this app hides from me.", "days": 14 })
+pub fn hidden_request(app_slug: &str) -> Box<Value> {
+    Box::new(json!({ "object_kind": "app", "object_id": app_slug, "role": "viewer", "reason": "I need to see a field this app hides from me.", "days": 14 }))
 }
 
 /// A refusal that names a Cedar action carries the request that would ask for what it withheld.
 fn with_request(e: ServiceError, kind: &str, id: &str) -> ServiceError {
     match e {
         ServiceError::Forbidden { message, reasons, diagnostics, policy, action, request: None } => {
-            let request = action.as_deref().and_then(|a| request_for(kind, id, a));
+            let request = action.as_deref().and_then(|a| request_for(kind, id, a)).map(Box::new);
             ServiceError::Forbidden { message, reasons, diagnostics, policy, action, request }
         }
         other => other,

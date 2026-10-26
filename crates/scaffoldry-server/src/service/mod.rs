@@ -125,7 +125,7 @@ pub enum ServiceError {
         /// The Cedar action that was refused, when a Cedar decision refused it. A receipt keeps it so the decision can be asked again.
         action: Option<String>,
         /// What to send to `POST /access/requests` to ask for the access that was refused, filled in.
-        request: Option<Value>,
+        request: Option<Box<Value>>,
     },
     NotFound(String),
     BadRequest(String),
@@ -184,7 +184,7 @@ pub enum ServiceError {
     /// A client's ceiling names a field that is sensitive. Sensitive data stays inside the platform.
     ClientSensitiveField(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
-    FieldHidden { message: String, reason: String, remedy: String, request: Option<Value> },
+    FieldHidden { message: String, reason: String, remedy: String, request: Option<Box<Value>> },
     /// A table may index 20 fields. `unused` lists the indexed fields no view uses, which can go.
     TooManyIndexes { message: String, unused: Vec<String> },
     /// A write names fields the person may not change.
@@ -323,7 +323,7 @@ impl ServiceError {
         match self {
             Self::Forbidden { reasons, diagnostics, policy, action, request, .. } => {
                 if let Some(request) = request {
-                    body.insert("request".to_string(), request.clone());
+                    body.insert("request".to_string(), (**request).clone());
                 }
                 if let Some(action) = action {
                     body.insert("action".to_string(), Value::String(action.clone()));
@@ -355,7 +355,7 @@ impl ServiceError {
             }
             Self::FieldHidden { reason, remedy, request, .. } => {
                 if let Some(request) = request {
-                    body.insert("request".to_string(), request.clone());
+                    body.insert("request".to_string(), (**request).clone());
                 }
                 body.insert("reason".to_string(), Value::String(reason.clone()));
                 body.insert("remedy".to_string(), Value::String(remedy.clone()));
