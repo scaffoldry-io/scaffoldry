@@ -77,7 +77,7 @@ fn coded_tool_error(code: &str, message: &str, hint: &str) -> Value {
 fn service_tool_error(err: &crate::service::ServiceError) -> Value {
     let mut value = coded_tool_error(err.code(), err.message(), &crate::service::hints::hint_for(err));
     let body = err.body();
-    for key in ["reason", "remedy", "fields"] {
+    for key in ["reason", "remedy", "fields", "request"] {
         if let Some(v) = body.get(key) {
             value["structuredContent"][key] = v.clone();
         }

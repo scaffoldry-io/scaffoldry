@@ -290,6 +290,39 @@ export interface Mentionable {
   name: string;
 }
 
+/** A request for access, as the server fills it in on a refusal. */
+export interface AccessRequestBody {
+  object_kind: "app" | "workspace";
+  object_id: string;
+  role: string;
+  clearance?: string | null;
+  reason: string;
+  days: number;
+}
+
+export interface AccessRequest {
+  id: string;
+  status: "Waiting for person" | "Pending" | "Approved" | "Rejected" | "Withdrawn" | "Expired";
+  route: "auto" | "self" | "approver";
+  days: number;
+  object_kind?: string;
+  object_id?: string;
+  role?: string;
+  reason?: string;
+  requester?: string;
+  task?: string | null;
+  filed_by_client?: string | null;
+  waiting_on?: string[];
+  ends_at?: string | null;
+}
+
+export interface AccessRequestRule {
+  id: string;
+  organization: string;
+  sentence: string;
+  retired_at: string | null;
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
@@ -302,6 +335,8 @@ export class ApiError extends Error {
   /** What to do about it, when the server knows. */
   public remedy?: string;
   public reason?: string;
+  /** On a refusal: what to send to ask for the access that was withheld. */
+  public request?: AccessRequestBody;
 
   constructor(status: number, message: string, details?: any) {
     super(message);
@@ -314,6 +349,7 @@ export class ApiError extends Error {
       if (details.fields && typeof details.fields === "object") this.fields = details.fields;
       if (typeof details.remedy === "string") this.remedy = details.remedy;
       if (typeof details.reason === "string") this.reason = details.reason;
+      if (details.request && typeof details.request === "object") this.request = details.request;
     }
   }
 }
@@ -1279,6 +1315,15 @@ export const apiClient = {
   mentionable: async (appSlug: string) => {
     return request<{ people: Mentionable[] }>(`/apps/${appSlug}/mentionable`);
   },
+
+  fileAccessRequest: async (body: AccessRequestBody) => request<AccessRequest>("/access/requests", { method: "POST", body: JSON.stringify(body) }),
+  myAccessRequests: async () => request<{ requests: AccessRequest[] }>("/me/access/requests"),
+  accessRequestsToDecide: async () => request<{ requests: AccessRequest[] }>("/me/access/requests/to-decide"),
+  confirmAccessRequest: async (id: string) => request<AccessRequest>(`/access/requests/${encodeURIComponent(id)}/confirm`, { method: "POST" }),
+  decideAccessRequest: async (id: string, decision: "approve" | "reject", note: string) =>
+    request<AccessRequest>(`/access/requests/${encodeURIComponent(id)}/decide`, { method: "POST", body: JSON.stringify({ decision, note }) }),
+  withdrawAccessRequest: async (id: string) => request<AccessRequest>(`/access/requests/${encodeURIComponent(id)}/withdraw`, { method: "POST" }),
+  accessRequestRules: async () => request<{ rules: AccessRequestRule[]; retired: AccessRequestRule[] }>("/admin/access/request-rules"),
 
   listProposals: async (workspaceId: string) => {
     return request<ProposalRow[]>(`/workspaces/${workspaceId}/proposals`);

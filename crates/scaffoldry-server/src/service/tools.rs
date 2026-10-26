@@ -233,6 +233,14 @@ Tool {
         run: run_propose_app_change,
     },
     Tool {
+        name: "request_access",
+        description: "Ask for access you were refused. The person confirms, then a rule or an approver decides.",
+        input_schema: schema_request_access,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_request_access,
+    },
+    Tool {
         name: "list_proposals",
         description: "List the proposals of a workspace, pending first.",
         input_schema: schema_list_proposals,
@@ -529,9 +537,9 @@ fn schema_manage_workspace_member() -> Value {
         "properties": {
             "workspace_id": { "type": "string" },
             "action": { "type": "string", "description": "add, update, or remove" },
-            "eppn": { "type": "string", "description": "Collaborator's eppn" },
+            "eppn": { "type": "string" },
             "role": { "type": "string", "description": "owner, admin, editor, commenter, or viewer" },
-            "name": { "type": "string", "description": "Full display name" }
+            "name": { "type": "string" }
         },
         "required": ["workspace_id", "action", "eppn"]
     })
@@ -542,7 +550,7 @@ fn schema_create_record() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "data": { "type": "object", "description": "Record field key-value pairs" }
+            "data": { "type": "object" }
         },
         "required": ["app_slug", "data"]
     })
@@ -564,11 +572,11 @@ fn schema_simulate_cedar_policy() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "eppn": { "type": "string", "description": "Principal's eppn" },
+            "eppn": { "type": "string" },
             "affiliation": { "type": "string", "description": "faculty, student, staff, employee, member, affiliate, or alum" },
             "action": { "type": "string", "description": "read, write, export, or approve" },
-            "ferpa_sensitive": { "type": "boolean", "description": "Record is FERPA sensitive" },
-            "department": { "type": "string", "description": "Department of the principal and the record" }
+            "ferpa_sensitive": { "type": "boolean" },
+            "department": { "type": "string" }
         },
         "required": ["eppn", "action"]
     })
@@ -578,11 +586,11 @@ fn schema_record_governance_decision() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "organization_code": { "type": "string", "description": "Institutional unit code" },
-            "app_slug": { "type": "string", "description": "Optional application slug" },
-            "decision_type": { "type": "string", "description": "A decision type, such as PolicyRevision" },
-            "oscal_control_id": { "type": "string", "description": "OSCAL control, such as AC-03" },
-            "rationale": { "type": "string", "description": "Why" }
+            "organization_code": { "type": "string" },
+            "app_slug": { "type": "string" },
+            "decision_type": { "type": "string", "description": "Such as PolicyRevision" },
+            "oscal_control_id": { "type": "string", "description": "Such as AC-03" },
+            "rationale": { "type": "string" }
         },
         "required": ["organization_code", "decision_type", "oscal_control_id", "rationale"]
     })
@@ -758,12 +766,12 @@ fn schema_save_view() -> Value {
         "properties": {
             "app_slug": { "type": "string" },
             "view_id": { "type": "string", "description": "Leave out to create" },
-            "name": { "type": "string", "description": "1 to 120 characters" },
+            "name": { "type": "string" },
             "kind": { "type": "string", "enum": ["grid", "kanban", "calendar", "gallery", "form", "summary", "dashboard"], "description": "Required to create" },
             "ownership": { "type": "string", "enum": ["personal", "collaborative", "locked"], "description": "To create. Default collaborative" },
             "table_id": { "type": "string", "description": "From describe_app" },
-            "config": { "type": "object", "description": "Sort, filters, grouping, layout" },
-            "version": { "type": "integer", "description": "The version you read" }
+            "config": { "type": "object" },
+            "version": { "type": "integer" }
         },
         "required": ["app_slug", "name"]
     })
@@ -942,15 +950,15 @@ fn schema_page_call() -> Value {
             "app_slug": { "type": "string" },
             "page_id": { "type": "string", "description": "Page id from list_pages" },
             "op": { "type": "string", "description": "list, get, create, update, remove, settings_get, or settings_set" },
-            "table_id": { "type": "string", "description": "The table" },
+            "table_id": { "type": "string" },
             "record_id": { "type": "string", "description": "For get, update, remove" },
-            "version": { "type": "integer", "description": "The version you read" },
-            "data": { "type": "object", "description": "Fields the page may write" },
+            "version": { "type": "integer" },
+            "data": { "type": "object" },
             "filter": { "type": "object", "description": "As in list_records" },
             "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
-            "limit": { "type": "integer", "description": "1 to 200" },
-            "cursor": { "type": "string", "description": "For list: previous next_cursor" },
-            "key": { "type": "string", "description": "For settings" },
+            "limit": { "type": "integer" },
+            "cursor": { "type": "string" },
+            "key": { "type": "string" },
             "value": { "description": "Any JSON, 64 KB per page" }
         },
         "required": ["app_slug", "page_id", "op"]
@@ -974,12 +982,12 @@ fn schema_list_records() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "table_id": { "type": "string", "description": "From describe_app" },
+            "table_id": { "type": "string" },
             "filter": { "type": "object", "description": "{ conjunction: And|Or, clauses: [{ id, field_name, operator, value }] }. Operators: Equals, NotEquals, Contains, NotContains, GreaterThan, LessThan, IsEmpty, IsNotEmpty" },
             "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
-            "limit": { "type": "integer", "description": "1 to 200. Default 50" },
-            "cursor": { "type": "string", "description": "Previous next_cursor" },
-            "search": { "type": "string", "description": "Full-text search" }
+            "limit": { "type": "integer" },
+            "cursor": { "type": "string" },
+            "search": { "type": "string" }
         },
         "required": ["app_slug", "table_id"]
     })
@@ -990,7 +998,7 @@ fn schema_get_record() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "record_id": { "type": "string", "description": "Record id" }
+            "record_id": { "type": "string" }
         },
         "required": ["app_slug", "record_id"]
     })
@@ -1215,6 +1223,21 @@ fn schema_propose_app_change() -> Value {
     })
 }
 
+fn schema_request_access() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "object_kind": { "type": "string", "description": "app or workspace" },
+            "object_id": { "type": "string" },
+            "role": { "type": "string" },
+            "clearance": { "type": "string" },
+            "reason": { "type": "string" },
+            "days": { "type": "integer" }
+        },
+        "required": ["object_kind", "object_id", "role", "reason", "days"]
+    })
+}
+
 fn schema_list_proposals() -> Value {
     json!({
         "type": "object",
@@ -1296,6 +1319,10 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
         },
         state,
     )
+}
+
+fn run_request_access(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::access_requests::file(state, caller, origin, &args)
 }
 
 fn run_list_proposals(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1453,7 +1480,7 @@ fn schema_aggregate_records() -> Value {
             "app_slug": { "type": "string" },
             "table_id": { "type": "string", "description": "From describe_app" },
             "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "count_distinct (alias unique), filled and empty fit any field type" },
-            "field": { "type": "string", "description": "Field to aggregate. Not for count" },
+            "field": { "type": "string", "description": "Not for count" },
             "filter": { "type": "object", "description": "Filter on indexed fields" },
             "group_by": { "type": "string", "description": "Indexed field to group by" },
             "group_by2": { "type": "string", "description": "Second indexed field, inside the first" },

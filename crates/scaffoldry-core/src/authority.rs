@@ -76,6 +76,9 @@ pub const FLAGGED: &[(&str, &str)] = &[
     ("access_loosened", "The change gives more people access than before."),
     ("coordinates_widened", "The change lowers an object's sensitivity or moves it up the unit tree."),
     ("mask_weakened", "The change shows more of a masked field than before."),
+    ("request_write", "The request asks for a role that can change data."),
+    ("request_sensitive", "The request asks for access to sensitive data."),
+    ("request_outside_unit", "The request is for something outside the requester's own unit."),
 ];
 
 /// What would avoid each flagged check, as one sentence. `None` where there is honestly nothing to change but the proposal
@@ -89,6 +92,9 @@ pub const REMEDIES: &[(&str, Option<&str>)] = &[
     ("access_loosened", Some("Keep access as it is, or narrow it.")),
     ("coordinates_widened", None),
     ("mask_weakened", None),
+    ("request_write", Some("Ask for the viewer role if reading is enough.")),
+    ("request_sensitive", None),
+    ("request_outside_unit", None),
 ];
 
 /// What would avoid the flagged check `name`, if anything.

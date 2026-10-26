@@ -15,6 +15,7 @@ pub mod repository_receipts;
 pub mod repository_files;
 pub mod repository_grants;
 pub mod repository_authority;
+pub mod repository_access_requests;
 pub mod repository_library;
 pub mod repository_supervision;
 pub mod repository_calc;
