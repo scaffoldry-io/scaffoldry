@@ -18,24 +18,24 @@ use uuid::Uuid;
 const MAX_SNAPSHOT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_SOURCES: i64 = 20;
 const MAX_RULE_KEYS: i64 = 500;
-const OSCAL_CONTROL: &str = "PL-01";
+pub(crate) const OSCAL_CONTROL: &str = "PL-01";
 
-fn internal(e: impl ToString) -> ServiceError {
+pub(crate) fn internal(e: impl ToString) -> ServiceError {
     ServiceError::Internal(e.to_string())
 }
 
 /// The fields of a body that did not pass, each with a sentence.
 #[derive(Default)]
-struct Problems(BTreeMap<String, String>);
+pub(crate) struct Problems(pub(crate) BTreeMap<String, String>);
 
 impl Problems {
-    fn add(&mut self, field: &str, why: impl Into<String>) {
+    pub(crate) fn add(&mut self, field: &str, why: impl Into<String>) {
         self.0
             .entry(field.to_string())
             .or_insert_with(|| why.into());
     }
 
-    fn text(&mut self, body: &Value, field: &str, max: usize, required: bool) -> Option<String> {
+    pub(crate) fn text(&mut self, body: &Value, field: &str, max: usize, required: bool) -> Option<String> {
         match body.get(field) {
             None | Some(Value::Null) if !required => None,
             None | Some(Value::Null) => {
@@ -128,7 +128,7 @@ impl Problems {
         Some((spec, raw.clone()))
     }
 
-    fn done(self) -> Result<(), ServiceError> {
+    pub(crate) fn done(self) -> Result<(), ServiceError> {
         if self.0.is_empty() {
             return Ok(());
         }
@@ -149,12 +149,12 @@ fn reason_of(p: &mut Problems, body: &Value) -> String {
     p.text(body, "reason", 500, true).unwrap_or_default()
 }
 
-fn is_admin(state: &SharedState, caller: &AuthUser) -> bool {
+pub(crate) fn is_admin(state: &SharedState, caller: &AuthUser) -> bool {
     require_platform_admin_or_compliance(caller, state).is_ok()
 }
 
 /// A Platform Admin, a caller with the compliance affiliation, or a person the owner spec resolves to today.
-fn may_write(state: &SharedState, caller: &AuthUser, policy: &Value) -> bool {
+pub(crate) fn may_write(state: &SharedState, caller: &AuthUser, policy: &Value) -> bool {
     if is_admin(state, caller) {
         return true;
     }
@@ -183,7 +183,7 @@ fn owner_text(owner: &Value) -> String {
     "not set".to_string()
 }
 
-fn forbidden(policy: Option<&Value>) -> ServiceError {
+pub(crate) fn forbidden(policy: Option<&Value>) -> ServiceError {
     ServiceError::forbidden(match policy {
         Some(p) => format!(
             "Only a Platform Admin, compliance, or the policy's owner may do this. The owner is {}",
@@ -194,7 +194,7 @@ fn forbidden(policy: Option<&Value>) -> ServiceError {
 }
 
 /// The policy, when the caller may write it. Someone who may not is told so whether or not the id exists.
-fn writable(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Value, ServiceError> {
+pub(crate) fn writable(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Value, ServiceError> {
     match state.repository.library_policy(id).map_err(internal)? {
         Some(p) if may_write(state, caller, &p) => Ok(p),
         Some(p) => Err(forbidden(Some(&p))),
@@ -205,7 +205,7 @@ fn writable(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Value, S
     }
 }
 
-fn parse_id(text: &str, what: &str) -> Result<Uuid, ServiceError> {
+pub(crate) fn parse_id(text: &str, what: &str) -> Result<Uuid, ServiceError> {
     Uuid::parse_str(text).map_err(|_| ServiceError::NotFound(format!("{what} not found")))
 }
 
@@ -539,7 +539,7 @@ pub fn add_snapshot(
 }
 
 /// Sentences in a statement: stops (. ! ?) that are followed by a space and more text, plus the last one.
-fn sentences(text: &str) -> usize {
+pub(crate) fn sentences(text: &str) -> usize {
     let chars: Vec<char> = text.trim().chars().collect();
     let stops = chars
         .windows(3)
@@ -550,7 +550,7 @@ fn sentences(text: &str) -> usize {
     stops + 1
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

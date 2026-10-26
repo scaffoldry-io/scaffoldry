@@ -101,6 +101,17 @@ pub fn passage_in(text: &str, passage: &str) -> bool {
     (20..=2000).contains(&length) && collapse(text).contains(&passage)
 }
 
+/// The `radius` characters of `text` on each side of `passage`, for a reviewer to read it in context. `None` when the
+/// passage is not in the text. White space is collapsed as `passage_in` does.
+pub fn context_around(text: &str, passage: &str, radius: usize) -> Option<(String, String)> {
+    let text = collapse(text);
+    let passage = collapse(passage);
+    let start = text.find(&passage)?;
+    let before: Vec<char> = text[..start].chars().rev().take(radius).collect();
+    let after = text[start + passage.len()..].chars().take(radius).collect();
+    Some((before.into_iter().rev().collect(), after))
+}
+
 /// Whether a binding's target is there and in use. The caller says which targets are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingState {
@@ -119,6 +130,18 @@ pub fn binding_state(target_kind: &str, target_ref: &str, lookup: &dyn Fn(&str, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_around_gives_the_characters_on_each_side_and_none_when_the_passage_is_absent() {
+        let text = format!("{} Needle sentence that is long enough here. {}", "a".repeat(400), "b".repeat(400));
+        let (before, after) = context_around(&text, "Needle sentence that is\nlong enough here.", 300).unwrap();
+        assert_eq!(before.chars().count(), 300);
+        assert!(before.ends_with(' ') && before.starts_with('a'));
+        assert_eq!(after.chars().count(), 300);
+        let (b, _) = context_around("short lead. Needle sentence that is long enough here.", "Needle sentence that is long enough here.", 300).unwrap();
+        assert_eq!(b, "short lead. ", "less than the radius when the text starts sooner");
+        assert!(context_around(&text, "Needle sentence that is long enough there.", 300).is_none());
+    }
 
     const PAGE: &str = "<html><head><title>Records</title><style>body { color: red; }</style>\n<script>var x = '<b>not text</b>';\nalert(1)</script></head>\n<body>\n  <h1>Records   retention</h1>\n<p>Student records &amp; grades are kept for\n seven years.&nbsp;After that, they are&nbsp;destroyed.</p>\n<p>&quot;Quoted&quot; and &lt;marked&gt; &#39;text&#39; stay.</p></body></html>";
 

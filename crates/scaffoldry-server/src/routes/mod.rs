@@ -7,6 +7,7 @@ pub mod positions;
 pub mod proposals;
 pub mod access_grants;
 pub mod library;
+pub mod library_review;
 pub mod access_review;
 pub mod receipts;
 pub mod admin_workspaces;
@@ -60,6 +61,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(admin_workspaces::router())
         .merge(access_grants::router())
         .merge(library::router())
+        .merge(library_review::router())
         .merge(access_review::router())
         .merge(receipts::router())
         .merge(workspaces::router())
