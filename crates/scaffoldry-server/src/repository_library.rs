@@ -368,4 +368,129 @@ impl PostgresRepository {
                 .collect())
         })
     }
+
+    // --- phase 3: review ------------------------------------------------------------------------------------------
+
+    /// One rule with its citations.
+    pub fn library_rule(&self, id: Uuid) -> Result<Option<Value>, RepositoryError> {
+        self.with_client(move |c| {
+            let Some(row) = c.query_opt(&format!("{} WHERE r.id = $1", rule_select()), &[&id])? else { return Ok(None) };
+            let mut rule = rule_of(&row);
+            let cites = c.query("SELECT snapshot_id, passage, locator FROM library_citations WHERE rule_id = $1 ORDER BY id", &[&id])?;
+            rule["citations"] = Value::Array(cites.iter().map(|r| json!({ "snapshot_id": r.get::<_, Uuid>(0), "passage": r.get::<_, String>(1), "locator": r.get::<_, String>(2) })).collect());
+            Ok(Some(rule))
+        })
+    }
+
+    /// Every rule waiting for review, oldest first.
+    pub fn library_rules_in_review(&self) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(|c| Ok(c.query(&format!("{} WHERE r.status = 'InReview' ORDER BY r.submitted_at, r.id LIMIT 500", rule_select()), &[])?.iter().map(rule_of).collect()))
+    }
+
+    /// The latest earlier version of a key that was ever published.
+    pub fn library_previous_version(&self, policy: Uuid, key: &str, below: i32) -> Result<Option<Value>, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |c| {
+            Ok(c.query_opt(&format!("{} WHERE r.policy_id = $1 AND r.key = $2 AND r.version < $3 AND r.status IN ('Published', 'Superseded', 'Retired') ORDER BY r.version DESC LIMIT 1", rule_select()), &[&policy, &key, &below])?
+                .map(|r| rule_of(&r)))
+        })
+    }
+
+    /// Moves a rule from one of the `from` statuses to `to`. False when it was not in one of them.
+    pub fn library_move_rule(&self, id: Uuid, from: &[&str], to: &str, by: Option<&str>, note: &str) -> Result<bool, RepositoryError> {
+        let (from, to, by, note) = (from.iter().map(|s| s.to_string()).collect::<Vec<_>>(), to.to_string(), by.map(str::to_string), note.to_string());
+        self.with_client(move |c| {
+            let n = c.execute(
+                "UPDATE library_rules SET status = $3, decided_by = COALESCE($4, decided_by), decided_at = CASE WHEN $4 IS NULL THEN decided_at ELSE NOW() END, decision_note = $5 WHERE id = $1 AND status = ANY($2)",
+                &[&id, &from, &to, &by, &note],
+            )?;
+            Ok(n == 1)
+        })
+    }
+
+    /// Publishes an `InReview` rule and marks the version it replaces `Superseded`, in one transaction.
+    pub fn library_publish_rule(&self, id: Uuid, by: &str, note: &str) -> Result<bool, RepositoryError> {
+        let (by, note) = (by.to_string(), note.to_string());
+        self.with_client(move |c| {
+            let mut tx = c.transaction()?;
+            let Some(row) = tx.query_opt("SELECT policy_id, key FROM library_rules WHERE id = $1", &[&id])? else { return Ok(false) };
+            let (policy, key): (Uuid, String) = (row.get(0), row.get(1));
+            tx.query_one("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", &[&format!("library-rule:{policy}:{key}")])?;
+            tx.execute("UPDATE library_rules SET status = 'Superseded' WHERE policy_id = $1 AND key = $2 AND status = 'Published' AND id <> $3", &[&policy, &key, &id])?;
+            let n = tx.execute("UPDATE library_rules SET status = 'Published', decided_by = $2, decided_at = NOW(), decision_note = $3 WHERE id = $1 AND status = 'InReview'", &[&id, &by, &note])?;
+            if n != 1 {
+                return Ok(false);
+            }
+            tx.commit()?;
+            Ok(true)
+        })
+    }
+
+    /// A reviewer's rewording: the next version, `InReview`, submitted by the reviewer, with the same citations. The
+    /// version it replaces becomes `Superseded`. Returns the new rule's id.
+    pub fn library_reword_rule(&self, id: Uuid, statement: &str, applies_to: &str, reviewer: &str, note: &str) -> Result<Option<Uuid>, RepositoryError> {
+        let (statement, applies_to, reviewer, note) = (statement.to_string(), applies_to.to_string(), reviewer.to_string(), note.to_string());
+        self.with_client(move |c| {
+            let mut tx = c.transaction()?;
+            let Some(row) = tx.query_opt("SELECT policy_id, key FROM library_rules WHERE id = $1 AND status = 'InReview'", &[&id])? else { return Ok(None) };
+            let (policy, key): (Uuid, String) = (row.get(0), row.get(1));
+            tx.query_one("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", &[&format!("library-rule:{policy}:{key}")])?;
+            let version: i32 = tx.query_one("SELECT COALESCE(MAX(version), 0) + 1 FROM library_rules WHERE policy_id = $1 AND key = $2", &[&policy, &key])?.get(0);
+            let new = Uuid::new_v4();
+            tx.execute(
+                "INSERT INTO library_rules (id, policy_id, key, version, statement, applies_to, status, submitted_by, submitted_via) VALUES ($1, $2, $3, $4, $5, $6, 'InReview', $7, 'person')",
+                &[&new, &policy, &key, &version, &statement, &applies_to, &reviewer],
+            )?;
+            tx.execute(
+                "INSERT INTO library_citations (id, rule_id, snapshot_id, passage, locator) SELECT gen_random_uuid(), $2, snapshot_id, passage, locator FROM library_citations WHERE rule_id = $1",
+                &[&id, &new],
+            )?;
+            let said = format!("Reworded as version {version}. {note}");
+            tx.execute("UPDATE library_rules SET status = 'Superseded', decided_by = $2, decided_at = NOW(), decision_note = $3 WHERE id = $1", &[&id, &reviewer, &said])?;
+            tx.commit()?;
+            Ok(Some(new))
+        })
+    }
+
+    /// Every question of a policy, answered or not.
+    pub fn library_questions_of(&self, policy: Uuid) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(move |c| {
+            let rows = c.query(
+                &format!("SELECT id, question, context_passage, snapshot_id, asked_by, asked_via, {}, answer, answered_by, {} FROM library_questions WHERE policy_id = $1 ORDER BY asked_at, id", ts("asked_at"), ts("answered_at")),
+                &[&policy],
+            )?;
+            Ok(rows.iter().map(question_of).collect())
+        })
+    }
+
+    pub fn library_question(&self, id: Uuid) -> Result<Option<(Uuid, Value)>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query_opt(
+                &format!("SELECT id, question, context_passage, snapshot_id, asked_by, asked_via, {}, answer, answered_by, {}, policy_id FROM library_questions WHERE id = $1", ts("asked_at"), ts("answered_at")),
+                &[&id],
+            )?
+            .map(|r| (r.get::<_, Uuid>(10), question_of(&r))))
+        })
+    }
+
+    /// Stores an answer. False when the question was already answered.
+    pub fn library_answer_question(&self, id: Uuid, answer: &str, by: &str) -> Result<bool, RepositoryError> {
+        let (answer, by) = (answer.to_string(), by.to_string());
+        self.with_client(move |c| Ok(c.execute("UPDATE library_questions SET answer = $2, answered_by = $3, answered_at = NOW() WHERE id = $1 AND answer IS NULL", &[&id, &answer, &by])? == 1))
+    }
+}
+
+fn question_of(r: &postgres::Row) -> Value {
+    json!({ "id": r.get::<_, Uuid>(0), "question": r.get::<_, String>(1), "context_passage": r.get::<_, String>(2), "snapshot_id": r.get::<_, Option<Uuid>>(3), "asked_by": r.get::<_, String>(4), "asked_via": r.get::<_, String>(5), "asked_at": r.get::<_, String>(6),
+            "answer": r.get::<_, Option<String>>(7), "answered_by": r.get::<_, Option<String>>(8), "answered_at": r.get::<_, Option<String>>(9) })
+}
+
+fn rule_select() -> String {
+    format!("SELECT r.id, r.policy_id, r.key, r.version, r.statement, r.applies_to, r.status, r.submitted_by, r.submitted_via, {}, r.decided_by, {}, r.decision_note, p.title FROM library_rules r JOIN library_policies p ON p.id = r.policy_id", ts("r.submitted_at"), ts("r.decided_at"))
+}
+
+fn rule_of(r: &postgres::Row) -> Value {
+    json!({ "id": r.get::<_, Uuid>(0), "policy_id": r.get::<_, Uuid>(1), "key": r.get::<_, String>(2), "version": r.get::<_, i32>(3), "statement": r.get::<_, String>(4), "applies_to": r.get::<_, String>(5),
+            "status": r.get::<_, String>(6), "submitted_by": r.get::<_, String>(7), "submitted_via": r.get::<_, String>(8), "submitted_at": r.get::<_, String>(9),
+            "decided_by": r.get::<_, Option<String>>(10), "decided_at": r.get::<_, Option<String>>(11), "decision_note": r.get::<_, String>(12), "policy_title": r.get::<_, String>(13) })
 }

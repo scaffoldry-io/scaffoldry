@@ -762,6 +762,29 @@ export interface AccessHierarchy {
   retired_at: string | null;
 }
 
+export interface LibraryRuleRow {
+  id: string;
+  policy_id: string;
+  key: string;
+  version: number;
+  statement: string;
+  applies_to: string;
+  status: string;
+  submitted_by: string;
+  submitted_via: "agent" | "person";
+}
+
+export interface LibraryRuleReview {
+  rule: LibraryRuleRow;
+  policy: { id: string; key: string; title: string };
+  citations: { snapshot_id: string; passage: string; locator: string; before: string; after: string; text_origin: "fetched" | "supplied" | null; source_title: string | null }[];
+  questions: { id: string; question: string; answer: string | null; answered_by: string | null }[];
+  previous: LibraryRuleRow | null;
+  submitted_by: string;
+  submitted_by_name: string;
+  submitted_via: "agent" | "person";
+}
+
 export interface AccessGrantRow {
   id: number;
   holder_kind: string;
@@ -1084,6 +1107,11 @@ export const apiClient = {
 
   accessExplain: async (person: string, object: string) =>
     request<AccessExplanation>(`/access/explain?person=${encodeURIComponent(person)}&object=${encodeURIComponent(object)}`),
+
+  libraryRuleReview: async (id: string) => request<LibraryRuleReview>(`/library/rules/${encodeURIComponent(id)}/review`),
+
+  libraryDecide: async (id: string, body: { decision: "publish" | "reject"; note: string; statement?: string; applies_to?: string }) =>
+    request<{ reworded: boolean; rule: LibraryRuleRow }>(`/library/rules/${encodeURIComponent(id)}/decide`, { method: "POST", body: JSON.stringify(body) }),
 
   accessReviews: async (cursor?: string) =>
     request<{ review_days: number; due: AccessGrantRow[]; conflicts: { person: string; pair: string }[]; next_cursor: string | null }>(

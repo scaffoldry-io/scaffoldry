@@ -341,9 +341,9 @@ pub fn validate_rule(state: &SharedState, rule: &AutomationRule) -> Result<(), S
     Ok(())
 }
 
-/// Whether `who` is one of the people `spec` resolves to today, for a thing that belongs to `unit` and has no submitter.
-/// The policy library uses it to ask whether a person owns a policy.
-pub fn resolves_to(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, who: &str) -> bool {
+/// The people `spec` resolves to today for a thing that belongs to `unit`. `extra` names people the resolver should know
+/// about. `submitter`, when given, is never one of them. The policy library asks it who owns and who reviews a policy.
+pub fn resolved_approvers(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, extra: &[&str], submitter: Option<&str>) -> Vec<String> {
     let units: Vec<Unit> = state
         .organizations
         .read()
@@ -356,7 +356,7 @@ pub fn resolves_to(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, w
             name: o.name.clone(),
         })
         .collect();
-    let mut named: Vec<String> = vec![who.to_string()];
+    let mut named: Vec<String> = extra.iter().map(|e| e.to_string()).collect();
     if let ApproverSpec::Person { eppn } = spec {
         named.push(eppn.clone());
     }
@@ -393,14 +393,21 @@ pub fn resolves_to(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, w
         delegations: vec![],
         collaborators: vec![],
         now: Utc::now().timestamp(),
-        submitter: None,
+        submitter: submitter.map(str::to_string),
         starter: None,
         workspace_unit: Some(unit.to_string()),
     };
     resolve_approvers(spec, &ctx)
         .approvers
+        .into_iter()
+        .map(|a| a.eppn)
+        .collect()
+}
+
+pub fn resolves_to(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, who: &str) -> bool {
+    resolved_approvers(state, spec, unit, &[who], None)
         .iter()
-        .any(|a| a.eppn.eq_ignore_ascii_case(who))
+        .any(|a| a.eq_ignore_ascii_case(who))
 }
 
 /// A spec the platform knows how to resolve: its position exists and is in use, or its person exists.

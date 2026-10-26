@@ -55,6 +55,10 @@ pub fn add(m: &mut Entries) {
             case!(library_rule_draft, root),
         );
     }
+    m.insert("POST /api/v1/library/rules/{id}/submit".into(), case!(library_rule_submit));
+    m.insert("POST /api/v1/library/rules/{id}/decide".into(), case!(library_rule_decide));
+    m.insert("POST /api/v1/library/rules/{id}/retire".into(), case!(library_rule_retire));
+    m.insert("POST /api/v1/library/questions/{id}/answer".into(), case!(library_question_answer));
     m.insert("POST /api/v1/orgs".into(), case!(org_create));
     m.insert("PATCH /api/v1/orgs/{id}".into(), case!(org_patch));
     m.insert("POST /api/v1/orgs/{id}/appointments".into(), case!(appoint));
@@ -881,4 +885,55 @@ async fn library_rule_draft(w: World, root: &'static str) -> Outcome {
         seen["rule_counts"].to_string().contains('1'),
         format!("B counts the rule A drafted: {seen}"),
     )
+}
+
+/// A policy owned by a new person, with a rule drafted by the Platform Admin. Returns the owner, the policy and the rule.
+async fn library_review_fixture(w: &World) -> Result<(String, String, String), String> {
+    let owner = person("p8owner");
+    make_user(w, &owner).await?;
+    let key = unique("p8pol").to_lowercase();
+    let body = json!({ "key": key, "title": "Review policy", "organization_id": ROOT, "owner": { "Person": { "eppn": owner } }, "reason": "Fixture" });
+    let made = status(w.wa("POST", "/api/v1/admin/library/policies", ADMIN, Some(body)).await, StatusCode::CREATED, "A creates a policy")?;
+    let policy = made["policy"]["id"].as_str().ok_or("a policy id")?.to_string();
+    let source = status(w.wa("POST", &format!("/api/v1/admin/library/policies/{policy}/sources"), ADMIN, Some(json!({ "title": "Schedule", "kind": "text", "reason": "Fixture" }))).await, StatusCode::CREATED, "A adds a source")?;
+    let source = source["source"]["id"].as_str().ok_or("a source id")?.to_string();
+    let snap = status(w.wa("POST", &format!("/api/v1/admin/library/sources/{source}/snapshots"), ADMIN, Some(json!({ "text": LIBRARY_PASSAGE, "reason": "Fixture" }))).await, StatusCode::CREATED, "A takes a snapshot")?;
+    let snap = snap["snapshot"]["id"].as_str().ok_or("a snapshot id")?.to_string();
+    let rule = json!({ "key": "retention", "statement": "Student records are kept for seven years.", "citations": [{ "snapshot_id": snap, "passage": LIBRARY_PASSAGE }], "reason": "Fixture" });
+    let rule = status(w.wa("POST", &format!("/api/v1/admin/library/policies/{policy}/rules"), ADMIN, Some(rule)).await, StatusCode::CREATED, "A drafts a rule")?;
+    Ok((owner, policy, rule["rule"]["id"].as_str().ok_or("a rule id")?.to_string()))
+}
+
+async fn library_rule_submit(w: World) -> Outcome {
+    let (owner, _, rule) = library_review_fixture(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/submit"), ADMIN, Some(json!({}))).await, StatusCode::OK, "A submits it")?;
+    let seen = status(w.rb("GET", "/api/v1/me/library/reviews", &owner, None).await, StatusCode::OK, "B lists the owner's reviews")?;
+    ensure(has(&seen["reviews"], &rule), format!("B lists the rule A submitted: {seen}"))
+}
+
+async fn library_rule_decide(w: World) -> Outcome {
+    let (owner, policy, rule) = library_review_fixture(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/submit"), ADMIN, Some(json!({}))).await, StatusCode::OK, "A submits it")?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/decide"), &owner, Some(json!({ "decision": "publish", "note": "Reviewed" }))).await, StatusCode::OK, "A publishes it")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/library/policies/{policy}"), ADMIN, None).await, StatusCode::OK, "B reads the policy")?;
+    ensure(seen["rule_counts"]["Published"] == 1, format!("B counts the rule A published: {seen}"))
+}
+
+async fn library_rule_retire(w: World) -> Outcome {
+    let (owner, policy, rule) = library_review_fixture(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/submit"), ADMIN, Some(json!({}))).await, StatusCode::OK, "A submits it")?;
+    status(w.rb("POST", &format!("/api/v1/library/rules/{rule}/decide"), &owner, Some(json!({ "decision": "publish", "note": "Reviewed" }))).await, StatusCode::OK, "B publishes it")?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/retire"), &owner, Some(json!({ "reason": "No longer the law" }))).await, StatusCode::OK, "A retires it")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/library/policies/{policy}"), ADMIN, None).await, StatusCode::OK, "B reads the policy")?;
+    ensure(seen["rule_counts"]["Retired"] == 1, format!("B counts the rule A retired: {seen}"))
+}
+
+async fn library_question_answer(w: World) -> Outcome {
+    let (_, policy, _) = library_review_fixture(&w).await?;
+    w.tool_a(ADMIN, "propose_library_rules", json!({ "policy_id": policy, "questions": [{ "question": "Does a hold pause it?" }] })).await?;
+    let open = status(w.rb("GET", "/api/v1/me/library/reviews", ADMIN, None).await, StatusCode::OK, "B lists the open questions")?;
+    let q = open["questions"].as_array().and_then(|l| l.iter().find(|q| q["policy_id"] == policy.as_str())).and_then(|q| q["id"].as_str()).ok_or("an open question on B")?.to_string();
+    status(w.wa("POST", &format!("/api/v1/library/questions/{q}/answer"), ADMIN, Some(json!({ "answer": "Yes" }))).await, StatusCode::OK, "A answers it")?;
+    let after = status(w.rb("GET", "/api/v1/me/library/reviews", ADMIN, None).await, StatusCode::OK, "B lists again")?;
+    ensure(!has(&after["questions"], &q), format!("B no longer lists the question A answered: {after}"))
 }
