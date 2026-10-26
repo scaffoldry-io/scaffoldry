@@ -26,6 +26,7 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/admin/overview", get(get_overview))
         .route("/admin/jobs", get(get_jobs))
+        .route("/admin/proposals", get(get_admin_proposals))
         .route("/admin/jobs/{id}", get(get_job_by_id))
         .route("/admin/jobs/{id}/cancel", post(cancel_job_by_id))
         .route("/admin/jobs/{id}/retry", post(retry_job_by_id))
@@ -165,6 +166,27 @@ struct AdminJobsQuery {
 #[derive(serde::Deserialize)]
 struct AdminReasonPayload {
     reason: String,
+}
+
+#[derive(serde::Deserialize)]
+struct AdminProposalsQuery {
+    #[serde(default)]
+    unassigned: bool,
+}
+
+/// Pending proposals. With `unassigned=true`, only those whose approver path resolves to nobody today.
+async fn get_admin_proposals(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<AdminProposalsQuery>,
+) -> Result<impl IntoResponse, ServiceError> {
+    let caller = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized"))?;
+    require_platform_admin(&caller, &state)?;
+    let state2 = state.clone();
+    let list = tokio::task::spawn_blocking(move || crate::service::proposals::list_pending(query.unassigned, &state2))
+        .await
+        .map_err(|_| ServiceError::Internal("The read stopped".to_string()))??;
+    Ok(Json(json!({ "proposals": list })))
 }
 
 async fn get_jobs(

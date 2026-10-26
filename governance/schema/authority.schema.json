@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/authority.schema.json",
+  "title": "Authority",
+  "description": "Decision authority: a signal row, a matrix row, and the body of a change to either. A unit can only raise a check's tier and tighten what a tier requires. The server also refuses a value below the built-in one.",
+  "$defs": {
+    "tier": { "enum": ["Low", "Moderate", "High"] },
+    "path": { "enum": ["direct", "second_person", "approver"] },
+    "signal": {
+      "type": "object",
+      "required": ["organization_id", "check_name", "tier"],
+      "additionalProperties": false,
+      "properties": {
+        "organization_id": { "type": "string", "format": "uuid" },
+        "check_name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "tier": { "$ref": "#/$defs/tier" }
+      }
+    },
+    "row": {
+      "type": "object",
+      "required": ["tier", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "organization_id": { "type": "string", "format": "uuid" },
+        "tier": { "$ref": "#/$defs/tier" },
+        "path": { "$ref": "#/$defs/path" },
+        "approver": { "$ref": "approver-spec.schema.json" },
+        "control_id": { "type": "string", "maxLength": 32 },
+        "library_policy_key": { "type": "string", "maxLength": 64 },
+        "library_rule_key": { "type": "string", "maxLength": 64 }
+      },
+      "if": { "properties": { "path": { "const": "approver" } } },
+      "then": { "required": ["approver"] },
+      "else": { "not": { "required": ["approver"] } }
+    },
+    "change": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "check_name", "tier"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "signal" },
+            "check_name": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "tier": { "$ref": "#/$defs/tier" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "row"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "row" },
+            "row": { "$ref": "#/$defs/row" }
+          }
+        }
+      ]
+    }
+  }
+}

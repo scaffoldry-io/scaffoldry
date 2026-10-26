@@ -75,6 +75,7 @@ const SCHEMA_0060: &str = include_str!("../../scaffoldry-core/migrations/0060_sy
 const SCHEMA_0061: &str = include_str!("../../scaffoldry-core/migrations/0061_page_settings.sql");
 const SCHEMA_0068: &str = include_str!("../../scaffoldry-core/migrations/0068_acted_by.sql");
 const SCHEMA_0070: &str = include_str!("../../scaffoldry-core/migrations/0070_policy_library.sql");
+const SCHEMA_0071: &str = include_str!("../../scaffoldry-core/migrations/0071_authority.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1110,6 +1111,7 @@ impl PostgresRepository {
                             ("0068_acted_by.sql", SCHEMA_0068),
                             ("0069_grant_review.sql", SCHEMA_0069),
                             ("0070_policy_library.sql", SCHEMA_0070),
+                            ("0071_authority.sql", SCHEMA_0071),
                         ];
 
                         let mut fresh_install = false;

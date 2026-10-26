@@ -49,6 +49,9 @@ pub enum Approval {
     Superseded { live: Option<i32> },
     /// A flagged check failed and the decider is the proposer.
     SecondPersonRequired,
+    /// The requirement names an approver and the decider is not one of the people it resolves to. Never returned by the
+    /// repository: the service decides who may decide, from `authority::required`, before it calls it.
+    ApproverRequired { resolved: Vec<String> },
 }
 
 const COLUMNS: &str = "id, workspace_id, app_slug, base_version, manifest, checks, summary, status, proposed_by, decided_by, \
@@ -237,8 +240,46 @@ impl PostgresRepository {
         })
     }
 
+    /// Both authority tables, one query each.
+    pub fn authority_tables(&self) -> Result<(Vec<scaffoldry_core::authority::SignalRow>, Vec<scaffoldry_core::authority::MatrixRow>), RepositoryError> {
+        use scaffoldry_core::authority::{MatrixRow, Path, SignalRow, Tier};
+        self.with_client(|client| {
+            let signals = client
+                .query("SELECT organization_id, check_name, tier FROM authority_signals", &[])?
+                .iter()
+                .filter_map(|r| Some(SignalRow { organization_id: r.get(0), check_name: r.get(1), tier: Tier::parse(&r.get::<_, String>(2))? }))
+                .collect();
+            let rows = client
+                .query("SELECT organization_id, tier, path, approver, control_id, library_policy_key, library_rule_key FROM authority_rows", &[])?
+                .iter()
+                .filter_map(|r| {
+                    Some(MatrixRow {
+                        organization_id: r.get(0),
+                        tier: Tier::parse(&r.get::<_, String>(1))?,
+                        path: Path::parse(&r.get::<_, String>(2))?,
+                        approver: r.get::<_, Option<Value>>(3).and_then(|v| serde_json::from_value(v).ok()),
+                        control_id: r.get(4),
+                        library_policy_key: r.get(5),
+                        library_rule_key: r.get(6),
+                    })
+                })
+                .collect();
+            Ok((signals, rows))
+        })
+    }
+
+    /// Every pending proposal, oldest first, for the list of those nobody can decide.
+    pub fn pending_proposals(&self, limit: i64) -> Result<Vec<ProposalRow>, RepositoryError> {
+        self.with_client(move |client| {
+            Ok(client.query(&format!("SELECT {COLUMNS} FROM app_proposals WHERE status = 'Pending' ORDER BY created_at, id LIMIT $1"), &[&limit])?.iter().map(row_of).collect())
+        })
+    }
+
     /// Approves a proposal in one transaction on one connection. If any step fails, none is kept.
-    pub fn approve_proposal(&self, id: uuid::Uuid, decider: &str, rationale: &str, digest: &str) -> Result<Approval, RepositoryError> {
+    ///
+    /// `other_person` is true when the requirement at this moment is a person other than the proposer. A flagged failure
+    /// needs one whatever the requirement says: no table lowers that.
+    pub fn approve_proposal(&self, id: uuid::Uuid, decider: &str, rationale: &str, digest: &str, other_person: bool) -> Result<Approval, RepositoryError> {
         let (decider, rationale, digest) = (decider.to_string(), rationale.to_string(), digest.to_string());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -277,8 +318,8 @@ impl PostgresRepository {
                 return Ok(Approval::Superseded { live });
             }
 
-            // 3. A flagged change needs a second person.
-            if has_flagged_failure(&p.checks) && p.proposed_by.eq_ignore_ascii_case(&decider) {
+            // 3. A flagged change, or a requirement that says so, needs a person other than the proposer.
+            if (other_person || has_flagged_failure(&p.checks)) && p.proposed_by.eq_ignore_ascii_case(&decider) {
                 return Ok(Approval::SecondPersonRequired);
             }
 
