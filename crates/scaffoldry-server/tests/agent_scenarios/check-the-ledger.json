@@ -71,8 +71,8 @@
       "as": "faculty-owner"
     },
     {
-      "tool": "verify_decision_ledger",
-      "args": {},
+      "tool": "governance_report",
+      "args": { "report": "ledger" },
       "as": "compliance"
     }
   ],
