@@ -478,6 +478,12 @@ pub fn list(state: &SharedState, caller: &AuthUser, q: &ListQuery) -> Result<Val
                 if c["kind"] == "hierarchy" {
                     return r.platform;
                 }
+                // A request rule belongs to a unit: whoever may set rules there sees it.
+                if c["kind"] == "request_rule" {
+                    let unit = c["organization_id"].as_str().and_then(|u| Uuid::parse_str(u).ok());
+                    let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+                    return r.platform || unit.is_some_and(|u| r.admin_units.iter().any(|a| tree.contains(*a, u)));
+                }
                 let g = &c["grant"];
                 AnchorKind::parse(g["anchor_kind"].as_str().unwrap_or_default()).is_some_and(|k| in_scope(k, g["anchor_id"].as_str()))
             })

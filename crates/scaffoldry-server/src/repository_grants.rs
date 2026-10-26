@@ -290,7 +290,7 @@ impl PostgresRepository {
                     let id: Uuid = r.get(0);
                     let change: Value = r.get(1);
                     let kind = change["kind"].as_str().unwrap_or("grant").to_string();
-                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6) })
+                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "rule": change["rule"].clone(), "organization_id": change["organization_id"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6) })
                 })
                 .collect())
         })

@@ -193,11 +193,7 @@ fn waiting_on(state: &SharedState, obj: &Object, requester: &str, need: &authori
     use scaffoldry_core::authority::Path;
     let mut people: Vec<String> = match need.requirement.path {
         Path::Approver => need.resolved.iter().map(|a| a.eppn.clone()).collect(),
-        _ => state
-            .collaborators
-            .read()
-            .map(|c| c.get(&obj.workspace.id).map(|list| list.iter().filter(|m| matches!(m.role.as_str(), "owner" | "admin") && m.app_slug.is_empty()).map(|m| m.eppn.clone()).collect()).unwrap_or_default())
-            .unwrap_or_default(),
+        _ => members::people_with_roles(&obj.workspace.id, state).into_iter().filter(|(_, role)| *role >= Role::Admin).map(|(eppn, _)| eppn).collect(),
     };
     people.retain(|p| !p.eq_ignore_ascii_case(requester));
     people.sort();
@@ -493,6 +489,10 @@ fn rule_faults(state: &SharedState, unit: Uuid, rule: &Rule) -> Result<(), Servi
 
 /// A rule change waits for a second person, like every change to who may see what.
 pub fn propose_rule(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+    let rights = crate::service::access_grants::rights(state, caller);
+    if !rights.platform && rights.admin_units.is_empty() {
+        return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
+    }
     let mut p = Problems::default();
     let unit = p.uuid_field(body, "organization_id");
     let reason = p.text(body, "reason", 500, true);

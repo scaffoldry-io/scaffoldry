@@ -184,7 +184,7 @@ pub enum ServiceError {
     /// A client's ceiling names a field that is sensitive. Sensitive data stays inside the platform.
     ClientSensitiveField(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
-    FieldHidden { message: String, reason: String, remedy: String },
+    FieldHidden { message: String, reason: String, remedy: String, request: Option<Value> },
     /// A table may index 20 fields. `unused` lists the indexed fields no view uses, which can go.
     TooManyIndexes { message: String, unused: Vec<String> },
     /// A write names fields the person may not change.
@@ -353,7 +353,10 @@ impl ServiceError {
             Self::ImpersonationNotSynthetic(_) => {
                 body.insert("remedy".to_string(), Value::String(IMPERSONATION_REMEDY.to_string()));
             }
-            Self::FieldHidden { reason, remedy, .. } => {
+            Self::FieldHidden { reason, remedy, request, .. } => {
+                if let Some(request) = request {
+                    body.insert("request".to_string(), request.clone());
+                }
                 body.insert("reason".to_string(), Value::String(reason.clone()));
                 body.insert("remedy".to_string(), Value::String(remedy.clone()));
             }

@@ -265,6 +265,7 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("get_job", true, false, false),
     ("cancel_job", false, true, true),
     ("begin_task", false, false, true),
+    ("request_access", false, false, false),
     ("export_records", false, false, false),
     ("list_library_policies", true, false, false),
     ("read_library_snapshot", true, false, false),

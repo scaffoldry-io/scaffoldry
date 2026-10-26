@@ -165,6 +165,7 @@ async fn a_forbidden_error_carries_the_policy_that_decided() {
         diagnostics: vec![],
         policy: Some(Box::new(PolicyRef { id: "policy11".into(), description: "Only members may open restricted workspaces.".into(), rule: None })),
         action: None,
+        request: None,
     };
     let (_, body) = body_of(error.into_response()).await;
     assert_eq!(body["policy"]["id"], "policy11");

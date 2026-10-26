@@ -1733,6 +1733,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
                 message: format!("You cannot filter or sort on '{name}' because you cannot see it."),
                 reason: rule.as_ref().map_or_else(|| format!("'{name}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                request: Some(crate::service::access::hidden_request(app_slug)),
             })
         } else {
             Ok(())
@@ -1769,6 +1770,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
                 message: "Search is not available on this table for your role.".to_string(),
                 reason: "The table has protected fields you may not read in full, and a search would match on them.".to_string(),
                 remedy: "Filter on a field you can see, or ask an owner of the workspace for a grant that clears you.".to_string(),
+                request: Some(crate::service::access::hidden_request(app_slug)),
             });
         }
     }
@@ -2098,6 +2100,7 @@ pub fn aggregate_records(
                 message: format!("You cannot aggregate on '{f}' because you cannot see it."),
                 reason: rule.as_ref().map_or_else(|| format!("'{f}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                request: Some(crate::service::access::hidden_request(app_slug)),
             });
         }
         if !indexed.contains(f) {
@@ -2124,6 +2127,7 @@ pub fn aggregate_records(
                 message: format!("You cannot group by '{g}' because you cannot see it."),
                 reason: rule.as_ref().map_or_else(|| format!("'{g}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                request: Some(crate::service::access::hidden_request(app_slug)),
             });
         }
         if !indexed.contains(g) {
@@ -2147,6 +2151,7 @@ pub fn aggregate_records(
                 message: format!("You cannot group by '{g2}' because you cannot see it."),
                 reason: rule.as_ref().map_or_else(|| format!("'{g2}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                request: Some(crate::service::access::hidden_request(app_slug)),
             });
         }
         if !indexed.contains(g2) {
@@ -2179,6 +2184,7 @@ pub fn aggregate_records(
                     message: format!("You cannot filter on '{}' because you cannot see it.", c.field_name),
                     reason: rule.as_ref().map_or_else(|| format!("'{}' is hidden from you.", c.field_name), |d| d.reason.clone()),
                     remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                    request: Some(crate::service::access::hidden_request(app_slug)),
                 });
             }
             if !fields.iter().any(|s| s.name == c.field_name) {
@@ -2331,6 +2337,7 @@ fn walk_of(caller: &AuthUser, app_slug: &str, q: &WindowQuery, state: &SharedSta
                 message: format!("You cannot filter or sort on '{name}' because you cannot see it."),
                 reason: rule.as_ref().map_or_else(|| format!("'{name}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                request: Some(crate::service::access::hidden_request(app_slug)),
             });
         }
     }

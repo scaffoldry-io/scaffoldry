@@ -456,6 +456,12 @@ fn request_for(kind: &str, id: &str, action: &str) -> Option<Value> {
     Some(json!({ "object_kind": kind, "object_id": id, "role": role, "reason": format!("I need to {verb} this {kind}."), "days": 14 }))
 }
 
+/// What to send to ask for access to an app whose field a person cannot see. The clearance a field needs is not known
+/// where it is refused, so the request asks for the app and an approver decides what clears the person.
+pub fn hidden_request(app_slug: &str) -> Value {
+    json!({ "object_kind": "app", "object_id": app_slug, "role": "viewer", "reason": "I need to see a field this app hides from me.", "days": 14 })
+}
+
 /// A refusal that names a Cedar action carries the request that would ask for what it withheld.
 fn with_request(e: ServiceError, kind: &str, id: &str) -> ServiceError {
     match e {
