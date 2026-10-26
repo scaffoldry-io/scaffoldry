@@ -323,6 +323,12 @@ async fn handle_mcp_request(
                         "mimeType": "text/markdown"
                     },
                     {
+                        "uri": crate::service::prompts::LIBRARY_GUIDE_URI,
+                        "name": "Guide: policy library",
+                        "description": "How to read a policy a page at a time, propose one cited rule for one obligation, and ask when the text does not say",
+                        "mimeType": "text/markdown"
+                    },
+                    {
                         "uri": crate::service::prompts::OUTSIDE_GUIDE_URI,
                         "name": "Guide: building outside Scaffoldry",
                         "description": "How an app hosted elsewhere gets institutional data: register a client, sign in with PKCE, use the generated module, keep calls small",
@@ -515,6 +521,15 @@ async fn handle_mcp_request(
                                 "uri": uri,
                                 "mimeType": "text/markdown",
                                 "text": crate::service::prompts::GUIDE
+                            }
+                        ]
+                    }),
+                    crate::service::prompts::LIBRARY_GUIDE_URI => json!({
+                        "contents": [
+                            {
+                                "uri": uri,
+                                "mimeType": "text/markdown",
+                                "text": crate::service::prompts::LIBRARY_GUIDE
                             }
                         ]
                     }),

@@ -266,6 +266,11 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("cancel_job", false, true, true),
     ("begin_task", false, false, true),
     ("export_records", false, false, false),
+    ("list_library_policies", true, false, false),
+    ("read_library_snapshot", true, false, false),
+    ("find_library_rules", true, false, false),
+    ("propose_library_rules", false, false, false),
+    ("list_library_questions", true, false, false),
 ];
 
 #[tokio::test]

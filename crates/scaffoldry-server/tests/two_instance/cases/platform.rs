@@ -708,10 +708,10 @@ async fn ledger_append(w: World) -> Outcome {
     ensure(after["total_entries"].as_i64() > before["total_entries"].as_i64() && has(&after, &rationale), format!("B shows the entry A appended: {after}"))
 }
 
-const LIBRARY_PASSAGE: &str = "Student records are kept for seven years after the student leaves.";
+pub const LIBRARY_PASSAGE: &str = "Student records are kept for seven years after the student leaves.";
 
 /// A policy written on A, with a text source and a snapshot of it.
-async fn library_fixture(w: &World, root: &str) -> Result<(String, String, String), String> {
+pub async fn library_fixture(w: &World, root: &str) -> Result<(String, String, String), String> {
     let owner = person("p7owner");
     make_user(w, &owner).await?;
     let body = json!({ "key": unique("p7pol").to_lowercase(), "title": "Records retention", "organization_id": ROOT, "owner": { "Person": { "eppn": owner } }, "reason": "Fixture" });

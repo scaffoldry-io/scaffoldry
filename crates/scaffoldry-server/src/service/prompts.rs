@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 
 pub const GUIDE_URI: &str = "scaffoldry://guide/building-apps";
 pub const GUIDE: &str = include_str!("../../guides/building-apps.md");
+pub const LIBRARY_GUIDE_URI: &str = "scaffoldry://guide/policy-library";
+pub const LIBRARY_GUIDE: &str = include_str!("../../guides/policy-library.md");
 pub const OUTSIDE_GUIDE_URI: &str = "scaffoldry://guide/outside-apps";
 pub const OUTSIDE_GUIDE: &str = include_str!("../../guides/outside-apps.md");
 

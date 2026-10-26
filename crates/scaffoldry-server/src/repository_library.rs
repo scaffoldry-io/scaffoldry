@@ -303,4 +303,69 @@ impl PostgresRepository {
                        "citations": citations.iter().map(|c| json!({ "snapshot_id": c.snapshot_id, "passage": c.passage, "locator": c.locator })).collect::<Vec<_>>() }))
         })
     }
+
+    pub fn library_add_question(
+        &self,
+        policy: Uuid,
+        question: &str,
+        context_passage: &str,
+        snapshot: Option<Uuid>,
+        by: &str,
+        via: &str,
+    ) -> Result<Value, RepositoryError> {
+        let (question, context_passage, by, via) = (
+            question.to_string(),
+            context_passage.to_string(),
+            by.to_string(),
+            via.to_string(),
+        );
+        self.with_client(move |c| {
+            let id = Uuid::new_v4();
+            c.execute(
+                "INSERT INTO library_questions (id, policy_id, question, context_passage, snapshot_id, asked_by, asked_via) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                &[&id, &policy, &question, &context_passage, &snapshot, &by, &via],
+            )?;
+            Ok(json!({ "id": id, "policy_id": policy, "question": question, "asked_by": by, "asked_via": via }))
+        })
+    }
+
+    /// Every open question, with the policy it belongs to.
+    pub fn library_open_questions_all(&self) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(|c| {
+            let rows = c.query(
+                &format!("SELECT q.id, q.policy_id, p.title, q.question, q.context_passage, q.snapshot_id, q.asked_by, q.asked_via, {} FROM library_questions q JOIN library_policies p ON p.id = q.policy_id WHERE q.answer IS NULL ORDER BY q.asked_at, q.id", ts("q.asked_at")),
+                &[],
+            )?;
+            Ok(rows
+                .iter()
+                .map(|r| json!({ "id": r.get::<_, Uuid>(0), "policy_id": r.get::<_, Uuid>(1), "policy_title": r.get::<_, String>(2), "question": r.get::<_, String>(3), "context_passage": r.get::<_, String>(4), "snapshot_id": r.get::<_, Option<Uuid>>(5), "asked_by": r.get::<_, String>(6), "asked_via": r.get::<_, String>(7), "asked_at": r.get::<_, String>(8) }))
+                .collect())
+        })
+    }
+
+    /// Published rules whose statement or `applies_to` contains the query, and whose `applies_to` contains the second filter.
+    /// A rule in any other status is never returned.
+    pub fn library_published_rules(
+        &self,
+        query: &str,
+        applies_to: &str,
+    ) -> Result<Vec<Value>, RepositoryError> {
+        let like = |t: &str| {
+            format!(
+                "%{}%",
+                t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+            )
+        };
+        let (query, applies_to) = (like(query), like(applies_to));
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT r.id, r.key, r.statement, r.applies_to, p.id, p.key, p.title FROM library_rules r JOIN library_policies p ON p.id = r.policy_id WHERE r.status = 'Published' AND (r.statement ILIKE $1 OR r.applies_to ILIKE $1) AND r.applies_to ILIKE $2 ORDER BY p.title, r.key LIMIT 50",
+                &[&query, &applies_to],
+            )?;
+            Ok(rows
+                .iter()
+                .map(|r| json!({ "id": r.get::<_, Uuid>(0), "key": r.get::<_, String>(1), "statement": r.get::<_, String>(2), "applies_to": r.get::<_, String>(3), "policy_id": r.get::<_, Uuid>(4), "policy_key": r.get::<_, String>(5), "policy_title": r.get::<_, String>(6) }))
+                .collect())
+        })
+    }
 }
