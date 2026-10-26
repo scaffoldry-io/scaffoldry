@@ -7,6 +7,9 @@ use scaffoldry_core::ledger::DecisionType;
 
 pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/admin/overview"),
+    ("POST", "/admin/library/policies/{id}/rules/{key}/bindings"),
+    ("DELETE", "/admin/library/bindings/{id}"),
+    ("GET", "/admin/library/catalog"),
     ("GET", "/admin/authority"),
     ("POST", "/admin/authority/impact"),
     ("POST", "/admin/authority/changes"),

@@ -478,6 +478,110 @@ impl PostgresRepository {
         let (answer, by) = (answer.to_string(), by.to_string());
         self.with_client(move |c| Ok(c.execute("UPDATE library_questions SET answer = $2, answered_by = $3, answered_at = NOW() WHERE id = $1 AND answer IS NULL", &[&id, &answer, &by])? == 1))
     }
+    // --- phase 4: bindings and the library people read ------------------------------------------------------------
+
+    /// Whether a policy has any rule of this key, in any status.
+    pub fn library_rule_key_exists(&self, policy: Uuid, key: &str) -> Result<bool, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |c| Ok(c.query_opt("SELECT 1 FROM library_rules WHERE policy_id = $1 AND key = $2 LIMIT 1", &[&policy, &key])?.is_some()))
+    }
+
+    pub fn library_policy_by_key(&self, key: &str) -> Result<Option<Value>, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |c| Ok(c.query_opt(&format!("{} WHERE key = $1", policy_select()), &[&key])?.map(|r| policy_of(&r))))
+    }
+
+    pub fn library_add_binding(&self, policy: Uuid, rule_key: &str, kind: &str, target: &str, by: &str) -> Result<Value, RepositoryError> {
+        let (rule_key, kind, target, by) = (rule_key.to_string(), kind.to_string(), target.to_string(), by.to_string());
+        self.with_client(move |c| {
+            let id = Uuid::new_v4();
+            c.execute("INSERT INTO library_bindings (id, rule_key_policy_id, rule_key, target_kind, target_ref, created_by) VALUES ($1, $2, $3, $4, $5, $6)", &[&id, &policy, &rule_key, &kind, &target, &by])?;
+            Ok(json!({ "id": id, "policy_id": policy, "rule_key": rule_key, "target_kind": kind, "target_ref": target, "created_by": by }))
+        })
+    }
+
+    pub fn library_binding(&self, id: Uuid) -> Result<Option<(Uuid, Value)>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query_opt("SELECT rule_key_policy_id, rule_key, target_kind, target_ref, created_by FROM library_bindings WHERE id = $1", &[&id])?.map(|r| {
+                (r.get::<_, Uuid>(0), json!({ "id": id, "policy_id": r.get::<_, Uuid>(0), "rule_key": r.get::<_, String>(1), "target_kind": r.get::<_, String>(2), "target_ref": r.get::<_, String>(3), "created_by": r.get::<_, String>(4) }))
+            }))
+        })
+    }
+
+    pub fn library_delete_binding(&self, id: Uuid) -> Result<bool, RepositoryError> {
+        self.with_client(move |c| Ok(c.execute("DELETE FROM library_bindings WHERE id = $1", &[&id])? == 1))
+    }
+
+    /// Every binding of a policy.
+    pub fn library_bindings_of(&self, policy: Uuid) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query("SELECT id, rule_key, target_kind, target_ref FROM library_bindings WHERE rule_key_policy_id = $1 ORDER BY created_at, id", &[&policy])?
+                .iter()
+                .map(|r| json!({ "id": r.get::<_, Uuid>(0), "rule_key": r.get::<_, String>(1), "target_kind": r.get::<_, String>(2), "target_ref": r.get::<_, String>(3) }))
+                .collect())
+        })
+    }
+
+    /// The first rule bound to a target: `(policy key, rule key)`.
+    pub fn library_rule_bound_to(&self, kind: &str, target: &str) -> Result<Option<(String, String)>, RepositoryError> {
+        let (kind, target) = (kind.to_string(), target.to_string());
+        self.with_client(move |c| {
+            Ok(c.query_opt("SELECT p.key, b.rule_key FROM library_bindings b JOIN library_policies p ON p.id = b.rule_key_policy_id WHERE b.target_kind = $1 AND b.target_ref = $2 ORDER BY b.created_at, b.id LIMIT 1", &[&kind, &target])?
+                .map(|r| (r.get(0), r.get(1))))
+        })
+    }
+
+    /// Published rules in `policies`, by policy title and key. `query` matches the statement or `applies_to`.
+    pub fn library_published_in(&self, policies: &[Uuid], query: &str, policy_key: &str, limit: i64, offset: i64) -> Result<Vec<Value>, RepositoryError> {
+        let escape = |t: &str| format!("%{}%", t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let (policies, like, policy_key) = (policies.to_vec(), escape(query), policy_key.to_string());
+        self.with_client(move |c| {
+            let rows = c.query(
+                &format!(
+                    "{} WHERE r.status = 'Published' AND r.policy_id = ANY($1) AND (r.statement ILIKE $2 OR r.applies_to ILIKE $2) AND ($3 = '' OR p.key = $3) ORDER BY p.title, p.key, r.key LIMIT $4 OFFSET $5",
+                    rule_select_with_policy()
+                ),
+                &[&policies, &like, &policy_key, &limit, &offset],
+            )?;
+            Ok(rows.iter().map(rule_with_policy_of).collect())
+        })
+    }
+
+    /// The published rule of a key.
+    pub fn library_published_rule(&self, policy: Uuid, key: &str) -> Result<Option<Uuid>, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |c| Ok(c.query_opt("SELECT id FROM library_rules WHERE policy_id = $1 AND key = $2 AND status = 'Published'", &[&policy, &key])?.map(|r| r.get(0))))
+    }
+
+    /// Every version of a key that was published, newest first, with who decided it.
+    pub fn library_rule_history(&self, policy: Uuid, key: &str) -> Result<Vec<Value>, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |c| {
+            Ok(c.query(
+                &format!("SELECT version, statement, status, decided_by, {}, decision_note FROM library_rules WHERE policy_id = $1 AND key = $2 AND status IN ('Published', 'Superseded', 'Retired') ORDER BY version DESC", ts("decided_at")),
+                &[&policy, &key],
+            )?
+            .iter()
+            .map(|r| json!({ "version": r.get::<_, i32>(0), "statement": r.get::<_, String>(1), "status": r.get::<_, String>(2), "decided_by": r.get::<_, Option<String>>(3), "decided_at": r.get::<_, Option<String>>(4), "decision_note": r.get::<_, String>(5) }))
+            .collect())
+        })
+    }
+
+    /// Published rules of one policy, by key.
+    pub fn library_published_of(&self, policy: Uuid) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query(&format!("{} WHERE r.status = 'Published' AND r.policy_id = $1 ORDER BY r.key", rule_select_with_policy()), &[&policy])?.iter().map(rule_with_policy_of).collect())
+        })
+    }
+}
+
+fn rule_select_with_policy() -> String {
+    format!("SELECT r.id, r.policy_id, r.key, r.version, r.statement, r.applies_to, p.key, p.title, {} FROM library_rules r JOIN library_policies p ON p.id = r.policy_id", ts("p.last_reviewed_at"))
+}
+
+fn rule_with_policy_of(r: &postgres::Row) -> Value {
+    json!({ "id": r.get::<_, Uuid>(0), "policy_id": r.get::<_, Uuid>(1), "rule_key": r.get::<_, String>(2), "version": r.get::<_, i32>(3), "statement": r.get::<_, String>(4), "applies_to": r.get::<_, String>(5),
+            "policy_key": r.get::<_, String>(6), "policy_title": r.get::<_, String>(7), "last_reviewed_at": r.get::<_, Option<String>>(8) })
 }
 
 fn question_of(r: &postgres::Row) -> Value {
