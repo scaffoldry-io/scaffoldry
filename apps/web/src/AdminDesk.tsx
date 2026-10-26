@@ -682,7 +682,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
+  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "authority" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
     if (typeof window !== "undefined") {
       const p = window.location.pathname;
       if (p === "/admin/jobs") return "jobs";
@@ -693,6 +693,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       if (p === "/admin/people") return "people";
       if (p === "/admin/positions") return "positions";
       if (p === "/admin/access") return "access";
+      if (p === "/admin/authority") return "authority";
       if (p === "/admin/workspaces") return "workspaces";
       if (p === "/admin/settings") return "settings";
     }
@@ -2285,6 +2286,25 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                     </svg>
                     {navRailExpanded && <span>Access</span>}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="admin-authority-tab-btn"
+                    onClick={() => {
+                      setAdminTab("authority");
+                      navigateTo("/admin/authority");
+                    }}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "authority"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    {navRailExpanded && <span>Decision authority</span>}
                   </button>
 
                   <button

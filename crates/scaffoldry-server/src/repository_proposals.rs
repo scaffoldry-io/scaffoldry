@@ -268,6 +268,18 @@ impl PostgresRepository {
         })
     }
 
+    /// Proposals made in the last `days` days in any of `workspaces`, oldest first.
+    pub fn proposals_in(&self, workspaces: &[String], days: i32, limit: i64) -> Result<Vec<ProposalRow>, RepositoryError> {
+        let workspaces = workspaces.to_vec();
+        self.with_client(move |client| {
+            Ok(client
+                .query(&format!("SELECT {COLUMNS} FROM app_proposals WHERE workspace_id = ANY($1) AND created_at >= NOW() - make_interval(days => $2) ORDER BY created_at, id LIMIT $3"), &[&workspaces, &days, &limit])?
+                .iter()
+                .map(row_of)
+                .collect())
+        })
+    }
+
     /// Every pending proposal, oldest first, for the list of those nobody can decide.
     pub fn pending_proposals(&self, limit: i64) -> Result<Vec<ProposalRow>, RepositoryError> {
         self.with_client(move |client| {

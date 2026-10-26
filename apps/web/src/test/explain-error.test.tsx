@@ -157,6 +157,11 @@ describe("UX standards phase 2: errors that explain", () => {
         },
       ],
       [
+        "authority_loosens",
+        new ApiError(400, "That would ask for less than the built-in answer.", { code: "authority_loosens" }),
+        { message: "That would ask for less than the built-in answer.", next: "Ask for the same or more. The built-in answer is the lowest a unit can set." },
+      ],
+      [
         "citation_not_found",
         new ApiError(400, "That passage is not in the source.", { code: "citation_not_found" }),
         { message: "That passage is not in the source.", next: "Copy the passage word for word from the stored text of the source." },

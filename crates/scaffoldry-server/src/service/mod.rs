@@ -6,6 +6,7 @@
 
 pub mod governance;
 pub mod authority;
+pub mod authority_changes;
 pub mod library;
 pub mod library_review;
 pub mod library_tools;
@@ -104,6 +105,7 @@ pub const ERROR_CODES: &[&str] = &[
     "impersonation_not_synthetic",
     "grant_conflict",
     "citation_not_found",
+    "authority_loosens",
 ];
 
 /// What a person who tried to act as a real person should do instead.
@@ -167,6 +169,8 @@ pub enum ServiceError {
     ImpersonationNotSynthetic(String),
     /// A cited passage is not in the snapshot it names. A passage is copied word for word.
     CitationNotFound(String),
+    /// A change to the decision-authority matrix would ask for less than the built-in answer.
+    AuthorityLoosens(String),
     /// A preview of a proposal tried to change something. A preview only reads.
     PreviewReadOnly(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
@@ -226,7 +230,7 @@ impl ServiceError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -257,6 +261,7 @@ impl ServiceError {
             Self::ImpersonationNotSynthetic(_) => "impersonation_not_synthetic",
             Self::GrantConflict(_) => "grant_conflict",
             Self::CitationNotFound(_) => "citation_not_found",
+            Self::AuthorityLoosens(_) => "authority_loosens",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
@@ -291,6 +296,7 @@ impl ServiceError {
             | Self::ImpersonationNotSynthetic(msg)
             | Self::GrantConflict(msg)
             | Self::CitationNotFound(msg)
+            | Self::AuthorityLoosens(msg)
             | Self::PreviewReadOnly(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)

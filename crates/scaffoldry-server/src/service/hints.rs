@@ -74,6 +74,7 @@ pub fn hint_for(err: &ServiceError) -> String {
         "undo_conflict" => "Call get_record_history to see what changed since, then decide what to keep.",
         "position_full" => "Call list_workspaces to find the unit, then ask a Platform Admin to replace the holder.",
         "impersonation_not_synthetic" => "Open the app and use view-as to see what that person sees. Only synthetic people can be acted as.",
+        "authority_loosens" => "Ask for the same or more: a flagged check is at least Moderate, and a Moderate or High change needs at least a second person.",
         "citation_not_found" => "Copy the passage exactly from the snapshot, and read it again with read_library_snapshot if it has changed.",
         "grant_conflict" => "One person may not hold both. Give it to someone else, or ask a Platform Admin to change the setting access.conflicts.",
         "view_as_read_only" => "Exit the view to make changes. Call list_records to keep reading in the meantime.",

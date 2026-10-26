@@ -52,6 +52,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "This position already has its holders.", next: "Replace a current holder, or raise the limit on the position type." };
     case "undo_conflict":
       return { message: "Someone changed this since. Undo stopped." };
+    case "authority_loosens":
+      return { message: e.message, next: "Ask for the same or more. The built-in answer is the lowest a unit can set." };
     case "citation_not_found":
       return { message: e.message, next: "Copy the passage word for word from the stored text of the source." };
     case "grant_conflict":
