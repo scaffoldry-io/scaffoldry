@@ -106,6 +106,34 @@ export function Proposals({ workspaceId, viewerEppn, onPreview }: ProposalsProps
   );
 }
 
+/** Why a decider is needed, who it is, and what would avoid it. Every sentence comes from the server. */
+function WhoDecides({ authority: a }: { authority: NonNullable<ProposalRow["authority"]> }) {
+  return (
+    <section aria-labelledby="proposal-who" data-testid="who-decides">
+      <h3 id="proposal-who" className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+        Who decides
+      </h3>
+      <p className="mt-2">{a.path_sentence}</p>
+      {a.path === "approver" && a.no_approver && (
+        <p className="mt-1 text-amber-700 dark:text-amber-400">
+          Nobody can decide this yet. Ask {a.contact.length > 0 ? a.contact.join(", ") : "a Platform Admin"} to assign the position.
+        </p>
+      )}
+      {a.path === "approver" && !a.no_approver && (
+        <p className="mt-1">Can decide: {a.resolved.map((r) => r.display_name || r.eppn).join(", ")}.</p>
+      )}
+      <ul className="mt-2 list-disc pl-5 space-y-1">
+        {a.reasons_detail.map((r, i) => (
+          <li key={i}>
+            {r.sentence}
+            {r.remedy && <span className="block text-xs text-gray-500">To avoid this: {r.remedy}</span>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function ProposalDetail({
   proposal,
   viewerEppn,
@@ -140,6 +168,8 @@ function ProposalDetail({
           ))}
         </ul>
       </section>
+
+      {proposal.authority && <WhoDecides authority={proposal.authority} />}
 
       <section aria-labelledby="proposal-checks">
         <h3 id="proposal-checks" className="text-xs font-semibold uppercase tracking-wide text-gray-500">

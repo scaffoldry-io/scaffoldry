@@ -760,6 +760,15 @@ pub(crate) fn digest_of(p: &ProposalRow, state: &SharedState) -> Result<String, 
 }
 
 pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
+    propose_with(caller, input, false, state)
+}
+
+/// Runs every check `propose` runs and says what the change would need, without storing anything.
+pub fn dry_run(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
+    propose_with(caller, input, true, state)
+}
+
+fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, state: &SharedState) -> Result<Value, ServiceError> {
     let repo = repo(state)?;
     let ws = state
         .workspaces
@@ -837,7 +846,19 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
     let mut stored_checks = json!({ "checks": checks, "changes": changes });
     // What the builder is told: the tier, the path, who can give it, and why. Decided again when the proposal is.
     let need = crate::service::authority::requirement_for(state, &ws.id, &stored_checks, &caller.eppn)?;
-    stored_checks["authority"] = need.to_json();
+    stored_checks["authority"] = need.to_json(state);
+    if dry_run {
+        return Ok(json!({
+            "dry_run": true,
+            "proposal_id": Value::Null,
+            "workspace_id": ws.id,
+            "app_slug": slug,
+            "summary": input.summary,
+            "checks": stored_checks["checks"],
+            "changes": stored_checks["changes"],
+            "authority": stored_checks["authority"],
+        }));
+    }
     let row = ProposalRow {
         id: uuid::Uuid::new_v4(),
         workspace_id: ws.id.clone(),
@@ -899,8 +920,18 @@ fn view(p: &ProposalRow, state: &SharedState) -> Result<Value, ServiceError> {
         "digest": digest_of(p, state)?,
         "checks": checks,
         "changes": p.checks["changes"],
-        "authority": p.checks["authority"],
+        "authority": authority_now(p, state),
     }))
+}
+
+/// What the proposal needs from the tables as they are now while it is pending, and what was recorded once it is not.
+fn authority_now(p: &ProposalRow, state: &SharedState) -> Value {
+    if p.status == "Pending" {
+        if let Ok(need) = crate::service::authority::requirement_for(state, &p.workspace_id, &p.checks, &p.proposed_by) {
+            return need.to_json(state);
+        }
+    }
+    p.checks["authority"].clone()
 }
 
 pub fn list(workspace_id: &str, state: &SharedState) -> Result<Value, ServiceError> {

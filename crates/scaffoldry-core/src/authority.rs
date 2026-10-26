@@ -78,6 +78,24 @@ pub const FLAGGED: &[(&str, &str)] = &[
     ("mask_weakened", "The change shows more of a masked field than before."),
 ];
 
+/// What would avoid each flagged check, as one sentence. `None` where there is honestly nothing to change but the proposal
+/// itself. A test keeps this list in step with `FLAGGED`.
+pub const REMEDIES: &[(&str, Option<&str>)] = &[
+    ("sensitivity", Some("Leave the sensitive field out of this change, or mark it not sensitive if it holds no sensitive data.")),
+    ("data_loss", Some("Hide the field instead of removing it.")),
+    ("page_sensitivity", Some("Have the page read only fields that are not sensitive.")),
+    ("page_dependencies", Some("Change the page in the same proposal, or keep what it depends on.")),
+    ("rule_effects", Some("Make the rule notify only, without changing records or sending data.")),
+    ("access_loosened", Some("Keep access as it is, or narrow it.")),
+    ("coordinates_widened", None),
+    ("mask_weakened", None),
+];
+
+/// What would avoid the flagged check `name`, if anything.
+pub fn remedy_for(name: &str) -> Option<&'static str> {
+    REMEDIES.iter().find(|(n, _)| *n == name).and_then(|(_, r)| *r)
+}
+
 /// What every flagged check raises to, before any table.
 pub const BUILT_IN_CHECK_TIER: Tier = Tier::Moderate;
 
@@ -128,6 +146,11 @@ pub struct Requirement {
 }
 
 impl Requirement {
+    /// What the path asks for, in one sentence.
+    pub fn path_sentence(&self) -> String {
+        format!("This needs {}.", path_words(self.path))
+    }
+
     /// The reasons as sentences, with each `{unit}` replaced by the unit's name.
     pub fn sentences(&self, name_of: &dyn Fn(Uuid) -> String) -> Vec<String> {
         self.reasons
@@ -229,6 +252,22 @@ mod tests {
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn every_flagged_check_has_a_remedy_or_an_honest_none_and_no_other_check_does() {
+        let flagged: Vec<&str> = FLAGGED.iter().map(|(n, _)| *n).collect();
+        let remedied: Vec<&str> = REMEDIES.iter().map(|(n, _)| *n).collect();
+        assert_eq!(flagged, remedied);
+        assert_eq!(remedy_for("coordinates_widened"), None);
+        assert!(remedy_for("sensitivity").is_some());
+        assert_eq!(remedy_for("nothing"), None);
+    }
+
+    #[test]
+    fn the_path_is_said_in_one_sentence() {
+        let r = required(&raised(&["sensitivity"]), &[], &[], &[]);
+        assert_eq!(r.path_sentence(), "This needs a second owner or admin, other than the proposer.");
     }
 
     fn raised(names: &[&str]) -> Vec<String> {
