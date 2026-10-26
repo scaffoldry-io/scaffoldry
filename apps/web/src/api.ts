@@ -785,6 +785,43 @@ export interface LibraryRuleReview {
   submitted_via: "agent" | "person";
 }
 
+export interface AuthorityTier {
+  tier: "Low" | "Moderate" | "High";
+  raised_by: { check: string; sentence: string }[];
+  path: "direct" | "second_person" | "approver";
+  approver: Record<string, unknown> | null;
+  resolved: { eppn: string; display_name: string }[];
+  source: { kind: "built_in" | "institution" | "unit"; organization_id?: string; name?: string };
+}
+
+export interface AuthorityView {
+  organization_id: string;
+  unit_name: string;
+  tiers: AuthorityTier[];
+  rows: { organization_id: string; unit_name: string; tier: string; path: string; approver: Record<string, unknown> | null; has_effect: boolean }[];
+  signals: { organization_id: string; unit_name: string; check_name: string; tier: string }[];
+}
+
+export interface AuthorityChange {
+  id: string;
+  organization_id: string;
+  unit_name?: string | null;
+  change: Record<string, unknown>;
+  reason: string;
+  status: "Pending" | "Confirmed" | "Rejected" | "Withdrawn";
+  proposed_by: string;
+  decided_by: string | null;
+}
+
+export interface AuthorityImpact {
+  proposals: number;
+  window_days: number;
+  before: { direct: number; second_person: number; approver: number };
+  after: { direct: number; second_person: number; approver: number };
+  load: { eppn: string; display_name: string; before: number; after: number }[];
+  unassigned: { proposal_id: string; workspace_id: string; summary: string }[];
+}
+
 export interface AccessGrantRow {
   id: number;
   holder_kind: string;
@@ -1107,6 +1144,19 @@ export const apiClient = {
 
   accessExplain: async (person: string, object: string) =>
     request<AccessExplanation>(`/access/explain?person=${encodeURIComponent(person)}&object=${encodeURIComponent(object)}`),
+
+  authorityShow: async (unit: string) => request<AuthorityView>(`/admin/authority?organization_id=${encodeURIComponent(unit)}`),
+
+  authorityChanges: async (unit: string) => request<{ changes: AuthorityChange[] }>(`/admin/authority/changes?organization_id=${encodeURIComponent(unit)}`),
+
+  authorityImpact: async (body: { organization_id: string; change: Record<string, unknown> }) =>
+    request<AuthorityImpact>("/admin/authority/impact", { method: "POST", body: JSON.stringify(body) }),
+
+  authorityPropose: async (body: { organization_id: string; change: Record<string, unknown>; reason: string }) =>
+    request<{ change: AuthorityChange }>("/admin/authority/changes", { method: "POST", body: JSON.stringify(body) }),
+
+  authorityDecide: async (id: string, decision: "confirm" | "reject", note: string) =>
+    request<{ change: AuthorityChange }>(`/admin/authority/changes/${encodeURIComponent(id)}/decide`, { method: "POST", body: JSON.stringify({ decision, note }) }),
 
   libraryRuleReview: async (id: string) => request<LibraryRuleReview>(`/library/rules/${encodeURIComponent(id)}/review`),
 
