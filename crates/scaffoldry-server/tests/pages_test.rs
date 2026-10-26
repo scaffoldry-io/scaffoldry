@@ -212,7 +212,7 @@ async fn list_pages_names_each_page_its_kind_and_its_grants() {
     let w = world().await;
     let view = json!({ "id": "list", "title": "List", "kind": { "View": { "view_id": "all" } } });
     publish(&w, vec![view, custom_page(SOURCE, &["title"], &["title"], true, false)], vec![SOURCE]).await.expect("published");
-    let listed = tool(&w, &w.owner, "list_pages", json!({ "app_slug": w.slug })).await.expect("list_pages");
+    let listed = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug })).await.expect("the pages");
     let pages = listed["pages"].as_array().expect("pages");
     assert_eq!(pages.len(), 2);
     let board = pages.iter().find(|p| p["id"] == "board").unwrap();
@@ -444,7 +444,7 @@ async fn a_bundle_is_rendered_as_a_bundle() {
     let html = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug, "page_id": "board" })).await.expect("get_page")["html"].as_str().unwrap().to_string();
     assert!(html.contains("BUNDLE-MARKER"));
     assert!(html.contains("\"format\":\"bundle\""), "the loader is told to run it as written");
-    let listed = tool(&w, &w.owner, "list_pages", json!({ "app_slug": w.slug })).await.unwrap();
+    let listed = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug })).await.unwrap();
     assert_eq!(listed["pages"][0]["format"], "bundle");
     assert_eq!(listed["pages"][0]["dependencies"][0]["name"], "mini");
 }

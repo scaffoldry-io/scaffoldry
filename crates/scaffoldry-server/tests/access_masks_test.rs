@@ -274,7 +274,7 @@ async fn history_shows_masks_to_a_reader_who_is_not_cleared() {
     let entries = |token: String| {
         let w = &w;
         let id = id.clone();
-        async move { tool(w, &token, "get_record_history", json!({ "app_slug": w.slug, "record_id": id })).await.expect("history") }
+        async move { tool(w, &token, "get_record", json!({ "app_slug": w.slug, "record_id": id, "history": true })).await.expect("history") }
     };
     let mine = entries(w.viewer.clone()).await;
     let change = mine["entries"].as_array().unwrap().iter().find_map(|e| e["changes"].get("dob").cloned()).unwrap_or_else(|| panic!("a change to dob in {mine}"));

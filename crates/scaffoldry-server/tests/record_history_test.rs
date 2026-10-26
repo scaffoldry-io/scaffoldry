@@ -414,7 +414,7 @@ async fn the_mcp_tool_masks_the_same_way() {
     let call = |token: String| {
         let (app, slug, id) = (f.app.clone(), f.slug.clone(), id.clone());
         async move {
-            let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "get_record_history", "arguments": { "app_slug": slug, "record_id": id } } });
+            let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "get_record", "arguments": { "app_slug": slug, "record_id": id, "history": true } } });
             let (_, v) = send(&app, "POST", "/api/mcp", &token, &[], Some(payload)).await;
             v["result"]["structuredContent"].clone()
         }

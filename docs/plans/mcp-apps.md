@@ -471,7 +471,7 @@ The shell's first element in `<head>`:
 
 | Tool | Scope | Behavior |
 | --- | --- | --- |
-| `list_pages` | `App(Read)` | id, title, kind, and grants for each page |
+| `list_pages` (now `get_page` with no `page_id`) | `App(Read)` | id, title, kind, and grants for each page |
 | `get_page` | `App(Read)` | `{ "html": render_page(...) }` for a `Custom` page. `BadRequest` for a `View` page |
 | `page_call` | `App(Read)` | Arguments `app_slug`, `page_id`, `op` of `list`, `get`, `create`, `update`, or `remove`, and that operation's arguments |
 

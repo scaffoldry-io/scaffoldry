@@ -89,6 +89,14 @@ pub static TOOLS: &[Tool] = &[
         run: run_list_datasets,
     },
     Tool {
+        name: "governance_report",
+        description: "Show a governance report. ledger: verify the hash chain of every decision from genesis. oscal: the OSCAL 1.1.2 component-definition with audit proofs. framework: the component catalog's JSON Schema, theme tokens and classification boundaries.",
+        input_schema: schema_governance_report,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_governance_report,
+    },
+    Tool {
         name: "simulate_cedar_policy",
         description: "Ask the Cedar policy engine for its decision on an action over a record. Platform Admin only. Changes nothing.",
         input_schema: schema_simulate_cedar_policy,
@@ -103,30 +111,6 @@ pub static TOOLS: &[Tool] = &[
         scope: Scope::SignedIn,
         read_only: false,
         run: run_record_governance_decision,
-    },
-    Tool {
-        name: "verify_decision_ledger",
-        description: "Verify the hash chain of every recorded governance decision from genesis.",
-        input_schema: schema_empty,
-        scope: Scope::SignedIn,
-        read_only: true,
-        run: run_verify_decision_ledger,
-    },
-    Tool {
-        name: "export_oscal_compliance",
-        description: "Generate the OSCAL 1.1.2 component-definition with audit proofs.",
-        input_schema: schema_empty,
-        scope: Scope::SignedIn,
-        read_only: true,
-        run: run_export_oscal_compliance,
-    },
-    Tool {
-        name: "get_framework_spec",
-        description: "Retrieve the component catalog's JSON Schema, theme tokens, and data classification boundaries.",
-        input_schema: schema_empty,
-        scope: Scope::SignedIn,
-        read_only: true,
-        run: run_get_framework_spec,
     },
     Tool {
         name: "list_apps",
@@ -170,31 +154,15 @@ pub static TOOLS: &[Tool] = &[
     },
 Tool {
         name: "get_record",
-        description: "Get one record, with its version.",
+        description: "Get one record with its version, or with history: true, the changes to it, newest first, with who made each. A field you may not read shows only that it changed.",
         input_schema: schema_get_record,
         scope: Scope::App(AppAction::Read),
         read_only: true,
         run: run_get_record,
     },
     Tool {
-        name: "get_record_history",
-        description: "List the changes to a record, newest first, with who made each. A field you may not read shows only that it changed.",
-        input_schema: schema_get_record_history,
-        scope: Scope::App(AppAction::Read),
-        read_only: true,
-        run: run_get_record_history,
-    },
-    Tool {
-        name: "list_pages",
-        description: "List the pages of an app: id, title, kind, and for a custom page its grants, format and libraries.",
-        input_schema: schema_describe_app,
-        scope: Scope::App(AppAction::Read),
-        read_only: true,
-        run: run_list_pages,
-    },
-    Tool {
         name: "get_page",
-        description: "Get a custom page as one HTML document for a sandboxed frame. It holds no data. It uses page_call.",
+        description: "Get a custom page as one HTML document for a sandboxed frame; it holds no data and uses page_call. Without page_id, list the app's pages: id, title, kind, and for a custom page its grants, format and libraries.",
         input_schema: schema_get_page,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -740,16 +708,21 @@ fn run_record_governance_decision(caller: &AuthUser, _origin: &Origin, args: Val
     }))
 }
 
-fn run_verify_decision_ledger(_caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    crate::service::governance::verify_decision_ledger(state)
+fn schema_governance_report() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "report": { "type": "string", "enum": ["ledger", "oscal", "framework"] } },
+        "required": ["report"]
+    })
 }
 
-fn run_export_oscal_compliance(_caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    Ok(state.export_oscal_component_definition())
-}
-
-fn run_get_framework_spec(_caller: &AuthUser, _origin: &Origin, _args: Value, _state: &SharedState) -> Result<Value, ServiceError> {
-    Ok(crate::routes::framework::build_framework_spec_json())
+fn run_governance_report(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    match required_str(&args, "report")? {
+        "ledger" => crate::service::governance::verify_decision_ledger(state),
+        "oscal" => Ok(state.export_oscal_component_definition()),
+        "framework" => Ok(crate::routes::framework::build_framework_spec_json()),
+        other => Err(ServiceError::BadRequest(format!("Argument 'report' is ledger, oscal or framework, not '{other}'"))),
+    }
 }
 
 fn schema_list_views() -> Value {
@@ -937,9 +910,9 @@ fn schema_get_page() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "page_id": { "type": "string", "description": "Page id from list_pages" }
+            "page_id": { "type": "string", "description": "Leave out to list the pages" }
         },
-        "required": ["app_slug", "page_id"]
+        "required": ["app_slug"]
     })
 }
 
@@ -948,7 +921,7 @@ fn schema_page_call() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "page_id": { "type": "string", "description": "Page id from list_pages" },
+            "page_id": { "type": "string", "description": "Page id from get_page" },
             "op": { "type": "string", "description": "list, get, create, update, remove, settings_get, or settings_set" },
             "table_id": { "type": "string" },
             "record_id": { "type": "string", "description": "For get, update, remove" },
@@ -965,12 +938,12 @@ fn schema_page_call() -> Value {
     })
 }
 
-fn run_list_pages(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    crate::service::pages::list_pages(required_str(&args, "app_slug")?, state)
-}
-
 fn run_get_page(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    crate::service::pages::get_page(required_str(&args, "app_slug")?, required_str(&args, "page_id")?, state)
+    let slug = required_str(&args, "app_slug")?;
+    match args.get("page_id").and_then(Value::as_str) {
+        Some(page) => crate::service::pages::get_page(slug, page, state),
+        None => crate::service::pages::list_pages(slug, state),
+    }
 }
 
 fn run_page_call(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -998,7 +971,10 @@ fn schema_get_record() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "record_id": { "type": "string" }
+            "record_id": { "type": "string" },
+            "history": { "type": "boolean", "description": "Return the changes instead" },
+            "limit": { "type": "integer", "description": "With history" },
+            "cursor": { "type": "string", "description": "With history" }
         },
         "required": ["app_slug", "record_id"]
     })
@@ -1065,6 +1041,10 @@ struct ListRecordsArgs {
 struct GetRecordArgs {
     app_slug: String,
     record_id: String,
+    #[serde(default)]
+    history: bool,
+    limit: Option<usize>,
+    cursor: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1147,7 +1127,24 @@ fn run_list_records(caller: &AuthUser, origin: &Origin, args: Value, state: &Sha
 
 fn run_get_record(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: GetRecordArgs = parse(args)?;
-    to_value(&records::get_record(caller, &args.app_slug, &args.record_id, state)?)
+    if !args.history {
+        if args.limit.is_some() || args.cursor.is_some() {
+            return Err(ServiceError::BadRequest("Arguments 'limit' and 'cursor' are for history: true".to_string()));
+        }
+        return to_value(&records::get_record(caller, &args.app_slug, &args.record_id, state)?);
+    }
+    let limit = args.limit.unwrap_or(crate::service::history::DEFAULT_PAGE);
+    if limit == 0 || limit > MAX_ROWS {
+        return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
+    }
+    let page = crate::service::history::record_history(
+        caller,
+        &args.app_slug,
+        &args.record_id,
+        crate::service::history::HistoryQuery { filter: Default::default(), cursor: args.cursor, limit },
+        state,
+    )?;
+    Ok(json!({ "entries": page.entries, "next_cursor": page.next_cursor }))
 }
 
 fn run_update_record(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1167,44 +1164,6 @@ fn run_delete_record(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
     let args: DeleteRecordArgs = parse(args)?;
     records::delete_record_checked(caller, origin, &args.app_slug, &args.record_id, args.version, state).map_err(stale_as_text)?;
     Ok(json!({ "deleted": true }))
-}
-
-fn schema_get_record_history() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "app_slug": { "type": "string" },
-            "record_id": { "type": "string", "description": "Record id" },
-            "limit": { "type": "integer", "description": "1 to 200. Default 50" },
-            "cursor": { "type": "string", "description": "Previous next_cursor" }
-        },
-        "required": ["app_slug", "record_id"]
-    })
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GetRecordHistoryArgs {
-    app_slug: String,
-    record_id: String,
-    limit: Option<usize>,
-    cursor: Option<String>,
-}
-
-fn run_get_record_history(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    let args: GetRecordHistoryArgs = parse(args)?;
-    let limit = args.limit.unwrap_or(crate::service::history::DEFAULT_PAGE);
-    if limit == 0 || limit > MAX_ROWS {
-        return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
-    }
-    let page = crate::service::history::record_history(
-        caller,
-        &args.app_slug,
-        &args.record_id,
-        crate::service::history::HistoryQuery { filter: Default::default(), cursor: args.cursor, limit },
-        state,
-    )?;
-    Ok(json!({ "entries": page.entries, "next_cursor": page.next_cursor }))
 }
 
 fn schema_propose_app_change() -> Value {
