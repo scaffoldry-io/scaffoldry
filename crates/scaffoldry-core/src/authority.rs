@@ -92,6 +92,9 @@ pub const REMEDIES: &[(&str, Option<&str>)] = &[
     ("access_loosened", Some("Keep access as it is, or narrow it.")),
     ("coordinates_widened", None),
     ("mask_weakened", None),
+    ("request_write", Some("Ask for the viewer role if reading is enough.")),
+    ("request_sensitive", None),
+    ("request_outside_unit", None),
 ];
 
 /// What would avoid the flagged check `name`, if anything.

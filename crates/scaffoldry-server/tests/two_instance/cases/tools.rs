@@ -20,6 +20,7 @@ pub fn add(m: &mut Entries) {
     m.insert("tool:delete_view".into(), case!(delete_view));
     m.insert("tool:cancel_job".into(), case!(cancel_job));
     m.insert("tool:propose_library_rules".into(), case!(propose_library_rules));
+    m.insert("tool:request_access".into(), case!(request_access));
     m.insert("tool:export_records".into(), files_case!(export_records));
 }
 
@@ -177,4 +178,14 @@ async fn propose_library_rules(w: World) -> Outcome {
     ensure(out["rules"][0]["stored"] == true, format!("A stores the rule: {out}"))?;
     let seen = status(w.rb("GET", &format!("/api/v1/admin/library/policies/{policy}"), ADMIN, None).await, StatusCode::OK, "B reads the policy")?;
     ensure(seen["rule_counts"]["Draft"] == 1, format!("B counts the draft the tool stored: {seen}"))
+}
+
+async fn request_access(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let who = person("p13tool");
+    make_user(&w, &who).await?;
+    let filed = w.tool_a(&who, "request_access", json!({ "object_kind": "app", "object_id": slug, "role": "viewer", "reason": "By tool", "days": 7 })).await?;
+    let id = filed["id"].as_str().ok_or("a request id")?.to_string();
+    let seen = status(w.rb("GET", "/api/v1/me/access/requests", &who, None).await, StatusCode::OK, "B lists the requests")?;
+    ensure(has(&seen, &id), format!("B shows the request the tool filed: {seen}"))
 }
