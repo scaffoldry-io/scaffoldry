@@ -27,6 +27,23 @@ Revisit when one of these is true:
 - Reviewers ask what a page does, and the grant sentence is not enough.
 - OpenUI Lang moves to a neutral body, or a second independent implementation of the spec exists.
 
+## Watching for a freeze
+
+`governance/scripts/audit-dependency-health.py` checks every direct dependency against its registry. It names a dependency stale after 365 days without a release, and frozen after 730 days, or when its newest release is deprecated or yanked. It is not a CI gate, because its answer changes with the date. A person runs it on a schedule (the pull request that adds it carries a weekly workflow to copy).
+
+OpenUI is young and has one owner, so it is watched more closely once it is a dependency. Each condition below opens a review. Phase 1 sets the first one in the script.
+
+| Condition | How it is seen |
+| --- | --- |
+| No release of `@openuidev/lang-core` or `@openuidev/react-lang` in 120 days. From March to October 2026, `lang-core` released about once a week | `STALE_DAYS_FOR` in the script, set in phase 1 |
+| An OpenUI package is deprecated on npm | The script reports it frozen |
+| A new version of OpenUI Lang breaks stored programs, against spec section 3 | Phase 2 test 3 fails on the upgrade |
+| A new version changes license | `audit-licenses.py` fails on the upgrade |
+| The repository is archived, or Thesys closes, is sold, or stops publishing the spec | A person. No registry reports it |
+| A React major version that `react-lang` does not support within 90 days of its release | The upgrade's own tests fail |
+
+When one trips, the answer is to freeze, not to remove. The vendored file keeps working, because it loads nothing at run time. After phase 4 the parser and the proposal checks are Scaffoldry's own. Only the browser renderer would need a successor. That is one loader branch, and the MIT license allows a fork. Phases 1 to 3 without phase 4 leave more to replace, which is one more reason decision 3 matters.
+
 ## What OpenUI is
 
 OpenUI is a set of npm packages under the MIT license. Its core is OpenUI Lang, a line-oriented language a model writes to describe a screen. One statement per line binds a name to a component call, a value, a query, or a mutation. A client parses the program and renders it with a component library the host defines. Queries and mutations call tools the host provides. The spec is three documents in `spec/` with 144 conformance fixture files.
@@ -103,6 +120,7 @@ This assessment read OpenUI's source to measure it, because the review asked for
 | OpenUI Lang 1.0 (Thesys) | Examined here. A published spec with fixtures, MIT, one vendor |
 | json-render (Vercel), A2UI (Google) | Named in OpenUI's own comparison. JSON formats from single vendors. Not examined in this session |
 | W3C, WHATWG, ISO, IETF | No published standard for a model-written declarative UI was found |
+| OpenSSF Scorecard, the `Maintained` check (Linux Foundation) | The published measure of whether a project is maintained. Its API was not reachable from this session's network, so the health script reads release dates from the registries instead. A person may add the Scorecard action to CI later |
 
 ## Conditional brief
 
@@ -130,6 +148,8 @@ Run only after decisions 1 and 2. Phase 4 also needs decision 3.
 Before this phase, a person sets `OPENUI_TELEMETRY_DISABLED=1` in four places: the web job in `ci.yml`, `build-agent.yml`, `deploy/Dockerfile.web`, and the dev container. Agents do not edit those files.
 
 Add exact pins of `@openuidev/lang-core`, `@openuidev/react-lang`, and `zod` to `apps/web` `devDependencies`. They stay in the workspace so `audit-licenses.py` reads their transitive licenses from the root `package-lock.json`. The pull request carries the `deps-approved` label.
+
+Add both OpenUI packages to `STALE_DAYS_FOR` in `governance/scripts/audit-dependency-health.py` at 120 days. An agent branch cannot change an existing `audit-*` script (`agent-guard.py`), so a person adds this entry.
 
 `apps/web/scripts/vendor-runtime.mjs` gains one entry, `openui.js`, global `OpenUI`, with `react` and `react/jsx-runtime` external to the shell's `React`. Commit the output under `crates/scaffoldry-server/src/ui/vendor/`. Record its size and the package versions in the session output.
 
