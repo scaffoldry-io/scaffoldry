@@ -25,7 +25,10 @@ export function ErrorState({
   const explained = error !== undefined ? explainError(error) : undefined;
   const message = givenMessage ?? explained?.message ?? "Something went wrong.";
   const next = givenNext ?? explained?.next;
-  const failure = error as { code?: string; status?: number } | undefined;
+  const failure = error as { code?: string; status?: number; policy?: { rule?: string } } | undefined;
+  // A denial whose policy is bound to a library rule links to the rule. The server gives an API address.
+  const ruleAddress = failure?.policy?.rule;
+  const policyRule = ruleAddress?.startsWith("/library/rules/") ? ruleAddress.replace("/library/rules/", "/policies/") : undefined;
   const code = givenCode ?? failure?.code;
   const status = givenStatus ?? failure?.status;
 
@@ -40,6 +43,13 @@ export function ErrorState({
         </span>
         <div className="flex-1">
           <p className="font-semibold text-sm">{message}</p>
+          {policyRule && (
+            <p className="mt-1 text-sm">
+              <a href={policyRule} className="underline text-red-800 dark:text-red-200">
+                Read the rule behind this
+              </a>
+            </p>
+          )}
           {next && (
             <p className="mt-1 text-sm text-red-700 dark:text-red-300">
               {next}

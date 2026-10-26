@@ -175,7 +175,7 @@ The rest of the access model, then the rules behind a decision and who decides. 
 | 96 | [policy-library.md](policy-library.md) | 3 | A person who did not submit a rule reviews it against its passage and publishes it | **COMPLETED** |
 | 97 | [authority.md](authority.md) | 1 | A change has a tier. A matrix says who decides. With no rows it behaves as it does today | **COMPLETED** |
 | 98 | [authority.md](authority.md) | 2 | The matrix in the console. Its effect on real proposals is shown before a change, and a second person confirms | **COMPLETED** |
-| 99 | [policy-library.md](policy-library.md) | 4 | Everyone reads the rules as sentences, linked to policy and source, marked Enforced or Guidance | |
+| 99 | [policy-library.md](policy-library.md) | 4 | Everyone reads the rules as sentences, linked to policy and source, marked Enforced or Guidance | **COMPLETED** |
 | 100 | [authority.md](authority.md) | 3 | The builder is told who decides, why, and what would change it. An agent can ask first | |
 | 101 | [access-model.md](access-model.md) | 13 | Anyone refused can request access in one step. Routine requests are approved by the institution's rules and expire. The rest go to the right person | |
 | 102 | [access-model.md](access-model.md) | 14 | An administrator's AI tool drafts access changes from computed suggestions. The server shows sentences and impact. A person confirms | |
