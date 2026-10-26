@@ -4,6 +4,7 @@ pub mod access;
 pub mod conflicts;
 pub mod coordinates;
 pub mod approver;
+pub mod authority;
 pub mod dataset;
 pub mod guards;
 pub mod ledger;

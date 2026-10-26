@@ -834,13 +834,17 @@ pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> R
 
     let base_version = if manifest_json.is_some() { live_version(&slug, state)? } else { None };
     let digest = digest_of_content(manifest_json.as_ref(), rules_json.as_ref(), &sources, state)?;
+    let mut stored_checks = json!({ "checks": checks, "changes": changes });
+    // What the builder is told: the tier, the path, who can give it, and why. Decided again when the proposal is.
+    let need = crate::service::authority::requirement_for(state, &ws.id, &stored_checks, &caller.eppn)?;
+    stored_checks["authority"] = need.to_json();
     let row = ProposalRow {
         id: uuid::Uuid::new_v4(),
         workspace_id: ws.id.clone(),
         app_slug: slug.clone(),
         base_version,
         manifest: manifest_json,
-        checks: json!({ "checks": checks, "changes": changes }),
+        checks: stored_checks,
         summary: input.summary,
         status: "Pending".to_string(),
         proposed_by: caller.eppn.clone(),
@@ -895,6 +899,7 @@ fn view(p: &ProposalRow, state: &SharedState) -> Result<Value, ServiceError> {
         "digest": digest_of(p, state)?,
         "checks": checks,
         "changes": p.checks["changes"],
+        "authority": p.checks["authority"],
     }))
 }
 
@@ -902,6 +907,12 @@ pub fn list(workspace_id: &str, state: &SharedState) -> Result<Value, ServiceErr
     let rows = repo(state)?.list_proposals(workspace_id, 100).map_err(internal)?;
     let views: Result<Vec<Value>, ServiceError> = rows.iter().map(|p| view(p, state)).collect();
     Ok(Value::Array(views?))
+}
+
+/// Pending proposals as callers see them. `unassigned` keeps those whose approver path resolves to nobody today.
+pub fn list_pending(unassigned: bool, state: &SharedState) -> Result<Vec<Value>, ServiceError> {
+    let rows = if unassigned { crate::service::authority::unassigned(state)? } else { repo(state)?.pending_proposals(500).map_err(internal)? };
+    rows.iter().map(|p| view(p, state)).collect()
 }
 
 pub fn get(proposal_id: &str, state: &SharedState) -> Result<Value, ServiceError> {
@@ -916,7 +927,27 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
     let id = parse_id(proposal_id)?;
     let repo = repo(state)?;
     let row = repo.get_proposal(id).map_err(internal)?.ok_or_else(|| ServiceError::NotFound("Proposal not found".to_string()))?;
-    authorize_workspace(caller, &row.workspace_id, "manage_workspace", state)?;
+    // What is required is worked out from the tables as they are now, not as they were when the proposal was made.
+    let need = if matches!(decision, "approve" | "reject") { Some(crate::service::authority::requirement_for(state, &row.workspace_id, &row.checks, &row.proposed_by)?) } else { None };
+    let approver_path = need.as_ref().is_some_and(|n| n.requirement.path == scaffoldry_core::authority::Path::Approver);
+    let is_resolved = need.as_ref().is_some_and(|n| n.resolved.iter().any(|a| a.eppn.eq_ignore_ascii_case(&caller.eppn)));
+    // A proposer may withdraw their own proposal. A person the approver spec names needs no role in the workspace.
+    let withdrawing = decision == "reject" && row.proposed_by.eq_ignore_ascii_case(&caller.eppn);
+    if !(withdrawing || approver_path && is_resolved) {
+        authorize_workspace(caller, &row.workspace_id, "manage_workspace", state)?;
+    }
+    if let Some(need) = &need {
+        if approver_path && !withdrawing && !is_resolved {
+            return Err(ServiceError::forbidden(if need.no_approver {
+                "Nobody can decide this change yet: the approver it needs resolves to no one. It stays pending until a person holds that position".to_string()
+            } else {
+                format!("This change needs an approver other than the proposer. Who can decide: {}", need.resolved.iter().map(|a| a.eppn.as_str()).collect::<Vec<_>>().join(", "))
+            }));
+        }
+        if decision == "approve" && need.requirement.path != scaffoldry_core::authority::Path::Direct && row.proposed_by.eq_ignore_ascii_case(&caller.eppn) {
+            return Err(ServiceError::forbidden("A change with a flagged check needs a second person to approve it. The proposer cannot"));
+        }
+    }
     if rationale.trim().is_empty() {
         return Err(ServiceError::BadRequest("Argument 'rationale' must say why".to_string()));
     }
@@ -952,7 +983,8 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
                 }
             }
-            match repo.approve_proposal(id, &caller.eppn, rationale, &stored).map_err(|e| match e {
+            let other_person = need.as_ref().is_some_and(|n| n.requirement.path != scaffoldry_core::authority::Path::Direct);
+            match repo.approve_proposal(id, &caller.eppn, rationale, &stored, other_person).map_err(|e| match e {
                 // The approval would start more background work than the person may have. Nothing was kept.
                 crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
                 other => ServiceError::Internal(format!("The approval was not kept: {other}")),
@@ -971,6 +1003,9 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                 }
                 Approval::SecondPersonRequired => {
                     return Err(ServiceError::forbidden("A change with a flagged check needs a second person to approve it. The proposer cannot"));
+                }
+                Approval::ApproverRequired { resolved } => {
+                    return Err(ServiceError::forbidden(format!("This change needs an approver other than the proposer. Who can decide: {}", resolved.join(", "))));
                 }
             }
         }
@@ -995,7 +1030,9 @@ pub fn submit_direct(caller: &AuthUser, input: ProposeInput, state: &SharedState
     let proposed = propose(caller, input, state)?;
     let any_fail = proposed["checks"].as_array().is_some_and(|l| l.iter().any(|c| c["outcome"] == "fail"));
     let owner_or_admin = matches!(role_in(caller, &ws_id, state).as_deref(), Some("owner" | "admin"));
-    if any_fail || !owner_or_admin {
+    // Applied in the same request only when what the change needs is its owner's say.
+    let direct = proposed["authority"]["path"] == "direct";
+    if any_fail || !owner_or_admin || !direct {
         return Ok(Direct::Pending(proposed));
     }
     let id = proposed["proposal_id"].as_str().unwrap_or_default().to_string();

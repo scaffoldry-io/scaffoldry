@@ -5,6 +5,7 @@
 //! to this service layer.
 
 pub mod governance;
+pub mod authority;
 pub mod library;
 pub mod library_review;
 pub mod library_tools;

@@ -343,7 +343,7 @@ pub fn validate_rule(state: &SharedState, rule: &AutomationRule) -> Result<(), S
 
 /// The people `spec` resolves to today for a thing that belongs to `unit`. `extra` names people the resolver should know
 /// about. `submitter`, when given, is never one of them. The policy library asks it who owns and who reviews a policy.
-pub fn resolved_approvers(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, extra: &[&str], submitter: Option<&str>) -> Vec<String> {
+pub fn resolution_at(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, extra: &[&str], submitter: Option<&str>) -> scaffoldry_core::approver::Resolution {
     let units: Vec<Unit> = state
         .organizations
         .read()
@@ -360,7 +360,8 @@ pub fn resolved_approvers(state: &SharedState, spec: &ApproverSpec, unit: uuid::
     if let ApproverSpec::Person { eppn } = spec {
         named.push(eppn.clone());
     }
-    let holdings = path_holdings(state, &[unit], &[]);
+    let submitters: Vec<String> = submitter.map(str::to_string).into_iter().collect();
+    let holdings = path_holdings(state, &[unit], &submitters);
     let mut wanted: HashSet<String> = holdings.iter().map(|h| h.eppn.clone()).collect();
     wanted.extend(named);
     let wanted: Vec<String> = wanted.into_iter().collect();
@@ -398,10 +399,11 @@ pub fn resolved_approvers(state: &SharedState, spec: &ApproverSpec, unit: uuid::
         workspace_unit: Some(unit.to_string()),
     };
     resolve_approvers(spec, &ctx)
-        .approvers
-        .into_iter()
-        .map(|a| a.eppn)
-        .collect()
+}
+
+/// The eppns of `resolution_at`.
+pub fn resolved_approvers(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, extra: &[&str], submitter: Option<&str>) -> Vec<String> {
+    resolution_at(state, spec, unit, extra, submitter).approvers.into_iter().map(|a| a.eppn).collect()
 }
 
 pub fn resolves_to(state: &SharedState, spec: &ApproverSpec, unit: uuid::Uuid, who: &str) -> bool {
