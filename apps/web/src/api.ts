@@ -65,6 +65,19 @@ export interface ProposalRow {
   decided_at: string | null;
   checks: ProposalCheck[];
   changes: string[];
+  /** What the proposal needs now, and who can give it. Absent on proposals made before authority existed. */
+  authority?: ProposalAuthority;
+}
+
+export interface ProposalAuthority {
+  tier: "Low" | "Moderate" | "High";
+  path: "direct" | "second_person" | "approver";
+  path_sentence: string;
+  resolved: { eppn: string; display_name: string }[];
+  no_approver: boolean;
+  /** The unit admins to ask when nobody holds the position. */
+  contact: string[];
+  reasons_detail: { sentence: string; remedy: string | null; control_id: string | null }[];
 }
 
 /** What a direct save came to: live at once, or waiting for a person to decide. */

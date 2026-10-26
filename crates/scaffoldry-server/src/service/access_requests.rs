@@ -235,7 +235,7 @@ fn view(state: &SharedState, req: &RequestRow) -> Result<Value, ServiceError> {
         if let Ok(obj) = find(state, &input) {
             let a = assess(state, &req.requester, "", &obj, input.role, input.clearance.as_deref(), input.days);
             let need = need_for(state, &obj, &req.requester, &a.raised)?;
-            out["authority"] = need.to_json();
+            out["authority"] = need.to_json(state);
             out["waiting_on"] = json!(waiting_on(state, &obj, &req.requester, &need));
             out["object"] = json!(obj.sentence());
         }

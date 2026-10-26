@@ -181,7 +181,7 @@ async fn a_viewer_request_in_the_own_unit_for_an_internal_app_is_approved_at_onc
     assert!(filed["rule_id"].is_string() && filed["grant_id"].is_number(), "the grant records the rule: {filed}");
     assert_eq!(w.records(&w.app_d, REQUESTER).await.0, StatusCode::OK, "the access is real");
 
-    let days: f64 = w.db.run(|c| c.query_one("SELECT EXTRACT(EPOCH FROM (valid_until - NOW())) / 86400.0 FROM access_grants WHERE source = 'request'", &[]).unwrap().get(0));
+    let days: f64 = w.db.run(|c| c.query_one("SELECT (EXTRACT(EPOCH FROM (valid_until - NOW())) / 86400.0)::float8 FROM access_grants WHERE source = 'request'", &[]).unwrap().get(0));
     assert!((13.9..=14.1).contains(&days), "expires after 14 days, not {days}");
     let reason: String = w.db.run(|c| c.query_one("SELECT reason FROM access_grants WHERE source = 'request'", &[]).unwrap().get(0));
     assert!(reason.contains(filed["id"].as_str().unwrap()), "the grant names the request: {reason}");
@@ -401,5 +401,5 @@ async fn a_request_names_a_real_object_a_reason_and_a_number_of_days_within_the_
     assert_eq!((s, done["status"].as_str()), (StatusCode::OK, Some("Withdrawn")), "{done}");
     let (s, _) = w.rest("POST", &format!("/api/v1/access/requests/{id}/decide"), ADMIN, Some(json!({ "decision": "approve", "note": "late" }))).await;
     assert_eq!(s, StatusCode::CONFLICT, "a withdrawn request cannot be approved");
-    assert_eq!(w.rest("POST", "/api/v1/access/requests", "", None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(raw(&w.app, "POST", "/api/v1/access/requests", "", None).await.0, StatusCode::UNAUTHORIZED);
 }
