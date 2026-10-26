@@ -935,14 +935,14 @@ async fn test_governance_decision_ledger_and_oscal_export() {
         .unwrap();
     assert!(impl_reqs.len() > appended_seq as usize);
 
-    // 5. Test MCP tools: verify_decision_ledger over JSON-RPC 2.0
+    // 5. Test MCP tools: governance_report (ledger) over JSON-RPC 2.0
     let mcp_verify_payload = json!({
         "jsonrpc": "2.0",
         "id": "test-mcp-verify-1",
         "method": "tools/call",
         "params": {
-            "name": "verify_decision_ledger",
-            "arguments": {}
+            "name": "governance_report",
+            "arguments": { "report": "ledger" }
         }
     });
 
@@ -992,14 +992,14 @@ async fn test_framework_specification_api_and_mcp_integration() {
     assert_eq!(components[1]["type"], "tabular-grid");
     assert!(spec["relational_architecture"]["multi_table_supported"].as_bool().unwrap());
 
-    // 2. MCP JSON-RPC 2.0 tools/call get_framework_spec
+    // 2. MCP JSON-RPC 2.0 tools/call governance_report (framework)
     let mcp_tool_payload = json!({
         "jsonrpc": "2.0",
         "id": "test-mcp-framework-1",
         "method": "tools/call",
         "params": {
-            "name": "get_framework_spec",
-            "arguments": {}
+            "name": "governance_report",
+            "arguments": { "report": "framework" }
         }
     });
 

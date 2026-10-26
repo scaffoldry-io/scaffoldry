@@ -19,7 +19,7 @@ pub fn hints(name: &str) -> (bool, bool) {
 /// One valid call, as the arguments object.
 pub fn example(name: &str) -> Value {
     match name {
-        "list_workspaces" | "list_library_policies" | "list_library_questions" | "verify_decision_ledger" | "export_oscal_compliance" | "get_framework_spec" | "list_waiting_decisions" => json!({}),
+        "list_workspaces" | "list_library_policies" | "list_library_questions" | "list_waiting_decisions" => json!({}),
         "get_workspace" => json!({ "workspace_id": "ws-physics-optics" }),
         "update_workspace" => json!({ "workspace_id": "ws-physics-optics", "description": "Laser logs" }),
         "manage_workspace_member" => json!({ "workspace_id": "ws-physics-optics", "action": "add", "eppn": "ada@example.edu", "role": "editor" }),
@@ -28,14 +28,14 @@ pub fn example(name: &str) -> Value {
         "simulate_cedar_policy" => json!({ "eppn": "ada@example.edu", "action": "read", "ferpa_sensitive": true }),
         "record_governance_decision" => json!({ "organization_code": "PHYS", "decision_type": "PolicyRevision", "oscal_control_id": "CM-03", "rationale": "Reviewed with the chair" }),
         "list_apps" | "list_proposals" => json!({ "workspace_id": "ws-physics-optics" }),
-        "describe_app" | "list_views" | "list_pages" => json!({ "app_slug": "scholarships" }),
+        "describe_app" | "list_views" => json!({ "app_slug": "scholarships" }),
         "aggregate_records" => json!({ "app_slug": "scholarships", "table_id": "applications", "function": "sum", "field": "amount" }),
         "list_records" => json!({ "app_slug": "scholarships", "table_id": "applications", "limit": 50 }),
         "get_view_data" => json!({ "app_slug": "scholarships", "view_id": "9d0a7c52-0d3e-4f55-8b53-6d2d6d9a4f10" }),
         "get_page" => json!({ "app_slug": "scholarships", "page_id": "board" }),
         "page_call" => json!({ "app_slug": "scholarships", "page_id": "board", "op": "list", "table_id": "applications", "limit": 50 }),
         "get_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123" }),
-        "get_record_history" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "limit": 20 }),
+        "governance_report" => json!({ "report": "ledger" }),
         "update_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "version": 3, "data": { "amount": 5000 } }),
         "delete_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "version": 3 }),
         "propose_app_change" => json!({ "workspace_id": "ws-physics-optics", "app_slug": "scholarships", "summary": "Add an amount column" }),

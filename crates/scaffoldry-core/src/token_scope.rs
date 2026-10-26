@@ -47,7 +47,6 @@ pub const DATA_TOOLS: &[(&str, TokenOp, TableFrom)] = &[
     ("list_records", TokenOp::Read, TableFrom::Argument),
     ("aggregate_records", TokenOp::Read, TableFrom::Argument),
     ("get_record", TokenOp::Read, TableFrom::Record),
-    ("get_record_history", TokenOp::Read, TableFrom::Record),
     ("create_record", TokenOp::Create, TableFrom::Data),
     ("update_record", TokenOp::Update, TableFrom::Record),
     ("delete_record", TokenOp::Delete, TableFrom::Record),
