@@ -154,7 +154,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_records",
-        description: "List one page of a table's records, up to 200. Pass next_cursor back as cursor. A filter or sort works on a table of 10,000 rows or fewer.",
+        description: "List a page of records, up to 200. Pass next_cursor back as cursor. Filter and sort need 10,000 rows or fewer.",
         input_schema: schema_list_records,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -226,7 +226,7 @@ Tool {
     },
     Tool {
         name: "propose_app_change",
-        description: "Propose a new app or a change to one. Send the whole manifest and each custom page's source. Nothing changes until a person approves. Returns the proposal id, checks, and change list.",
+        description: "Propose a new app or a change to one. Send the whole manifest and each custom page's source. Nothing changes until a person approves. Returns the id, checks, changes, and who must approve.",
         input_schema: schema_propose_app_change,
         scope: Scope::Workspace("access_workspace"),
         read_only: false,
@@ -236,7 +236,7 @@ Tool {
         name: "list_proposals",
         description: "List the proposals of a workspace, pending first.",
         input_schema: schema_list_proposals,
-        scope: Scope::Workspace("access_workspace"),
+        scope: Scope::SignedIn,
         read_only: true,
         run: run_list_proposals,
     },
@@ -250,7 +250,7 @@ Tool {
     },
     Tool {
         name: "decide_proposal",
-        description: "Approve or reject a proposal. To approve, send the digest you reviewed. A workspace owner or admin only. A failed sensitivity or data loss check needs a second person.",
+        description: "Approve or reject a proposal; to approve send the digest you reviewed. Owner or admin only. A flagged check needs a second person.",
         input_schema: schema_decide_proposal,
         scope: Scope::Proposal("manage_workspace"),
         read_only: false,
@@ -258,7 +258,7 @@ Tool {
     },
     Tool {
         name: "preview_proposal",
-        description: "Show a proposed change as an app before it is live: a 30-minute read-only token, the app as proposed, and each custom page rendered.",
+        description: "Show a proposed change as an app before it is live: a 30-minute read-only token, the app, and its custom pages.",
         input_schema: schema_get_proposal,
         scope: Scope::Proposal("access_workspace"),
         read_only: false,
@@ -266,7 +266,7 @@ Tool {
     },
     Tool {
         name: "get_agent_kit",
-        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. It writes nothing. Ask the person before writing the files.",
+        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. Writes nothing. Ask the person first.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
@@ -306,7 +306,7 @@ Tool {
     },
     Tool {
         name: "save_view",
-        description: "Create a view, or change one by its view_id and current version. A personal view is yours. A collaborative one needs an editor. A locked one needs an admin.",
+        description: "Create a view, or change one by view_id and version. Personal views are yours; collaborative ones need an editor, locked ones an admin.",
         input_schema: schema_save_view,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -1208,7 +1208,8 @@ fn schema_propose_app_change() -> Value {
             "manifest": { "type": "object", "description": "Whole manifest. See scaffoldry://schema/app-manifest" },
             "rules": { "type": "array", "items": { "type": "object" }, "description": "Automation rules to add or change. No webhook steps" },
             "summary": { "type": "string", "description": "What changes and why" },
-            "page_sources": { "type": "array", "items": { "type": "string" }, "description": "Source of every new or changed custom page" }
+            "page_sources": { "type": "array", "items": { "type": "string" }, "description": "Source of every new or changed custom page" },
+            "dry_run": { "type": "boolean", "description": "Run the checks and say who must approve. Stores nothing" }
         },
         "required": ["workspace_id", "summary"]
     })
@@ -1217,8 +1218,7 @@ fn schema_propose_app_change() -> Value {
 fn schema_list_proposals() -> Value {
     json!({
         "type": "object",
-        "properties": { "workspace_id": { "type": "string" } },
-        "required": ["workspace_id"]
+        "properties": { "workspace_id": { "type": "string" }, "to_decide": { "type": "boolean", "description": "Instead: those you may approve, in any workspace" } }
     })
 }
 
@@ -1254,6 +1254,16 @@ struct ProposeArgs {
     summary: String,
     #[serde(default)]
     page_sources: Vec<String>,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListProposalsArgs {
+    workspace_id: Option<String>,
+    #[serde(default)]
+    to_decide: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -1273,7 +1283,8 @@ struct DecideArgs {
 
 fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: ProposeArgs = parse(args)?;
-    crate::service::proposals::propose(
+    let run = if a.dry_run { crate::service::proposals::dry_run } else { crate::service::proposals::propose };
+    run(
         caller,
         crate::service::proposals::ProposeInput {
             workspace_id: a.workspace_id,
@@ -1287,9 +1298,14 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
     )
 }
 
-fn run_list_proposals(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    let a: ListAppsArgs = parse(args)?;
-    crate::service::proposals::list(&a.workspace_id, state)
+fn run_list_proposals(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ListProposalsArgs = parse(args)?;
+    if a.to_decide {
+        return Ok(json!({ "proposals": crate::service::authority::to_decide(state, caller)? }));
+    }
+    let ws = a.workspace_id.ok_or_else(|| ServiceError::BadRequest("Argument 'workspace_id' is required".to_string()))?;
+    authorize_workspace(caller, &ws, "access_workspace", state)?;
+    crate::service::proposals::list(&ws, state)
 }
 
 fn run_get_proposal(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {

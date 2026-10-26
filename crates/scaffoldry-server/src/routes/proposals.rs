@@ -16,6 +16,7 @@ use serde_json::Value;
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/workspaces/{id}/proposals", get(list_proposals))
+        .route("/me/proposals/to-decide", get(to_decide))
         .route("/proposals/{id}", get(get_proposal))
         .route("/proposals/{id}/decision", post(decide_proposal))
         .route("/proposals/{id}/preview", post(preview_proposal))
@@ -38,6 +39,12 @@ async fn list_proposals(State(state): State<SharedState>, headers: HeaderMap, Pa
     })
     .await
     .map(Json)
+}
+
+/// The pending proposals the caller may decide under the matrix as it is now, in any workspace.
+async fn to_decide(State(state): State<SharedState>, headers: HeaderMap) -> Reply {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    blocking(move || Ok(serde_json::json!({ "proposals": crate::service::authority::to_decide(&state, &user)? }))).await.map(Json)
 }
 
 async fn get_proposal(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Reply {

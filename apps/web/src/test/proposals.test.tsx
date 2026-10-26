@@ -148,4 +148,34 @@ describe("Overview", () => {
     render(<Overview />);
     expect(await screen.findByTestId("admin-overview-proposals-card")).toHaveTextContent("4");
   });
+
+  it("says who decides, why, and what would avoid it; and who to ask when nobody can", async () => {
+    const withAuthority: ProposalRow = {
+      ...flagged,
+      authority: {
+        tier: "Moderate",
+        path: "approver",
+        path_sentence: "This needs a named approver, other than the proposer.",
+        resolved: [{ eppn: "officer@state.edu", display_name: "Pat Officer" }],
+        no_approver: false,
+        contact: [],
+        reasons_detail: [{ sentence: "A custom page reads a field that holds sensitive data.", remedy: "Have the page read only fields that are not sensitive.", control_id: "AC-3" }],
+      },
+    };
+    vi.spyOn(apiClient, "listProposals").mockResolvedValue([withAuthority]);
+    const { unmount } = render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    const panel = await screen.findByTestId("who-decides");
+    expect(panel).toHaveTextContent("This needs a named approver, other than the proposer.");
+    expect(panel).toHaveTextContent("Can decide: Pat Officer.");
+    expect(panel).toHaveTextContent("To avoid this: Have the page read only fields that are not sensitive.");
+    expect(panel).not.toHaveTextContent("AC-3");
+    unmount();
+
+    const vacant: ProposalRow = { ...withAuthority, authority: { ...withAuthority.authority!, resolved: [], no_approver: true, contact: ["unit.admin@state.edu"] } };
+    vi.spyOn(apiClient, "listProposals").mockResolvedValue([vacant]);
+    render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    expect(await screen.findByTestId("who-decides")).toHaveTextContent("Nobody can decide this yet. Ask unit.admin@state.edu to assign the position.");
+  });
 });
