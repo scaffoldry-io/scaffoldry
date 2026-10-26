@@ -53,6 +53,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::ImpersonationNotSynthetic("Real".into()), "impersonation_not_synthetic", StatusCode::FORBIDDEN),
         (ServiceError::GrantConflict("Both".into()), "grant_conflict", StatusCode::CONFLICT),
         (ServiceError::CitationNotFound("No such passage".into()), "citation_not_found", StatusCode::BAD_REQUEST),
+        (ServiceError::AuthorityLoosens("Too loose".into()), "authority_loosens", StatusCode::BAD_REQUEST),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
         (
             ServiceError::ConstraintViolation {
@@ -111,6 +112,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::ImpersonationNotSynthetic(_)
             | ServiceError::GrantConflict(_)
             | ServiceError::CitationNotFound(_)
+            | ServiceError::AuthorityLoosens(_)
             | ServiceError::QuotaExceeded(_)
             | ServiceError::TooManyIndexes { .. }
             | ServiceError::ConstraintViolated(_)

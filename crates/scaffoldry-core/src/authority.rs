@@ -201,6 +201,28 @@ pub fn required(raised: &[String], unit_path: &[Uuid], signals: &[SignalRow], ro
     Requirement { tier, path, approver, reasons }
 }
 
+/// What one tier needs at a unit, and where that comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Effective {
+    pub path: Path,
+    pub approver: Option<ApproverSpec>,
+    /// The unit whose row makes the path stricter than the built-in one. `None` when the built-in answer stands.
+    pub source: Option<Uuid>,
+}
+
+/// The answer for a change of `tier`, as `required` would give it: the built-in path, or the strictest row on the path.
+pub fn effective_for_tier(tier: Tier, unit_path: &[Uuid], rows: &[MatrixRow]) -> Effective {
+    let built_in = built_in_path(tier);
+    let applicable = |r: &&MatrixRow| unit_path.contains(&r.organization_id) && r.tier <= tier;
+    let path = rows.iter().filter(applicable).map(|r| r.path).fold(built_in, Path::max);
+    if path == built_in {
+        return Effective { path, approver: None, source: None };
+    }
+    // The nearest unit with a row at the winning path.
+    let winner = unit_path.iter().find_map(|unit| rows.iter().filter(applicable).filter(|r| r.organization_id == *unit && r.path == path).max_by_key(|r| r.tier));
+    Effective { path, approver: winner.and_then(|r| r.approver.clone()), source: winner.map(|r| r.organization_id) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,6 +328,21 @@ mod tests {
         assert_eq!(unit.library_rule, Some(("change".to_string(), "privacy".to_string())));
         let sentences = need.sentences(&|u| if u == id(2) { "College of Science".to_string() } else { "?".to_string() });
         assert!(sentences.iter().any(|s| s.starts_with("College of Science requires a named approver")), "{sentences:?}");
+    }
+
+    #[test]
+    fn the_effective_answer_for_a_tier_names_where_it_comes_from() {
+        let rows = [row(id(1), Tier::Moderate, Path::Approver, Some(officer())), row(id(3), Tier::Moderate, Path::SecondPerson, None)];
+        let high = effective_for_tier(Tier::High, &tree(), &rows);
+        assert_eq!((high.path, high.source, high.approver), (Path::Approver, Some(id(1)), Some(officer())));
+        // Nothing set: the built-in answer, from nowhere.
+        let low = effective_for_tier(Tier::Low, &tree(), &rows);
+        assert_eq!((low.path, low.source), (Path::Direct, None));
+        // A row for a higher tier does not hold a lower one.
+        assert_eq!(effective_for_tier(Tier::Moderate, &tree(), &[row(id(1), Tier::High, Path::Approver, Some(officer()))]).path, Path::SecondPerson);
+        // Looser than the built-in answer never shows as its source.
+        let loose = [row(id(3), Tier::Moderate, Path::Direct, None)];
+        assert_eq!(effective_for_tier(Tier::Moderate, &tree(), &loose).source, None);
     }
 
     #[test]

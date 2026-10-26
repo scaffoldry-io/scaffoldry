@@ -29,7 +29,7 @@ pub struct Need {
 type Tables = (Vec<SignalRow>, Vec<MatrixRow>);
 
 /// The workspace's unit first, then each unit above it, ending at the root.
-fn unit_path(state: &SharedState, unit: Option<Uuid>) -> Vec<Uuid> {
+pub(crate) fn unit_path(state: &SharedState, unit: Option<Uuid>) -> Vec<Uuid> {
     let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
     let mut path = Vec::new();
     let mut next = unit;
@@ -43,7 +43,7 @@ fn unit_path(state: &SharedState, unit: Option<Uuid>) -> Vec<Uuid> {
     path
 }
 
-fn raised_in(checks: &Value) -> Vec<String> {
+pub(crate) fn raised_in(checks: &Value) -> Vec<String> {
     checks["checks"]
         .as_array()
         .map(|list| list.iter().filter(|c| c["outcome"] == "fail").filter_map(|c| c["name"].as_str()).filter(|n| FLAGGED.iter().any(|(f, _)| f == n)).map(str::to_string).collect())

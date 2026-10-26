@@ -59,6 +59,12 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/library/rules/{id}/decide".into(), case!(library_rule_decide));
     m.insert("POST /api/v1/library/rules/{id}/retire".into(), case!(library_rule_retire));
     m.insert("POST /api/v1/library/questions/{id}/answer".into(), case!(library_question_answer));
+    for (root, prefix) in [("/api/v1", "/api/v1"), ("", "")] {
+        let k = |method: &str, path: &str| format!("{method} {prefix}{path}");
+        m.insert(k("POST", "/admin/authority/changes"), case!(authority_propose, root));
+        m.insert(k("POST", "/admin/authority/changes/{id}/decide"), case!(authority_decide, root));
+        exempt(m, &k("POST", "/admin/authority/impact"), "counts what a change would do to stored proposals and stores nothing");
+    }
     m.insert("POST /api/v1/orgs".into(), case!(org_create));
     m.insert("PATCH /api/v1/orgs/{id}".into(), case!(org_patch));
     m.insert("POST /api/v1/orgs/{id}/appointments".into(), case!(appoint));
@@ -936,4 +942,38 @@ async fn library_question_answer(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/library/questions/{q}/answer"), ADMIN, Some(json!({ "answer": "Yes" }))).await, StatusCode::OK, "A answers it")?;
     let after = status(w.rb("GET", "/api/v1/me/library/reviews", ADMIN, None).await, StatusCode::OK, "B lists again")?;
     ensure(!has(&after["questions"], &q), format!("B no longer lists the question A answered: {after}"))
+}
+
+const AUTHORITY_ROW: &str = r#"{ "kind": "row", "row": { "tier": "High", "path": "second_person" } }"#;
+
+/// A unit and a second Platform Admin. Returns the unit and the second admin.
+async fn authority_fixture(w: &World) -> Result<(String, String), String> {
+    let unit = make_unit(w, &unique("P9AU")).await?;
+    let second = person("p9admin");
+    make_user(w, &second).await?;
+    status(
+        w.wa("POST", &format!("/api/v1/orgs/{ROOT}/appointments"), ADMIN, Some(json!({ "eppn": second, "scoped_affiliation": "platform_admin", "reason": "Fixture" }))).await,
+        StatusCode::CREATED,
+        "appoint the second admin",
+    )?;
+    Ok((unit, second))
+}
+
+async fn authority_propose(w: World, root: &'static str) -> Outcome {
+    let (unit, _) = authority_fixture(&w).await?;
+    let change: Value = serde_json::from_str(AUTHORITY_ROW).map_err(|e| e.to_string())?;
+    let made = status(w.wa("POST", &format!("{root}/admin/authority/changes"), ADMIN, Some(json!({ "organization_id": unit, "change": change, "reason": "Tighten" }))).await, StatusCode::CREATED, "A proposes a change")?;
+    let id = made["change"]["id"].as_str().ok_or("a change id")?.to_string();
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/authority/changes?organization_id={unit}"), ADMIN, None).await, StatusCode::OK, "B lists the changes")?;
+    ensure(has(&seen["changes"], &id), format!("B shows the change A stored: {seen}"))
+}
+
+async fn authority_decide(w: World, root: &'static str) -> Outcome {
+    let (unit, second) = authority_fixture(&w).await?;
+    let change: Value = serde_json::from_str(AUTHORITY_ROW).map_err(|e| e.to_string())?;
+    let made = status(w.wa("POST", "/api/v1/admin/authority/changes", ADMIN, Some(json!({ "organization_id": unit, "change": change, "reason": "Tighten" }))).await, StatusCode::CREATED, "A proposes a change")?;
+    let id = made["change"]["id"].as_str().ok_or("a change id")?.to_string();
+    status(w.rb("POST", &format!("{root}/admin/authority/changes/{id}/decide"), &second, Some(json!({ "decision": "confirm", "note": "Reviewed" }))).await, StatusCode::OK, "B confirms it")?;
+    let seen = status(w.wa("GET", &format!("/api/v1/admin/authority?organization_id={unit}"), ADMIN, None).await, StatusCode::OK, "A reads the matrix")?;
+    ensure(seen["rows"].as_array().is_some_and(|r| r.iter().any(|x| x["tier"] == "High" && x["path"] == "second_person")), format!("A shows the row B confirmed: {seen}"))
 }
