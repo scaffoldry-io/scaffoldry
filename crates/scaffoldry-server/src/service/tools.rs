@@ -90,7 +90,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "governance_report",
-        description: "Show a governance report. ledger: verify the hash chain of every decision from genesis. oscal: the OSCAL 1.1.2 component-definition with audit proofs. framework: the component catalog's JSON Schema, theme tokens and classification boundaries.",
+        description: "Show a governance report. ledger: verify the decision hash chain. oscal: the OSCAL 1.1.2 component-definition with audit proofs. framework: the component catalog's schema, theme tokens and classification boundaries.",
         input_schema: schema_governance_report,
         scope: Scope::SignedIn,
         read_only: true,
@@ -154,7 +154,7 @@ pub static TOOLS: &[Tool] = &[
     },
 Tool {
         name: "get_record",
-        description: "Get one record with its version, or with history: true, the changes to it, newest first, with who made each. A field you may not read shows only that it changed.",
+        description: "Get one record with its version, or with history: true its changes, newest first, with who made each. A field you may not read shows only that it changed.",
         input_schema: schema_get_record,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -201,8 +201,24 @@ Tool {
         run: run_propose_app_change,
     },
     Tool {
+        name: "draft_access_change",
+        description: "Draft a grant, revocation, request rule or hierarchy for a person to confirm. Applies nothing; ends in 7 days. preview: true stores nothing.",
+        input_schema: schema_draft_access_change,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_draft_access_change,
+    },
+    Tool {
+        name: "access_suggestions",
+        description: "List what could be simpler in who has access: covered memberships, a grant for a position, ended or unused grants, unmasked fields.",
+        input_schema: schema_empty,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_access_suggestions,
+    },
+    Tool {
         name: "request_access",
-        description: "Ask for access you were refused. The person confirms, then a rule or an approver decides.",
+        description: "Ask for access you were refused. The person confirms; a rule or approver decides.",
         input_schema: schema_request_access,
         scope: Scope::SignedIn,
         read_only: false,
@@ -1182,6 +1198,28 @@ fn schema_propose_app_change() -> Value {
     })
 }
 
+fn schema_draft_access_change() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "kind": { "type": "string", "enum": ["grant", "revoke", "request_rule", "hierarchy"] },
+            "change": { "type": "object", "description": "grant fields, or grant_id, or organization_id with rule" },
+            "reason": { "type": "string" },
+            "preview": { "type": "boolean" }
+        },
+        "required": ["kind", "change", "reason"]
+    })
+}
+
+fn run_draft_access_change(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let preview = args.get("preview").and_then(Value::as_bool).unwrap_or(false);
+    crate::service::access_drafts::draft(state, caller, origin, &args, !preview)
+}
+
+fn run_access_suggestions(caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::access_drafts::suggestions(state, caller)
+}
+
 fn schema_request_access() -> Value {
     json!({
         "type": "object",
@@ -1438,7 +1476,7 @@ fn schema_aggregate_records() -> Value {
         "properties": {
             "app_slug": { "type": "string" },
             "table_id": { "type": "string", "description": "From describe_app" },
-            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "count_distinct (alias unique), filled and empty fit any field type" },
+            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "count_distinct (or unique), filled and empty fit any type" },
             "field": { "type": "string", "description": "Not for count" },
             "filter": { "type": "object", "description": "Filter on indexed fields" },
             "group_by": { "type": "string", "description": "Indexed field to group by" },

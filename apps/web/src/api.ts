@@ -924,7 +924,7 @@ export interface AccessGrantRow {
 
 export interface AccessChange {
   change_id: string;
-  kind: "grant" | "hierarchy";
+  kind: "grant" | "hierarchy" | "revoke" | "request_rule";
   grant: Record<string, unknown> | null;
   hierarchy: { key: string; name: string; kind: string; source: string } | null;
   widens: boolean;
@@ -932,6 +932,18 @@ export interface AccessChange {
   status: string;
   proposed_by: string;
   proposed_at: string;
+  /** `agent` for a change an AI tool drafted. */
+  proposed_via?: "person" | "agent";
+  /** The person a draft was made for. */
+  drafted_for?: string | null;
+  /** The AI tool that drafted it, when it signed in as a client. */
+  via_client?: string | null;
+  task?: string | null;
+  /** What the change does, in one sentence. Stored with a draft. */
+  sentence?: string | null;
+  /** A draft ends seven days after it is stored. */
+  expires_at?: string | null;
+  expired?: boolean;
 }
 
 export interface AccessGrantsPage {

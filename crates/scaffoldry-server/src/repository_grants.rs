@@ -93,6 +93,8 @@ pub enum ChangeDecision {
     Missing,
     AlreadyDecided,
     OwnChange,
+    /// An AI tool's draft that is more than seven days old.
+    Expired,
 }
 
 pub enum RetireOutcome {
@@ -186,6 +188,25 @@ impl PostgresRepository {
         })
     }
 
+    /// Active grants older than `days` days that no receipt in the last `days` days names. Empty when no receipt exists at
+    /// all, since nothing can then be said about use.
+    pub fn unused_grant_ids(&self, days: i64) -> Result<Vec<i64>, RepositoryError> {
+        self.with_client(move |c| {
+            let days = days as i32;
+            Ok(c.query(
+                "SELECT g.id FROM access_grants g \
+                 WHERE EXISTS (SELECT 1 FROM access_receipts) AND g.revoked_at IS NULL AND (g.valid_until IS NULL OR g.valid_until > NOW()) \
+                   AND g.created_at < NOW() - make_interval(days => $1) \
+                   AND NOT EXISTS (SELECT 1 FROM access_receipts r WHERE r.at > NOW() - make_interval(days => $1) AND g.id = ANY(r.grant_ids)) \
+                 ORDER BY g.id LIMIT 500",
+                &[&days],
+            )?
+            .iter()
+            .map(|r| r.get(0))
+            .collect())
+        })
+    }
+
     /// Active grants nobody has reviewed for `days` days, by id, a page after `after`.
     pub fn due_grant_rows(&self, days: i64, after: i64, limit: i64) -> Result<Vec<GrantRow>, RepositoryError> {
         let days = i32::try_from(days).unwrap_or(i32::MAX);
@@ -268,6 +289,27 @@ impl PostgresRepository {
         })
     }
 
+    /// Stores a change an AI tool drafted. It records the person it was drafted for, the tool and the task, and ends in
+    /// seven days.
+    pub fn propose_access_draft(&self, change: &Value, widens: bool, reason: &str, proposed_by: &str, client: Option<&str>, task: Option<&str>) -> Result<(Uuid, String), RepositoryError> {
+        let (change, reason, proposed_by, client, task) = (change.clone(), reason.to_string(), proposed_by.to_string(), client.map(str::to_string), task.map(str::to_string));
+        self.with_client(move |c| {
+            let id = Uuid::new_v4();
+            let row = c.query_one(
+                "INSERT INTO access_changes (id, change, widens, reason, proposed_by, proposed_via, drafted_for, via_client, task, expires_at) \
+                 VALUES ($1, $2, $3, $4, $5, 'agent', $5, $6, $7, NOW() + INTERVAL '7 days') \
+                 RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
+                &[&id, &change, &widens, &reason, &proposed_by, &client, &task],
+            )?;
+            Ok((id, row.get(0)))
+        })
+    }
+
+    /// How a change came about and whether it ended: `(proposed_via, widens, expired)`.
+    pub fn access_change_flags(&self, id: Uuid) -> Result<Option<(String, bool, bool)>, RepositoryError> {
+        self.with_client(move |c| Ok(c.query_opt("SELECT proposed_via, widens, COALESCE(expires_at < NOW(), false) FROM access_changes WHERE id = $1", &[&id])?.map(|r| (r.get(0), r.get(1), r.get(2)))))
+    }
+
     /// A change by id: `(change, status, proposed_by, reason)`.
     pub fn access_change(&self, id: Uuid) -> Result<Option<(Value, String, String, String)>, RepositoryError> {
         self.with_client(move |c| {
@@ -280,7 +322,9 @@ impl PostgresRepository {
         let status = status.to_string();
         self.with_client(move |c| {
             let rows = c.query(
-                "SELECT id, change, widens, reason, status, proposed_by, to_char(proposed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
+                "SELECT id, change, widens, reason, status, proposed_by, to_char(proposed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+                        proposed_via, drafted_for, via_client, task, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+                        COALESCE(expires_at < NOW(), false) \
                  FROM access_changes WHERE status = $1 ORDER BY proposed_at, id",
                 &[&status],
             )?;
@@ -290,7 +334,9 @@ impl PostgresRepository {
                     let id: Uuid = r.get(0);
                     let change: Value = r.get(1);
                     let kind = change["kind"].as_str().unwrap_or("grant").to_string();
-                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "rule": change["rule"].clone(), "organization_id": change["organization_id"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6) })
+                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "sentence": change["sentence"].clone(), "rule": change["rule"].clone(), "organization_id": change["organization_id"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6),
+                        "proposed_via": r.get::<_, String>(7), "drafted_for": r.get::<_, Option<String>>(8), "via_client": r.get::<_, Option<String>>(9), "task": r.get::<_, Option<String>>(10),
+                        "expires_at": r.get::<_, Option<String>>(11), "expired": r.get::<_, bool>(12) })
                 })
                 .collect())
         })
@@ -302,14 +348,20 @@ impl PostgresRepository {
         let decider = decider.to_string();
         self.with_client(move |c| {
             let mut tx = c.transaction()?;
-            let Some(row) = tx.query_opt("SELECT change, status, proposed_by FROM access_changes WHERE id = $1 FOR UPDATE", &[&id])? else {
+            let Some(row) = tx.query_opt("SELECT change, status, proposed_by, proposed_via, widens, COALESCE(expires_at < NOW(), false) FROM access_changes WHERE id = $1 FOR UPDATE", &[&id])? else {
                 return Ok(ChangeDecision::Missing);
             };
             let (change, status, proposed_by): (Value, String, String) = (row.get(0), row.get(1), row.get(2));
+            let (via, widens, expired): (String, bool, bool) = (row.get(3), row.get(4), row.get(5));
             if status != "Pending" {
                 return Ok(ChangeDecision::AlreadyDecided);
             }
-            if confirm && proposed_by.eq_ignore_ascii_case(&decider) {
+            if confirm && expired {
+                return Ok(ChangeDecision::Expired);
+            }
+            // A change that only narrows access, drafted by an AI tool, may be confirmed by the person it was drafted for.
+            let narrowing_draft = via == "agent" && !widens;
+            if confirm && proposed_by.eq_ignore_ascii_case(&decider) && !narrowing_draft {
                 return Ok(ChangeDecision::OwnChange);
             }
             let mut grant_id = None;
@@ -331,6 +383,11 @@ impl PostgresRepository {
                 )?;
                 tx.execute("INSERT INTO org_closure (hierarchy_key, ancestor, descendant, depth) VALUES ($1, $2, $2, 0)", &[&key, &root])?;
                 crate::cache::bump(&mut tx, "organizations")?;
+            } else if confirm && change["kind"] == "revoke" {
+                let grant: i64 = change["grant_id"].as_i64().unwrap_or_default();
+                if tx.execute("UPDATE access_grants SET revoked_at = NOW(), revoked_by = $2 WHERE id = $1 AND revoked_at IS NULL", &[&grant, &decider])? == 0 {
+                    return Ok(ChangeDecision::Missing);
+                }
             } else if confirm && change["kind"] == "request_rule" {
                 let org: Uuid = change["organization_id"].as_str().and_then(|u| Uuid::parse_str(u).ok()).unwrap_or_default();
                 if change["op"] == "retire" {

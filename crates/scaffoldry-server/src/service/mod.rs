@@ -15,6 +15,7 @@ pub mod history;
 pub mod organizations;
 pub mod records;
 pub mod access;
+pub mod access_drafts;
 pub mod access_grants;
 pub mod access_requests;
 pub mod hierarchies;

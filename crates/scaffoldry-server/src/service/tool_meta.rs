@@ -41,6 +41,8 @@ pub fn example(name: &str) -> Value {
         "propose_app_change" => json!({ "workspace_id": "ws-physics-optics", "app_slug": "scholarships", "summary": "Add an amount column" }),
         "get_agent_kit" => json!({}),
         "explain_access" => json!({ "object": "app:scholarships" }),
+        "draft_access_change" => json!({ "kind": "revoke", "change": { "grant_id": 12 }, "reason": "The audit is finished", "preview": true }),
+        "access_suggestions" => json!({}),
         "begin_task" => json!({ "task": "Enter the spring grant proposals" }),
         "request_access" => json!({ "object_kind": "app", "object_id": "scholarships", "role": "viewer", "reason": "Check the award totals for the audit", "days": 14 }),
         "preview_proposal" => json!({ "proposal_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11" }),

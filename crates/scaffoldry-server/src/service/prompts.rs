@@ -20,6 +20,17 @@ struct Prompt {
 
 const PROMPTS: &[Prompt] = &[
     Prompt {
+        name: "tidy_access",
+        description: "Find access that can be simpler, draft the changes, and show a person what each would do.",
+        arguments: &[],
+        template: "Help the person tidy who has access. You draft changes. You never confirm them.\n\
+1. Call access_suggestions. Each suggestion comes from a query over what is stored.\n\
+2. Pick the suggestions that remove the most memberships and lose no one's access. Draft at most five changes.\n\
+3. For each, call draft_access_change with preview: true first, and read its sentences and its impact. A change that would lose someone access is not one to draft.\n\
+4. Show the person each change as its sentences and its impact. Draft the ones they agree to by calling draft_access_change again without preview.\n\
+5. Say that a person must confirm each draft in the console, and that a draft is gone after seven days. Never confirm a draft yourself.",
+    },
+    Prompt {
         name: "build_app_from_description",
         description: "Turn a plain description into a proposed app, then wait for approval.",
         arguments: &[("description", "What the person wants to keep track of, in their words", true)],

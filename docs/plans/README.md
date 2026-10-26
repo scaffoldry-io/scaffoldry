@@ -178,7 +178,7 @@ The rest of the access model, then the rules behind a decision and who decides. 
 | 99 | [policy-library.md](policy-library.md) | 4 | Everyone reads the rules as sentences, linked to policy and source, marked Enforced or Guidance | **COMPLETED** |
 | 100 | [authority.md](authority.md) | 3 | The builder is told who decides, why, and what would change it. An agent can ask first | **COMPLETED** |
 | 101 | [access-model.md](access-model.md) | 13 | Anyone refused can request access in one step. Routine requests are approved by the institution's rules and expire. The rest go to the right person | **COMPLETED** |
-| 102 | [access-model.md](access-model.md) | 14 | An administrator's AI tool drafts access changes from computed suggestions. The server shows sentences and impact. A person confirms | |
+| 102 | [access-model.md](access-model.md) | 14 | An administrator's AI tool drafts access changes from computed suggestions. The server shows sentences and impact. A person confirms | **COMPLETED** |
 | 103 | [authority.md](authority.md) | 4 | A simulated institution of 5,000 people, and the same measures from real decisions | |
 | 104 | [external-apps.md](external-apps.md) | 5 | A confidential client may act as its own service identity, through grants a second person approved | |
 | 105 | [external-apps.md](external-apps.md) | 6 | An Outside apps panel: clients, ceilings, usage, and each person's connections | |
