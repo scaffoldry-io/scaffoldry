@@ -123,6 +123,9 @@ jobs:
     runs-on: ubuntu-latest
     # A hung test would hold the check, and the pull request with it, for the six hours GitHub allows. The slowest group takes about fifteen minutes.
     timeout-minutes: 45
+    env:
+      # library_phase4_test writes the policy library's OSCAL catalog here. The gate below validates it.
+      OSCAL_CATALOG_OUT: /tmp/library-catalog.json
     strategy:
       fail-fast: false
       matrix:
@@ -175,6 +178,14 @@ jobs:
         run: |
           args="$(python3 governance/scripts/rust-test-groups.py ${{ matrix.group }})"
           cargo nextest run --workspace $args --profile ci
+
+      # A test reads OSCAL_CATALOG_OUT and writes the exported catalog. If none wrote it, the export is not tested.
+      - name: Hard Gate - OSCAL Catalog Export
+        if: matrix.group == 'light'
+        run: |
+          python3 -m pip install jsonschema
+          test -f "$OSCAL_CATALOG_OUT" || { echo "No test wrote the catalog to $OSCAL_CATALOG_OUT"; exit 1; }
+          python3 governance/scripts/validate-oscal.py "$OSCAL_CATALOG_OUT"
 
       - name: Hard Gate - Rust Doc Tests
         if: matrix.group == 'light'

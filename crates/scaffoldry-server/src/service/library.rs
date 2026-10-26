@@ -652,6 +652,10 @@ pub fn draft_rule_via(
     let policy = writable(state, caller, policy_id)?;
     let mut p = Problems::default();
     let key = p.key(body, "key");
+    // These words are routes under /library/rules/{id}/..., so a rule of that key could not be read at its address.
+    if key.as_deref().is_some_and(|k| ["review", "submit", "decide", "retire"].contains(&k)) {
+        p.add("key", "key may not be review, submit, decide or retire");
+    }
     let statement = p.text(body, "statement", 500, true);
     if statement.as_deref().is_some_and(|s| sentences(s) > 2) {
         p.add("statement", "a statement is one sentence or two");
@@ -751,9 +755,9 @@ pub fn read_snapshot_page(
 pub fn find_rules(state: &SharedState, query: &str, applies_to: &str) -> Result<Value, ServiceError> {
     let mut rules = state.repository.library_published_rules(query, applies_to).map_err(internal)?;
     for r in &mut rules {
-        let page = format!("/library/policies/{}", r["policy_id"].as_str().unwrap_or_default());
-        // Nothing is evaluated as a binding target until phase 3, so every rule is Guidance.
-        r["enforcement"] = json!("Guidance");
+        let page = format!("/policies/{}", r["policy_key"].as_str().unwrap_or_default());
+        let pid = r["policy_id"].as_str().and_then(|u| Uuid::parse_str(u).ok()).unwrap_or_default();
+        r["enforcement"] = json!(crate::service::library_public::enforcement_for(state, pid, r["key"].as_str().unwrap_or_default()));
         r["page"] = json!(page);
     }
     Ok(json!({ "rules": rules }))

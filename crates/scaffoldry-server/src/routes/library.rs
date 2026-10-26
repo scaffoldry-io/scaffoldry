@@ -4,13 +4,14 @@ use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde_json::Value;
 
 use crate::guard::session_user;
 use crate::service::library;
+use crate::service::library_public;
 use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 
@@ -28,6 +29,9 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/library/sources/{id}/snapshots", post(add_snapshot))
         .route("/admin/library/snapshots/{id}", get(get_snapshot))
         .route("/admin/library/policies/{id}/rules", post(draft_rule))
+        .route("/admin/library/policies/{id}/rules/{key}/bindings", post(add_binding))
+        .route("/admin/library/bindings/{id}", delete(delete_binding))
+        .route("/admin/library/catalog", get(catalog))
 }
 
 fn caller(state: &SharedState, headers: &HeaderMap) -> Result<AuthUser, ServiceError> {
@@ -151,4 +155,21 @@ async fn draft_rule(
     blocking(move || library::draft_rule(&state, &c, &id, &body))
         .await
         .map(|v| (StatusCode::CREATED, Json(v)))
+}
+
+async fn add_binding(State(state): State<SharedState>, headers: HeaderMap, Path((id, key)): Path<(String, String)>, body: Bytes) -> Result<(StatusCode, Json<Value>), ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body);
+    blocking(move || library_public::add_binding(&state, &c, &id, &key, &body)).await.map(|v| (StatusCode::CREATED, Json(v)))
+}
+
+async fn delete_binding(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body);
+    blocking(move || library_public::delete_binding(&state, &c, &id, &body)).await.map(Json)
+}
+
+async fn catalog(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    blocking(move || library_public::catalog(&state, &c)).await.map(Json)
 }

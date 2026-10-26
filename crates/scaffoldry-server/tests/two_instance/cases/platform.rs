@@ -61,6 +61,8 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/library/questions/{id}/answer".into(), case!(library_question_answer));
     for (root, prefix) in [("/api/v1", "/api/v1"), ("", "")] {
         let k = |method: &str, path: &str| format!("{method} {prefix}{path}");
+        m.insert(k("POST", "/admin/library/policies/{id}/rules/{key}/bindings"), case!(library_binding_add, root));
+        m.insert(k("DELETE", "/admin/library/bindings/{id}"), case!(library_binding_remove, root));
         m.insert(k("POST", "/admin/authority/changes"), case!(authority_propose, root));
         m.insert(k("POST", "/admin/authority/changes/{id}/decide"), case!(authority_decide, root));
         exempt(m, &k("POST", "/admin/authority/impact"), "counts what a change would do to stored proposals and stores nothing");
@@ -976,4 +978,30 @@ async fn authority_decide(w: World, root: &'static str) -> Outcome {
     status(w.rb("POST", &format!("{root}/admin/authority/changes/{id}/decide"), &second, Some(json!({ "decision": "confirm", "note": "Reviewed" }))).await, StatusCode::OK, "B confirms it")?;
     let seen = status(w.wa("GET", &format!("/api/v1/admin/authority?organization_id={unit}"), ADMIN, None).await, StatusCode::OK, "A reads the matrix")?;
     ensure(seen["rows"].as_array().is_some_and(|r| r.iter().any(|x| x["tier"] == "High" && x["path"] == "second_person")), format!("A shows the row B confirmed: {seen}"))
+}
+
+/// A policy with a rule the owner published through the review flow. Returns the policy id, its key, and a guard template.
+async fn library_binding_fixture(w: &World) -> Result<(String, String, &'static str), String> {
+    let (owner, policy, rule) = library_review_fixture(w).await?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/submit"), ADMIN, Some(json!({}))).await, StatusCode::OK, "A submits it")?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/decide"), &owner, Some(json!({ "decision": "publish", "note": "Reviewed" }))).await, StatusCode::OK, "the owner publishes it")?;
+    let shown = status(w.wa("GET", &format!("/api/v1/admin/library/policies/{policy}"), ADMIN, None).await, StatusCode::OK, "A reads the policy")?;
+    let key = shown["policy"]["key"].as_str().ok_or("a policy key")?.to_string();
+    Ok((policy, key, scaffoldry_core::guards::ALLOWED_TEMPLATES[0]))
+}
+
+async fn library_binding_add(w: World, root: &'static str) -> Outcome {
+    let (policy, key, template) = library_binding_fixture(&w).await?;
+    status(w.wa("POST", &format!("{root}/admin/library/policies/{policy}/rules/retention/bindings"), ADMIN, Some(json!({ "target_kind": "guard_template", "target_ref": template, "reason": "Enforced" }))).await, StatusCode::CREATED, "A binds it")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/library/rules/{key}/retention"), ADMIN, None).await, StatusCode::OK, "B reads the rule")?;
+    ensure(seen["rule"]["enforcement"] == "Enforced", format!("B shows the binding A stored: {seen}"))
+}
+
+async fn library_binding_remove(w: World, root: &'static str) -> Outcome {
+    let (policy, key, template) = library_binding_fixture(&w).await?;
+    let bound = status(w.wa("POST", &format!("/api/v1/admin/library/policies/{policy}/rules/retention/bindings"), ADMIN, Some(json!({ "target_kind": "guard_template", "target_ref": template, "reason": "Enforced" }))).await, StatusCode::CREATED, "A binds it")?;
+    let id = bound["binding"]["id"].as_str().ok_or("a binding id")?.to_string();
+    status(w.rb("DELETE", &format!("{root}/admin/library/bindings/{id}"), ADMIN, Some(json!({ "reason": "Not enforced" }))).await, StatusCode::OK, "B removes it")?;
+    let seen = status(w.wa("GET", &format!("/api/v1/library/rules/{key}/retention"), ADMIN, None).await, StatusCode::OK, "A reads the rule")?;
+    ensure(seen["rule"]["enforcement"] == "Guidance", format!("A shows the rule as guidance again: {seen}"))
 }

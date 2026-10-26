@@ -208,7 +208,13 @@ pub fn decide_for(
     ) {
         Ok(res) => Decision {
             allowed: res.decision == scaffoldry_policy::PolicyDecision::Allow,
-            policy: res.deciding_policy,
+            // A denial links to the library rule its policy is bound to, when there is one.
+            policy: res.deciding_policy.map(|mut p| {
+                if res.decision == scaffoldry_policy::PolicyDecision::Deny {
+                    p.rule = crate::service::library_public::rule_address_for_cedar_policy(state, &p.id);
+                }
+                p
+            }),
             reasons: res.reasons,
             diagnostics: res.diagnostics,
             error: None,

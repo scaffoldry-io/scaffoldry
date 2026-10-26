@@ -75,4 +75,9 @@ impl PostgresRepository {
             Ok(true)
         })
     }
+
+    /// A matrix row by id: its tier and unit.
+    pub fn authority_row(&self, id: Uuid) -> Result<Option<(String, Uuid)>, RepositoryError> {
+        self.with_client(move |c| Ok(c.query_opt("SELECT tier, organization_id FROM authority_rows WHERE id = $1", &[&id])?.map(|r| (r.get(0), r.get(1)))))
+    }
 }

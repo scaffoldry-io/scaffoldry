@@ -6,6 +6,7 @@ import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow } from "./api";
 import { MyApps } from "./MyApps";
+import { Policies } from "./library/Policies";
 import { BackgroundWork, PreviewBanner, ViewAsBanner } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
@@ -1115,12 +1116,15 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   const [activeWorkspaceApp, setActiveWorkspaceApp] = useState<RegisteredApp | null>(null);
 
   // Navigation View State ("workspaces" | "datasets")
-  const [mainView, setMainView] = useState<"workspaces" | "datasets" | "myapps">(() => {
+  const [mainView, setMainView] = useState<"workspaces" | "datasets" | "myapps" | "policies">(() => {
     if (typeof window !== "undefined" && window.location.pathname.startsWith("/datasets")) {
       return "datasets";
     }
     if (typeof window !== "undefined" && window.location.pathname.startsWith("/my-apps")) {
       return "myapps";
+    }
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/policies")) {
+      return "policies";
     }
     return "workspaces";
   });
@@ -1139,6 +1143,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         setMainView("datasets");
       } else if (path.startsWith("/my-apps")) {
         setMainView("myapps");
+      } else if (path.startsWith("/policies")) {
+        setMainView("policies");
       } else if (path === "/" || path.startsWith("/workspace")) {
         setMainView("workspaces");
       }
@@ -1160,6 +1166,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         setMainView("datasets");
       } else if (p.startsWith("/my-apps")) {
         setMainView("myapps");
+      } else if (p.startsWith("/policies")) {
+        setMainView("policies");
       } else if (p === "/" || p.startsWith("/workspace")) {
         setMainView("workspaces");
       }
@@ -2670,6 +2678,23 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                     </button>
                     <button
                       type="button"
+                      aria-label="Policies"
+                      onClick={() => {
+                        setMainView("policies");
+                        navigateTo("/policies");
+                      }}
+                      className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        mainView === "policies"
+                          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-semibold"
+                          : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                      }`}
+                      title="The rules your institution has published"
+                    >
+                      <span className="text-sm shrink-0">📜</span>
+                      {navRailExpanded && <span className="flex-1 text-left truncate">Policies</span>}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => {
                         setMainView("datasets");
                         navigateTo("/datasets");
@@ -2759,6 +2784,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 personas={PERSONAS}
                 handleStartImpersonation={handleStartImpersonation}
               />
+          ) : mainView === "policies" ? (
+            <Policies path={currentPath} navigate={navigateTo} />
           ) : mainView === "myapps" ? (
             <MyApps apps={myApps} pinned={pinnedAppSlugs} onTogglePin={handleTogglePinApp} onOpen={(slug) => navigateTo(`/app/${slug}`)} />
           ) : mainView === "datasets" ? (

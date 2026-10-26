@@ -87,6 +87,9 @@ pub enum PolicyDecision {
 pub struct PolicyRef {
     pub id: String,
     pub description: String,
+    /// The address of the library rule bound to this policy, when one is. Filled by the server on a denial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,6 +220,7 @@ impl ScaffoldryPolicyEngine {
                 .map(|p| PolicyRef {
                     id: p.id().to_string(),
                     description: p.annotation("description").unwrap_or("").to_string(),
+                    rule: None,
                 })
         } else {
             None
@@ -239,6 +243,7 @@ impl ScaffoldryPolicyEngine {
             .map(|p| PolicyRef {
                 id: p.id().to_string(),
                 description: p.annotation("description").unwrap_or("").to_string(),
+                rule: None,
             })
             .collect()
     }

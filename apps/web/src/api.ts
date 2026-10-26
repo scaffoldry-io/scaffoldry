@@ -110,6 +110,8 @@ export type { OrganizationNode };
 export interface PolicyRef {
   id: string;
   description: string;
+  /** The address of the library rule bound to this policy, when there is one. */
+  rule?: string;
 }
 
 export interface AdminWorkspaceRow {
@@ -822,6 +824,33 @@ export interface AuthorityImpact {
   unassigned: { proposal_id: string; workspace_id: string; summary: string }[];
 }
 
+export interface LibraryRuleSummary {
+  id: string;
+  policy_id: string;
+  rule_key: string;
+  policy_key: string;
+  policy_title: string;
+  statement: string;
+  applies_to: string;
+  last_reviewed_at: string | null;
+  enforcement: "Enforced" | "Guidance";
+  enforced_by: { id: string; target_kind: string; name: string; state: "Enforced" | "Missing" }[];
+  warning: string | null;
+}
+
+export interface LibraryPolicyPage {
+  policy: { key: string; title: string; summary: string; last_reviewed_at: string | null; organization_id: string };
+  rules: LibraryRuleSummary[];
+  sources: { title: string; href: string | null; kind: string; state: string; last_checked_at: string | null }[];
+}
+
+export interface LibraryRulePage {
+  rule: LibraryRuleSummary;
+  policy: { key: string; title: string };
+  citations: { passage: string; locator: string; before: string; after: string; source_title: string | null }[];
+  history: { version: number; statement: string; status: string; decided_by: string | null; decided_at: string | null }[];
+}
+
 export interface AccessGrantRow {
   id: number;
   holder_kind: string;
@@ -1144,6 +1173,17 @@ export const apiClient = {
 
   accessExplain: async (person: string, object: string) =>
     request<AccessExplanation>(`/access/explain?person=${encodeURIComponent(person)}&object=${encodeURIComponent(object)}`),
+
+  library: async (params: { q?: string; policy?: string; unit?: string; enforcement?: string; cursor?: string } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
+    const qs = q.toString();
+    return request<{ rules: LibraryRuleSummary[]; next_cursor: string | null }>(`/library${qs ? `?${qs}` : ""}`);
+  },
+
+  libraryPolicy: async (key: string) => request<LibraryPolicyPage>(`/library/policies/${encodeURIComponent(key)}`),
+
+  libraryRule: async (policyKey: string, ruleKey: string) => request<LibraryRulePage>(`/library/rules/${encodeURIComponent(policyKey)}/${encodeURIComponent(ruleKey)}`),
 
   authorityShow: async (unit: string) => request<AuthorityView>(`/admin/authority?organization_id=${encodeURIComponent(unit)}`),
 

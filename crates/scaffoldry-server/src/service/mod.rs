@@ -8,6 +8,7 @@ pub mod governance;
 pub mod authority;
 pub mod authority_changes;
 pub mod library;
+pub mod library_public;
 pub mod library_review;
 pub mod library_tools;
 pub mod history;
