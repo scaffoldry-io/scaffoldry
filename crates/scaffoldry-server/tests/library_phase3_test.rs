@@ -54,7 +54,7 @@ async fn world(holders: &[&str], text: &str, origin_supplied: bool) -> World {
     let (s, unit) = send(&app, "POST", "/api/v1/orgs", ADMIN, Some(json!({ "name": code, "code": code, "org_type": "Department", "parent_id": ROOT }))).await;
     assert_eq!(s, StatusCode::CREATED, "{unit}");
     let unit = unit["id"].as_str().unwrap().to_string();
-    let key = format!("records-officer-{}", &code.to_lowercase());
+    let key = format!("records-officer-{}", code.to_lowercase());
     let (s, p) = send(&app, "POST", "/api/v1/admin/positions", ADMIN, Some(json!({ "key": key, "name": "Records officer", "description": "Test", "org_types": ["Department"], "max_holders": 5, "reason": "Define" }))).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
     for h in holders {
