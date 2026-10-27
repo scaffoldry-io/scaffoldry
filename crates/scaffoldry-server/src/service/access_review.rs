@@ -423,6 +423,8 @@ struct Compare<'a> {
     /// Each person's standing, read once.
     standing: std::collections::HashMap<String, Option<(HolderSet, Vec<Grant>)>>,
     memberships: std::collections::HashMap<String, Vec<Grant>>,
+    /// A stored grant to leave out of the "after" side, for the impact of a revocation.
+    without: Option<i64>,
     gain: Vec<Value>,
     lose: Vec<Value>,
     per_role: std::collections::BTreeMap<String, (u32, u32)>,
@@ -430,7 +432,7 @@ struct Compare<'a> {
 
 impl<'a> Compare<'a> {
     fn new(state: &'a SharedState) -> Self {
-        Compare { state, now: chrono::Utc::now().timestamp(), standing: Default::default(), memberships: Default::default(), gain: Vec::new(), lose: Vec::new(), per_role: Default::default() }
+        Compare { state, now: chrono::Utc::now().timestamp(), standing: Default::default(), memberships: Default::default(), without: None, gain: Vec::new(), lose: Vec::new(), per_role: Default::default() }
     }
 
     fn person(&mut self, eppn: &str, object_text: &str, before: &Object, after: &Object, workspace: &str, extra: Option<&Grant>) {
@@ -439,7 +441,10 @@ impl<'a> Compare<'a> {
         let Some((holders, mut grants)) = standing else { return };
         let ms = self.memberships.entry(workspace.to_string()).or_insert_with(|| members::membership_grants(workspace, state));
         grants.extend(ms.iter().filter(|g| holders.is_holder(g)).cloned());
-        let mut with_extra = grants.clone();
+        let mut with_extra: Vec<Grant> = match self.without {
+            Some(gone) => grants.iter().filter(|g| g.id != gone).cloned().collect(),
+            None => grants.clone(),
+        };
         with_extra.extend(extra.cloned());
         let now = self.now;
         let Ok((was, will)) = with_world(state, |places, tree| (role_at(&holders, &grants, before, tree, places, now).map(|(r, _)| r), role_at(&holders, &with_extra, after, tree, places, now).map(|(r, _)| r))) else { return };
@@ -467,6 +472,15 @@ impl<'a> Compare<'a> {
 /// workspace as it is and as it would be.
 pub fn impact(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Value, ServiceError> {
     if let Some(grant) = crate::service::access_grants::pending_grant(state, caller, id)? {
+        // A revocation names the grant it would end, so who is asked is who would lose it.
+        let revoke = state.repository.access_change(id).ok().flatten().filter(|(c, ..)| c["kind"] == "revoke").and_then(|(c, ..)| c["grant_id"].as_i64());
+        if let Some(gid) = revoke {
+            if let Some(row) = state.repository.grant_row(gid).map_err(|e| ServiceError::Internal(e.to_string()))? {
+                let mut out = impact_of_revoke(state, &row.grant)?;
+                out["change_id"] = json!(id);
+                return Ok(out);
+            }
+        }
         return impact_of_grant(state, id, &grant);
     }
     let Some((workspace_id, coordinates, status)) = state.repository.coordinate_change(id).map_err(|e| ServiceError::Internal(e.to_string()))? else {
@@ -481,6 +495,28 @@ pub fn impact(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Value,
         return Err(ServiceError::conflict("That change has already been decided"));
     }
     impact_of_coordinates(state, id, &ws, coordinates)
+}
+
+/// Who would lose what if a stored grant were revoked.
+pub fn impact_of_revoke(state: &SharedState, grant: &Grant) -> Result<Value, ServiceError> {
+    let now = chrono::Utc::now().timestamp();
+    let mut people = people_of_holder(state, grant.holder_kind, &grant.holder_id);
+    let truncated = people.len() > MOST_PEOPLE;
+    people.truncate(MOST_PEOPLE);
+    let holder = HolderSet::holding(grant);
+    let mut cmp = Compare::new(state);
+    cmp.without = Some(grant.id);
+    for t in &all_targets(state) {
+        let Some(object) = t.object(state) else { continue };
+        let may_reach = !holder.is_holder(grant) || with_world(state, |places, tree| trace(grant, &holder, &object, tree, places, now).missed.is_none()).unwrap_or(false);
+        if !may_reach {
+            continue;
+        }
+        for p in &people {
+            cmp.person(p, &t.container, &object, &object, &t.workspace.id, None);
+        }
+    }
+    Ok(cmp.finish(Uuid::nil(), "revoke", people.len(), truncated))
 }
 
 /// The impact of a grant that is not stored yet, for the form that proposes it.

@@ -71,7 +71,7 @@ pub fn hint_for(err: &ServiceError) -> String {
         "quota_exceeded" => "Wait for your queued work to finish, and call get_job to check on it.",
         "too_large" => "Send less in one call, and call list_records with a limit to read a page at a time.",
         "file_too_large" | "file_type_blocked" | "scanner_unavailable" => "Choose a smaller or plainer file, and call get_job if an upload was queued.",
-        "undo_conflict" => "Call get_record_history to see what changed since, then decide what to keep.",
+        "undo_conflict" => "Call get_record with history: true to see what changed since, then decide what to keep.",
         "position_full" => "Call list_workspaces to find the unit, then ask a Platform Admin to replace the holder.",
         "impersonation_not_synthetic" => "Open the app and use view-as to see what that person sees. Only synthetic people can be acted as.",
         "authority_loosens" => "Ask for the same or more: a flagged check is at least Moderate, and a Moderate or High change needs at least a second person.",

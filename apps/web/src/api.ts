@@ -65,6 +65,19 @@ export interface ProposalRow {
   decided_at: string | null;
   checks: ProposalCheck[];
   changes: string[];
+  /** What the proposal needs now, and who can give it. Absent on proposals made before authority existed. */
+  authority?: ProposalAuthority;
+}
+
+export interface ProposalAuthority {
+  tier: "Low" | "Moderate" | "High";
+  path: "direct" | "second_person" | "approver";
+  path_sentence: string;
+  resolved: { eppn: string; display_name: string }[];
+  no_approver: boolean;
+  /** The unit admins to ask when nobody holds the position. */
+  contact: string[];
+  reasons_detail: { sentence: string; remedy: string | null; control_id: string | null }[];
 }
 
 /** What a direct save came to: live at once, or waiting for a person to decide. */
@@ -277,6 +290,39 @@ export interface Mentionable {
   name: string;
 }
 
+/** A request for access, as the server fills it in on a refusal. */
+export interface AccessRequestBody {
+  object_kind: "app" | "workspace";
+  object_id: string;
+  role: string;
+  clearance?: string | null;
+  reason: string;
+  days: number;
+}
+
+export interface AccessRequest {
+  id: string;
+  status: "Waiting for person" | "Pending" | "Approved" | "Rejected" | "Withdrawn" | "Expired";
+  route: "auto" | "self" | "approver";
+  days: number;
+  object_kind?: string;
+  object_id?: string;
+  role?: string;
+  reason?: string;
+  requester?: string;
+  task?: string | null;
+  filed_by_client?: string | null;
+  waiting_on?: string[];
+  ends_at?: string | null;
+}
+
+export interface AccessRequestRule {
+  id: string;
+  organization: string;
+  sentence: string;
+  retired_at: string | null;
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
@@ -289,6 +335,8 @@ export class ApiError extends Error {
   /** What to do about it, when the server knows. */
   public remedy?: string;
   public reason?: string;
+  /** On a refusal: what to send to ask for the access that was withheld. */
+  public request?: AccessRequestBody;
 
   constructor(status: number, message: string, details?: any) {
     super(message);
@@ -301,6 +349,7 @@ export class ApiError extends Error {
       if (details.fields && typeof details.fields === "object") this.fields = details.fields;
       if (typeof details.remedy === "string") this.remedy = details.remedy;
       if (typeof details.reason === "string") this.reason = details.reason;
+      if (details.request && typeof details.request === "object") this.request = details.request;
     }
   }
 }
@@ -875,7 +924,7 @@ export interface AccessGrantRow {
 
 export interface AccessChange {
   change_id: string;
-  kind: "grant" | "hierarchy";
+  kind: "grant" | "hierarchy" | "revoke" | "request_rule";
   grant: Record<string, unknown> | null;
   hierarchy: { key: string; name: string; kind: string; source: string } | null;
   widens: boolean;
@@ -883,6 +932,18 @@ export interface AccessChange {
   status: string;
   proposed_by: string;
   proposed_at: string;
+  /** `agent` for a change an AI tool drafted. */
+  proposed_via?: "person" | "agent";
+  /** The person a draft was made for. */
+  drafted_for?: string | null;
+  /** The AI tool that drafted it, when it signed in as a client. */
+  via_client?: string | null;
+  task?: string | null;
+  /** What the change does, in one sentence. Stored with a draft. */
+  sentence?: string | null;
+  /** A draft ends seven days after it is stored. */
+  expires_at?: string | null;
+  expired?: boolean;
 }
 
 export interface AccessGrantsPage {
@@ -1266,6 +1327,15 @@ export const apiClient = {
   mentionable: async (appSlug: string) => {
     return request<{ people: Mentionable[] }>(`/apps/${appSlug}/mentionable`);
   },
+
+  fileAccessRequest: async (body: AccessRequestBody) => request<AccessRequest>("/access/requests", { method: "POST", body: JSON.stringify(body) }),
+  myAccessRequests: async () => request<{ requests: AccessRequest[] }>("/me/access/requests"),
+  accessRequestsToDecide: async () => request<{ requests: AccessRequest[] }>("/me/access/requests/to-decide"),
+  confirmAccessRequest: async (id: string) => request<AccessRequest>(`/access/requests/${encodeURIComponent(id)}/confirm`, { method: "POST" }),
+  decideAccessRequest: async (id: string, decision: "approve" | "reject", note: string) =>
+    request<AccessRequest>(`/access/requests/${encodeURIComponent(id)}/decide`, { method: "POST", body: JSON.stringify({ decision, note }) }),
+  withdrawAccessRequest: async (id: string) => request<AccessRequest>(`/access/requests/${encodeURIComponent(id)}/withdraw`, { method: "POST" }),
+  accessRequestRules: async () => request<{ rules: AccessRequestRule[]; retired: AccessRequestRule[] }>("/admin/access/request-rules"),
 
   listProposals: async (workspaceId: string) => {
     return request<ProposalRow[]>(`/workspaces/${workspaceId}/proposals`);

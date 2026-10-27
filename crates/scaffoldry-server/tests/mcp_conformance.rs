@@ -178,7 +178,7 @@ fn fits(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
 
 const VERBS: &[&str] = &[
     "List", "Read", "Get", "Create", "Update", "Delete", "Change", "Add", "Submit", "Ask", "Append", "Verify", "Generate", "Export", "Propose", "Approve", "Cancel", "Save", "Count", "Move", "Return",
-    "Retrieve", "Aggregate", "Find", "Show", "Enqueue",
+    "Retrieve", "Aggregate", "Find", "Show", "Enqueue", "Draft",
 ];
 
 #[tokio::test]
@@ -235,17 +235,13 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("list_datasets", true, false, false),
     ("simulate_cedar_policy", true, false, false),
     ("record_governance_decision", false, false, false),
-    ("verify_decision_ledger", true, false, false),
-    ("export_oscal_compliance", true, false, false),
-    ("get_framework_spec", true, false, false),
+    ("governance_report", true, false, false),
     ("list_apps", true, false, false),
     ("describe_app", true, false, false),
     ("aggregate_records", true, false, false),
     ("list_records", true, false, false),
     ("get_view_data", true, false, false),
     ("get_record", true, false, false),
-    ("get_record_history", true, false, false),
-    ("list_pages", true, false, false),
     ("get_page", true, false, false),
     ("page_call", false, true, false),
     ("update_record", false, false, true),
@@ -265,6 +261,9 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("get_job", true, false, false),
     ("cancel_job", false, true, true),
     ("begin_task", false, false, true),
+    ("request_access", false, false, false),
+    ("draft_access_change", false, false, false),
+    ("access_suggestions", true, false, false),
     ("export_records", false, false, false),
     ("list_library_policies", true, false, false),
     ("read_library_snapshot", true, false, false),

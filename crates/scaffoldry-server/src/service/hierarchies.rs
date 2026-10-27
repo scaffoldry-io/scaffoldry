@@ -25,7 +25,8 @@ fn key_ok(key: &str) -> bool {
 }
 
 /// Stores a new hierarchy as a change. It exists once a different Platform Admin confirms it.
-pub fn propose(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+/// Checks a new hierarchy as a Platform Admin may propose it and shapes the change: `(change, reason, sentence)`.
+pub(crate) fn build(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<(Value, String, String), ServiceError> {
     require_platform_admin(caller, state)?;
     let text = |k: &str| body.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
     let key = text("key").ok_or_else(|| bad("key is required"))?;
@@ -43,7 +44,12 @@ pub fn propose(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<V
         return Err(bad(format!("a hierarchy named '{key}' exists")));
     }
     let change = json!({ "kind": "hierarchy", "hierarchy": { "key": key, "name": name, "kind": kind, "source": source } });
-    let id = state.repository.propose_access_change(&change, false, reason, &caller.eppn).map_err(internal)?;
+    Ok((change, reason.to_string(), format!("Add the {kind} hierarchy '{name}' ({key}).")))
+}
+
+pub fn propose(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+    let (change, reason, _) = build(state, caller, body)?;
+    let id = state.repository.propose_access_change(&change, false, &reason, &caller.eppn).map_err(internal)?;
     Ok(json!({ "change_id": id, "status": "Pending", "message": "A different Platform Admin must confirm this hierarchy before it exists." }))
 }
 

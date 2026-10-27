@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/access-request.schema.json",
+  "title": "Access request",
+  "description": "A request for access, and the rule that approves some requests without a person. A rule is a closed set of conditions, all of which must hold. A rule never covers restricted workspaces: a request for one always goes to its owner. A unit's rule may only add conditions to the institution's.",
+  "$defs": {
+    "role": { "enum": ["viewer", "commenter", "editor", "admin", "owner"] },
+    "sensitivity": { "enum": ["Public", "Directory", "Internal", "Restricted"] },
+    "rule": {
+      "type": "object",
+      "required": ["max_role", "max_sensitivity", "visibilities", "own_unit", "max_days"],
+      "additionalProperties": false,
+      "properties": {
+        "max_role": { "$ref": "#/$defs/role" },
+        "max_sensitivity": { "$ref": "#/$defs/sensitivity" },
+        "visibilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["departmental", "institutional"] }
+        },
+        "own_unit": { "type": "boolean" },
+        "max_days": { "type": "integer", "minimum": 1, "maximum": 365 },
+        "affiliations": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 64 } }
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": ["object_kind", "object_id", "role", "reason", "days"],
+      "additionalProperties": false,
+      "properties": {
+        "object_kind": { "enum": ["app", "workspace"] },
+        "object_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "role": { "$ref": "#/$defs/role" },
+        "clearance": { "oneOf": [{ "$ref": "#/$defs/sensitivity" }, { "type": "null" }] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "days": { "type": "integer", "minimum": 1, "maximum": 365 }
+      }
+    }
+  }
+}

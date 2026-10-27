@@ -125,6 +125,7 @@ fn check_visible(caller: &AuthUser, app_slug: &str, table_id: &str, config: &Val
                 message: format!("You cannot use '{name}' in a view because you cannot see it."),
                 reason: rule.as_ref().map_or_else(|| format!("'{name}' is hidden from you."), |d| d.reason.clone()),
                 remedy: rule.map_or_else(|| "Choose a field you can see.".to_string(), |d| d.remedy),
+                request: Some(crate::service::access::hidden_request(app_slug)),
             });
         }
     }

@@ -27,6 +27,8 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/hierarchies", post(create_hierarchy))
         .route("/admin/hierarchies/{key}/retire", post(retire_hierarchy))
         .route("/admin/access/changes/{id}/decide", post(decide_change))
+        .route("/admin/access/changes/preview", post(preview_change))
+        .route("/admin/access/suggestions", get(suggestions))
 }
 
 fn caller(state: &SharedState, headers: &HeaderMap) -> Result<AuthUser, ServiceError> {
@@ -149,3 +151,23 @@ async fn decide_change(State(state): State<SharedState>, headers: HeaderMap, Pat
         .map(Json)
 }
 
+
+/// What drafting a change would do, as the console shows it. Nothing is stored.
+async fn preview_change(State(state): State<SharedState>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    let origin = crate::guard::read_origin(&state, &headers);
+    let body = parse(&body)?;
+    tokio::task::spawn_blocking(move || crate::service::access_drafts::draft(&state, &c, &origin, &body, false))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
+        .map(Json)
+}
+
+/// What could be simpler, from queries over what is stored.
+async fn suggestions(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    tokio::task::spawn_blocking(move || crate::service::access_drafts::suggestions(&state, &c))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
+        .map(Json)
+}

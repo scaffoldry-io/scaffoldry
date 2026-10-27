@@ -1,6 +1,7 @@
 import { COMMON_TIMEZONES, getUserTimezone, setUserTimezone } from "./utils/durationDatetime";
 import React, { useState, useEffect } from "react";
 import { apiClient, type Connection, type MyApp } from "./api";
+import { AccessRequestsPanel } from "./AccessRequestsPanel";
 import { scopeSentence, TOKEN_OPS, type TokenOp, type TokenScope } from "./tokenScope";
 
 export interface UserSettingsModalProps {
@@ -231,6 +232,10 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
           </div>
         </div>
 
+
+        <div className="pb-4 border-b border-slate-100 dark:border-slate-800">
+          <AccessRequestsPanel />
+        </div>
 
         {/* Outside apps */}
         <div className="space-y-2 pb-4 border-b border-slate-100 dark:border-slate-800" data-testid="connected-apps">

@@ -239,6 +239,9 @@ async fn a_filter_or_sort_on_a_hidden_field_is_refused() {
     assert_eq!(r["isError"], true, "{r}");
     assert_eq!(r["structuredContent"]["code"], "field_hidden", "{r}");
     assert!(r["structuredContent"]["reason"].as_str().is_some_and(|s| !s.is_empty()), "{r}");
+    // The refusal carries the request that asks for access to the app.
+    let ask = &r["structuredContent"]["request"];
+    assert_eq!((ask["object_kind"].as_str(), ask["object_id"].as_str(), ask["role"].as_str()), (Some("app"), Some(w.slug.as_str()), Some("viewer")), "{r}");
     let r = tool(&w, &w.ann, "list_records", json!({ "app_slug": w.slug, "table_id": "students", "sort": { "field_name": "gpa", "direction": "Desc" } })).await;
     assert_eq!(r["structuredContent"]["code"], "field_hidden", "{r}");
     let r = tool(&w, &w.olga, "list_records", json!({ "app_slug": w.slug, "table_id": "students", "sort": { "field_name": "gpa", "direction": "Desc" } })).await;

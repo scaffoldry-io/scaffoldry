@@ -83,6 +83,7 @@ pub enum DecisionType {
     PolicyLibraryChanged,
     PolicyRuleDecided,
     AuthorityChanged,
+    AccessRequestDecided,
 }
 
 impl DecisionType {
@@ -130,6 +131,7 @@ impl DecisionType {
         DecisionType::PolicyLibraryChanged,
         DecisionType::PolicyRuleDecided,
         DecisionType::AuthorityChanged,
+        DecisionType::AccessRequestDecided,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -177,6 +179,7 @@ impl DecisionType {
             DecisionType::PolicyLibraryChanged => "PolicyLibraryChanged",
             DecisionType::PolicyRuleDecided => "PolicyRuleDecided",
             DecisionType::AuthorityChanged => "AuthorityChanged",
+            DecisionType::AccessRequestDecided => "AccessRequestDecided",
         }
     }
 

@@ -89,6 +89,14 @@ pub static TOOLS: &[Tool] = &[
         run: run_list_datasets,
     },
     Tool {
+        name: "governance_report",
+        description: "Show a governance report. ledger: verify the decision hash chain. oscal: the OSCAL 1.1.2 component-definition with audit proofs. framework: the component catalog's schema, theme tokens and classification boundaries.",
+        input_schema: schema_governance_report,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_governance_report,
+    },
+    Tool {
         name: "simulate_cedar_policy",
         description: "Ask the Cedar policy engine for its decision on an action over a record. Platform Admin only. Changes nothing.",
         input_schema: schema_simulate_cedar_policy,
@@ -103,30 +111,6 @@ pub static TOOLS: &[Tool] = &[
         scope: Scope::SignedIn,
         read_only: false,
         run: run_record_governance_decision,
-    },
-    Tool {
-        name: "verify_decision_ledger",
-        description: "Verify the hash chain of every recorded governance decision from genesis.",
-        input_schema: schema_empty,
-        scope: Scope::SignedIn,
-        read_only: true,
-        run: run_verify_decision_ledger,
-    },
-    Tool {
-        name: "export_oscal_compliance",
-        description: "Generate the OSCAL 1.1.2 component-definition with audit proofs.",
-        input_schema: schema_empty,
-        scope: Scope::SignedIn,
-        read_only: true,
-        run: run_export_oscal_compliance,
-    },
-    Tool {
-        name: "get_framework_spec",
-        description: "Retrieve the component catalog's JSON Schema, theme tokens, and data classification boundaries.",
-        input_schema: schema_empty,
-        scope: Scope::SignedIn,
-        read_only: true,
-        run: run_get_framework_spec,
     },
     Tool {
         name: "list_apps",
@@ -154,7 +138,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_records",
-        description: "List one page of a table's records, up to 200. Pass next_cursor back as cursor. A filter or sort works on a table of 10,000 rows or fewer.",
+        description: "List a page of records, up to 200. Pass next_cursor back as cursor. Filter and sort need 10,000 rows or fewer.",
         input_schema: schema_list_records,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -170,31 +154,15 @@ pub static TOOLS: &[Tool] = &[
     },
 Tool {
         name: "get_record",
-        description: "Get one record, with its version.",
+        description: "Get one record with its version, or with history: true its changes, newest first, with who made each. A field you may not read shows only that it changed.",
         input_schema: schema_get_record,
         scope: Scope::App(AppAction::Read),
         read_only: true,
         run: run_get_record,
     },
     Tool {
-        name: "get_record_history",
-        description: "List the changes to a record, newest first, with who made each. A field you may not read shows only that it changed.",
-        input_schema: schema_get_record_history,
-        scope: Scope::App(AppAction::Read),
-        read_only: true,
-        run: run_get_record_history,
-    },
-    Tool {
-        name: "list_pages",
-        description: "List the pages of an app: id, title, kind, and for a custom page its grants, format and libraries.",
-        input_schema: schema_describe_app,
-        scope: Scope::App(AppAction::Read),
-        read_only: true,
-        run: run_list_pages,
-    },
-    Tool {
         name: "get_page",
-        description: "Get a custom page as one HTML document for a sandboxed frame. It holds no data. It uses page_call.",
+        description: "Get a custom page as one HTML document for a sandboxed frame; it holds no data and uses page_call. Without page_id, list the app's pages: id, title, kind, and for a custom page its grants, format and libraries.",
         input_schema: schema_get_page,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -226,17 +194,41 @@ Tool {
     },
     Tool {
         name: "propose_app_change",
-        description: "Propose a new app or a change to one. Send the whole manifest and each custom page's source. Nothing changes until a person approves. Returns the proposal id, checks, and change list.",
+        description: "Propose a new app or a change to one. Send the whole manifest and each custom page's source. Nothing changes until a person approves. Returns the id, checks, changes, and who must approve.",
         input_schema: schema_propose_app_change,
         scope: Scope::Workspace("access_workspace"),
         read_only: false,
         run: run_propose_app_change,
     },
     Tool {
+        name: "draft_access_change",
+        description: "Draft a grant, revocation, request rule or hierarchy for a person to confirm. Applies nothing; ends in 7 days. preview: true stores nothing.",
+        input_schema: schema_draft_access_change,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_draft_access_change,
+    },
+    Tool {
+        name: "access_suggestions",
+        description: "List what could be simpler in who has access: covered memberships, a grant for a position, ended or unused grants, unmasked fields.",
+        input_schema: schema_empty,
+        scope: Scope::SignedIn,
+        read_only: true,
+        run: run_access_suggestions,
+    },
+    Tool {
+        name: "request_access",
+        description: "Ask for access you were refused. The person confirms; a rule or approver decides.",
+        input_schema: schema_request_access,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_request_access,
+    },
+    Tool {
         name: "list_proposals",
         description: "List the proposals of a workspace, pending first.",
         input_schema: schema_list_proposals,
-        scope: Scope::Workspace("access_workspace"),
+        scope: Scope::SignedIn,
         read_only: true,
         run: run_list_proposals,
     },
@@ -250,7 +242,7 @@ Tool {
     },
     Tool {
         name: "decide_proposal",
-        description: "Approve or reject a proposal. To approve, send the digest you reviewed. A workspace owner or admin only. A failed sensitivity or data loss check needs a second person.",
+        description: "Approve or reject a proposal; to approve send the digest you reviewed. Owner or admin only. A flagged check needs a second person.",
         input_schema: schema_decide_proposal,
         scope: Scope::Proposal("manage_workspace"),
         read_only: false,
@@ -258,7 +250,7 @@ Tool {
     },
     Tool {
         name: "preview_proposal",
-        description: "Show a proposed change as an app before it is live: a 30-minute read-only token, the app as proposed, and each custom page rendered.",
+        description: "Show a proposed change as an app before it is live: a 30-minute read-only token, the app, and its custom pages.",
         input_schema: schema_get_proposal,
         scope: Scope::Proposal("access_workspace"),
         read_only: false,
@@ -266,7 +258,7 @@ Tool {
     },
     Tool {
         name: "get_agent_kit",
-        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. It writes nothing. Ask the person before writing the files.",
+        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. Writes nothing. Ask the person first.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
@@ -306,7 +298,7 @@ Tool {
     },
     Tool {
         name: "save_view",
-        description: "Create a view, or change one by its view_id and current version. A personal view is yours. A collaborative one needs an editor. A locked one needs an admin.",
+        description: "Create a view, or change one by view_id and version. Personal views are yours; collaborative ones need an editor, locked ones an admin.",
         input_schema: schema_save_view,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -529,9 +521,9 @@ fn schema_manage_workspace_member() -> Value {
         "properties": {
             "workspace_id": { "type": "string" },
             "action": { "type": "string", "description": "add, update, or remove" },
-            "eppn": { "type": "string", "description": "Collaborator's eppn" },
+            "eppn": { "type": "string" },
             "role": { "type": "string", "description": "owner, admin, editor, commenter, or viewer" },
-            "name": { "type": "string", "description": "Full display name" }
+            "name": { "type": "string" }
         },
         "required": ["workspace_id", "action", "eppn"]
     })
@@ -542,7 +534,7 @@ fn schema_create_record() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "data": { "type": "object", "description": "Record field key-value pairs" }
+            "data": { "type": "object" }
         },
         "required": ["app_slug", "data"]
     })
@@ -564,11 +556,11 @@ fn schema_simulate_cedar_policy() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "eppn": { "type": "string", "description": "Principal's eppn" },
+            "eppn": { "type": "string" },
             "affiliation": { "type": "string", "description": "faculty, student, staff, employee, member, affiliate, or alum" },
             "action": { "type": "string", "description": "read, write, export, or approve" },
-            "ferpa_sensitive": { "type": "boolean", "description": "Record is FERPA sensitive" },
-            "department": { "type": "string", "description": "Department of the principal and the record" }
+            "ferpa_sensitive": { "type": "boolean" },
+            "department": { "type": "string" }
         },
         "required": ["eppn", "action"]
     })
@@ -578,11 +570,11 @@ fn schema_record_governance_decision() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "organization_code": { "type": "string", "description": "Institutional unit code" },
-            "app_slug": { "type": "string", "description": "Optional application slug" },
-            "decision_type": { "type": "string", "description": "A decision type, such as PolicyRevision" },
-            "oscal_control_id": { "type": "string", "description": "OSCAL control, such as AC-03" },
-            "rationale": { "type": "string", "description": "Why" }
+            "organization_code": { "type": "string" },
+            "app_slug": { "type": "string" },
+            "decision_type": { "type": "string", "description": "Such as PolicyRevision" },
+            "oscal_control_id": { "type": "string", "description": "Such as AC-03" },
+            "rationale": { "type": "string" }
         },
         "required": ["organization_code", "decision_type", "oscal_control_id", "rationale"]
     })
@@ -732,16 +724,21 @@ fn run_record_governance_decision(caller: &AuthUser, _origin: &Origin, args: Val
     }))
 }
 
-fn run_verify_decision_ledger(_caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    crate::service::governance::verify_decision_ledger(state)
+fn schema_governance_report() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "report": { "type": "string", "enum": ["ledger", "oscal", "framework"] } },
+        "required": ["report"]
+    })
 }
 
-fn run_export_oscal_compliance(_caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    Ok(state.export_oscal_component_definition())
-}
-
-fn run_get_framework_spec(_caller: &AuthUser, _origin: &Origin, _args: Value, _state: &SharedState) -> Result<Value, ServiceError> {
-    Ok(crate::routes::framework::build_framework_spec_json())
+fn run_governance_report(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    match required_str(&args, "report")? {
+        "ledger" => crate::service::governance::verify_decision_ledger(state),
+        "oscal" => Ok(state.export_oscal_component_definition()),
+        "framework" => Ok(crate::routes::framework::build_framework_spec_json()),
+        other => Err(ServiceError::BadRequest(format!("Argument 'report' is ledger, oscal or framework, not '{other}'"))),
+    }
 }
 
 fn schema_list_views() -> Value {
@@ -758,12 +755,12 @@ fn schema_save_view() -> Value {
         "properties": {
             "app_slug": { "type": "string" },
             "view_id": { "type": "string", "description": "Leave out to create" },
-            "name": { "type": "string", "description": "1 to 120 characters" },
+            "name": { "type": "string" },
             "kind": { "type": "string", "enum": ["grid", "kanban", "calendar", "gallery", "form", "summary", "dashboard"], "description": "Required to create" },
             "ownership": { "type": "string", "enum": ["personal", "collaborative", "locked"], "description": "To create. Default collaborative" },
             "table_id": { "type": "string", "description": "From describe_app" },
-            "config": { "type": "object", "description": "Sort, filters, grouping, layout" },
-            "version": { "type": "integer", "description": "The version you read" }
+            "config": { "type": "object" },
+            "version": { "type": "integer" }
         },
         "required": ["app_slug", "name"]
     })
@@ -929,9 +926,9 @@ fn schema_get_page() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "page_id": { "type": "string", "description": "Page id from list_pages" }
+            "page_id": { "type": "string", "description": "Leave out to list the pages" }
         },
-        "required": ["app_slug", "page_id"]
+        "required": ["app_slug"]
     })
 }
 
@@ -940,29 +937,29 @@ fn schema_page_call() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "page_id": { "type": "string", "description": "Page id from list_pages" },
+            "page_id": { "type": "string", "description": "Page id from get_page" },
             "op": { "type": "string", "description": "list, get, create, update, remove, settings_get, or settings_set" },
-            "table_id": { "type": "string", "description": "The table" },
+            "table_id": { "type": "string" },
             "record_id": { "type": "string", "description": "For get, update, remove" },
-            "version": { "type": "integer", "description": "The version you read" },
-            "data": { "type": "object", "description": "Fields the page may write" },
+            "version": { "type": "integer" },
+            "data": { "type": "object" },
             "filter": { "type": "object", "description": "As in list_records" },
             "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
-            "limit": { "type": "integer", "description": "1 to 200" },
-            "cursor": { "type": "string", "description": "For list: previous next_cursor" },
-            "key": { "type": "string", "description": "For settings" },
+            "limit": { "type": "integer" },
+            "cursor": { "type": "string" },
+            "key": { "type": "string" },
             "value": { "description": "Any JSON, 64 KB per page" }
         },
         "required": ["app_slug", "page_id", "op"]
     })
 }
 
-fn run_list_pages(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    crate::service::pages::list_pages(required_str(&args, "app_slug")?, state)
-}
-
 fn run_get_page(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    crate::service::pages::get_page(required_str(&args, "app_slug")?, required_str(&args, "page_id")?, state)
+    let slug = required_str(&args, "app_slug")?;
+    match args.get("page_id").and_then(Value::as_str) {
+        Some(page) => crate::service::pages::get_page(slug, page, state),
+        None => crate::service::pages::list_pages(slug, state),
+    }
 }
 
 fn run_page_call(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -974,12 +971,12 @@ fn schema_list_records() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "table_id": { "type": "string", "description": "From describe_app" },
+            "table_id": { "type": "string" },
             "filter": { "type": "object", "description": "{ conjunction: And|Or, clauses: [{ id, field_name, operator, value }] }. Operators: Equals, NotEquals, Contains, NotContains, GreaterThan, LessThan, IsEmpty, IsNotEmpty" },
             "sort": { "type": "object", "description": "{ field_name, direction: Asc|Desc }" },
-            "limit": { "type": "integer", "description": "1 to 200. Default 50" },
-            "cursor": { "type": "string", "description": "Previous next_cursor" },
-            "search": { "type": "string", "description": "Full-text search" }
+            "limit": { "type": "integer" },
+            "cursor": { "type": "string" },
+            "search": { "type": "string" }
         },
         "required": ["app_slug", "table_id"]
     })
@@ -990,7 +987,10 @@ fn schema_get_record() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "record_id": { "type": "string", "description": "Record id" }
+            "record_id": { "type": "string" },
+            "history": { "type": "boolean", "description": "Return the changes instead" },
+            "limit": { "type": "integer", "description": "With history" },
+            "cursor": { "type": "string", "description": "With history" }
         },
         "required": ["app_slug", "record_id"]
     })
@@ -1057,6 +1057,10 @@ struct ListRecordsArgs {
 struct GetRecordArgs {
     app_slug: String,
     record_id: String,
+    #[serde(default)]
+    history: bool,
+    limit: Option<usize>,
+    cursor: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1139,7 +1143,24 @@ fn run_list_records(caller: &AuthUser, origin: &Origin, args: Value, state: &Sha
 
 fn run_get_record(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: GetRecordArgs = parse(args)?;
-    to_value(&records::get_record(caller, &args.app_slug, &args.record_id, state)?)
+    if !args.history {
+        if args.limit.is_some() || args.cursor.is_some() {
+            return Err(ServiceError::BadRequest("Arguments 'limit' and 'cursor' are for history: true".to_string()));
+        }
+        return to_value(&records::get_record(caller, &args.app_slug, &args.record_id, state)?);
+    }
+    let limit = args.limit.unwrap_or(crate::service::history::DEFAULT_PAGE);
+    if limit == 0 || limit > MAX_ROWS {
+        return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
+    }
+    let page = crate::service::history::record_history(
+        caller,
+        &args.app_slug,
+        &args.record_id,
+        crate::service::history::HistoryQuery { filter: Default::default(), cursor: args.cursor, limit },
+        state,
+    )?;
+    Ok(json!({ "entries": page.entries, "next_cursor": page.next_cursor }))
 }
 
 fn run_update_record(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1161,44 +1182,6 @@ fn run_delete_record(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
     Ok(json!({ "deleted": true }))
 }
 
-fn schema_get_record_history() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "app_slug": { "type": "string" },
-            "record_id": { "type": "string", "description": "Record id" },
-            "limit": { "type": "integer", "description": "1 to 200. Default 50" },
-            "cursor": { "type": "string", "description": "Previous next_cursor" }
-        },
-        "required": ["app_slug", "record_id"]
-    })
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GetRecordHistoryArgs {
-    app_slug: String,
-    record_id: String,
-    limit: Option<usize>,
-    cursor: Option<String>,
-}
-
-fn run_get_record_history(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    let args: GetRecordHistoryArgs = parse(args)?;
-    let limit = args.limit.unwrap_or(crate::service::history::DEFAULT_PAGE);
-    if limit == 0 || limit > MAX_ROWS {
-        return Err(ServiceError::BadRequest(format!("Argument 'limit' must be from 1 to {MAX_ROWS}")));
-    }
-    let page = crate::service::history::record_history(
-        caller,
-        &args.app_slug,
-        &args.record_id,
-        crate::service::history::HistoryQuery { filter: Default::default(), cursor: args.cursor, limit },
-        state,
-    )?;
-    Ok(json!({ "entries": page.entries, "next_cursor": page.next_cursor }))
-}
-
 fn schema_propose_app_change() -> Value {
     json!({
         "type": "object",
@@ -1208,17 +1191,54 @@ fn schema_propose_app_change() -> Value {
             "manifest": { "type": "object", "description": "Whole manifest. See scaffoldry://schema/app-manifest" },
             "rules": { "type": "array", "items": { "type": "object" }, "description": "Automation rules to add or change. No webhook steps" },
             "summary": { "type": "string", "description": "What changes and why" },
-            "page_sources": { "type": "array", "items": { "type": "string" }, "description": "Source of every new or changed custom page" }
+            "page_sources": { "type": "array", "items": { "type": "string" }, "description": "Source of every new or changed custom page" },
+            "dry_run": { "type": "boolean", "description": "Run the checks and say who must approve. Stores nothing" }
         },
         "required": ["workspace_id", "summary"]
+    })
+}
+
+fn schema_draft_access_change() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "kind": { "type": "string", "enum": ["grant", "revoke", "request_rule", "hierarchy"] },
+            "change": { "type": "object", "description": "grant fields, or grant_id, or organization_id with rule" },
+            "reason": { "type": "string" },
+            "preview": { "type": "boolean" }
+        },
+        "required": ["kind", "change", "reason"]
+    })
+}
+
+fn run_draft_access_change(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let preview = args.get("preview").and_then(Value::as_bool).unwrap_or(false);
+    crate::service::access_drafts::draft(state, caller, origin, &args, !preview)
+}
+
+fn run_access_suggestions(caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::access_drafts::suggestions(state, caller)
+}
+
+fn schema_request_access() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "object_kind": { "type": "string", "description": "app or workspace" },
+            "object_id": { "type": "string" },
+            "role": { "type": "string" },
+            "clearance": { "type": "string" },
+            "reason": { "type": "string" },
+            "days": { "type": "integer" }
+        },
+        "required": ["object_kind", "object_id", "role", "reason", "days"]
     })
 }
 
 fn schema_list_proposals() -> Value {
     json!({
         "type": "object",
-        "properties": { "workspace_id": { "type": "string" } },
-        "required": ["workspace_id"]
+        "properties": { "workspace_id": { "type": "string" }, "to_decide": { "type": "boolean", "description": "Instead: those you may approve, in any workspace" } }
     })
 }
 
@@ -1254,6 +1274,16 @@ struct ProposeArgs {
     summary: String,
     #[serde(default)]
     page_sources: Vec<String>,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListProposalsArgs {
+    workspace_id: Option<String>,
+    #[serde(default)]
+    to_decide: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -1273,7 +1303,8 @@ struct DecideArgs {
 
 fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: ProposeArgs = parse(args)?;
-    crate::service::proposals::propose(
+    let run = if a.dry_run { crate::service::proposals::dry_run } else { crate::service::proposals::propose };
+    run(
         caller,
         crate::service::proposals::ProposeInput {
             workspace_id: a.workspace_id,
@@ -1287,9 +1318,18 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
     )
 }
 
-fn run_list_proposals(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    let a: ListAppsArgs = parse(args)?;
-    crate::service::proposals::list(&a.workspace_id, state)
+fn run_request_access(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::access_requests::file(state, caller, origin, &args)
+}
+
+fn run_list_proposals(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ListProposalsArgs = parse(args)?;
+    if a.to_decide {
+        return Ok(json!({ "proposals": crate::service::authority::to_decide(state, caller)? }));
+    }
+    let ws = a.workspace_id.ok_or_else(|| ServiceError::BadRequest("Argument 'workspace_id' is required".to_string()))?;
+    authorize_workspace(caller, &ws, "access_workspace", state)?;
+    crate::service::proposals::list(&ws, state)
 }
 
 fn run_get_proposal(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1436,8 +1476,8 @@ fn schema_aggregate_records() -> Value {
         "properties": {
             "app_slug": { "type": "string" },
             "table_id": { "type": "string", "description": "From describe_app" },
-            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "count_distinct (alias unique), filled and empty fit any field type" },
-            "field": { "type": "string", "description": "Field to aggregate. Not for count" },
+            "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "count_distinct (or unique), filled and empty fit any type" },
+            "field": { "type": "string", "description": "Not for count" },
             "filter": { "type": "object", "description": "Filter on indexed fields" },
             "group_by": { "type": "string", "description": "Indexed field to group by" },
             "group_by2": { "type": "string", "description": "Second indexed field, inside the first" },

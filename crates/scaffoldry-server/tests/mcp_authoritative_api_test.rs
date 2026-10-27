@@ -707,7 +707,7 @@ async fn the_cedar_resource_is_the_source_the_engine_was_built_from() {
     assert_eq!(text, engine.policy_source());
     assert!(text.contains("@description"), "it is the real set, with descriptions");
 
-    // The fake OSCAL resource is gone. export_oscal_compliance is the real one.
+    // The fake OSCAL resource is gone. governance_report with report: oscal is the real one.
     let (_, listed) = mcp_call(&app, &token, "resources/list", None).await;
     let uris: Vec<&str> = listed["result"]["resources"]
         .as_array()

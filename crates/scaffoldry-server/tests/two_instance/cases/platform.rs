@@ -67,6 +67,14 @@ pub fn add(m: &mut Entries) {
         m.insert(k("POST", "/admin/authority/changes/{id}/decide"), case!(authority_decide, root));
         exempt(m, &k("POST", "/admin/authority/impact"), "counts what a change would do to stored proposals and stores nothing");
     }
+    m.insert("POST /api/v1/access/requests".into(), case!(request_file));
+    m.insert("POST /api/v1/access/requests/{id}/confirm".into(), case!(request_confirm));
+    m.insert("POST /api/v1/access/requests/{id}/decide".into(), case!(request_decide));
+    m.insert("POST /api/v1/access/requests/{id}/withdraw".into(), case!(request_withdraw));
+    for (root, prefix) in [("/api/v1", "/api/v1"), ("", "")] {
+        m.insert(format!("POST {prefix}/admin/access/request-rules"), case!(request_rule_propose, root));
+        exempt(m, &format!("POST {prefix}/admin/access/changes/preview"), "says what a draft would do and stores nothing");
+    }
     m.insert("POST /api/v1/orgs".into(), case!(org_create));
     m.insert("PATCH /api/v1/orgs/{id}".into(), case!(org_patch));
     m.insert("POST /api/v1/orgs/{id}/appointments".into(), case!(appoint));
@@ -1004,4 +1012,71 @@ async fn library_binding_remove(w: World, root: &'static str) -> Outcome {
     status(w.rb("DELETE", &format!("{root}/admin/library/bindings/{id}"), ADMIN, Some(json!({ "reason": "Not enforced" }))).await, StatusCode::OK, "B removes it")?;
     let seen = status(w.wa("GET", &format!("/api/v1/library/rules/{key}/retention"), ADMIN, None).await, StatusCode::OK, "A reads the rule")?;
     ensure(seen["rule"]["enforcement"] == "Guidance", format!("A shows the rule as guidance again: {seen}"))
+}
+
+/// A request for a viewer role on a new app in the demo workspace, filed by a new person through A.
+async fn request_fixture(w: &World) -> Result<(String, String, String), String> {
+    let slug = make_app(w).await?;
+    let who = person("p13req");
+    make_user(w, &who).await?;
+    let filed = status(
+        w.wa("POST", "/api/v1/access/requests", &who, Some(json!({ "object_kind": "app", "object_id": slug, "role": "viewer", "reason": "Fixture request", "days": 7 }))).await,
+        StatusCode::CREATED,
+        "A files the request",
+    )?;
+    Ok((slug, who, filed["id"].as_str().ok_or("a request id")?.to_string()))
+}
+
+async fn request_file(w: World) -> Outcome {
+    let (_, who, id) = request_fixture(&w).await?;
+    let seen = status(w.rb("GET", "/api/v1/me/access/requests", &who, None).await, StatusCode::OK, "B lists the requests")?;
+    ensure(has(&seen, &id), format!("B shows the request A stored: {seen}"))
+}
+
+async fn request_decide(w: World) -> Outcome {
+    let (_, who, id) = request_fixture(&w).await?;
+    let waiting = status(w.rb("GET", "/api/v1/me/access/requests/to-decide", OWNER, None).await, StatusCode::OK, "B lists what the owner may decide")?;
+    ensure(has(&waiting, &id), format!("B shows the owner the request A stored: {waiting}"))?;
+    status(w.rb("POST", &format!("/api/v1/access/requests/{id}/decide"), OWNER, Some(json!({ "decision": "approve", "note": "Reviewed" }))).await, StatusCode::OK, "B approves")?;
+    let seen = status(w.wa("GET", &format!("/api/v1/admin/access/grants?state=active&holder={who}"), ADMIN, None).await, StatusCode::OK, "A lists the active grants")?;
+    ensure(seen["grants"].as_array().is_some_and(|g| g.len() == 1), format!("A shows the grant B made: {seen}"))
+}
+
+async fn request_withdraw(w: World) -> Outcome {
+    let (_, who, id) = request_fixture(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/access/requests/{id}/withdraw"), &who, None).await, StatusCode::OK, "A withdraws")?;
+    let seen = status(w.rb("GET", "/api/v1/me/access/requests", &who, None).await, StatusCode::OK, "B lists the requests")?;
+    ensure(has(&seen, "Withdrawn"), format!("B shows the request as A closed it: {seen}"))
+}
+
+/// An AI tool filed this request and it waits for the person. A tool's session is not needed to leave one in that state.
+async fn request_confirm(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let who = person("p13conf");
+    make_user(&w, &who).await?;
+    let id = uuid::Uuid::new_v4();
+    let url = w.db.url().to_string();
+    let (s, who2) = (slug.clone(), who.clone());
+    std::thread::spawn(move || {
+        let mut c = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+        c.execute(
+            "INSERT INTO access_requests (id, requester, filed_by_client, object_kind, object_id, role, reason, days, route, status) VALUES ($1, $2, 'client-fixture', 'app', $3, 'viewer', 'Filed by a tool', 7, 'approver', 'Waiting for person')",
+            &[&id, &who2, &s],
+        )
+        .unwrap();
+    })
+    .join()
+    .map_err(|_| "the fixture row".to_string())?;
+    status(w.wa("POST", &format!("/api/v1/access/requests/{id}/confirm"), &who, None).await, StatusCode::OK, "A confirms")?;
+    let seen = status(w.rb("GET", "/api/v1/me/access/requests", &who, None).await, StatusCode::OK, "B lists the requests")?;
+    ensure(has(&seen, "Pending"), format!("B shows the request as A confirmed it: {seen}"))
+}
+
+async fn request_rule_propose(w: World, root: &'static str) -> Outcome {
+    let unit = make_unit(&w, &unique("P13RU")).await?;
+    let rule = json!({ "max_role": "viewer", "max_sensitivity": "Internal", "visibilities": ["departmental"], "own_unit": true, "max_days": 7 });
+    let made = status(w.wa("POST", &format!("{root}/admin/access/request-rules"), ADMIN, Some(json!({ "organization_id": unit, "reason": "Our unit asks for less", "rule": rule }))).await, StatusCode::ACCEPTED, "A proposes the rule")?;
+    let change = made["change_id"].as_str().ok_or("a change id")?.to_string();
+    let seen = status(w.rb("GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
+    ensure(has(&seen["changes"], &change), format!("B shows the change A stored: {seen}"))
 }
