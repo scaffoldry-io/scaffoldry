@@ -252,6 +252,32 @@ pub fn effective_for_tier(tier: Tier, unit_path: &[Uuid], rows: &[MatrixRow]) ->
     Effective { path, approver: winner.and_then(|r| r.approver.clone()), source: winner.map(|r| r.organization_id) }
 }
 
+/// The value at `pct` percent of `sorted` by the nearest-rank method: the smallest value with at least that share of
+/// the list at or below it. PostgreSQL's `percentile_disc` gives the same answer, so the simulation and the load route
+/// agree. An empty list gives 0.
+pub fn nearest_rank(sorted: &[u64], pct: u64) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let rank = (pct * sorted.len() as u64).div_ceil(100).max(1);
+    sorted[(rank as usize - 1).min(sorted.len() - 1)]
+}
+
+/// One approver's items per week, summarised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadSummary {
+    pub median: u64,
+    pub p95: u64,
+    pub largest: u64,
+}
+
+/// The median, 95th percentile and largest of `weeks`, one count for each week including the quiet ones.
+pub fn load_summary(weeks: &[u64]) -> LoadSummary {
+    let mut sorted = weeks.to_vec();
+    sorted.sort_unstable();
+    LoadSummary { median: nearest_rank(&sorted, 50), p95: nearest_rank(&sorted, 95), largest: sorted.last().copied().unwrap_or(0) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +432,20 @@ mod tests {
         let signals: Vec<SignalRow> = tree().iter().map(|u| SignalRow { organization_id: *u, check_name: "sensitivity".into(), tier: Tier::Low }).collect();
         let r = required(&raised(&["sensitivity"]), &tree(), &signals, &rows);
         assert_eq!((r.tier, r.path), (Tier::Moderate, Path::SecondPerson));
+    }
+
+    #[test]
+    fn nearest_rank_takes_the_lower_middle_of_an_even_list() {
+        assert_eq!(nearest_rank(&[1, 2, 3, 4], 50), 2);
+        assert_eq!(nearest_rank(&[1, 2, 3, 4, 5], 50), 3);
+        assert_eq!(nearest_rank(&[], 95), 0);
+        assert_eq!(nearest_rank(&(1..=100).collect::<Vec<u64>>(), 95), 95);
+        assert_eq!(nearest_rank(&[7], 95), 7);
+    }
+
+    #[test]
+    fn load_summary_counts_the_quiet_weeks() {
+        let s = load_summary(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 5, 40]);
+        assert_eq!(s, LoadSummary { median: 0, p95: 40, largest: 40 });
     }
 }

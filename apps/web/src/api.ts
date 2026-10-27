@@ -873,6 +873,17 @@ export interface AuthorityImpact {
   unassigned: { proposal_id: string; workspace_id: string; summary: string }[];
 }
 
+/** The last 90 days of real proposals under the matrix as it is now. Counts, approver names and times; never content. */
+export interface AuthorityLoad {
+  window_days: number;
+  proposals: number;
+  paths: { direct: number; second_person: number; approver: number };
+  unassigned: number;
+  /** `weeks[0]` is the last seven days. Quiet weeks are zeros. */
+  approvers: { eppn: string; display_name: string; weeks: number[]; median: number; p95: number; largest: number }[];
+  decision_time: { decided: number; median_seconds: number | null; p95_seconds: number | null };
+}
+
 export interface LibraryRuleSummary {
   id: string;
   policy_id: string;
@@ -1247,6 +1258,8 @@ export const apiClient = {
   libraryRule: async (policyKey: string, ruleKey: string) => request<LibraryRulePage>(`/library/rules/${encodeURIComponent(policyKey)}/${encodeURIComponent(ruleKey)}`),
 
   authorityShow: async (unit: string) => request<AuthorityView>(`/admin/authority?organization_id=${encodeURIComponent(unit)}`),
+
+  authorityLoad: async () => request<AuthorityLoad>("/admin/authority/load"),
 
   authorityChanges: async (unit: string) => request<{ changes: AuthorityChange[] }>(`/admin/authority/changes?organization_id=${encodeURIComponent(unit)}`),
 
