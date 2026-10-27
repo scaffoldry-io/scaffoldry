@@ -21,7 +21,7 @@
     "valid_until": { "type": ["string", "null"], "format": "date-time" },
     "revoked_at": { "type": ["string", "null"], "format": "date-time" },
     "revoked_by": { "type": ["string", "null"] },
-    "source": { "enum": ["membership", "appointment", "rule", "request", "task", "flow"] },
+    "source": { "enum": ["membership", "appointment", "rule", "request", "task", "flow", "client"] },
     "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
   }
 }

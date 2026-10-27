@@ -38,14 +38,19 @@ pub fn issuer_of(headers: &axum::http::HeaderMap) -> String {
 }
 
 /// RFC 8414 authorization server metadata.
-pub fn authorization_server_metadata(issuer: &str) -> Value {
+pub fn authorization_server_metadata(issuer: &str, client_credentials: bool) -> Value {
+    let mut grants = vec!["authorization_code", "refresh_token"];
+    // Only when some active client has a service identity. Everyone else is told the grant does not exist.
+    if client_credentials {
+        grants.push("client_credentials");
+    }
     json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/oauth/authorize"),
         "token_endpoint": format!("{issuer}/oauth/token"),
         "revocation_endpoint": format!("{issuer}/oauth/revoke"),
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": grants,
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "none"],
         "revocation_endpoint_auth_methods_supported": ["client_secret_basic", "none"]
@@ -239,7 +244,8 @@ pub fn token(basic: Option<(String, String)>, form: &TokenForm, state: &SharedSt
     match form.grant_type.as_str() {
         "authorization_code" => from_code(basic, form, state),
         "refresh_token" => from_refresh(basic, form, state),
-        _ => Err(OAuthError::new(400, "unsupported_grant_type", "Only authorization_code and refresh_token are supported.")),
+        "client_credentials" => from_client_credentials(basic, form, state),
+        _ => Err(OAuthError::new(400, "unsupported_grant_type", "Only authorization_code, refresh_token and client_credentials are supported.")),
     }
 }
 
@@ -322,6 +328,28 @@ fn from_code(basic: Option<(String, String)>, form: &TokenForm, state: &SharedSt
         return agent_reply(&client, &row.eppn, &code_hash, session, level, hours * 3600, state);
     }
     let raw = issue(&client, &row.eppn, &code_hash, None, state)?;
+    Ok(json!({ "access_token": raw, "token_type": "Bearer", "expires_in": TOKEN_SECONDS }))
+}
+
+/// The name a client's service identity signs in as. It is not an address, so no person can be it.
+pub fn service_eppn(client_id: &str) -> String {
+    format!("client:{client_id}")
+}
+
+/// The client id in a service identity's name, or `None` for any other name.
+pub fn service_client_id(eppn: &str) -> Option<&str> {
+    eppn.strip_prefix("client:")
+}
+
+/// RFC 6749 section 4.4. A confidential client with a service identity trades its secret for a one-hour token that acts
+/// as `client:{client_id}`. There is no person and no refresh token. Its rights are the grants a second person approved,
+/// inside its ceiling.
+fn from_client_credentials(basic: Option<(String, String)>, form: &TokenForm, state: &SharedState) -> Result<Value, OAuthError> {
+    let client = authenticate(basic, form.client_id.as_deref(), state)?;
+    if client.kind != "confidential" || !client.service_identity {
+        return Err(OAuthError::new(400, "unauthorized_client", "This client has no service identity."));
+    }
+    let raw = issue(&client, &service_eppn(&client.client_id), "", None, state)?;
     Ok(json!({ "access_token": raw, "token_type": "Bearer", "expires_in": TOKEN_SECONDS }))
 }
 

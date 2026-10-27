@@ -31,6 +31,10 @@ class AppClientSchema(unittest.TestCase):
     def test_a_registration_passes(self):
         self.assertEqual(list(VALIDATOR.iter_errors(GOOD)), [])
 
+    def test_a_confidential_client_may_ask_for_a_service_identity(self):
+        doc = with_change(kind="confidential", service_identity=True)
+        self.assertEqual(list(VALIDATOR.iter_errors(doc)), [])
+
     def test_what_the_server_refuses_the_schema_refuses_too(self):
         bad = [
             with_change(kind="hybrid"),
@@ -41,6 +45,7 @@ class AppClientSchema(unittest.TestCase):
             with_change(ceiling={"apps": []}),
             with_change(ceiling={"apps": [{"app_slug": "grants", "tables": []}]}),
             with_change(unknown="x"),
+            with_change(service_identity=True),
         ]
         for doc in bad:
             self.assertTrue(list(VALIDATOR.iter_errors(doc)), doc)

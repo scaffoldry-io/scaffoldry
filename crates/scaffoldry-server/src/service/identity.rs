@@ -72,6 +72,19 @@ fn root_roles(eppn: &str, state: &SharedState) -> (bool, bool) {
 }
 
 pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
+    // A client's service identity is not a person. It exists while its client is active and has one.
+    if let Some(client_id) = crate::service::oauth::service_client_id(eppn) {
+        let client = state.repository.get_client(client_id).ok().flatten().filter(|c| c.status == "Active" && c.service_identity)?;
+        return Some(AuthUser {
+            eppn: eppn.to_string(),
+            name: client.name,
+            role_title: "Service identity".to_string(),
+            affiliation: "service".to_string(),
+            department: "System".to_string(),
+            view_as_by: None,
+            via_client: None,
+        });
+    }
     if eppn == "setup@scaffoldry.local" {
         // The way in before any admin exists. It ends when the first Platform Admin is appointed. When the
         // database cannot say, it is refused.

@@ -13,7 +13,7 @@ use scaffoldry_core::reach::{AnchorKind, Grant, HolderKind};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-const SOURCES: [&str; 6] = ["membership", "appointment", "rule", "request", "task", "flow"];
+const SOURCES: [&str; 7] = ["membership", "appointment", "rule", "request", "task", "flow", "client"];
 
 /// A grant as a caller asks for it, checked.
 struct NewGrant {
@@ -250,7 +250,13 @@ fn check_holder(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
     let unit_exists = |id: &str| Uuid::parse_str(id).ok().is_some_and(|u| state.organizations.read().unwrap_or_else(|p| p.into_inner()).contains_key(&u));
     match g.holder_kind {
         HolderKind::Person => {
-            if !g.holder_id.contains('@') {
+            // A client's service identity is `client:{client_id}`, and only a client that has one can hold a grant.
+            if let Some(client_id) = crate::service::oauth::service_client_id(&g.holder_id) {
+                let has = state.repository.get_client(client_id).map_err(internal)?.is_some_and(|c| c.service_identity);
+                if !has || g.source != "client" {
+                    return Err(bad("a service identity holds grants from a client that has one, with source 'client'"));
+                }
+            } else if !g.holder_id.contains('@') {
                 return Err(bad("a person holder is an address"));
             }
         }

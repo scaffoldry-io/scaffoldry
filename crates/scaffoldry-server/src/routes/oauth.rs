@@ -41,8 +41,14 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, ServiceError>
         .map_err(ServiceError::into_pair)
 }
 
-async fn authorization_server(headers: HeaderMap) -> Json<Value> {
-    Json(oauth::authorization_server_metadata(&oauth::issuer_of(&headers)))
+async fn authorization_server(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let issuer = oauth::issuer_of(&headers);
+    blocking(move || {
+        let any = state.repository.any_service_identity().map_err(|e| ServiceError::internal(e.to_string()))?;
+        Ok(oauth::authorization_server_metadata(&issuer, any))
+    })
+    .await
+    .map(Json)
 }
 
 async fn show_consent(State(state): State<SharedState>, headers: HeaderMap, Query(params): Query<AuthorizeParams>) -> Reply {

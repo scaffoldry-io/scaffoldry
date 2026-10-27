@@ -591,7 +591,36 @@ async fn oauth_token(w: World) -> Outcome {
     let (_, code) = client_and_code(&w).await?;
     let (first, _) = form_post(&w.b, "/oauth/token", token_form(&id, &code)).await;
     let (second, _) = form_post(&w.a, "/oauth/token", token_form(&id, &code)).await;
-    ensure(first != StatusCode::OK || second == StatusCode::BAD_REQUEST, "A refuses a code B already used")
+    ensure(first != StatusCode::OK || second == StatusCode::BAD_REQUEST, "A refuses a code B already used")?;
+    service_identity_token(&w).await
+}
+
+/// A client's service identity is in the database. A registers it and B trades its secret, and both accept the token until A disables the client.
+async fn service_identity_token(w: &World) -> Outcome {
+    use axum::{body::Body, http::Request};
+    use base64::Engine;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let second = person("p5second");
+    make_user(w, &second).await?;
+    status(w.wa("POST", &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"), ADMIN, Some(json!({ "eppn": second, "role": "admin" }))).await, StatusCode::CREATED, "add the second person")?;
+    let slug = make_app(w).await?;
+    let body = json!({
+        "name": unique("p5service"), "operator": "Physics", "kind": "confidential", "redirect_uris": ["https://nightly.example.edu/callback"], "service_identity": true,
+        "ceiling": { "apps": [{ "app_slug": slug, "tables": [{ "table_id": "apps", "read": ["name"], "write": [], "create": false, "delete": false }] }] }
+    });
+    let made = status(w.wa("POST", "/api/v1/clients", OWNER, Some(body)).await, StatusCode::CREATED, "register a service client")?;
+    let id = made["client_id"].as_str().ok_or("a client id")?.to_string();
+    let decided = status(w.rb("POST", &format!("/api/v1/clients/{id}/decide"), &second, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "B approves")?;
+    let secret = decided["client_secret"].as_str().ok_or("a secret")?.to_string();
+    let basic = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{id}:{secret}")));
+    let req = Request::builder().method("POST").uri("/oauth/token").header("authorization", basic).header("content-type", "application/x-www-form-urlencoded").body(Body::from("grant_type=client_credentials")).unwrap();
+    let resp = w.b.clone().oneshot(req).await.unwrap();
+    let issued: Value = serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap_or(Value::Null);
+    let token = issued["access_token"].as_str().ok_or_else(|| format!("B issues a token: {issued}"))?.to_string();
+    ensure(token_works(&w.a, &token).await && token_works(&w.b, &token).await, "both instances accept the service identity's token")?;
+    status(w.wa("POST", &format!("/api/v1/clients/{id}/disable"), OWNER, Some(json!({ "reason": "Done" }))).await, StatusCode::OK, "A disables the client")?;
+    ensure(!token_works(&w.b, &token).await, "B refuses the token after A disabled the client")
 }
 
 async fn oauth_revoke(w: World) -> Outcome {

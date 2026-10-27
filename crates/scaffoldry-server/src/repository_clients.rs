@@ -18,9 +18,11 @@ pub struct ClientRow {
     pub decided_at: Option<String>,
     pub disabled_by: Option<String>,
     pub disabled_at: Option<String>,
+    /// A confidential client may act as `client:{client_id}`, through grants a second person approved.
+    pub service_identity: bool,
 }
 
-const COLUMNS: &str = "client_id, name, operator, kind, redirect_uris, ceiling, status, proposed_by, proposed_at::text, decided_by, decided_at::text, disabled_by, disabled_at::text";
+const COLUMNS: &str = "client_id, name, operator, kind, redirect_uris, ceiling, status, proposed_by, proposed_at::text, decided_by, decided_at::text, disabled_by, disabled_at::text, service_identity";
 
 fn row_of(r: &postgres::Row) -> ClientRow {
     ClientRow {
@@ -37,6 +39,7 @@ fn row_of(r: &postgres::Row) -> ClientRow {
         decided_at: r.get(10),
         disabled_by: r.get(11),
         disabled_at: r.get(12),
+        service_identity: r.get(13),
     }
 }
 
@@ -45,12 +48,17 @@ impl PostgresRepository {
         let c = c.clone();
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO app_clients (client_id, name, operator, kind, redirect_uris, ceiling, status, proposed_by) \
-                 VALUES ($1, $2, $3, $4, $5, $6, 'Pending', $7)",
-                &[&c.client_id, &c.name, &c.operator, &c.kind, &c.redirect_uris, &c.ceiling, &c.proposed_by],
+                "INSERT INTO app_clients (client_id, name, operator, kind, redirect_uris, ceiling, status, proposed_by, service_identity) \
+                 VALUES ($1, $2, $3, $4, $5, $6, 'Pending', $7, $8)",
+                &[&c.client_id, &c.name, &c.operator, &c.kind, &c.redirect_uris, &c.ceiling, &c.proposed_by, &c.service_identity],
             )?;
             Ok(())
         })
+    }
+
+    /// Whether any active client has a service identity. The server says it supports `client_credentials` only then.
+    pub fn any_service_identity(&self) -> Result<bool, RepositoryError> {
+        self.with_client(|client| Ok(client.query_one("SELECT EXISTS (SELECT 1 FROM app_clients WHERE service_identity AND status = 'Active')", &[])?.get(0)))
     }
 
     pub fn get_client(&self, id: &str) -> Result<Option<ClientRow>, RepositoryError> {

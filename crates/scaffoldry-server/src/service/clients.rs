@@ -56,6 +56,9 @@ pub struct Registration {
     /// An agent client has none: it acts within the person's own rights.
     #[serde(default)]
     pub ceiling: Ceiling,
+    /// A confidential client may ask to act as itself, `client:{client_id}`, when nobody is signed in.
+    #[serde(default)]
+    pub service_identity: bool,
 }
 
 /// A new client secret. The `scs_` prefix tells a person and a scanner what it is.
@@ -285,6 +288,7 @@ pub fn view(row: &ClientRow, state: &SharedState) -> Value {
         "name": row.name,
         "operator": row.operator,
         "kind": row.kind,
+        "service_identity": row.service_identity,
         "redirect_uris": row.redirect_uris,
         "ceiling": row.ceiling,
         "sentences": sentences_of(row, state),
@@ -303,7 +307,7 @@ fn ledger(caller: &AuthUser, row: &ClientRow, kind: DecisionType, control: &str,
     let first = ceiling.apps.first().and_then(|a| live(&a.app_slug, state));
     let payload = json!({
         "client_id": row.client_id, "name": row.name, "operator": row.operator, "kind": row.kind,
-        "ceiling": row.ceiling, "by": caller.eppn, "detail": extra
+        "ceiling": row.ceiling, "service_identity": row.service_identity, "by": caller.eppn, "detail": extra
     });
     state
         .append_ledger_entry(RecordDecisionInput {
@@ -347,6 +351,9 @@ pub fn propose(caller: &AuthUser, input: Registration, state: &SharedState) -> R
             return Err(ServiceError::bad_request("An agent client has no ceiling: it acts within the person's own rights"));
         }
     }
+    if input.service_identity && input.kind != "confidential" {
+        return Err(ServiceError::bad_request("Only a confidential client can have a service identity: it needs a secret to prove who it is"));
+    }
     if input.redirect_uris.is_empty() || input.redirect_uris.len() > MAX_REDIRECTS {
         return Err(ServiceError::bad_request(format!("A client needs between 1 and {MAX_REDIRECTS} redirect addresses")));
     }
@@ -378,6 +385,7 @@ pub fn propose(caller: &AuthUser, input: Registration, state: &SharedState) -> R
         decided_at: None,
         disabled_by: None,
         disabled_at: None,
+        service_identity: input.service_identity,
     };
     ledger(caller, &row, DecisionType::ClientProposed, "CM-03", format!("{} proposed the outside app '{}' run by {}", caller.name, row.name, row.operator), json!({}), state)?;
     state.repository.insert_client(&row).map_err(internal)?;
@@ -421,8 +429,8 @@ pub fn decide(caller: &AuthUser, id: &str, decision: &str, rationale: &str, stat
     }
     let is_proposer = row.proposed_by.eq_ignore_ascii_case(&caller.eppn);
     if is_proposer && !agent {
-        if needs_second_person(&ceiling, state) {
-            return Err(ServiceError::forbidden("Forbidden: a client that writes, or reaches more than one workspace, needs a second person to decide it"));
+        if row.service_identity || needs_second_person(&ceiling, state) {
+            return Err(ServiceError::forbidden("Forbidden: a client that writes, reaches more than one workspace, or acts as itself needs a second person to decide it"));
         }
         if !is_platform_admin(caller) && !roles.iter().all(|r| r.as_deref() == Some("owner")) {
             return Err(ServiceError::forbidden("Forbidden: a person may decide their own client only when they own the workspace"));
