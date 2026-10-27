@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { apiClient, type AccessChange, type AccessGrantRow, type AccessImpact, type NewAccessGrant } from "../api";
 import { ConfirmAction, DataTable, Drawer, ErrorState, FormField, StatusBadge, type DataTableColumn } from "../ui";
 import { grantSentence } from "./accessSentences";
+import { AccessDrafts } from "./AccessDrafts";
 import type { AccessViewer } from "./Access";
 
 const inputClass =
@@ -18,14 +19,17 @@ export function AccessGrants({ viewer }: { viewer: AccessViewer }) {
   const [revoking, setRevoking] = useState<AccessGrantRow | null>(null);
   const [version, setVersion] = useState(0);
   const [pending, setPending] = useState<AccessChange[]>([]);
+  const [all, setAll] = useState<AccessChange[]>([]);
   const [deciding, setDeciding] = useState<AccessChange | null>(null);
 
   const loadPending = useCallback(async () => {
     try {
       const page = await apiClient.accessGrants({ state: "pending" });
-      setPending(page.changes.filter((c) => c.kind === "grant"));
+      setPending(page.changes.filter((c) => c.kind === "grant" && c.proposed_via !== "agent"));
+      setAll(page.changes);
     } catch {
       setPending([]);
+      setAll([]);
     }
   }, []);
   useEffect(() => {
@@ -84,6 +88,8 @@ export function AccessGrants({ viewer }: { viewer: AccessViewer }) {
           </button>
         </div>
       </div>
+
+      <AccessDrafts changes={all} viewer={viewer} onChanged={() => setVersion((v) => v + 1)} />
 
       {pending.length > 0 && (
         <section aria-label="Waiting for confirmation" className="space-y-2">

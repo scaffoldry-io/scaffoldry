@@ -178,7 +178,7 @@ fn fits(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
 
 const VERBS: &[&str] = &[
     "List", "Read", "Get", "Create", "Update", "Delete", "Change", "Add", "Submit", "Ask", "Append", "Verify", "Generate", "Export", "Propose", "Approve", "Cancel", "Save", "Count", "Move", "Return",
-    "Retrieve", "Aggregate", "Find", "Show", "Enqueue",
+    "Retrieve", "Aggregate", "Find", "Show", "Enqueue", "Draft",
 ];
 
 #[tokio::test]
@@ -262,6 +262,8 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("cancel_job", false, true, true),
     ("begin_task", false, false, true),
     ("request_access", false, false, false),
+    ("draft_access_change", false, false, false),
+    ("access_suggestions", true, false, false),
     ("export_records", false, false, false),
     ("list_library_policies", true, false, false),
     ("read_library_snapshot", true, false, false),

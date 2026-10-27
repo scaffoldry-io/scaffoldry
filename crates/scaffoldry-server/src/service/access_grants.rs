@@ -308,8 +308,43 @@ pub fn pending_grant(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result
     }))
 }
 
-/// Stores a new grant as a change that waits for a different person.
-pub fn propose_grant(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+/// A change that is ready to wait for a person, with what is needed to describe it.
+pub(crate) struct Built {
+    pub change: Value,
+    pub widens: bool,
+    pub reason: String,
+    /// What the change does, as one sentence.
+    pub sentence: String,
+    /// The grant a new-grant change would make, for working out who gains.
+    pub grant: Option<Grant>,
+}
+
+/// A stored grant row as a grant the reach rule can read.
+fn core_grant(g: &NewGrant, id: i64) -> Grant {
+    Grant {
+        id,
+        holder_kind: g.holder_kind,
+        holder_id: g.holder_id.clone(),
+        role: g.role,
+        hierarchy: g.hierarchy.clone(),
+        anchor_kind: g.anchor_kind,
+        anchor_id: g.anchor_id.clone(),
+        depth: g.depth.and_then(|d| i16::try_from(d).ok()),
+        domain: g.domain.clone(),
+        valid_from: 0,
+        valid_until: g.valid_until.as_deref().and_then(|u| chrono::DateTime::parse_from_rfc3339(u).ok()).map(|d| d.timestamp()),
+        revoked: false,
+        clearance: g.clearance.as_deref().and_then(sensitivity_rank),
+    }
+}
+
+fn grant_sentence(g: &NewGrant) -> String {
+    let until = g.valid_until.as_deref().map(|u| format!(" until {}", u.split('T').next().unwrap_or(u))).unwrap_or_default();
+    format!("Give {} {} the {} role on {}{}.", g.holder_kind.as_str(), g.holder_id, g.role.as_str(), g.anchor_id.as_deref().unwrap_or("the unit they hold a position in"), until)
+}
+
+/// Checks a new grant as `caller` may propose it, and shapes the change. Nothing is stored.
+pub(crate) fn build_grant_change(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Built, ServiceError> {
     let r = rights(state, caller);
     // Only a workspace owner or admin can grant without administering a unit, and only on a container.
     if !r.platform && r.admin_units.is_empty() && body.get("anchor_kind").and_then(Value::as_str) != Some("container") {
@@ -317,8 +352,25 @@ pub fn propose_grant(state: &SharedState, caller: &AuthUser, body: &Value) -> Re
     }
     let g = parse_new_grant(state, body)?;
     scope_allows(state, &r, caller, &g)?;
-    let change = json!({ "kind": "grant", "grant": g.json() });
-    let id = state.repository.propose_access_change(&change, true, &g.reason, &caller.eppn).map_err(internal)?;
+    Ok(Built { change: json!({ "kind": "grant", "grant": g.json() }), widens: true, reason: g.reason.clone(), sentence: grant_sentence(&g), grant: Some(core_grant(&g, i64::MAX)) })
+}
+
+/// Checks the revocation of a stored grant as `caller` may make it, and shapes the change. Nothing is stored.
+pub(crate) fn build_revoke_change(state: &SharedState, caller: &AuthUser, id: i64, reason: &str) -> Result<Built, ServiceError> {
+    let row = state.repository.grant_row(id).map_err(internal)?.ok_or_else(|| missing(state, caller, "Grant"))?;
+    let as_new = NewGrant::of_json(&row.json()).ok_or_else(|| ServiceError::Internal("The stored grant is not a grant".to_string()))?;
+    scope_allows(state, &rights(state, caller), caller, &as_new)?;
+    if row.grant.revoked {
+        return Err(ServiceError::conflict("That grant is already revoked"));
+    }
+    let sentence = format!("Take away: {}", grant_sentence(&as_new).trim_start_matches("Give "));
+    Ok(Built { change: json!({ "kind": "revoke", "grant_id": id, "grant": row.json() }), widens: false, reason: reason.to_string(), sentence, grant: Some(row.grant.clone()) })
+}
+
+/// Stores a new grant as a change that waits for a different person.
+pub fn propose_grant(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+    let built = build_grant_change(state, caller, body)?;
+    let id = state.repository.propose_access_change(&built.change, true, &built.reason, &caller.eppn).map_err(internal)?;
     Ok(json!({ "change_id": id, "status": "Pending", "widens": true, "message": "A different person with the same right must confirm this grant before it takes effect." }))
 }
 
@@ -353,7 +405,8 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
         return crate::service::access_requests::decide_rule_change(state, caller, id, &change, &proposed_by, confirm, &reason);
     }
     let hierarchy_change = change["kind"] == "hierarchy";
-    let g = if hierarchy_change {
+    let revoke_change = change["kind"] == "revoke";
+    let g = if hierarchy_change || revoke_change {
         None
     } else {
         Some(NewGrant::of_json(&change["grant"]).ok_or_else(|| ServiceError::Internal("The stored change is not a grant".to_string()))?)
@@ -361,6 +414,12 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
     let r = rights(state, caller);
     match &g {
         Some(g) => scope_allows(state, &r, caller, g).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?,
+        None if revoke_change => {
+            let gid = change["grant_id"].as_i64().unwrap_or_default();
+            let stored = NewGrant::of_json(&change["grant"]).ok_or_else(|| ServiceError::Internal("The stored change has no grant".to_string()))?;
+            let _ = gid;
+            scope_allows(state, &r, caller, &stored).map_err(|_| ServiceError::forbidden("You do not hold the right to decide this change"))?;
+        }
         None if r.platform => {}
         None => return Err(ServiceError::forbidden("You do not hold the right to decide this change")),
     }
@@ -376,7 +435,13 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
             check_grant_conflict(state, g)?;
         }
     }
-    if confirm && proposed_by.eq_ignore_ascii_case(&caller.eppn) {
+    let (via, widens, expired) = state.repository.access_change_flags(id).map_err(internal)?.unwrap_or_else(|| ("person".to_string(), true, false));
+    if confirm && expired {
+        return Err(ServiceError::conflict("That draft expired. A draft made by an AI tool cannot be confirmed after seven days. Ask for it again"));
+    }
+    // A change an AI tool drafted that only narrows access may be confirmed by the person it was drafted for.
+    let narrowing_draft = via == "agent" && !widens;
+    if confirm && proposed_by.eq_ignore_ascii_case(&caller.eppn) && !narrowing_draft {
         return Err(ServiceError::forbidden("The person who proposed a change cannot confirm it"));
     }
     let decide = || state.repository.decide_access_change(id, &caller.eppn, confirm).map_err(internal);
@@ -384,6 +449,10 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
         match &g {
             Some(g) => {
                 let payload = json!({ "action": "grant_confirmed", "change_id": id, "grant": g.json(), "proposed_by": proposed_by });
+                admin_write(state, caller, DecisionType::AccessGrantChanged, "AC-02", &reason, &payload, decide)?
+            }
+            None if revoke_change => {
+                let payload = json!({ "action": "grant_revoked", "change_id": id, "grant": change["grant"], "proposed_by": proposed_by });
                 admin_write(state, caller, DecisionType::AccessGrantChanged, "AC-02", &reason, &payload, decide)?
             }
             None => {
@@ -401,6 +470,7 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
         ChangeDecision::Missing => Err(ServiceError::NotFound("Change not found".to_string())),
         ChangeDecision::AlreadyDecided => Err(ServiceError::conflict("That change has already been decided")),
         ChangeDecision::OwnChange => Err(ServiceError::forbidden("The person who proposed a change cannot confirm it")),
+        ChangeDecision::Expired => Err(ServiceError::conflict("That draft expired. A draft made by an AI tool cannot be confirmed after seven days. Ask for it again")),
     }
 }
 

@@ -496,8 +496,8 @@ fn rule_faults(state: &SharedState, unit: Uuid, rule: &Rule) -> Result<(), Servi
     p.done()
 }
 
-/// A rule change waits for a second person, like every change to who may see what.
-pub fn propose_rule(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+/// Checks a rule change as `caller` may make it and shapes the change. Nothing is stored.
+pub(crate) fn build_rule_change(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<(Value, String, String), ServiceError> {
     let rights = crate::service::access_grants::rights(state, caller);
     if !rights.platform && rights.admin_units.is_empty() {
         return Err(ServiceError::forbidden("Platform Admin, compliance, or Org Unit Admin required"));
@@ -514,13 +514,12 @@ pub fn propose_rule(state: &SharedState, caller: &AuthUser, body: &Value) -> Res
         return Err(ServiceError::GrantOutsideScope("You may not set request rules for this unit".to_string()));
     }
     state.repository.ensure_default_request_rule().map_err(internal)?;
-    let change = if let Some(rule_id) = body.get("retire").and_then(Value::as_str) {
+    let (change, sentence) = if let Some(rule_id) = body.get("retire").and_then(Value::as_str) {
         let rule_id = Uuid::parse_str(rule_id).map_err(|_| ServiceError::bad_request("retire is a rule id"))?;
         let found = state.repository.request_rules().map_err(internal)?.into_iter().find(|r| r.id == rule_id && r.organization_id == unit && r.retired_at.is_none());
-        if found.is_none() {
-            return Err(ServiceError::not_found("Rule not found"));
-        }
-        json!({ "kind": "request_rule", "op": "retire", "organization_id": unit, "rule_id": rule_id })
+        let Some(found) = found else { return Err(ServiceError::not_found("Rule not found")) };
+        let sentence = serde_json::from_value::<Rule>(found.rule.clone()).map(|r| format!("Retire this rule: {}", rules::sentence(&r))).unwrap_or_else(|_| "Retire a request rule.".to_string());
+        (json!({ "kind": "request_rule", "op": "retire", "organization_id": unit, "rule_id": rule_id }), sentence)
     } else {
         let rule: Rule = serde_json::from_value(body.get("rule").cloned().unwrap_or(Value::Null)).map_err(|e| {
             let mut p = Problems::default();
@@ -528,8 +527,15 @@ pub fn propose_rule(state: &SharedState, caller: &AuthUser, body: &Value) -> Res
             p.done().err().unwrap_or_else(|| ServiceError::bad_request("rule is not a request rule"))
         })?;
         rule_faults(state, unit, &rule)?;
-        json!({ "kind": "request_rule", "op": "add", "organization_id": unit, "rule": rule })
+        let sentence = format!("Add this rule: {}", rules::sentence(&rule));
+        (json!({ "kind": "request_rule", "op": "add", "organization_id": unit, "rule": rule }), sentence)
     };
+    Ok((change, reason, sentence))
+}
+
+/// A rule change waits for a second person, like every change to who may see what.
+pub fn propose_rule(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+    let (change, reason, _) = build_rule_change(state, caller, body)?;
     let id = state.repository.propose_access_change(&change, true, &reason, &caller.eppn).map_err(internal)?;
     Ok(json!({ "change_id": id, "status": "Pending", "message": "A different person with the same right must confirm this rule change before it takes effect." }))
 }
@@ -561,5 +567,6 @@ pub fn decide_rule_change(state: &SharedState, caller: &AuthUser, id: Uuid, chan
         ChangeDecision::Missing => Err(ServiceError::NotFound("Change not found".to_string())),
         ChangeDecision::AlreadyDecided => Err(ServiceError::conflict("That change has already been decided")),
         ChangeDecision::OwnChange => Err(ServiceError::forbidden("The person who proposed a change cannot confirm it")),
+        ChangeDecision::Expired => Err(ServiceError::conflict("That draft expired. A draft made by an AI tool cannot be confirmed after seven days. Ask for it again")),
     }
 }

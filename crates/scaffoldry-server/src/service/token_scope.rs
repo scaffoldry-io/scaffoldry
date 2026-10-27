@@ -34,7 +34,7 @@ fn check_table(scope: &TokenScope, app: &str, table: &str, op: TokenOp) -> Resul
 fn level_needed(name: &str) -> Option<AgentLevel> {
     match name {
         "begin_task" | "request_access" => Some(AgentLevel::Read),
-        "propose_app_change" | "preview_proposal" => Some(AgentLevel::Propose),
+        "propose_app_change" | "preview_proposal" | "draft_access_change" => Some(AgentLevel::Propose),
         "create_record" | "update_record" | "delete_record" => Some(AgentLevel::Write),
         _ => crate::service::tools::TOOLS.iter().find(|t| t.name == name).filter(|t| t.read_only).map(|_| AgentLevel::Read),
     }

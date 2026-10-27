@@ -21,6 +21,7 @@ pub fn add(m: &mut Entries) {
     m.insert("tool:cancel_job".into(), case!(cancel_job));
     m.insert("tool:propose_library_rules".into(), case!(propose_library_rules));
     m.insert("tool:request_access".into(), case!(request_access));
+    m.insert("tool:draft_access_change".into(), case!(draft_access_change));
     m.insert("tool:export_records".into(), files_case!(export_records));
 }
 
@@ -188,4 +189,15 @@ async fn request_access(w: World) -> Outcome {
     let id = filed["id"].as_str().ok_or("a request id")?.to_string();
     let seen = status(w.rb("GET", "/api/v1/me/access/requests", &who, None).await, StatusCode::OK, "B lists the requests")?;
     ensure(has(&seen, &id), format!("B shows the request the tool filed: {seen}"))
+}
+
+async fn draft_access_change(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let who = person("p14target");
+    make_user(&w, &who).await?;
+    let grant = json!({ "holder_kind": "person", "holder_id": who, "role": "viewer", "anchor_kind": "container", "anchor_id": format!("app:{slug}"), "source": "task" });
+    let drafted = w.tool_a(ADMIN, "draft_access_change", json!({ "kind": "grant", "change": grant, "reason": "By tool" })).await?;
+    let id = drafted["change_id"].as_str().ok_or("a change id")?.to_string();
+    let seen = status(w.rb("GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
+    ensure(has(&seen["changes"], &id) && has(&seen["changes"], "agent"), format!("B shows the draft A stored, marked as a tool's: {seen}"))
 }

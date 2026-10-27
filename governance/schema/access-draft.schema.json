@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/access-draft.schema.json",
+  "title": "Access draft",
+  "description": "What an AI tool sends to draft one change to who has access. It stores a pending change that applies nothing. The server checks the right to propose the change, the kind-specific fields, and that a widening change is confirmed by someone other than the person it was drafted for. A draft ends seven days after it is stored.",
+  "type": "object",
+  "required": ["kind", "change", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "enum": ["grant", "revoke", "request_rule", "hierarchy"] },
+    "change": { "type": "object" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "preview": { "type": "boolean" }
+  },
+  "allOf": [
+    { "if": { "properties": { "kind": { "const": "revoke" } } }, "then": { "properties": { "change": { "required": ["grant_id"], "properties": { "grant_id": { "type": "integer", "minimum": 1 } } } } } },
+    { "if": { "properties": { "kind": { "const": "hierarchy" } } }, "then": { "properties": { "change": { "required": ["key", "name", "kind", "source"] } } } },
+    { "if": { "properties": { "kind": { "const": "request_rule" } } }, "then": { "properties": { "change": { "required": ["organization_id"], "anyOf": [{ "required": ["rule"] }, { "required": ["retire"] }] } } } },
+    { "if": { "properties": { "kind": { "const": "grant" } } }, "then": { "properties": { "change": { "required": ["holder_kind", "holder_id", "role", "anchor_kind"] } } } }
+  ]
+}

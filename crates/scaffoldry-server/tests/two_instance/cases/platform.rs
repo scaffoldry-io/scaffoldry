@@ -73,6 +73,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/access/requests/{id}/withdraw".into(), case!(request_withdraw));
     for (root, prefix) in [("/api/v1", "/api/v1"), ("", "")] {
         m.insert(format!("POST {prefix}/admin/access/request-rules"), case!(request_rule_propose, root));
+        exempt(m, &format!("POST {prefix}/admin/access/changes/preview"), "says what a draft would do and stores nothing");
     }
     m.insert("POST /api/v1/orgs".into(), case!(org_create));
     m.insert("PATCH /api/v1/orgs/{id}".into(), case!(org_patch));
