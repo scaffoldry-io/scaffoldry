@@ -2,8 +2,29 @@
 //! transaction, after the service has written its ledger entry.
 
 use crate::repository::{PostgresRepository, RepositoryError};
+use scaffoldry_core::authority::FLAGGED;
 use serde_json::{json, Value};
 use uuid::Uuid;
+
+/// The proposals of one workspace, proposer and week that failed the same flagged checks. The load report reads counts of
+/// these and never a proposal's content.
+#[derive(Debug, Clone)]
+pub struct LoadGroup {
+    pub workspace_id: String,
+    pub proposed_by: String,
+    /// 0 is the last seven days.
+    pub weeks_ago: usize,
+    pub raised: Vec<String>,
+    pub count: i64,
+}
+
+/// How long decided proposals took, in seconds. `None` when none were decided in the window.
+#[derive(Debug, Clone, Copy)]
+pub struct DecisionTimes {
+    pub decided: i64,
+    pub median: Option<i64>,
+    pub p95: Option<i64>,
+}
 
 const TS: &str = "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'";
 
@@ -79,5 +100,40 @@ impl PostgresRepository {
     /// A matrix row by id: its tier and unit.
     pub fn authority_row(&self, id: Uuid) -> Result<Option<(String, Uuid)>, RepositoryError> {
         self.with_client(move |c| Ok(c.query_opt("SELECT tier, organization_id FROM authority_rows WHERE id = $1", &[&id])?.map(|r| (r.get(0), r.get(1)))))
+    }
+
+    /// Proposals made in the last `days` days, counted by workspace, proposer, week and the flagged checks that failed.
+    /// One statement. The checks are read in SQL, so no proposal body leaves the database.
+    pub fn authority_load_groups(&self, days: i32) -> Result<Vec<LoadGroup>, RepositoryError> {
+        let flagged: Vec<String> = FLAGGED.iter().map(|(n, _)| (*n).to_string()).collect();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT workspace_id, proposed_by,
+                        LEAST(FLOOR(EXTRACT(EPOCH FROM (NOW() - created_at)) / 604800)::int, 12) AS weeks_ago,
+                        ARRAY(SELECT x->>'name' FROM jsonb_array_elements(COALESCE(checks->'checks', '[]'::jsonb)) x
+                              WHERE x->>'outcome' = 'fail' AND x->>'name' = ANY($2) ORDER BY 1) AS raised,
+                        COUNT(*)
+                 FROM app_proposals
+                 WHERE created_at >= NOW() - make_interval(days => $1)
+                 GROUP BY 1, 2, 3, 4",
+                &[&days, &flagged],
+            )?;
+            Ok(rows.iter().map(|r| LoadGroup { workspace_id: r.get(0), proposed_by: r.get(1), weeks_ago: r.get::<_, i32>(2).max(0) as usize, raised: r.get(3), count: r.get(4) }).collect())
+        })
+    }
+
+    /// The count, median and 95th percentile of seconds from a proposal to its decision, for proposals made in the last
+    /// `days` days and approved or rejected. One statement. `percentile_disc` is the nearest-rank method.
+    pub fn authority_decision_times(&self, days: i32) -> Result<DecisionTimes, RepositoryError> {
+        self.with_client(move |c| {
+            let r = c.query_one(
+                "SELECT COUNT(*), percentile_disc(0.5) WITHIN GROUP (ORDER BY secs), percentile_disc(0.95) WITHIN GROUP (ORDER BY secs)
+                 FROM (SELECT FLOOR(EXTRACT(EPOCH FROM (decided_at - created_at)))::bigint AS secs
+                       FROM app_proposals
+                       WHERE decided_at IS NOT NULL AND status IN ('Approved', 'Rejected') AND created_at >= NOW() - make_interval(days => $1)) t",
+                &[&days],
+            )?;
+            Ok(DecisionTimes { decided: r.get(0), median: r.get(1), p95: r.get(2) })
+        })
     }
 }

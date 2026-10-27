@@ -14,6 +14,7 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/admin/authority/impact"),
     ("POST", "/admin/authority/changes"),
     ("GET", "/admin/authority/changes"),
+    ("GET", "/admin/authority/load"),
     ("POST", "/admin/authority/changes/{id}/decide"),
     ("GET", "/admin/proposals"),
     ("GET", "/admin/library/policies"),

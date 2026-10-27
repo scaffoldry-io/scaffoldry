@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient, type AuthorityChange, type AuthorityImpact, type AuthorityTier, type AuthorityView } from "../api";
-import { ConfirmAction, EmptyState, ErrorState, FormField, PageHeader, Skeleton } from "../ui";
+import { ConfirmAction, EmptyState, ErrorState, FormField, PageHeader, Skeleton, Tabs } from "../ui";
+import { AuthorityLoadPanel } from "./AuthorityLoad";
 
 const inputClass = "w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 p-2 text-sm";
 const buttonClass = "px-3 py-1.5 text-sm font-medium rounded border disabled:opacity-50 disabled:cursor-not-allowed";
@@ -74,6 +75,7 @@ export function Authority() {
   const [shownFor, setShownFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [deciding, setDeciding] = useState<{ change: AuthorityChange; decision: "confirm" | "reject" } | null>(null);
+  const [tab, setTab] = useState<"matrix" | "load">("matrix");
 
   useEffect(() => {
     let live = true;
@@ -154,9 +156,22 @@ export function Authority() {
   const pathOptions = mode?.kind === "tier" && mode.tier !== "Low" ? ["second_person", "approver"] : ["direct", "second_person", "approver"];
   const pending = changes.filter((c) => c.status === "Pending");
 
+  const header = <PageHeader title="Decision authority" description="Who must say yes to a change, and what a change to that rule would do" />;
+  const tabs = <Tabs ariaLabel="Decision authority" selectedId={tab} onSelect={(id) => setTab(id as "matrix" | "load")} tabs={[{ id: "matrix", label: "Matrix" }, { id: "load", label: "Load" }]} />;
+  if (tab === "load") {
+    return (
+      <div className="space-y-6" data-testid="admin-authority">
+        {header}
+        {tabs}
+        <AuthorityLoadPanel />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6" data-testid="admin-authority">
-      <PageHeader title="Decision authority" description="Who must say yes to a change, and what a change to that rule would do" />
+      {header}
+      {tabs}
       {error !== null && <ErrorState error={error} onRetry={() => void load()} />}
       <FormField id="authority-unit" label="Unit">
         {(props) => (
