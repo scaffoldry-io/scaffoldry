@@ -17,8 +17,11 @@
       "items": { "type": "string", "pattern": "^https://[^*?#\\s]+$", "maxLength": 2048 },
       "description": "Exact https addresses. No wildcard, no query string, no fragment. A localhost http address is allowed only when the setting oauth.allow_localhost is true, which this schema cannot know."
     },
-    "ceiling": { "$ref": "#/$defs/ceiling" }
+    "ceiling": { "$ref": "#/$defs/ceiling" },
+    "service_identity": { "type": "boolean", "default": false, "description": "A confidential client may also act as itself, client:{client_id}, through grants a second person approved, within the ceiling. A public client cannot." }
   },
+  "if": { "required": ["service_identity"], "properties": { "service_identity": { "const": true } } },
+  "then": { "properties": { "kind": { "const": "confidential" } } },
   "$defs": {
     "ceiling": {
       "type": "object",

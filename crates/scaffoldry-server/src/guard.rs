@@ -206,6 +206,10 @@ pub fn read_origin(state: &SharedState, headers: &HeaderMap) -> crate::service::
             origin.kind = ActorKind::Agent;
             origin.token_label = Some(row.label);
         } else if row.kind == "client" {
+            // A service identity is no person: the history says an automation acted, and which client.
+            if crate::service::oauth::service_client_id(&row.eppn).is_some() {
+                origin.kind = ActorKind::Automation;
+            }
             // The person acts, through an app. The history says which one, and for an AI tool, the task it named.
             let session = crate::service::oauth::active_client_of(&row.token_hash, state).and_then(|(_, s)| s);
             let task = session.as_ref().and_then(|s| s.task.clone());
