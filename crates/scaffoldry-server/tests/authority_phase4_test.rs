@@ -88,11 +88,11 @@ impl World {
     fn seed(&self, count: i32, days_ago: i32, raised: bool, summary: &'static str) {
         let ws = self.workspace.clone();
         let outcome = if raised { "fail" } else { "pass" };
-        let checks = json!({ "checks": [{ "name": "sensitivity", "outcome": outcome, "messages": ["SECRET-MESSAGE"] }], "changes": [] });
+        let checks = json!({ "checks": [{ "name": "sensitivity", "outcome": outcome, "messages": ["PLANTED-MESSAGE"] }], "changes": [] });
         self.db.run(move |c| {
             c.execute(
                 "INSERT INTO app_proposals (id, workspace_id, app_slug, manifest, checks, summary, proposed_by, status, created_at) \
-                 SELECT gen_random_uuid(), $1, 'seed', '{\"secret\": \"SECRET-FIELD\"}', $2, $3, $4, 'Pending', NOW() - make_interval(days => $5, hours => 1) FROM generate_series(1, $6)",
+                 SELECT gen_random_uuid(), $1, 'seed', '{\"hidden\": \"PLANTED-FIELD\"}', $2, $3, $4, 'Pending', NOW() - make_interval(days => $5, hours => 1) FROM generate_series(1, $6)",
                 &[&ws, &checks, &summary, &PROPOSER, &days_ago, &count],
             )
             .unwrap();
@@ -187,12 +187,12 @@ async fn with_nothing_decided_the_times_are_null() {
 #[tokio::test]
 async fn the_answer_holds_no_content_of_any_proposal() {
     let w = world(&[H1]).await;
-    w.seed(2, 1, true, "SECRET-SUMMARY");
+    w.seed(2, 1, true, "PLANTED-SUMMARY");
     let (s, b) = w.load(ADMIN).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     let text = b.to_string();
-    for secret in ["SECRET-SUMMARY", "SECRET-FIELD", "SECRET-MESSAGE", PROPOSER, "seed"] {
-        assert!(!text.contains(secret), "{secret} leaked: {text}");
+    for planted in ["PLANTED-SUMMARY", "PLANTED-FIELD", "PLANTED-MESSAGE", PROPOSER, "seed"] {
+        assert!(!text.contains(planted), "{planted} appears in the answer: {text}");
     }
     let mut keys: Vec<&str> = b.as_object().unwrap().keys().map(String::as_str).collect();
     keys.sort_unstable();
