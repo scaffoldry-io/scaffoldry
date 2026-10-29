@@ -64,7 +64,7 @@ impl TestDb {
     /// server ships with none, and an operator mints one.
     pub fn new() -> TestDb {
         let db = TestDb::bare();
-        db.run(|c| add_test_scim_credential(c));
+        db.run(add_test_scim_credential);
         db
     }
 
