@@ -43,6 +43,17 @@ fn on_server(sql: String) {
     .expect("the database thread");
 }
 
+/// Adds the provisioning credential the SCIM tests use. A test that empties `api_tokens` adds it again with this.
+pub fn add_test_scim_credential(c: &mut postgres::Client) {
+    let hash = scaffoldry_server::service::identity::hash_token("test-scim-token");
+    c.execute(
+        "INSERT INTO api_tokens (token_hash, id, kind, eppn, label, created_at, expires_at) \
+         VALUES ($1, $2, 'scim', 'scim-tests@scaffoldry.invalid', 'Test provisioning credential', NOW(), NOW() + INTERVAL '365 days') ON CONFLICT DO NOTHING",
+        &[&hash, &Uuid::new_v4()],
+    )
+    .expect("add the test provisioning credential");
+}
+
 pub struct TestDb {
     name: String,
     url: String,
@@ -53,15 +64,7 @@ impl TestDb {
     /// server ships with none, and an operator mints one.
     pub fn new() -> TestDb {
         let db = TestDb::bare();
-        let hash = scaffoldry_server::service::identity::hash_token("test-scim-token");
-        db.run(move |c| {
-            c.execute(
-                "INSERT INTO api_tokens (token_hash, id, kind, eppn, label, created_at, expires_at) \
-                 VALUES ($1, $2, 'scim', 'scim-tests@scaffoldry.invalid', 'Test provisioning credential', NOW(), NOW() + INTERVAL '365 days') ON CONFLICT DO NOTHING",
-                &[&hash, &Uuid::new_v4()],
-            )
-            .expect("add the test provisioning credential");
-        });
+        db.run(|c| add_test_scim_credential(c));
         db
     }
 
