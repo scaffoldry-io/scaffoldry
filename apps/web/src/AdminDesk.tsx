@@ -4,7 +4,7 @@ import { DatasetExplorer } from "./DatasetExplorer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { CoBuilderStudioModal } from "./CoBuilderStudioModal";
 import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
-import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow } from "./api";
+import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow, type ProposalTrial } from "./api";
 import { MyApps } from "./MyApps";
 import { Policies } from "./library/Policies";
 import { BackgroundWork, PreviewBanner, ViewAsBanner } from "./ui";
@@ -1091,6 +1091,28 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       }
     } catch (err: any) {
       showToast(err?.message || "The preview could not be opened.");
+    }
+  };
+
+  // A trial copy is an app of the person's own, in a synthetic workspace. It opens as any app does.
+  const handleOpenTrial = async (trial: ProposalTrial, proposal: ProposalRow) => {
+    try {
+      const manifest = await apiClient.getApp(trial.app_slug);
+      const shown = registeredAppOf(
+        {
+          slug: trial.app_slug,
+          title: manifest?.title ?? `Trial: ${proposal.app_slug}`,
+          department: manifest?.department ?? "",
+          workspace_id: trial.workspace_id,
+          description: manifest?.description ?? "",
+        } as MyApp,
+        manifest
+      );
+      setIsWorkspaceSettingsOpen(false);
+      setActiveWorkspaceApp(shown);
+      showToast("This is a trial copy. Its records are made up, and nothing you do here reaches the live app.");
+    } catch (err: any) {
+      showToast(err?.message || "The trial copy could not be opened.");
     }
   };
 
@@ -3074,6 +3096,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 onSave={handleSaveWorkspaceSettings}
                 ledgerEntries={ledger}
                 onPreviewProposal={handlePreviewProposal}
+                onOpenTrial={handleOpenTrial}
               />
             </div>
           )}

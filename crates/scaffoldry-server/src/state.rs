@@ -497,6 +497,9 @@ impl ServerState {
         settings_map.insert("access.request_max_days".to_string(), serde_json::json!(90));
         settings_map.insert("access.conflicts".to_string(), serde_json::json!([]));
         settings_map.insert("platform.timezone".to_string(), serde_json::json!("UTC"));
+        settings_map.insert("preview.trials_per_person".to_string(), serde_json::json!(3));
+        settings_map.insert("preview.trial_records".to_string(), serde_json::json!(500));
+        settings_map.insert("preview.trial_days".to_string(), serde_json::json!(7));
         add_sensitivity_defaults(&mut settings_map);
 
         let repository = match crate::repository::PostgresRepository::connect(Some(database_url)) {
