@@ -275,6 +275,13 @@ pub async fn require_session(
                     return refusal.into_response();
                 }
             }
+            // An outside app's call is counted for its panel, whether or not it is allowed. An AI tool signs in as an agent
+            // client, which has no ceiling, so its client is found from the token.
+            let client_id = user.via_client.as_ref().map(|c| c.client_id.clone()).or_else(|| agent_client_id(&state, req.headers()));
+            if let Some(client_id) = client_id {
+                let counted = state.clone();
+                let _ = tokio::task::spawn_blocking(move || crate::service::clients::note_client_usage(&client_id, &counted, 1, 0, 0)).await;
+            }
             // A limited token reaches the record routes its scope allows and the tool endpoint, where each tool is checked.
             if let Some((scope, from_client)) = request_scope(&state, req.headers(), &user) {
                 let path = req.uri().path().to_string();
@@ -295,6 +302,13 @@ pub async fn require_session(
         }
         None => unauthorized(),
     }
+}
+
+/// The agent client behind a bearer token, when it is one.
+fn agent_client_id(state: &SharedState, headers: &HeaderMap) -> Option<String> {
+    let hash = hash_token(bearer_token(headers)?);
+    let row = state.get_api_token(&hash).filter(|r| r.kind == "client")?;
+    crate::service::oauth::active_client_of(&row.token_hash, state).map(|(c, _)| c.client_id)
 }
 
 pub async fn require_scim_credential(

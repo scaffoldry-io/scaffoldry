@@ -522,6 +522,7 @@ Each of these adds its routes to `ADMIN_ROUTES`, is built from the kit, writes a
 | Policy library | `policy-library.md` phase 6 |
 | Decision authority | `authority.md` phase 2 |
 | Access | `access-model.md` phase 11 |
+| Outside apps | `external-apps.md` phase 6 |
 
 ## How to prompt Gemini
 

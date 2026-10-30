@@ -4,6 +4,7 @@ import { Jobs } from "./Jobs";
 import { People } from "./People";
 import { Positions } from "./Positions";
 import { Authority } from "./Authority";
+import { OutsideApps } from "./OutsideApps";
 import { Access } from "./Access";
 import { Workspaces } from "./Workspaces";
 import { AdminConsoleView } from "../AdminConsoleView";
@@ -16,8 +17,8 @@ export interface AdminConsoleProps {
   realAdmin?: Persona | null;
   handleStopImpersonation?: () => void;
   navigateTo?: (path: string) => void;
-  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -54,7 +55,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -125,6 +126,8 @@ export function AdminConsole({
         <Access />
       ) : currentTab === "authority" ? (
         <Authority />
+      ) : currentTab === "clients" ? (
+        <OutsideApps />
       ) : currentTab === "workspaces" ? (
         <Workspaces />
       ) : currentTab === "people" ? (

@@ -17,6 +17,7 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/clients", get(list_clients).post(create_client))
         .route("/clients/{id}", get(get_client))
+        .route("/clients/{id}/usage", get(client_usage))
         .route("/clients/{id}/decide", post(decide_client))
         .route("/clients/{id}/disable", post(disable_client))
 }
@@ -42,6 +43,11 @@ async fn list_clients(State(state): State<SharedState>, headers: HeaderMap) -> R
 async fn get_client(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
     let user = user_of(&state, &headers)?;
     blocking(move || clients::get(&user, &id, &state)).await.map(Json)
+}
+
+async fn client_usage(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
+    let user = user_of(&state, &headers)?;
+    blocking(move || clients::usage(&user, &id, &state)).await.map(Json)
 }
 
 async fn create_client(State(state): State<SharedState>, headers: HeaderMap, Json(body): Json<Registration>) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {

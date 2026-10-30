@@ -393,9 +393,24 @@ pub fn propose(caller: &AuthUser, input: Registration, state: &SharedState) -> R
     Ok(view(&stored, state))
 }
 
+/// A client as the panel shows it: the view, the workspaces its ceiling names, how many people agreed to it, and its last call.
+fn panel_view(row: &ClientRow, stats: Option<&crate::repository_clients::ClientStats>, state: &SharedState) -> Value {
+    let mut out = view(row, state);
+    let known = state.workspaces.read().unwrap_or_else(|p| p.into_inner());
+    let spaces: Vec<Value> = workspaces_of(&ceiling_of(row), state)
+        .into_iter()
+        .map(|id| json!({ "name": known.get(&id).map(|w| w.name.clone()).unwrap_or_else(|| id.clone()), "id": id }))
+        .collect();
+    out["workspaces"] = Value::Array(spaces);
+    out["connected_users"] = json!(stats.map_or(0, |s| s.connected_users));
+    out["last_call_at"] = json!(stats.and_then(|s| s.last_call_at.clone()));
+    out
+}
+
 pub fn list(caller: &AuthUser, state: &SharedState) -> Result<Value, ServiceError> {
     let rows = state.repository.list_clients().map_err(internal)?;
-    Ok(Value::Array(rows.iter().filter(|r| may_see(caller, r, state)).map(|r| view(r, state)).collect()))
+    let stats = state.repository.client_stats().map_err(internal)?;
+    Ok(Value::Array(rows.iter().filter(|r| may_see(caller, r, state)).map(|r| panel_view(r, stats.get(&r.client_id), state)).collect()))
 }
 
 fn load(caller: &AuthUser, id: &str, state: &SharedState) -> Result<ClientRow, ServiceError> {
@@ -404,7 +419,30 @@ fn load(caller: &AuthUser, id: &str, state: &SharedState) -> Result<ClientRow, S
 }
 
 pub fn get(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
-    Ok(view(&load(caller, id, state)?, state))
+    let row = load(caller, id, state)?;
+    let stats = state.repository.client_stats().map_err(internal)?;
+    Ok(panel_view(&row, stats.get(&row.client_id), state))
+}
+
+/// `GET /clients/{id}/usage`: thirty days of calls, records read and records written, for the people who may see the client.
+pub fn usage(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    let row = load(caller, id, state)?;
+    let days = state.repository.client_usage_days(&row.client_id).map_err(internal)?;
+    let days: Vec<Value> = days.iter().map(|d| json!({ "day": d.day, "calls": d.calls, "records_read": d.records_read, "records_written": d.records_written })).collect();
+    Ok(json!({ "client_id": row.client_id, "days": days }))
+}
+
+/// Counts an outside app's work for the panel: calls, records it read, records it wrote. It counts only calls made through
+/// an app's ceiling. It never fails the call it counts.
+pub fn note_usage(caller: &AuthUser, state: &SharedState, calls: i64, read: i64, written: i64) {
+    let Some(client) = &caller.via_client else { return };
+    note_client_usage(&client.client_id, state, calls, read, written);
+}
+
+pub fn note_client_usage(client_id: &str, state: &SharedState, calls: i64, read: i64, written: i64) {
+    if let Err(e) = state.repository.add_client_usage(client_id, calls, read, written) {
+        eprintln!("client usage was not counted for {client_id}: {e}");
+    }
 }
 
 /// Approves or rejects a pending client. On the approval of a confidential client the secret is made and returned
