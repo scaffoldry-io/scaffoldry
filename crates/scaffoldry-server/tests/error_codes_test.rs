@@ -101,6 +101,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::Invalid { .. }
             | ServiceError::Conflict(_)
             | ServiceError::PositionFull(_)
+            | ServiceError::LastOwner(_)
             | ServiceError::StaleVersion { .. }
             | ServiceError::TooLarge(_)
             | ServiceError::FileTooLarge(_)

@@ -4,6 +4,8 @@ use super::*;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
 
 pub fn add(m: &mut Entries) {
+    m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
+    exempt(m, "POST /api/v1/admin/ownership/transfer/preview", "reports what a transfer would do and stores nothing");
     // Workspaces are mounted at the root and under /api/v1: two paths, one handler, a case for each.
     for (root, prefix) in [("/api/v1", "/api/v1"), ("", "")] {
         let k = |method: &str, path: &str| format!("{method} {prefix}{path}");
@@ -141,6 +143,18 @@ async fn ws_update(w: World, root: &'static str) -> Outcome {
     status(w.wa("PUT", &format!("{root}/workspaces/{id}"), ADMIN, Some(json!({ "name": name, "reason": "Rename" }))).await, StatusCode::OK, "update")?;
     let seen = status(w.rb("GET", &format!("/api/v1/workspaces/{id}"), ADMIN, None).await, StatusCode::OK, "B reads it")?;
     ensure(has(&seen, &name), format!("B shows the new name: {seen}"))
+}
+
+/// A hands a workspace to a new owner. B sees the new owner and no longer sees the old one.
+async fn ownership_transfer(w: World) -> Outcome {
+    let id = make_workspace(&w, &unique("P5OT"), "restricted").await?;
+    let to = person("p5owner");
+    issue_test_token_and_user(&to);
+    status(w.wa("POST", "/api/v1/admin/ownership/transfer", ADMIN, Some(json!({ "from": ADMIN, "to": to, "workspaces": [id], "reason": "Moved to another school" }))).await, StatusCode::OK, "transfer")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/workspaces/{id}/collaborators"), ADMIN, None).await, StatusCode::OK, "B lists them")?;
+    let row = seen.as_array().and_then(|rows| rows.iter().find(|r| has(r, &to))).cloned().unwrap_or(Value::Null);
+    ensure(has(&row, "owner"), format!("B shows the new owner: {seen}"))?;
+    ensure(!has(&seen, ADMIN), format!("B no longer shows the old owner: {seen}"))
 }
 
 async fn collab_add(w: World, root: &'static str) -> Outcome {
