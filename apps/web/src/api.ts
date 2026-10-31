@@ -874,6 +874,38 @@ export interface AuthorityImpact {
 }
 
 /** The last 90 days of real proposals under the matrix as it is now. Counts, approver names and times; never content. */
+/** One owner of a workspace and why they have gone. `why` is `inactive`, `on hold`, `no appointment`, or null when they are here. */
+export interface OwnershipOwner {
+  eppn: string;
+  why: string | null;
+}
+
+/** What has lost the person who looked after it. */
+export interface OwnershipOrphans {
+  workspaces: { id: string; name: string; owners: OwnershipOwner[] }[];
+  proposals: { id: string; name: string; proposed_by: string; why: string; workspace_id: string }[];
+  clients: { id: string; name: string; proposed_by: string; why: string }[];
+}
+
+/** What a transfer would do. Nothing is written to get it. */
+export interface OwnershipPreview {
+  from: string;
+  to: string;
+  can_transfer: boolean;
+  blockers: string[];
+  workspaces: {
+    id: string;
+    name: string;
+    to_role: string | null;
+    gains: string[];
+    loses: string[];
+    open_proposals: { id: string; app_slug: string; summary: string }[];
+    process_steps: { id: string; app_slug: string; prompt: string }[];
+    tokens: { id: string; label: string }[];
+  }[];
+  clients_from_created: { client_id: string; name: string; status: string }[];
+}
+
 export interface AuthorityLoad {
   window_days: number;
   proposals: number;
@@ -1303,6 +1335,14 @@ export const apiClient = {
     request<AppClientRow>(`/clients/${encodeURIComponent(id)}/disable`, { method: "POST", body: JSON.stringify({ reason }) }),
 
   authorityLoad: async () => request<AuthorityLoad>("/admin/authority/load"),
+
+  ownershipOrphans: async () => request<OwnershipOrphans>("/admin/ownership/orphans"),
+
+  ownershipPreview: async (body: { from: string; to: string; workspaces?: string[] }) =>
+    request<OwnershipPreview>("/admin/ownership/transfer/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  ownershipTransfer: async (body: { from: string; to: string; reason: string; workspaces?: string[] }) =>
+    request<{ status: string; from: string; to: string; workspaces: number; revoked_tokens: number }>("/admin/ownership/transfer", { method: "POST", body: JSON.stringify(body) }),
 
   authorityChanges: async (unit: string) => request<{ changes: AuthorityChange[] }>(`/admin/authority/changes?organization_id=${encodeURIComponent(unit)}`),
 

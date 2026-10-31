@@ -8,6 +8,7 @@ import {
   type AdminWorkspaceRow,
   type OrganizationNode,
 } from "../api";
+import { Ownership } from "./Ownership";
 import {
   DataTable,
   Drawer,
@@ -28,7 +29,7 @@ const inputClass =
   "w-full text-sm rounded border border-gray-300 dark:border-gray-700 p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100";
 
 export function Workspaces() {
-  const [activeTab, setActiveTab] = useState<"workspaces" | "apps">("workspaces");
+  const [activeTab, setActiveTab] = useState<"workspaces" | "apps" | "ownership">("workspaces");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [detail, setDetail] = useState<AdminWorkspaceDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -395,9 +396,23 @@ export function Workspaces() {
         >
           Applications
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("ownership")}
+          data-testid="admin-workspaces-subtab-ownership"
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
+            activeTab === "ownership"
+              ? "border-amber-600 text-amber-700 dark:text-amber-400 font-semibold"
+              : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+          }`}
+        >
+          Ownership
+        </button>
       </div>
 
-      {activeTab === "workspaces" ? (
+      {activeTab === "ownership" ? (
+        <Ownership />
+      ) : activeTab === "workspaces" ? (
         <DataTable
           columns={workspaceColumns}
           load={loadWorkspaces}
