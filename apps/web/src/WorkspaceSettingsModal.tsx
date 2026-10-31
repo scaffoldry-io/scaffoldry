@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Collaborator, LedgerEntryItem, Persona, Workspace } from "./types";
-import { apiClient, computeSha256, type ProposalRow } from "./api";
+import { apiClient, computeSha256, type ProposalRow, type ProposalTrial } from "./api";
 import { WorkspaceRulesTab } from "./WorkspaceRulesTab";
 import { Proposals } from "./Proposals";
 
@@ -14,6 +14,8 @@ interface WorkspaceSettingsModalProps {
   ledgerEntries: LedgerEntryItem[];
   /** Opens a pending proposal as a read-only app. */
   onPreviewProposal?: (proposal: ProposalRow) => void | Promise<void>;
+  /** Opens a trial copy the person just made. */
+  onOpenTrial?: (trial: ProposalTrial, proposal: ProposalRow) => void | Promise<void>;
 }
 
 export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
@@ -25,6 +27,7 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
   onSave,
   ledgerEntries,
   onPreviewProposal,
+  onOpenTrial,
 }) => {
   const [tab, setTab] = useState<"general" | "access" | "members" | "audit" | "rules" | "proposals">("general");
 
@@ -444,7 +447,7 @@ when {
 
         {/* Tab Body */}
         <div className="flex-1 overflow-y-auto p-6 text-xs space-y-4">
-          {tab === "proposals" && canSeeProposals && <Proposals workspaceId={workspace.id} viewerEppn={activePersona.eppn} onPreview={onPreviewProposal} />}
+          {tab === "proposals" && canSeeProposals && <Proposals workspaceId={workspace.id} viewerEppn={activePersona.eppn} onPreview={onPreviewProposal} onTrial={onOpenTrial} />}
           {tab === "rules" && (
             <WorkspaceRulesTab
               workspace={workspace}

@@ -35,6 +35,7 @@ async fn ctx() -> Ctx {
             let _ = client.batch_execute(
                 "TRUNCATE TABLE scim_users, scim_groups, roles, persons, organizations, workspaces, api_tokens, position_types CASCADE;",
             );
+            common::add_test_scim_credential(&mut client);
         }
     })
     .await

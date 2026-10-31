@@ -172,6 +172,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: scan_file,
     },
     JobKind {
+        name: "expire_trials",
+        title: "Ending old trial copies",
+        description: "Destroys trial copies of proposed apps that nobody has opened for the number of days in the settings.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: expire_trials,
+    },
+    JobKind {
         name: "purge_unattached_files",
         title: "Clearing unused uploads",
         description: "Deletes files that were uploaded and never added to a record within 24 hours.",
@@ -934,6 +942,12 @@ pub fn scan_file(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 }
 
 /// Deletes uploads no record took within a day, and the blobs nothing refers to. It runs on a schedule.
+pub fn expire_trials(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
+    let days = ctx.repository().setting_i64("preview.trial_days").map_err(|e| JobError::Retry(e.to_string()))?.filter(|d| *d > 0).unwrap_or(7);
+    let gone = crate::service::trials::expire_with(ctx.repository(), days).map_err(JobError::Retry)?;
+    ctx.result(serde_json::json!({ "destroyed": gone }))
+}
+
 pub fn purge_unattached_files(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
     let removed = crate::files::purge_unattached(ctx.repository(), crate::files::UNATTACHED_HOURS).map_err(JobError::Retry)?;
     ctx.result(serde_json::json!({ "deleted": removed }))
