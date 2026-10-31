@@ -1,4 +1,5 @@
 import { UserSettingsModal } from "./UserSettingsModal";
+import { TemplatePicker } from "./TemplatePicker";
 import React, { useState, useEffect, useRef, Suspense, lazy, useMemo } from "react";
 import { DatasetExplorer } from "./DatasetExplorer";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
@@ -1382,6 +1383,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     setActiveWorkspaceApp(app);
   };
 
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+
   // Create New App in Active Workspace. The server creates it, or holds it as a proposal. The desk says which.
   const handleCreateNewApp = async () => {
     if (activeWorkspaceId === "all") {
@@ -1992,6 +1995,16 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
               <span>New App</span>
             </button>
           )}
+          {!isAdminPath && activeWorkspaceId !== "all" && (
+            <button
+              type="button"
+              onClick={() => setTemplatesOpen(true)}
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-blue-600 text-blue-700 dark:text-blue-300 cursor-pointer"
+            >
+              From a template
+            </button>
+          )}
+          {templatesOpen && <TemplatePicker workspaceId={activeWorkspaceId} onClose={() => setTemplatesOpen(false)} />}
 
           {/* Theme Toggle */}
           <button
