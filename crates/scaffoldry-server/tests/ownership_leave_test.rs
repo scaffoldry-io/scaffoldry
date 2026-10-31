@@ -316,8 +316,8 @@ async fn the_last_owner_cannot_be_removed_demoted_or_held() {
 
     // A directory sync reports a person who has left. The registry has to accept that, so it is listed, not refused.
     let sync_id = user_id(&w, &second).await;
-    let (s, _) = rest(&w.app, "PATCH", &format!("/scim/v2/Users/{sync_id}"), "test-scim-token", Some(json!({ "Operations": [{ "op": "replace", "path": "active", "value": false }] }))).await;
-    assert!(s.is_success(), "an IdP that deprovisions someone is not refused");
+    let (s, body) = rest(&w.app, "PUT", &format!("/scim/v2/Users/{sync_id}"), "test-scim-token", Some(json!({ "userName": second, "active": false }))).await;
+    assert!(s.is_success(), "an IdP that deprovisions someone is not refused: {body}");
     let (_, listed) = rest(&w.app, "GET", "/api/v1/admin/ownership/orphans", &w.admin, None).await;
     assert!(orphan_ids(&listed).contains(&"ws-keep".to_string()), "the workspace whose last owner left is listed: {listed}");
 }

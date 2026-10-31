@@ -527,6 +527,19 @@ pub fn set_user_hold(
 ) -> Result<Value, ServiceError> {
     let target = find_by_id(state, id)
         .ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
+    if hold {
+        // Holding the only owner who is here would leave a workspace with nobody. Checked before the ledger entry.
+        let stranded = state.repository.sole_live_owner_of(&target.user_name).map_err(|e| ServiceError::Internal(e.to_string()))?;
+        if !stranded.is_empty() {
+            let names: Vec<String> = stranded.iter().map(|(_, name)| name.clone()).collect();
+            return Err(ServiceError::LastOwner(format!(
+                "{} is the only owner of {}. Hand {} over first with Ownership in the console, then hold them.",
+                display_name(&target),
+                names.join(", "),
+                if names.len() == 1 { "it" } else { "them" },
+            )));
+        }
+    }
     let payload = json!({ "action": if hold { "hold" } else { "release" }, "user_id": target.id, "user_name": target.user_name });
     let user = admin_write(
         state,

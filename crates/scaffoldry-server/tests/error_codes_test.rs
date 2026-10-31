@@ -81,6 +81,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::PreviewReadOnly("Read only".into()), "preview_read_only", StatusCode::FORBIDDEN),
         (ServiceError::TokenScope("Scoped".into()), "token_scope", StatusCode::FORBIDDEN),
         (ServiceError::ClientScope("Ceiling".into()), "client_scope", StatusCode::FORBIDDEN),
+        (ServiceError::LastOwner("Last owner".into()), "last_owner", StatusCode::CONFLICT),
         (ServiceError::ClientSensitiveField("Sensitive".into()), "client_sensitive_field", StatusCode::BAD_REQUEST),
         (ServiceError::Internal("Oops".into()), "internal", StatusCode::INTERNAL_SERVER_ERROR),
     ];

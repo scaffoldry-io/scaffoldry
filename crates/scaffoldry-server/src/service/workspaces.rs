@@ -468,6 +468,21 @@ pub fn update_workspace(
 }
 
 /// True when `target` is a person who is the only person holding the owner role.
+/// The refusal for a change that would leave a workspace with no owner. The same sentence the repository gives.
+fn last_owner(workspace_name: &str) -> ServiceError {
+    ServiceError::LastOwner(format!(
+        "{workspace_name} would be left with no owner. Make someone else an owner first, or use Ownership in the console to hand it over."
+    ))
+}
+
+/// What a failed membership write means to the caller. The repository checks the last owner again inside its transaction.
+pub(crate) fn membership_error(e: crate::repository::RepositoryError) -> ServiceError {
+    match e {
+        crate::repository::RepositoryError::LastOwner(m) => ServiceError::LastOwner(m),
+        other => ServiceError::Internal(other.to_string()),
+    }
+}
+
 fn is_last_user_owner(collabs: &[CollaboratorRecord], target: &str) -> bool {
     let owners: Vec<&CollaboratorRecord> = collabs
         .iter()
@@ -736,9 +751,7 @@ pub fn update_collaborator_role(
         ));
     }
     if wanted != Role::Owner && is_last_user_owner(&collabs, target_eppn) {
-        return Err(ServiceError::Conflict(
-            "A workspace keeps at least one person as owner".to_string(),
-        ));
+        return Err(last_owner(&ws.name));
     }
     let member = collabs
         .iter_mut()
@@ -769,8 +782,7 @@ pub fn update_collaborator_role(
 
     {
         let repo = &state.repository;
-        repo.upsert_collaborator(&updated)
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        repo.upsert_collaborator(&updated).map_err(membership_error)?;
     }
 
     super::reload_after_write(state)?;
@@ -813,9 +825,7 @@ pub fn remove_collaborator(
     )?;
 
     if app.is_empty() && is_last_user_owner(&collabs, target_eppn) {
-        return Err(ServiceError::Conflict(
-            "A workspace keeps at least one person as owner".to_string(),
-        ));
+        return Err(last_owner(&ws.name));
     }
     let mut remaining = collabs;
     let initial_len = remaining.len();
@@ -848,8 +858,7 @@ pub fn remove_collaborator(
 
     {
         let repo = &state.repository;
-        repo.remove_collaborator(workspace_id, target_eppn, app)
-            .map_err(|e| ServiceError::Internal(e.to_string()))?;
+        repo.remove_collaborator(workspace_id, target_eppn, app).map_err(membership_error)?;
     }
 
     super::reload_after_write(state)?;

@@ -27,6 +27,7 @@ pub mod view_as;
 pub mod views;
 pub mod trash;
 pub mod clients;
+pub mod ownership;
 pub mod framework;
 pub mod governance;
 pub mod jobs;
@@ -86,6 +87,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(disclosures::router())
         .merge(datasets::router())
         .merge(clients::router())
+        .merge(ownership::router())
         .merge(oauth::me_router())
         .merge(framework::router())
         .merge(policy::router())
