@@ -20,6 +20,8 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/templates/{id}/decision".into(), case!(template_decide));
     m.insert("POST /api/v1/templates/{id}/retire".into(), case!(template_retire));
     m.insert("POST /api/v1/workspaces/{ws}/templates/{id}/instantiate".into(), case!(template_instantiate));
+    m.insert("POST /api/v1/apps/{slug}/snapshots".into(), case!(snapshot_take));
+    m.insert("POST /api/v1/snapshots/{id}/restore".into(), case!(snapshot_restore));
     exempt(m, "POST /api/v1/apps/{slug}/bundle", "reads an app's definition into a document and stores nothing");
 
     m.insert("POST /api/v1/apps/{slug}/records".into(), case!(record_create));
@@ -225,6 +227,30 @@ async fn template_instantiate(w: World) -> Outcome {
     let pid = made["proposal_id"].as_str().ok_or("a proposal id")?;
     let seen = status(w.rb("GET", &format!("/api/v1/proposals/{pid}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
     ensure(seen["app_slug"] == made["app_slug"], format!("B shows the proposal A made: {seen}"))
+}
+
+/// A asks for a snapshot. B lists it.
+async fn snapshot_take(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let made = status(w.wa("POST", &format!("/api/v1/apps/{slug}/snapshots"), OWNER, Some(json!({ "name": "Before the term" }))).await, StatusCode::ACCEPTED, "A asks for a snapshot")?;
+    let id = made["snapshot_id"].as_str().ok_or("a snapshot id")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/snapshots"), OWNER, None).await, StatusCode::OK, "B lists them")?;
+    ensure(has(&seen, id), format!("B lists the snapshot A asked for: {seen}"))
+}
+
+/// A restores a ready snapshot into a new app. B reads the proposal that made.
+async fn snapshot_restore(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let made = status(w.wa("POST", &format!("/api/v1/apps/{slug}/snapshots"), OWNER, Some(json!({ "name": "To restore" }))).await, StatusCode::ACCEPTED, "A asks for a snapshot")?;
+    let id = made["snapshot_id"].as_str().ok_or("a snapshot id")?.to_string();
+    // No job runs here, so the snapshot is marked ready by hand. The restore proposes from the stored definition.
+    let key = id.clone();
+    w.db.run(move |c| c.execute("UPDATE app_snapshots SET state = 'ready', file_sha256 = repeat('a', 64), record_count = 0, size = 0 WHERE id = $1::text::uuid", &[&key]).unwrap());
+    let new_slug = unique("restored");
+    let r = status(w.wa("POST", &format!("/api/v1/snapshots/{id}/restore"), OWNER, Some(json!({ "slug": new_slug }))).await, StatusCode::ACCEPTED, "A restores")?;
+    let pid = r["proposal_id"].as_str().ok_or("a proposal id")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/proposals/{pid}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
+    ensure(seen["app_slug"] == new_slug.as_str(), format!("B shows the proposal A made: {seen}"))
 }
 
 /// A makes a trial. B opens it again, which starts its days over.
