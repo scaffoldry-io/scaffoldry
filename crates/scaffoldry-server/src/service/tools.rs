@@ -1166,7 +1166,7 @@ fn run_get_record(caller: &AuthUser, _origin: &Origin, args: Value, state: &Shar
 fn run_update_record(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let args: UpdateRecordArgs = parse(args)?;
     // The agent names the fields to change. The rest of the row stays as it is.
-    let current = records::get_record(caller, &args.app_slug, &args.record_id, state)?;
+    let current = records::fetch_record(caller, &args.app_slug, &args.record_id, state)?;
     let mut data = current.data.as_object().cloned().unwrap_or_default();
     for (name, value) in args.data {
         data.insert(name, value);

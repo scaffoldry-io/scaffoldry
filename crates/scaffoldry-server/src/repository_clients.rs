@@ -360,3 +360,68 @@ fn revoke_session_in(tx: &mut postgres::Transaction<'_>, session: uuid::Uuid) ->
     tx.execute("UPDATE api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL AND token_hash IN (SELECT token_hash FROM oauth_tokens WHERE session_id = $1)", &[&session])?;
     Ok(())
 }
+
+/// What the panel shows about a client beyond the row itself.
+#[derive(Debug, Clone, Default)]
+pub struct ClientStats {
+    pub connected_users: i64,
+    pub last_call_at: Option<String>,
+}
+
+/// One day of a client's work.
+#[derive(Debug, Clone)]
+pub struct UsageDay {
+    pub day: String,
+    pub calls: i64,
+    pub records_read: i64,
+    pub records_written: i64,
+}
+
+impl PostgresRepository {
+    /// Adds to today's counts for a client (UTC day). `calls` above 0 also sets the time of the last call.
+    pub fn add_client_usage(&self, client_id: &str, calls: i64, read: i64, written: i64) -> Result<(), RepositoryError> {
+        let client_id = client_id.to_string();
+        self.with_client(move |c| {
+            c.execute(
+                "INSERT INTO client_usage (client_id, day, calls, records_read, records_written, last_call_at) \
+                 VALUES ($1, (NOW() AT TIME ZONE 'UTC')::date, $2::bigint, $3::bigint, $4::bigint, CASE WHEN $2::bigint > 0 THEN NOW() END) \
+                 ON CONFLICT (client_id, day) DO UPDATE SET \
+                    calls = client_usage.calls + EXCLUDED.calls, \
+                    records_read = client_usage.records_read + EXCLUDED.records_read, \
+                    records_written = client_usage.records_written + EXCLUDED.records_written, \
+                    last_call_at = GREATEST(client_usage.last_call_at, EXCLUDED.last_call_at)",
+                &[&client_id, &calls, &read, &written],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The last thirty days (UTC), oldest first, quiet days as zeros. One statement.
+    pub fn client_usage_days(&self, client_id: &str) -> Result<Vec<UsageDay>, RepositoryError> {
+        let client_id = client_id.to_string();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT d::date::text, COALESCE(u.calls, 0), COALESCE(u.records_read, 0), COALESCE(u.records_written, 0) \
+                 FROM generate_series((NOW() AT TIME ZONE 'UTC')::date - 29, (NOW() AT TIME ZONE 'UTC')::date, INTERVAL '1 day') d \
+                 LEFT JOIN client_usage u ON u.client_id = $1 AND u.day = d::date \
+                 ORDER BY d",
+                &[&client_id],
+            )?;
+            Ok(rows.iter().map(|r| UsageDay { day: r.get(0), calls: r.get(1), records_read: r.get(2), records_written: r.get(3) }).collect())
+        })
+    }
+
+    /// For every client: how many people agreed to it, and when it was last called. One statement.
+    pub fn client_stats(&self) -> Result<std::collections::HashMap<String, ClientStats>, RepositoryError> {
+        self.with_client(|c| {
+            let rows = c.query(
+                "SELECT a.client_id, \
+                        (SELECT COUNT(*) FROM oauth_consents o WHERE o.client_id = a.client_id), \
+                        (SELECT to_char(MAX(u.last_call_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM client_usage u WHERE u.client_id = a.client_id) \
+                 FROM app_clients a",
+                &[],
+            )?;
+            Ok(rows.iter().map(|r| (r.get::<_, String>(0), ClientStats { connected_users: r.get(1), last_call_at: r.get(2) })).collect())
+        })
+    }
+}

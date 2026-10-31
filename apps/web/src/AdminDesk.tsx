@@ -683,7 +683,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "authority" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
+  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
     if (typeof window !== "undefined") {
       const p = window.location.pathname;
       if (p === "/admin/jobs") return "jobs";
@@ -695,6 +695,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       if (p === "/admin/positions") return "positions";
       if (p === "/admin/access") return "access";
       if (p === "/admin/authority") return "authority";
+      if (p === "/admin/clients") return "clients";
       if (p === "/admin/workspaces") return "workspaces";
       if (p === "/admin/settings") return "settings";
     }
@@ -2335,6 +2336,25 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
                     </svg>
                     {navRailExpanded && <span>Decision authority</span>}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="admin-clients-tab-btn"
+                    onClick={() => {
+                      setAdminTab("clients");
+                      navigateTo("/admin/clients");
+                    }}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "clients"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    {navRailExpanded && <span>Outside apps</span>}
                   </button>
 
                   <button

@@ -884,6 +884,27 @@ export interface AuthorityLoad {
   decision_time: { decided: number; median_seconds: number | null; p95_seconds: number | null };
 }
 
+/** An outside app as the Outside apps panel shows it. */
+export interface AppClientRow {
+  client_id: string;
+  name: string;
+  operator: string;
+  kind: "public" | "confidential" | "agent";
+  status: "Pending" | "Active" | "Rejected" | "Disabled";
+  /** The ceiling as sentences. */
+  sentences: string[];
+  workspaces: { id: string; name: string }[];
+  connected_users: number;
+  last_call_at: string | null;
+  service_identity: boolean;
+}
+
+/** Thirty days of one app's work, oldest first. Quiet days are zeros. */
+export interface ClientUsage {
+  client_id: string;
+  days: { day: string; calls: number; records_read: number; records_written: number }[];
+}
+
 /** A trial copy of a proposed app: synthetic records only, owned by the person who made it. */
 export interface ProposalTrial {
   trial_id: string;
@@ -1270,6 +1291,16 @@ export const apiClient = {
   libraryRule: async (policyKey: string, ruleKey: string) => request<LibraryRulePage>(`/library/rules/${encodeURIComponent(policyKey)}/${encodeURIComponent(ruleKey)}`),
 
   authorityShow: async (unit: string) => request<AuthorityView>(`/admin/authority?organization_id=${encodeURIComponent(unit)}`),
+
+  listClients: async () => request<AppClientRow[]>("/clients"),
+
+  clientUsage: async (id: string) => request<ClientUsage>(`/clients/${encodeURIComponent(id)}/usage`),
+
+  decideClient: async (id: string, decision: "approve" | "reject", rationale: string) =>
+    request<AppClientRow>(`/clients/${encodeURIComponent(id)}/decide`, { method: "POST", body: JSON.stringify({ decision, rationale }) }),
+
+  disableClient: async (id: string, reason: string) =>
+    request<AppClientRow>(`/clients/${encodeURIComponent(id)}/disable`, { method: "POST", body: JSON.stringify({ reason }) }),
 
   authorityLoad: async () => request<AuthorityLoad>("/admin/authority/load"),
 

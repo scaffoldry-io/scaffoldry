@@ -771,8 +771,9 @@ pub fn create_record(
     );
 
     // Reload the record in case automations updated it
-    let final_record = get_record(caller, app_slug, &record.id, state).unwrap_or(record);
+    let final_record = fetch_record(caller, app_slug, &record.id, state).unwrap_or(record);
 
+    crate::service::clients::note_usage(caller, state, 0, 0, 1);
     Ok(final_record)
 }
 
@@ -839,10 +840,25 @@ pub fn list_records(
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     let rows = state.list_app_records(app_slug).map_err(ServiceError::Internal)?;
     let rows = scope::retain_readable(caller, app_slug, rows, state);
-    Ok(redact_records(caller, app_slug, rows, state))
+    let rows = redact_records(caller, app_slug, rows, state);
+    crate::service::clients::note_usage(caller, state, 0, rows.len() as i64, 0);
+    Ok(rows)
 }
 
+/// A record the caller asked to read. An outside app's panel counts it.
 pub fn get_record(
+    caller: &AuthUser,
+    app_slug: &str,
+    id: &str,
+    state: &SharedState,
+) -> Result<DatasetRecord, ServiceError> {
+    let record = fetch_record(caller, app_slug, id, state)?;
+    crate::service::clients::note_usage(caller, state, 0, 1, 0);
+    Ok(record)
+}
+
+/// A record the caller may read, fetched for the server's own use, such as the answer to a save. It is not counted as a read.
+pub fn fetch_record(
     caller: &AuthUser,
     app_slug: &str,
     id: &str,
@@ -1001,7 +1017,8 @@ pub fn update_record(
         &mut applied_rule_ids,
     );
 
-    let final_rec = get_record(caller, app_slug, id, state).unwrap_or(updated_rec);
+    let final_rec = fetch_record(caller, app_slug, id, state).unwrap_or(updated_rec);
+    crate::service::clients::note_usage(caller, state, 0, 0, 1);
     Ok(final_rec)
 }
 
@@ -1023,6 +1040,7 @@ pub fn delete_record(
     check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     if state.remove_record(app_slug, id, &ctx).map_err(ServiceError::Internal)? {
+        crate::service::clients::note_usage(caller, state, 0, 0, 1);
         Ok(())
     } else {
         Err(ServiceError::NotFound(format!("Record '{id}' not found")))
@@ -1050,7 +1068,10 @@ pub fn delete_record_checked(
     check_not_restricted(app_slug, &current, state)?;
     let ctx = write_ctx(&caller.eppn, origin, app_slug, &current.data, state);
     match state.remove_record_checked(app_slug, id, version, &ctx).map_err(ServiceError::Internal)? {
-        RecordWrite::Saved(_) => Ok(()),
+        RecordWrite::Saved(_) => {
+            crate::service::clients::note_usage(caller, state, 0, 0, 1);
+            Ok(())
+        }
         RecordWrite::Conflict(current) => Err(ServiceError::StaleVersion {
             message: "Someone else saved this record first. Reload it and try again.".to_string(),
             version: current,
@@ -1879,7 +1900,9 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
         rows.last().map(|r| encode_cursor(r, sort_field.as_deref()))
     };
     fill_lookups(caller, app_slug, &mut rows, state);
-    Ok(RecordPage { records: redact_records(caller, app_slug, rows, state), next_cursor, calculating })
+    let records = redact_records(caller, app_slug, rows, state);
+    crate::service::clients::note_usage(caller, state, 0, records.len() as i64, 0);
+    Ok(RecordPage { records, next_cursor, calculating })
 }
 
 /// Who triggered an automation: their identity and their stored department.

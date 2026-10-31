@@ -181,7 +181,7 @@ The rest of the access model, then the rules behind a decision and who decides. 
 | 102 | [access-model.md](access-model.md) | 14 | An administrator's AI tool drafts access changes from computed suggestions. The server shows sentences and impact. A person confirms | **COMPLETED** |
 | 103 | [authority.md](authority.md) | 4 | A simulated institution of 5,000 people, and the same measures from real decisions | **COMPLETED** |
 | 104 | [external-apps.md](external-apps.md) | 5 | A confidential client may act as its own service identity, through grants a second person approved | **COMPLETED** |
-| 105 | [external-apps.md](external-apps.md) | 6 | An Outside apps panel: clients, ceilings, usage, and each person's connections | |
+| 105 | [external-apps.md](external-apps.md) | 6 | An Outside apps panel: clients, ceilings, usage, and each person's connections | **COMPLETED** |
 | 106 | [proposal-preview.md](proposal-preview.md) | 3 | A trial copy of a proposed app, filled with synthetic records, to try writes. It expires | **COMPLETED** |
 | 107 | [lifecycle.md](lifecycle.md) | 5 | When an owner leaves: orphaned workspaces are listed, a transfer is previewed first, and no workspace loses its last owner | |
 

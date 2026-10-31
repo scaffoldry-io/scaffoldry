@@ -16,6 +16,8 @@ use serde_json::Value;
 pub const RECORD_READERS: &[&str] = &[
     "list_records",
     "get_record",
+    // The body of `get_record`, without the count an outside app's panel keeps. It applies the scope and returns the record.
+    "fetch_record",
     "list_page",
     "page",
     "app_history",
