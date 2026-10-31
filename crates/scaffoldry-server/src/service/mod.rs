@@ -46,6 +46,7 @@ pub mod agent_kit;
 pub mod bundle;
 pub mod clients;
 pub mod ownership;
+pub mod templates;
 pub mod oauth;
 pub mod openapi;
 pub mod mcp_ui;

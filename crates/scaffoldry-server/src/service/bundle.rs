@@ -278,7 +278,7 @@ fn views_into_manifest(views: &[Value], manifest: &mut Value, rewritten: &mut Ve
 }
 
 /// Checks a bundle's hash and shape. Nothing is stored. Returns the parts the import uses.
-fn verify(bundle: &Value) -> Result<(), ServiceError> {
+pub(crate) fn verify(bundle: &Value) -> Result<(), ServiceError> {
     let doc = bundle.as_object().ok_or_else(|| bad("The bundle is not a JSON object"))?;
     let carried = doc.get("sha256").and_then(Value::as_str).ok_or_else(|| bad("The bundle has no sha256, so damage to it cannot be detected"))?;
     if !carried.eq_ignore_ascii_case(&digest_of(bundle)) {
@@ -328,7 +328,7 @@ fn verify(bundle: &Value) -> Result<(), ServiceError> {
 /// The sources of the bundle's custom pages. A bundle holds everything its pages run, and each source hashes to the key it is
 /// filed under. A server that already stores a page with that hash would otherwise take the stored text and never look at
 /// the bundle's.
-fn checked_page_sources(bundle: &Value, manifest: &Value) -> Result<Vec<String>, ServiceError> {
+pub(crate) fn checked_page_sources(bundle: &Value, manifest: &Value) -> Result<Vec<String>, ServiceError> {
     let held = bundle["page_sources"].as_object().cloned().unwrap_or_default();
     for (key, text) in &held {
         let actual = hex(&Sha256::digest(text.as_str().unwrap_or("").as_bytes()));
@@ -359,14 +359,28 @@ fn arriving_webhooks(bundle: &Value) -> Result<Vec<Value>, ServiceError> {
         .collect()
 }
 
-/// Makes a proposal from a bundle. The workspace's owner, admin or editor may. Nothing becomes live.
-pub fn import(caller: &AuthUser, workspace_id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
-    let bundle = body.get("bundle").ok_or_else(|| bad("The request needs a 'bundle'"))?;
+/// A bundle made ready to propose: the manifest and rules with a free slug and ids of their own.
+pub(crate) struct Prepared {
+    pub manifest: Value,
+    pub rules: Vec<Value>,
+    pub page_sources: Vec<String>,
+    pub notes: Vec<String>,
+    pub slug: String,
+    pub original: String,
+    pub wanted: String,
+    pub rewritten: Vec<Value>,
+    pub webhooks: Vec<Value>,
+    pub sample_records: usize,
+}
+
+/// Checks the bundle and gives it a slug and ids that are free here. `manifest` replaces the bundle's manifest when the
+/// caller edited it (a person using a template may). Nothing is stored.
+pub(crate) fn prepare(bundle: &Value, workspace_id: &str, body: &Value, manifest: Option<&Value>, state: &SharedState) -> Result<Prepared, ServiceError> {
     verify(bundle)?;
     let webhooks = arriving_webhooks(bundle)?;
 
-    let mut manifest = bundle["manifest"].clone();
-    let original = manifest["slug"].as_str().filter(|s| !s.is_empty()).ok_or_else(|| bad("The bundle's manifest has no slug"))?.to_string();
+    let mut manifest = manifest.unwrap_or(&bundle["manifest"]).clone();
+    let original = bundle["manifest"]["slug"].as_str().filter(|s| !s.is_empty()).ok_or_else(|| bad("The bundle's manifest has no slug"))?.to_string();
     let wanted = body.get("slug").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).unwrap_or(&original).to_string();
     let slug = free_slug(&wanted, state)?;
     manifest["slug"] = json!(slug);
@@ -392,20 +406,36 @@ pub fn import(caller: &AuthUser, workspace_id: &str, body: &Value, state: &Share
     if sample_records > 0 {
         notes.push(format!("{sample_records} sample records came with the bundle. This import does not load them."));
     }
+    Ok(Prepared { manifest, rules, page_sources, notes, slug, original, wanted, rewritten, webhooks, sample_records })
+}
 
-    let title = manifest["title"].as_str().unwrap_or(&slug).to_string();
-    let summary = body.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_string).unwrap_or_else(|| format!("Import the bundle '{title}'"));
+/// The summary a person gave, or one made from the manifest's title.
+pub(crate) fn summary_of(body: &Value, manifest: &Value, slug: &str, what: &str) -> String {
+    let title = manifest["title"].as_str().unwrap_or(slug);
+    body.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_string).unwrap_or_else(|| format!("{what} '{title}'"))
+}
+
+/// What the proposal tells the person about where the bundle came from.
+pub(crate) fn describe(p: &Prepared) -> Value {
+    json!({
+        "original_slug": p.original,
+        "suggested_slug": if p.slug != p.wanted || p.slug != p.original { json!(p.slug) } else { Value::Null },
+        "rewritten_ids": p.rewritten,
+        "webhooks": p.webhooks,
+        "sample_records": p.sample_records,
+    })
+}
+
+/// Makes a proposal from a bundle. The workspace's owner, admin or editor may. Nothing becomes live.
+pub fn import(caller: &AuthUser, workspace_id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let bundle = body.get("bundle").ok_or_else(|| bad("The request needs a 'bundle'"))?;
+    let p = prepare(bundle, workspace_id, body, None, state)?;
+    let summary = summary_of(body, &p.manifest, &p.slug, "Import the bundle");
     let mut proposal = proposals::propose(
         caller,
-        ProposeInput { workspace_id: workspace_id.to_string(), app_slug: None, manifest: Some(manifest), rules, summary, page_sources, notes },
+        ProposeInput { workspace_id: workspace_id.to_string(), app_slug: None, manifest: Some(p.manifest.clone()), rules: p.rules.clone(), summary, page_sources: p.page_sources.clone(), notes: p.notes.clone() },
         state,
     )?;
-    proposal["bundle"] = json!({
-        "original_slug": original,
-        "suggested_slug": if slug != wanted || slug != original { json!(slug) } else { Value::Null },
-        "rewritten_ids": rewritten,
-        "webhooks": webhooks,
-        "sample_records": sample_records,
-    });
+    proposal["bundle"] = describe(&p);
     Ok(proposal)
 }
