@@ -59,6 +59,10 @@ pub const AGENT_RELEASE_EXEMPT: &[(&str, &str)] = &[
         "Returns each deleted record's id and the value of its primary field, not the record. Not logged. Log it if a primary field can be sensitive.",
     ),
     (
+        "service/bundle.rs::sample_data",
+        "Returns a bundle's sample records with every sensitive field removed, by the manifest's reckoning and by this log's, so nothing the log keeps is released. Log it here if a sensitive field can ever stay in.",
+    ),
+    (
         "routes/link_options.rs::options",
         "Returns an id and one display value per row for the link picker, not the record. Not logged. Log it if a display field can be sensitive.",
     ),

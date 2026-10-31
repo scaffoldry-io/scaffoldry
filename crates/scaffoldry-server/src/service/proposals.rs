@@ -38,6 +38,9 @@ pub struct ProposeInput {
     pub rules: Vec<Value>,
     pub summary: String,
     pub page_sources: Vec<String>,
+    /// Sentences the caller adds to the change list, for what the proposal cannot carry itself, such as a webhook that
+    /// came with a bundle and is off until it is approved on its own.
+    pub notes: Vec<String>,
 }
 
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
@@ -76,7 +79,7 @@ fn warn(name: &str, messages: Vec<String>) -> Value {
 }
 
 /// Fields that are protected under the effective rule, or whose CEDS code is FERPA sensitive.
-fn sensitive_fields(m: &AppManifest, state: &SharedState) -> BTreeSet<(String, String)> {
+pub(crate) fn sensitive_fields(m: &AppManifest, state: &SharedState) -> BTreeSet<(String, String)> {
     let categories = state.sensitivity_categories();
     let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
     let mut out = BTreeSet::new();
@@ -252,7 +255,7 @@ fn records_exist(slug: &str, state: &SharedState) -> bool {
 }
 
 /// The caller's role in the workspace, lowercase. A Platform Admin counts as an admin.
-fn role_in(caller: &AuthUser, ws_id: &str, state: &SharedState) -> Option<String> {
+pub(crate) fn role_in(caller: &AuthUser, ws_id: &str, state: &SharedState) -> Option<String> {
     if caller.affiliation == "central_admin" {
         return Some("admin".to_string());
     }
@@ -840,6 +843,7 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, state: &S
         ));
     }
     checks.push(check("stale", vec![]));
+    changes.extend(input.notes);
 
     let base_version = if manifest_json.is_some() { live_version(&slug, state)? } else { None };
     let digest = digest_of_content(manifest_json.as_ref(), rules_json.as_ref(), &sources, state)?;

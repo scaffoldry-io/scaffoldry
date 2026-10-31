@@ -1,0 +1,232 @@
+{
+  "bundle_version": 1,
+  "manifest": {
+    "slug": "bundle-example",
+    "title": "Bundle source",
+    "description": "An app to copy",
+    "organization_code": "PHYS",
+    "department": "physics",
+    "access": {
+      "rows": [],
+      "columns": []
+    },
+    "herm_capability_id": null,
+    "pages": [
+      {
+        "id": "board",
+        "title": "Board",
+        "kind": {
+          "Custom": {
+            "source_sha256": "bb2c405b13cd15543bdcc7cf40a82a6c8c04f1f2fc8b4ff07cc31601b5b37265",
+            "grants": [
+              {
+                "table_id": "cases",
+                "read": [
+                  "title"
+                ],
+                "write": [],
+                "create": false,
+                "delete": false
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "ceds_mappings": {},
+    "tables": [
+      {
+        "id": "cases",
+        "name": "Cases",
+        "slug": "cases",
+        "description": null,
+        "icon": null,
+        "fields": [
+          {
+            "name": "title",
+            "label": "title",
+            "field_type": "Text",
+            "required": false,
+            "ferpa_sensitive": false,
+            "categories": [],
+            "linked_dataset_id": null,
+            "linked_field": null,
+            "target_table_id": null,
+            "target_display_field": null,
+            "display_label_override": null,
+            "cardinality": null,
+            "allow_multiple": null,
+            "link_filter": null,
+            "formula_expression": null,
+            "rollup_function": null,
+            "select_options": [],
+            "currency_symbol": null,
+            "precision": null,
+            "indexed": false,
+            "notify_on_assign": false
+          },
+          {
+            "name": "note",
+            "label": "note",
+            "field_type": "Text",
+            "required": false,
+            "ferpa_sensitive": false,
+            "categories": [],
+            "linked_dataset_id": null,
+            "linked_field": null,
+            "target_table_id": null,
+            "target_display_field": null,
+            "display_label_override": null,
+            "cardinality": null,
+            "allow_multiple": null,
+            "link_filter": null,
+            "formula_expression": null,
+            "rollup_function": null,
+            "select_options": [],
+            "currency_symbol": null,
+            "precision": null,
+            "indexed": false,
+            "notify_on_assign": false
+          }
+        ],
+        "primary_field": null,
+        "sample_records": []
+      },
+      {
+        "id": "people",
+        "name": "People",
+        "slug": "people",
+        "description": null,
+        "icon": null,
+        "fields": [
+          {
+            "name": "name",
+            "label": "name",
+            "field_type": "Text",
+            "required": false,
+            "ferpa_sensitive": false,
+            "categories": [],
+            "linked_dataset_id": null,
+            "linked_field": null,
+            "target_table_id": null,
+            "target_display_field": null,
+            "display_label_override": null,
+            "cardinality": null,
+            "allow_multiple": null,
+            "link_filter": null,
+            "formula_expression": null,
+            "rollup_function": null,
+            "select_options": [],
+            "currency_symbol": null,
+            "precision": null,
+            "indexed": false,
+            "notify_on_assign": false
+          }
+        ],
+        "primary_field": null,
+        "sample_records": []
+      }
+    ],
+    "relationships": [],
+    "views": [
+      {
+        "id": "all",
+        "table_id": "cases",
+        "title": "All cases",
+        "view_type": "Table",
+        "fields": [
+          {
+            "name": "title",
+            "label": "title",
+            "field_type": "Text",
+            "required": false,
+            "ferpa_sensitive": false,
+            "categories": [],
+            "linked_dataset_id": null,
+            "linked_field": null,
+            "target_table_id": null,
+            "target_display_field": null,
+            "display_label_override": null,
+            "cardinality": null,
+            "allow_multiple": null,
+            "link_filter": null,
+            "formula_expression": null,
+            "rollup_function": null,
+            "select_options": [],
+            "currency_symbol": null,
+            "precision": null,
+            "indexed": false,
+            "notify_on_assign": false
+          }
+        ],
+        "filters": null,
+        "sort_rules": [],
+        "group_by_field": null,
+        "row_density": null,
+        "kanban_column_field": null,
+        "calendar_date_field": null,
+        "column_order": [],
+        "column_widths": [],
+        "hidden_columns": [],
+        "frozen_through": null,
+        "column_summary": []
+      }
+    ]
+  },
+  "views": [],
+  "rules": [
+    {
+      "id": "flag-urgent",
+      "steps": [
+        {
+          "id": "s1",
+          "when": [],
+          "kind": {
+            "Service": {
+              "action": {
+                "UpdateRecordStatus": {
+                  "new_status": "Open"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "name": "Rule flag-urgent",
+      "description": "",
+      "enabled": true,
+      "trigger": "RecordCreated",
+      "predicates": [
+        {
+          "field_name": "title",
+          "operator": "Equals",
+          "expected_value": "urgent"
+        }
+      ],
+      "actions": []
+    }
+  ],
+  "page_sources": {
+    "bb2c405b13cd15543bdcc7cf40a82a6c8c04f1f2fc8b4ff07cc31601b5b37265": "export default function Page() { return <p>BUNDLE-PAGE</p>; }"
+  },
+  "integrations": {
+    "webhooks": []
+  },
+  "sample_data": {
+    "cases": [
+      {
+        "note": "note one",
+        "title": "one"
+      },
+      {
+        "note": "note two",
+        "title": "two"
+      },
+      {
+        "note": "note three",
+        "title": "three"
+      }
+    ]
+  },
+  "sha256": "36e1986a6f02eb80738e688b49bea2dd4fd51ca3234760294cdeca466637d486"
+}

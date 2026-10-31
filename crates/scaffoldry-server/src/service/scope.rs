@@ -28,6 +28,8 @@ pub const RECORD_READERS: &[&str] = &[
     "list_waiting_decisions",
     "decide_process",
     "list_app_processes",
+    // A bundle's sample records. It reads them with `list_page`, so the exporter's row and column rules apply.
+    "sample_data",
 ];
 
 /// Functions that load records but return none of it to the caller: they write, or they read a

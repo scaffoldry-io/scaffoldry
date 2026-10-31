@@ -78,6 +78,15 @@
         "type": "string"
       }
     },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The app's row and column rules. Their shapes are access-rules.schema.json and access-column-rules.schema.json, which validate_manifest and the access checks enforce.",
+      "properties": {
+        "rows": { "type": "array", "items": { "type": "object" } },
+        "columns": { "type": "array", "items": { "type": "object" } }
+      }
+    },
     "sealed": { "type": "boolean", "description": "A sealed app stops every grant anchored above it. Grants at the app or inside it still reach. Unsealing needs a second person." },
     "pages": {
       "type": "array",

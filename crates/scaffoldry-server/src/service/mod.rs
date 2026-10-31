@@ -43,6 +43,7 @@ pub mod tool_meta;
 pub mod tools;
 pub mod calc;
 pub mod agent_kit;
+pub mod bundle;
 pub mod clients;
 pub mod ownership;
 pub mod oauth;

@@ -64,6 +64,7 @@ async fn create_app_in_workspace(
         rules: vec![],
         summary: format!("Create the app \"{title}\""),
         page_sources: vec![],
+        notes: vec![],
     };
     match direct(&user, input, &state).await? {
         crate::service::proposals::Direct::Applied => {
@@ -227,6 +228,7 @@ async fn update_app(
         rules: vec![],
         summary: format!("Update the app \"{}\"", existing.title),
         page_sources: vec![],
+        notes: vec![],
     };
     match direct(&user, input, &state).await? {
         crate::service::proposals::Direct::Applied => {
@@ -265,6 +267,7 @@ async fn publish_app(
         rules: vec![],
         summary: format!("Publish the app \"{slug}\" at {domain}"),
         page_sources: vec![],
+        notes: vec![],
     };
     match direct(&user, input, &state).await? {
         crate::service::proposals::Direct::Applied => {
@@ -313,6 +316,7 @@ async fn create_app_automation(
         rules: vec![payload],
         summary: format!("Save the rule \"{}\"", rule.name),
         page_sources: vec![],
+        notes: vec![],
     };
     match direct(&user, input, &state).await? {
         crate::service::proposals::Direct::Applied => {

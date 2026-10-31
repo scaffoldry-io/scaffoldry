@@ -229,7 +229,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 122 | [attachments.md](attachments.md) | 2 | Scanning through an operator's antivirus daemon | **COMPLETED** |
 | 123 | [attachments.md](attachments.md) | 3 | Attachment cells and chips in the app | **COMPLETED** |
 | 124 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures | **COMPLETED** |
-| 125 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal |
+| 125 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal | **COMPLETED** |
 | 126 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had |
 | 127 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first |
 | 128 | [import-export.md](import-export.md) | 6 | Moving off a spreadsheet tool, with every decision listed |
@@ -427,3 +427,4 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Who holds the positions the first matrix names, such as a privacy officer | The matrix has no rows and behaves as the platform does today |
 | Whether the license audit should keep accepting `cc0-1.0`, `python-2.0` and `unlicense`, which the written policy does not list | The audit accepts them |
 | Whether the desk keeps its built-in demo people (the sign-in list, the Impersonation Hub, and the mock workspaces with their collaborators), or starts signed out and takes every person from the server | They stay. They grant nothing, because the server checks every request. Real impersonation is Admin, People. Removing them touches about 50 test sites in 13 files and the desk's mock data, so it is its own phase |
+| What an imported bundle does with its sample records and its saved views, and whether bundles are compressed with `flate2` | Sample records are exported (at most 5,000, sensitive fields removed) and checked on import, but not loaded. Saved views travel as manifest views inside the proposal. `flate2` is not added: sample data stays inside the document. A webhook arrives off, and its `webhook_host` check waits for `integrations.md` phase 4 |

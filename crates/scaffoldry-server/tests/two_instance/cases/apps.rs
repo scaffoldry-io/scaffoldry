@@ -15,6 +15,8 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/proposals/{id}/preview".into(), case!(proposal_preview));
     m.insert("POST /api/v1/proposals/{id}/trial".into(), case!(proposal_trial));
     m.insert("POST /api/v1/me/trials/{id}/open".into(), case!(trial_reopen));
+    m.insert("POST /api/v1/workspaces/{id}/bundle-import".into(), case!(bundle_import));
+    exempt(m, "POST /api/v1/apps/{slug}/bundle", "reads an app's definition into a document and stores nothing");
 
     m.insert("POST /api/v1/apps/{slug}/records".into(), case!(record_create));
     m.insert("PATCH /api/v1/apps/{slug}/records/{id}".into(), case!(record_patch));
@@ -155,6 +157,16 @@ async fn proposal_trial(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/proposals/{id}/decision"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] }))).await, StatusCode::OK, "A approves")?;
     status(w.rb("GET", &format!("/api/v1/apps/{slug}/tables/apps/records"), OWNER, None).await, StatusCode::NOT_FOUND, "B no longer finds the trial")?;
     Ok(())
+}
+
+/// A exports an app and imports the bundle, which makes a proposal. B reads that proposal.
+async fn bundle_import(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let bundle = status(w.wa("POST", &format!("/api/v1/apps/{slug}/bundle"), OWNER, Some(json!({}))).await, StatusCode::OK, "A exports the app")?;
+    let made = status(w.wa("POST", &format!("/api/v1/workspaces/{WORKSPACE}/bundle-import"), OWNER, Some(json!({ "bundle": bundle }))).await, StatusCode::CREATED, "A imports the bundle")?;
+    let id = made["proposal_id"].as_str().ok_or("a proposal id")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/proposals/{id}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
+    ensure(seen["app_slug"] == made["app_slug"] && seen["status"] == "Pending", format!("B shows the pending proposal A made: {seen}"))
 }
 
 /// A makes a trial. B opens it again, which starts its days over.
