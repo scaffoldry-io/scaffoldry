@@ -16,6 +16,10 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/proposals/{id}/trial".into(), case!(proposal_trial));
     m.insert("POST /api/v1/me/trials/{id}/open".into(), case!(trial_reopen));
     m.insert("POST /api/v1/workspaces/{id}/bundle-import".into(), case!(bundle_import));
+    m.insert("POST /api/v1/templates".into(), case!(template_publish));
+    m.insert("POST /api/v1/templates/{id}/decision".into(), case!(template_decide));
+    m.insert("POST /api/v1/templates/{id}/retire".into(), case!(template_retire));
+    m.insert("POST /api/v1/workspaces/{ws}/templates/{id}/instantiate".into(), case!(template_instantiate));
     exempt(m, "POST /api/v1/apps/{slug}/bundle", "reads an app's definition into a document and stores nothing");
 
     m.insert("POST /api/v1/apps/{slug}/records".into(), case!(record_create));
@@ -167,6 +171,60 @@ async fn bundle_import(w: World) -> Outcome {
     let id = made["proposal_id"].as_str().ok_or("a proposal id")?;
     let seen = status(w.rb("GET", &format!("/api/v1/proposals/{id}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
     ensure(seen["app_slug"] == made["app_slug"] && seen["status"] == "Pending", format!("B shows the pending proposal A made: {seen}"))
+}
+
+/// A second Platform Admin, appointed through A. A template needs a second person.
+async fn second_admin(w: &World) -> Result<String, String> {
+    let second = format!("{}@state.edu", unique("tplsecond"));
+    scaffoldry_server::service::identity::issue_test_token_and_user(&second);
+    status(w.wa("POST", &format!("/api/v1/orgs/{ROOT}/appointments"), ADMIN, Some(json!({ "eppn": second, "scoped_affiliation": "platform_admin", "reason": "Fixture" }))).await, StatusCode::CREATED, "appoint")?;
+    Ok(second)
+}
+
+/// A publishes the app as a template. Returns its id.
+async fn publish_template(w: &World) -> Result<String, String> {
+    let slug = make_app(w).await?;
+    let bundle = status(w.wa("POST", &format!("/api/v1/apps/{slug}/bundle"), OWNER, Some(json!({}))).await, StatusCode::OK, "A exports the app")?;
+    let made = status(w.wa("POST", "/api/v1/templates", ADMIN, Some(json!({ "bundle": bundle, "name": unique("Template") }))).await, StatusCode::CREATED, "A publishes")?;
+    Ok(made["template_id"].as_str().ok_or("a template id")?.to_string())
+}
+
+/// A publishes. B finds it waiting and decides it.
+async fn template_publish(w: World) -> Outcome {
+    let id = publish_template(&w).await?;
+    let second = second_admin(&w).await?;
+    let seen = status(w.rb("POST", &format!("/api/v1/templates/{id}/decision"), &second, Some(json!({ "decision": "reject", "rationale": "Checked on B" }))).await, StatusCode::OK, "B decides the template A published")?;
+    ensure(seen["status"] == "rejected", format!("B found the pending template: {seen}"))
+}
+
+/// A publishes, B approves, A offers it.
+async fn template_decide(w: World) -> Outcome {
+    let id = publish_template(&w).await?;
+    let second = second_admin(&w).await?;
+    status(w.rb("POST", &format!("/api/v1/templates/{id}/decision"), &second, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "B approves")?;
+    let list = status(w.wa("GET", "/api/v1/templates", OWNER, None).await, StatusCode::OK, "A lists")?;
+    ensure(has(&list, &id), format!("A offers what B approved: {list}"))
+}
+
+/// A retires an approved template. B no longer offers it.
+async fn template_retire(w: World) -> Outcome {
+    let id = publish_template(&w).await?;
+    let second = second_admin(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/templates/{id}/decision"), &second, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "approve")?;
+    status(w.wa("POST", &format!("/api/v1/templates/{id}/retire"), ADMIN, Some(json!({ "reason": "Out of date" }))).await, StatusCode::OK, "A retires")?;
+    let list = status(w.rb("GET", "/api/v1/templates", OWNER, None).await, StatusCode::OK, "B lists")?;
+    ensure(!has(&list, &id), format!("B no longer offers it: {list}"))
+}
+
+/// A uses an approved template. B reads the proposal that made.
+async fn template_instantiate(w: World) -> Outcome {
+    let id = publish_template(&w).await?;
+    let second = second_admin(&w).await?;
+    status(w.rb("POST", &format!("/api/v1/templates/{id}/decision"), &second, Some(json!({ "decision": "approve", "rationale": "Reviewed" }))).await, StatusCode::OK, "B approves")?;
+    let made = status(w.wa("POST", &format!("/api/v1/workspaces/{WORKSPACE}/templates/{id}/instantiate"), OWNER, Some(json!({ "slug": unique("fromtpl") }))).await, StatusCode::CREATED, "A uses the template")?;
+    let pid = made["proposal_id"].as_str().ok_or("a proposal id")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/proposals/{pid}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
+    ensure(seen["app_slug"] == made["app_slug"], format!("B shows the proposal A made: {seen}"))
 }
 
 /// A makes a trial. B opens it again, which starts its days over.

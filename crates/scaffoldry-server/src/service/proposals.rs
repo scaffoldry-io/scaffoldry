@@ -43,6 +43,13 @@ pub struct ProposeInput {
     pub notes: Vec<String>,
 }
 
+/// Content a person already reviewed and approved, such as a published template. The checks that ask "did this change?"
+/// compare the proposal with it when the app is not live, so they are raised for what differs from it and no more.
+pub struct Reviewed {
+    pub manifest: Value,
+    pub rules: Vec<Value>,
+}
+
 fn repo(state: &SharedState) -> Result<&crate::repository::PostgresRepository, ServiceError> {
     Ok(&*state.repository)
 }
@@ -116,7 +123,7 @@ fn words(m: &AppManifest, table: &str, names: &[String]) -> String {
 }
 
 /// The grants of a custom page, in words a department chair can check.
-fn grant_sentences(m: &AppManifest, page_title: &str, kind: &PageKind) -> Vec<String> {
+pub(crate) fn grant_sentences(m: &AppManifest, page_title: &str, kind: &PageKind) -> Vec<String> {
     let PageKind::Custom { grants, .. } = kind else { return Vec::new() };
     if grants.is_empty() {
         return vec![format!("Page \"{page_title}\" has no access to any table.")];
@@ -305,6 +312,7 @@ fn check_manifest_part(
     page_sources: Vec<String>,
     ws: &crate::state::WorkspaceRecord,
     live: Option<&AppManifest>,
+    reviewed: Option<&AppManifest>,
     state: &SharedState,
 ) -> Result<ManifestPart, ServiceError> {
     let repo = repo(state)?;
@@ -406,6 +414,8 @@ fn check_manifest_part(
         return Err(ServiceError::BadRequest(format!("page_source: {}", source_problems.join("; "))));
     }
 
+    // What the checks below compare a page, an access rule or a mask with: the live app, else the reviewed content.
+    let baseline = live.or(reviewed);
     let proposed_sensitive = sensitive_fields(&manifest, state);
     let live_sensitive = live.map(|l| sensitive_fields(l, state)).unwrap_or_default();
 
@@ -519,7 +529,7 @@ fn check_manifest_part(
     // page_sensitivity: a new or changed custom page reads a sensitive field.
     let mut page_problems = Vec::new();
     for page in &manifest.pages {
-        let changed = live.and_then(|l| l.pages.iter().find(|x| x.id == page.id)).is_none_or(|x| x != page);
+        let changed = baseline.and_then(|l| l.pages.iter().find(|x| x.id == page.id)).is_none_or(|x| x != page);
         if !changed {
             continue;
         }
@@ -537,7 +547,7 @@ fn check_manifest_part(
     // page_dependencies: a new or changed bundle names its libraries, and each license is approved.
     let mut dependency_problems = Vec::new();
     for page in &manifest.pages {
-        let changed = live.and_then(|l| l.pages.iter().find(|x| x.id == page.id)).is_none_or(|x| x != page);
+        let changed = baseline.and_then(|l| l.pages.iter().find(|x| x.id == page.id)).is_none_or(|x| x != page);
         if !changed {
             continue;
         }
@@ -560,7 +570,7 @@ fn check_manifest_part(
 
     let access_problems = scaffoldry_engine::detect_access_problems(&manifest);
     let mut loosened = Vec::new();
-    if let Some(l) = live {
+    if let Some(l) = baseline {
         for old in &l.access.rows {
             match manifest.access.rows.iter().find(|r| r.id == old.id) {
                 None => loosened.push(format!("rule '{}' was removed", old.id)),
@@ -601,7 +611,7 @@ fn check_manifest_part(
         .flat_map(|t| t.fields.iter().map(move |f| (t, f)))
         .filter_map(|(t, f)| {
             let mask = f.mask?;
-            let was = live.and_then(|l| l.tables.iter().find(|x| x.id == t.id)).and_then(|x| x.fields.iter().find(|x| x.name == f.name)).and_then(|x| x.mask);
+            let was = baseline.and_then(|l| l.tables.iter().find(|x| x.id == t.id)).and_then(|x| x.fields.iter().find(|x| x.name == f.name)).and_then(|x| x.mask);
             let default = scaffoldry_engine::default_mask(f, &categories);
             (was != Some(mask) && mask.weaker_than(default)).then(|| format!("table '{}' field '{}': the mask shows more than its category's default. {} The default: {}", t.id, f.name, mask.sentence(), default.sentence()))
         })
@@ -633,6 +643,7 @@ fn check_rules_part(
     raw: Vec<Value>,
     slug: &str,
     effective: &AppManifest,
+    reviewed_rules: &[Value],
     state: &SharedState,
 ) -> Result<RulesPart, ServiceError> {
     let repo = repo(state)?;
@@ -665,9 +676,20 @@ fn check_rules_part(
     let mut effects = Vec::new();
     let mut loops = Vec::new();
     let mut approvers = Vec::new();
+    // A rule equal to one that was reviewed has had its effects reviewed.
+    let reviewed_rules: Vec<AutomationRule> = reviewed_rules
+        .iter()
+        .filter_map(|v| serde_json::from_value::<AutomationRule>(v.clone()).ok())
+        .map(|mut r| {
+            r.app_slug = slug.to_string();
+            r.version = 0;
+            r
+        })
+        .collect();
     for (rule, _) in &rules {
         let set = crate::service::processes::fields_set(rule);
-        for name in &set {
+        let already = reviewed_rules.contains(rule);
+        for name in set.iter().filter(|_| !already) {
             let flagged = effective.tables.iter().any(|t| sensitive.contains(&(t.id.clone(), name.clone())));
             if flagged {
                 effects.push(format!("rule '{}' sets the sensitive field '{name}'", rule.name));
@@ -728,6 +750,60 @@ fn rule_sentences(proposed: &AutomationRule, state: &SharedState) -> Vec<String>
     out
 }
 
+/// What differs between a proposed manifest and the reviewed one, in sentences. Views, the slug and the workspace are
+/// left out: a new app always has its own.
+fn differences(proposed: &AppManifest, reviewed: &AppManifest) -> Vec<String> {
+    fn same<T: serde::Serialize>(a: &T, b: &T) -> bool {
+        serde_json::to_value(a).ok() == serde_json::to_value(b).ok()
+    }
+    let mut out = Vec::new();
+    if proposed.title != reviewed.title {
+        out.push(format!("the title is \"{}\", the template's is \"{}\"", proposed.title, reviewed.title));
+    }
+    for t in &proposed.tables {
+        let Some(r) = reviewed.tables.iter().find(|x| x.id == t.id) else {
+            out.push(format!("table '{}' is not in the template", t.id));
+            continue;
+        };
+        if t.name != r.name {
+            out.push(format!("table '{}' is named differently from the template's", t.id));
+        }
+        for f in &t.fields {
+            match r.fields.iter().find(|x| x.name == f.name) {
+                None => out.push(format!("field '{}' of table '{}' is not in the template", f.name, t.id)),
+                Some(x) if !same(x, f) => out.push(format!("field '{}' of table '{}' differs from the template", f.name, t.id)),
+                _ => {}
+            }
+        }
+        for x in &r.fields {
+            if !t.fields.iter().any(|f| f.name == x.name) {
+                out.push(format!("field '{}' of table '{}' is in the template and not here", x.name, t.id));
+            }
+        }
+    }
+    for r in &reviewed.tables {
+        if !proposed.tables.iter().any(|t| t.id == r.id) {
+            out.push(format!("table '{}' is in the template and not here", r.id));
+        }
+    }
+    for p in &proposed.pages {
+        match reviewed.pages.iter().find(|x| x.id == p.id) {
+            None => out.push(format!("page '{}' is not in the template", p.id)),
+            Some(x) if !same(x, p) => out.push(format!("page '{}' differs from the template", p.id)),
+            _ => {}
+        }
+    }
+    for x in &reviewed.pages {
+        if !proposed.pages.iter().any(|p| p.id == x.id) {
+            out.push(format!("page '{}' is in the template and not here", x.id));
+        }
+    }
+    if !same(&proposed.access, &reviewed.access) {
+        out.push("the access rules differ from the template's".to_string());
+    }
+    out
+}
+
 /// The source text of each custom page of a manifest, keyed by page id. `local` holds sources that came with the
 /// proposal and are not stored yet. The others are read from the store.
 fn page_texts(manifest: Option<&Value>, local: &[(String, String)], state: &SharedState) -> Result<BTreeMap<String, String>, ServiceError> {
@@ -763,15 +839,20 @@ pub(crate) fn digest_of(p: &ProposalRow, state: &SharedState) -> Result<String, 
 }
 
 pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
-    propose_with(caller, input, false, state)
+    propose_with(caller, input, false, None, state)
+}
+
+/// A proposal made from content that was reviewed already. What matches it is not raised again. What differs is.
+pub fn propose_reviewed(caller: &AuthUser, input: ProposeInput, reviewed: Reviewed, state: &SharedState) -> Result<Value, ServiceError> {
+    propose_with(caller, input, false, Some(reviewed), state)
 }
 
 /// Runs every check `propose` runs and says what the change would need, without storing anything.
 pub fn dry_run(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
-    propose_with(caller, input, true, state)
+    propose_with(caller, input, true, None, state)
 }
 
-fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, state: &SharedState) -> Result<Value, ServiceError> {
+fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed: Option<Reviewed>, state: &SharedState) -> Result<Value, ServiceError> {
     let repo = repo(state)?;
     let ws = state
         .workspaces
@@ -821,8 +902,15 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, state: &S
     let mut manifest_json: Option<Value> = None;
     let mut effective: Option<AppManifest> = live.clone();
 
+    let reviewed_manifest: Option<AppManifest> = match &reviewed {
+        Some(r) => Some(serde_json::from_value(r.manifest.clone()).map_err(|e| ServiceError::Internal(format!("The reviewed manifest is not a manifest: {e}")))?),
+        None => None,
+    };
     if let Some(raw) = input.manifest {
-        let part = check_manifest_part(raw, input.page_sources, &ws, live.as_ref(), state)?;
+        let part = check_manifest_part(raw, input.page_sources, &ws, live.as_ref(), reviewed_manifest.as_ref(), state)?;
+        if let Some(r) = &reviewed_manifest {
+            checks.push(warn("template_pristine", differences(&part.manifest, r)));
+        }
         changes.extend(change_list(&part.manifest, live.as_ref(), state));
         checks.extend(part.checks);
         sources = part.sources;
@@ -833,7 +921,7 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, state: &S
     let mut rules_json: Option<Value> = None;
     if !input.rules.is_empty() {
         let effective = effective.as_ref().ok_or_else(|| ServiceError::NotFound(format!("App '{slug}' not found")))?;
-        let part = check_rules_part(caller, input.rules, &slug, effective, state)?;
+        let part = check_rules_part(caller, input.rules, &slug, effective, reviewed.as_ref().map_or(&[][..], |r| &r.rules), state)?;
         for (rule, _) in &part.rules {
             changes.extend(rule_sentences(rule, state));
         }
@@ -1063,20 +1151,30 @@ pub enum Direct {
 /// same request when its caller owns or administers the workspace and no check is raised.
 /// A `fail` that stores no proposal comes back as the error `propose` returns.
 pub fn submit_direct(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Direct, ServiceError> {
-    let ws_id = input.workspace_id.clone();
     let proposed = propose(caller, input, state)?;
+    if approve_if_direct(caller, &proposed, state)? {
+        Ok(Direct::Applied)
+    } else {
+        Ok(Direct::Pending(proposed))
+    }
+}
+
+/// Approves a proposal just made, in the same request, when its caller owns or administers the workspace, nothing failed,
+/// and what the change needs is the owner's say. Returns whether it did.
+pub fn approve_if_direct(caller: &AuthUser, proposed: &Value, state: &SharedState) -> Result<bool, ServiceError> {
+    let ws_id = proposed["workspace_id"].as_str().unwrap_or_default();
     let any_fail = proposed["checks"].as_array().is_some_and(|l| l.iter().any(|c| c["outcome"] == "fail"));
-    let owner_or_admin = matches!(role_in(caller, &ws_id, state).as_deref(), Some("owner" | "admin"));
+    let owner_or_admin = matches!(role_in(caller, ws_id, state).as_deref(), Some("owner" | "admin"));
     // Applied in the same request only when what the change needs is its owner's say.
     let direct = proposed["authority"]["path"] == "direct";
     if any_fail || !owner_or_admin || !direct {
-        return Ok(Direct::Pending(proposed));
+        return Ok(false);
     }
     let id = proposed["proposal_id"].as_str().unwrap_or_default().to_string();
     // The direct path reviewed the content it just made, so it names that content's digest itself.
     let digest = proposed["digest"].as_str().unwrap_or_default().to_string();
     decide(caller, &id, "approve", "Applied directly by an owner or admin: no check was raised", Some(&digest), state)?;
-    Ok(Direct::Applied)
+    Ok(true)
 }
 
 #[cfg(test)]

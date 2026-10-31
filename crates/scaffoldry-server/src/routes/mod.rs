@@ -29,6 +29,7 @@ pub mod trash;
 pub mod bundle;
 pub mod clients;
 pub mod ownership;
+pub mod templates;
 pub mod framework;
 pub mod governance;
 pub mod jobs;
@@ -90,6 +91,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(clients::router())
         .merge(bundle::router())
         .merge(ownership::router())
+        .merge(templates::router())
         .merge(oauth::me_router())
         .merge(framework::router())
         .merge(policy::router())

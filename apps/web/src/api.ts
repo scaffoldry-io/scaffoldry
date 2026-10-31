@@ -881,6 +881,22 @@ export interface OwnershipOwner {
 }
 
 /** What has lost the person who looked after it. */
+export interface AppTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  contents: string[];
+  needs_classification: string;
+}
+
+export interface TemplateUse {
+  proposal_id: string;
+  app_slug: string;
+  approved: boolean;
+  checks: { name: string; outcome: string; messages: string[] }[];
+}
+
 export interface OwnershipOrphans {
   workspaces: { id: string; name: string; owners: OwnershipOwner[] }[];
   proposals: { id: string; name: string; proposed_by: string; why: string; workspace_id: string }[];
@@ -1335,6 +1351,11 @@ export const apiClient = {
     request<AppClientRow>(`/clients/${encodeURIComponent(id)}/disable`, { method: "POST", body: JSON.stringify({ reason }) }),
 
   authorityLoad: async () => request<AuthorityLoad>("/admin/authority/load"),
+
+  templates: async () => request<{ templates: AppTemplate[] }>("/templates"),
+
+  useTemplate: async (workspaceId: string, templateId: string, body: { slug?: string; approve?: boolean }) =>
+    request<TemplateUse>(`/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(templateId)}/instantiate`, { method: "POST", body: JSON.stringify(body) }),
 
   ownershipOrphans: async () => request<OwnershipOrphans>("/admin/ownership/orphans"),
 

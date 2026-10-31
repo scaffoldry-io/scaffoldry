@@ -82,6 +82,7 @@ const SCHEMA_0074: &str = include_str!("../../scaffoldry-core/migrations/0074_se
 const SCHEMA_0075: &str = include_str!("../../scaffoldry-core/migrations/0075_revoke_default_scim_credential.sql");
 const SCHEMA_0076: &str = include_str!("../../scaffoldry-core/migrations/0076_client_usage.sql");
 const SCHEMA_0077: &str = include_str!("../../scaffoldry-core/migrations/0077_proposal_trials.sql");
+const SCHEMA_0078: &str = include_str!("../../scaffoldry-core/migrations/0078_app_templates.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1127,6 +1128,7 @@ impl PostgresRepository {
                             ("0075_revoke_default_scim_credential.sql", SCHEMA_0075),
                             ("0076_client_usage.sql", SCHEMA_0076),
                             ("0077_proposal_trials.sql", SCHEMA_0077),
+                            ("0078_app_templates.sql", SCHEMA_0078),
                         ];
 
                         let mut fresh_install = false;
