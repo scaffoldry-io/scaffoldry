@@ -214,7 +214,7 @@ pub static JOB_KINDS: &[JobKind] = &[
     JobKind {
         name: "snapshot_take",
         title: "Taking a snapshot",
-        description: "Writes an app's definition and every record to a compressed file. A change that loses data waits for it.",
+        description: "Writes an app's definition and every record to a compressed file, and finishes an approval that was waiting for it.",
         max_attempts: 1,
         max_concurrent: 1,
         run: crate::snapshot_jobs::snapshot_take,
