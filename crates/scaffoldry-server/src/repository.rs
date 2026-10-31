@@ -112,6 +112,9 @@ pub enum RepositoryError {
     NotFound(String),
     #[error("Conflict: {0}")]
     Conflict(String),
+    /// A change would leave a workspace with no owner. The text is a plain sentence for the person.
+    #[error("{0}")]
+    LastOwner(String),
     #[error("Constraint violation on '{field}': {message}")]
     ConstraintViolation {
         message: String,
@@ -1779,6 +1782,7 @@ impl PostgresRepository {
         let (kind, id) = (kind.as_str().to_string(), id.to_string());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
+            guard_last_owner(&mut tx, &c.workspace_id, &c.eppn, &c.app_slug, Some(&c.role))?;
             tx.execute(
                 "INSERT INTO workspace_collaborators (id, workspace_id, eppn, name, role, scoped_affiliation, department, principal_type, principal_id, app_slug) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
@@ -1809,6 +1813,7 @@ impl PostgresRepository {
         let app = app.to_string();
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
+            guard_last_owner(&mut tx, &ws_id, &eppn_str, &app, None)?;
             tx.execute(
                 "DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn = $2 AND app_slug = $3",
                 &[&ws_id, &eppn_str, &app],
@@ -4044,4 +4049,44 @@ pub(crate) fn upsert_role_in(
 fn token_scope_of(stored: Option<serde_json::Value>) -> Option<scaffoldry_core::TokenScope> {
     let value = stored?;
     Some(serde_json::from_value(value).unwrap_or(scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: Some(Vec::new()), max_rows_per_call: Some(1), level: None }))
+}
+
+/// A workspace keeps at least one owner. This runs inside every membership writer's transaction, so a route added later
+/// cannot skip it. A user who owns a workspace-wide may not be removed (`new_role` None) or given another role when no
+/// other user owner would remain. The workspace row is locked, so two changes at once cannot each leave the other behind.
+fn guard_last_owner(
+    tx: &mut postgres::Transaction<'_>,
+    workspace_id: &str,
+    eppn: &str,
+    app_slug: &str,
+    new_role: Option<&str>,
+) -> Result<(), RepositoryError> {
+    if !app_slug.is_empty() || new_role == Some("owner") {
+        return Ok(());
+    }
+    let Some(ws) = tx.query_opt("SELECT name FROM workspaces WHERE id = $1 FOR NO KEY UPDATE", &[&workspace_id])? else {
+        return Ok(());
+    };
+    let name: String = ws.get(0);
+    let holds = tx
+        .query_opt(
+            "SELECT 1 FROM workspace_collaborators WHERE workspace_id = $1 AND lower(eppn) = lower($2) AND app_slug = '' AND role = 'owner' AND principal_type = 'user'",
+            &[&workspace_id, &eppn],
+        )?
+        .is_some();
+    if !holds {
+        return Ok(());
+    }
+    let others: i64 = tx
+        .query_one(
+            "SELECT count(*) FROM workspace_collaborators WHERE workspace_id = $1 AND lower(eppn) <> lower($2) AND app_slug = '' AND role = 'owner' AND principal_type = 'user'",
+            &[&workspace_id, &eppn],
+        )?
+        .get(0);
+    if others == 0 {
+        return Err(RepositoryError::LastOwner(format!(
+            "{name} would be left with no owner. Make someone else an owner first, or use Ownership in the console to hand it over."
+        )));
+    }
+    Ok(())
 }

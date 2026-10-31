@@ -44,6 +44,7 @@ pub mod tools;
 pub mod calc;
 pub mod agent_kit;
 pub mod clients;
+pub mod ownership;
 pub mod oauth;
 pub mod openapi;
 pub mod mcp_ui;
@@ -107,6 +108,7 @@ pub const ERROR_CODES: &[&str] = &[
     "preview_read_only",
     "client_sensitive_field",
     "client_scope",
+    "last_owner",
     "impersonation_not_synthetic",
     "grant_conflict",
     "citation_not_found",
@@ -184,6 +186,8 @@ pub enum ServiceError {
     TokenScope(String),
     /// An outside app asked for something its ceiling does not cover.
     ClientScope(String),
+    /// A change would leave a workspace with no owner.
+    LastOwner(String),
     /// A client's ceiling names a field that is sensitive. Sensitive data stays inside the platform.
     ClientSensitiveField(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
@@ -239,7 +243,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -273,6 +277,7 @@ impl ServiceError {
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
+            Self::LastOwner(_) => "last_owner",
             Self::ClientSensitiveField(_) => "client_sensitive_field",
             Self::FieldHidden { .. } => "field_hidden",
             Self::TooManyIndexes { .. } => "too_many_indexes",
@@ -308,6 +313,7 @@ impl ServiceError {
             | Self::PreviewReadOnly(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)
+            | Self::LastOwner(msg)
             | Self::ClientSensitiveField(msg)
             | Self::ConstraintViolated(msg)
             | Self::GrantOutsideScope(msg)

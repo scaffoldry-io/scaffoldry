@@ -448,24 +448,13 @@ async fn transfer_workspace_ownership(
                 collabs_guard.get(&id).cloned().unwrap_or_default()
             };
 
-            for c in collabs.iter_mut() {
-                if c.role == "owner" {
-                    c.role = "admin".to_string();
-                    {
-        let repo = &state.repository;
-                        repo.upsert_collaborator(c)
-                            .map_err(|e| ServiceError::internal(e.to_string()))?;
-                    }
-                }
-            }
-
-            if let Some(existing) = collabs.iter_mut().find(|c| c.eppn == target_user.eppn) {
+            // The new owner comes first. The workspace is never without one, which the repository refuses.
+            if let Some(existing) = collabs.iter_mut().find(|c| c.eppn == target_user.eppn && c.app_slug.is_empty()) {
                 existing.role = "owner".to_string();
-                {
-        let repo = &state.repository;
-                    repo.upsert_collaborator(existing)
-                        .map_err(|e| ServiceError::internal(e.to_string()))?;
-                }
+                state
+                    .repository
+                    .upsert_collaborator(existing)
+                    .map_err(crate::service::workspaces::membership_error)?;
             } else {
                 let new_collab = CollaboratorRecord {
                     id: Uuid::new_v4().to_string(),
@@ -478,12 +467,21 @@ async fn transfer_workspace_ownership(
                     added_at: Utc::now().to_rfc3339(),
                     app_slug: String::new(),
                 };
-                {
-        let repo = &state.repository;
-                    repo.upsert_collaborator(&new_collab)
-                        .map_err(|e| ServiceError::internal(e.to_string()))?;
-                }
+                state
+                    .repository
+                    .upsert_collaborator(&new_collab)
+                    .map_err(crate::service::workspaces::membership_error)?;
                 collabs.push(new_collab);
+            }
+            // Then the earlier owners become admins.
+            for c in collabs.iter_mut() {
+                if c.role == "owner" && c.eppn != target_user.eppn {
+                    c.role = "admin".to_string();
+                    state
+                        .repository
+                        .upsert_collaborator(c)
+                        .map_err(crate::service::workspaces::membership_error)?;
+                }
             }
 
             ws.lead = target_user.name.clone();
