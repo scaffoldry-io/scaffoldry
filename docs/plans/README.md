@@ -426,3 +426,4 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | A full export of one institution in documented formats, and whether process definitions are also exported as BPMN XML | Exports are per app and capped. Not built |
 | Who holds the positions the first matrix names, such as a privacy officer | The matrix has no rows and behaves as the platform does today |
 | Whether the license audit should keep accepting `cc0-1.0`, `python-2.0` and `unlicense`, which the written policy does not list | The audit accepts them |
+| Whether the desk keeps its built-in demo people (the sign-in list, the Impersonation Hub, and the mock workspaces with their collaborators), or starts signed out and takes every person from the server | They stay. They grant nothing, because the server checks every request. Real impersonation is Admin, People. Removing them touches about 50 test sites in 13 files and the desk's mock data, so it is its own phase |
