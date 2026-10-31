@@ -381,8 +381,29 @@ async fn a_conversion_previews_flags_converts_with_history_and_can_be_undone() {
     let refused = decide(&w, &w.token, &p).await;
     assert_eq!(refused["isError"], true, "the proposer cannot approve a flagged change alone: {refused}");
 
+    // A change that loses data waits for a snapshot of the app (import-export phase 5). The snapshot job finishes the
+    // approval, and the approval queues the conversion.
+    let files = std::env::temp_dir().join(format!("scaffoldry-recalc-snapshots-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&files).unwrap();
+    std::env::set_var("SCAFFOLDRY_FILES_DIR", &files);
     let done = decide(&w, &w.second, &p).await;
     assert_ne!(done["isError"], true, "{done}");
+    assert_eq!(done["structuredContent"]["status"], "Approving", "the approval waits for the snapshot: {done}");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let slug_q = w.slug.clone();
+    while db({
+        let slug_q = slug_q.clone();
+        move |c| c.query_one("SELECT count(*) FROM jobs WHERE kind = 'convert_field' AND payload->>'app_slug' = $1", &[&slug_q]).unwrap().get::<_, i64>(0)
+    }) == 0
+    {
+        assert!(Instant::now() < deadline, "the conversion was never queued");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let snapshot_state: String = db({
+        let slug_q = slug_q.clone();
+        move |c| c.query_one("SELECT state FROM app_snapshots WHERE app_slug = $1 AND kind = 'pre_change'", &[&slug_q]).unwrap().get(0)
+    });
+    assert_eq!(snapshot_state, "ready", "the app was snapshotted before its values were blanked");
     let convert = job_of(&w.slug, "convert_field");
     let job = wait_for_job(&repo, convert);
     assert_eq!(job.state, "done", "{:?}", job.error);

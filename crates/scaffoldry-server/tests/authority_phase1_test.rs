@@ -229,9 +229,12 @@ fn the_flagged_checks_are_the_cores_and_each_has_a_sentence() {
     assert_eq!(core, server);
 }
 
-// 10. approve_proposal is called from one place, and that place asks the requirement first.
+// 10. approve_proposal is called from `decide`, which asks the requirement first. The one other caller is the snapshot job
+// that finishes an approval `decide` held for a snapshot (import-export phase 5). Jobs work at the repository level and
+// cannot call `decide`, so the hold is what carries the check: the job only approves what `hold_for_snapshot` queued, and
+// `hold_for_snapshot` is called from `decide` after the requirement was asked and the digest checked.
 #[test]
-fn approve_proposal_is_called_from_one_place_and_that_place_asks_what_is_required_first() {
+fn approve_proposal_is_called_from_decide_and_from_the_snapshot_job_it_queued() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut calls = Vec::new();
     let mut stack = vec![root];
@@ -250,12 +253,27 @@ fn approve_proposal_is_called_from_one_place_and_that_place_asks_what_is_require
             }
         }
     }
-    assert_eq!(calls.len(), 1, "approve_proposal is called from {} places", calls.len());
-    let (path, line, text) = &calls[0];
-    assert!(path.ends_with("service/proposals.rs"), "{path:?}");
+    assert_eq!(calls.len(), 2, "approve_proposal is called from {} places", calls.len());
+    let in_decide: Vec<_> = calls.iter().filter(|(p, _, _)| p.ends_with("service/proposals.rs")).collect();
+    assert_eq!(in_decide.len(), 1, "one call is in service/proposals.rs");
+    let (_, line, text) = in_decide[0];
     let before: String = text.lines().take(*line).collect::<Vec<_>>().join("\n");
     let decide_start = before.rfind("pub fn decide(").expect("the call is inside decide");
-    assert!(before[decide_start..].contains("authority::requirement_for("), "decide asks for the requirement before it applies anything");
+    let in_decide_body = &before[decide_start..];
+    assert!(in_decide_body.contains("authority::requirement_for("), "decide asks for the requirement before it applies anything");
+    assert!(in_decide_body.contains("hold_for_snapshot("), "and holds a change that loses data for its snapshot before it applies it");
+    assert!(in_decide_body.find("requirement_for(") < in_decide_body.find("hold_for_snapshot("), "after asking the requirement");
+
+    let other: Vec<_> = calls.iter().filter(|(p, _, _)| !p.ends_with("service/proposals.rs")).collect();
+    assert!(other[0].0.ends_with("snapshot_jobs.rs"), "the other call is the snapshot job: {:?}", other[0].0);
+    let (_, line, text) = other[0];
+    let before: String = text.lines().take(*line).collect::<Vec<_>>().join("\n");
+    let job_start = before.rfind("pub fn snapshot_take(").expect("the call is inside snapshot_take");
+    assert!(before[job_start..].contains("then_approve"), "the job approves only what a hold queued");
+    let callers = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/service/snapshots.rs")).unwrap();
+    assert_eq!(callers.matches("Some(then)").count(), 1, "and only hold_for_snapshot queues one");
+    let hold = callers.find("fn hold_for_snapshot(").expect("hold_for_snapshot");
+    assert!(callers.find("Some(then)").unwrap() > hold, "inside hold_for_snapshot");
 }
 
 // A proposer may withdraw their own proposal, even as an editor who could not decide anyone's.

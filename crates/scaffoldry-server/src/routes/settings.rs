@@ -40,6 +40,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "preview.trials_per_person",
     "preview.trial_records",
     "preview.trial_days",
+    "snapshots.max_records",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -74,6 +75,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "preview.trials_per_person" => value.as_i64().is_some_and(|n| (1..=20).contains(&n)),
         "preview.trial_records" => value.as_i64().is_some_and(|n| (1..=5_000).contains(&n)),
         "preview.trial_days" => value.as_i64().is_some_and(|n| (1..=90).contains(&n)),
+        "snapshots.max_records" => value.as_i64().is_some_and(|n| (1..=1_000_000).contains(&n)),
         "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
