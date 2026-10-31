@@ -43,13 +43,33 @@ fn on_server(sql: String) {
     .expect("the database thread");
 }
 
+/// Adds the provisioning credential the SCIM tests use. A test that empties `api_tokens` adds it again with this.
+pub fn add_test_scim_credential(c: &mut postgres::Client) {
+    let hash = scaffoldry_server::service::identity::hash_token("test-scim-token");
+    c.execute(
+        "INSERT INTO api_tokens (token_hash, id, kind, eppn, label, created_at, expires_at) \
+         VALUES ($1, $2, 'scim', 'scim-tests@scaffoldry.invalid', 'Test provisioning credential', NOW(), NOW() + INTERVAL '365 days') ON CONFLICT DO NOTHING",
+        &[&hash, &Uuid::new_v4()],
+    )
+    .expect("add the test provisioning credential");
+}
+
 pub struct TestDb {
     name: String,
     url: String,
 }
 
 impl TestDb {
+    /// A database with the provisioning credential the SCIM tests use. The credential exists in a test database only: a
+    /// server ships with none, and an operator mints one.
     pub fn new() -> TestDb {
+        let db = TestDb::bare();
+        db.run(add_test_scim_credential);
+        db
+    }
+
+    /// A migrated, empty database, as a new installation has it.
+    pub fn bare() -> TestDb {
         let name = format!("scaffoldry_test_{}", Uuid::new_v4().simple());
         on_server(format!("CREATE DATABASE {name} STRATEGY = WAL_LOG"));
         let url = url_of(&admin_url(), &name);

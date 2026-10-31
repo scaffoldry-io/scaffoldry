@@ -1,6 +1,5 @@
 //! Server State and Storage for Datasets, Workspaces, and SCIM Identity
 
-use chrono::Utc;
 use scaffoldry_core::{
     ActionType, AutomationRule, ConditionOperator, DatasetField,
     DatasetRelationship, DecisionType, FieldPredicate, LedgerEntry, LedgerError,
@@ -467,21 +466,6 @@ impl ServerState {
 
         let mut workspaces = HashMap::new();
         let mut collaborators: HashMap<String, Vec<CollaboratorRecord>> = HashMap::new();
-        let scim_hash = crate::service::identity::hash_token("test-scim-token");
-        let default_scim_token = ApiToken {
-            token_hash: scim_hash.clone(),
-            id: uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
-            kind: "scim".to_string(),
-            eppn: "jordan.lee@state.edu".to_string(),
-            label: "SCIM Provisioning Credential".to_string(),
-            original_admin: None,
-            created_at: Utc::now(),
-            expires_at: Utc::now() + chrono::Duration::days(365),
-            last_used_at: None,
-            revoked_at: None,
-            app_slug: None,
-        scope: None,
-    };
 
         let mut settings_map = HashMap::new();
         settings_map.insert("cors.allowed_origins".to_string(), serde_json::json!([]));
@@ -678,9 +662,6 @@ impl ServerState {
             collaborators.insert(ws.id.clone(), collabs);
             workspaces.insert(ws.id.clone(), ws);
         }
-
-        repo.insert_api_token(&default_scim_token)
-            .map_err(|e| read("the provisioning token", e))?;
 
         // The ledger stays in the database. A database with none gets the genesis entry.
         if repo.ledger_summary().map_err(|e| read("the ledger", e))?.0 == 0 {

@@ -410,9 +410,6 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
     let app_slug = payload.get("app_slug")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    let _caller_eppn = payload.get("caller_eppn")
-        .and_then(|v| v.as_str())
-        .unwrap_or("user@university.edu");
 
     let repo = ctx.repository();
     let import = repo
@@ -691,7 +688,7 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         .unwrap_or_default();
     let caller_eppn = payload.get("caller_eppn")
         .and_then(|v| v.as_str())
-        .unwrap_or("user@university.edu");
+        .ok_or_else(|| JobError::Permanent("Missing caller_eppn: an import is made for a person".to_string()))?;
     let accept_errors = payload.get("accept_errors").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let repo = ctx.repository();

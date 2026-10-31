@@ -79,6 +79,7 @@ const SCHEMA_0071: &str = include_str!("../../scaffoldry-core/migrations/0071_au
 const SCHEMA_0072: &str = include_str!("../../scaffoldry-core/migrations/0072_access_requests.sql");
 const SCHEMA_0073: &str = include_str!("../../scaffoldry-core/migrations/0073_access_drafts.sql");
 const SCHEMA_0074: &str = include_str!("../../scaffoldry-core/migrations/0074_service_identity.sql");
+const SCHEMA_0075: &str = include_str!("../../scaffoldry-core/migrations/0075_revoke_default_scim_credential.sql");
 const SCHEMA_0077: &str = include_str!("../../scaffoldry-core/migrations/0077_proposal_trials.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1119,6 +1120,7 @@ impl PostgresRepository {
                             ("0072_access_requests.sql", SCHEMA_0072),
                             ("0073_access_drafts.sql", SCHEMA_0073),
                             ("0074_service_identity.sql", SCHEMA_0074),
+                            ("0075_revoke_default_scim_credential.sql", SCHEMA_0075),
                             ("0077_proposal_trials.sql", SCHEMA_0077),
                         ];
 

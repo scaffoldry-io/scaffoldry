@@ -142,7 +142,7 @@ pub fn export_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 
     let caller_eppn = payload.get("caller_eppn")
         .and_then(|v| v.as_str())
-        .unwrap_or("user@university.edu")
+        .ok_or_else(|| JobError::Permanent("Missing caller_eppn: an export is made for a person".to_string()))?
         .to_string();
 
     let mock_row_count = payload.get("mock_row_count").and_then(Value::as_u64);

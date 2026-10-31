@@ -58,25 +58,15 @@ async fn simulate_policy(
     if user.affiliation != "central_admin" && user.affiliation != "compliance" {
         return Err(ServiceError::forbidden("Forbidden: Requires Platform Admin or compliance affiliation").into_pair());
     }
-    let eppn = payload["eppn"]
-        .as_str()
-        .unwrap_or("sim.user@university.edu");
-
-    let affiliation_str = payload["affiliation"]
-        .as_str()
-        .unwrap_or("faculty");
-
-    let action = payload["action"]
-        .as_str()
-        .unwrap_or("read");
-
-    let app_slug = payload["app_slug"]
-        .as_str()
-        .unwrap_or("physics-admissions");
-
-    let department = payload["department"]
-        .as_str()
-        .unwrap_or("physics");
+    // The simulation names who it simulates. The server supplies no person, app or department of its own.
+    let need = |field: &str| -> Result<&str, (StatusCode, Json<Value>)> {
+        payload[field].as_str().map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| ServiceError::bad_request(format!("{field} is required")).into_pair())
+    };
+    let eppn = need("eppn")?;
+    let affiliation_str = need("affiliation")?;
+    let action = need("action")?;
+    let app_slug = need("app_slug")?;
+    let department = need("department")?;
 
     // The simulated person's stored department. Defaults to the resource department.
     let principal_department = payload["principal_department"]
