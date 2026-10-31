@@ -106,6 +106,59 @@ describe("Proposals", () => {
   });
 });
 
+describe("Proposals: a trial copy", () => {
+  const trial = { trial_id: "t-1", proposal_id: "p-1", app_slug: "awards~trial~ab12cd34", workspace_id: "trial-1", records: 50, created_at: "2026-10-30T01:00:00Z", last_opened_at: "2026-10-30T01:00:00Z", expires_at: "2026-11-06T01:00:00Z" };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(apiClient, "listProposals").mockResolvedValue([flagged, done]);
+  });
+
+  it("offers Try it while the person has fewer trials than the limit, and opens the trial", async () => {
+    vi.spyOn(apiClient, "myTrials").mockResolvedValue({ limit: 3, trials: [] });
+    const open = vi.spyOn(apiClient, "openTrial").mockResolvedValue(trial);
+    const onTrial = vi.fn();
+    render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" onTrial={onTrial} />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    fireEvent.click(await screen.findByRole("button", { name: /^try it$/i }));
+    await waitFor(() => expect(open).toHaveBeenCalledWith("p-1"));
+    await waitFor(() => expect(onTrial).toHaveBeenCalledWith(trial, expect.objectContaining({ id: "p-1" })));
+  });
+
+  it("says why there is no Try it when the person has the limit open already", async () => {
+    vi.spyOn(apiClient, "myTrials").mockResolvedValue({ limit: 3, trials: [trial, { ...trial, trial_id: "t-2" }, { ...trial, trial_id: "t-3" }] });
+    render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" onTrial={vi.fn()} />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    expect(await screen.findByText(/You have 3 trial copies open/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^try it$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the server's sentence when it refuses, and opens nothing", async () => {
+    vi.spyOn(apiClient, "myTrials").mockResolvedValue({ limit: 3, trials: [] });
+    vi.spyOn(apiClient, "openTrial").mockRejectedValue(Object.assign(new Error("You already have 3 trial copies open. Let one end first."), { status: 429 }));
+    const onTrial = vi.fn();
+    render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" onTrial={onTrial} />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    fireEvent.click(await screen.findByRole("button", { name: /^try it$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("You already have 3 trial copies open. Let one end first.");
+    expect(onTrial).not.toHaveBeenCalled();
+  });
+
+  it("is not offered on a decided proposal, or when the desk cannot host a trial", async () => {
+    vi.spyOn(apiClient, "myTrials").mockResolvedValue({ limit: 3, trials: [] });
+    const { unmount } = render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" onTrial={vi.fn()} />);
+    fireEvent.click(await screen.findByText("Earlier change"));
+    await screen.findByTestId("proposal-detail");
+    expect(screen.queryByRole("button", { name: /^try it$/i })).not.toBeInTheDocument();
+    unmount();
+
+    render(<Proposals workspaceId="ws-1" viewerEppn="admin@state.edu" />);
+    fireEvent.click(await screen.findByText("Add a dashboard page"));
+    await screen.findByRole("button", { name: /^approve$/i });
+    expect(screen.queryByRole("button", { name: /^try it$/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("WorkflowBuilder with approval", () => {
   const rule = { id: "r1", app_slug: "awards", name: "Rule", description: "", enabled: true, trigger: { type: "RecordCreated" as const }, predicates: [], actions: [] };
   const props = { appSlug: "awards", appTitle: "Awards", fields: [], rules: [], onDeleteRule: vi.fn(), onToggleRule: vi.fn() };

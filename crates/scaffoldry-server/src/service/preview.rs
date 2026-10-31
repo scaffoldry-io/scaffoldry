@@ -37,7 +37,7 @@ fn internal(e: impl std::fmt::Display) -> ServiceError {
 }
 
 /// The manifest the proposal would make live: its own, or the live one when it only changes rules.
-fn proposed_manifest(row: &crate::repository_proposals::ProposalRow, state: &SharedState) -> Result<AppManifest, ServiceError> {
+pub(crate) fn proposed_manifest(row: &crate::repository_proposals::ProposalRow, state: &SharedState) -> Result<AppManifest, ServiceError> {
     let live_views = state.app_views.read().unwrap_or_else(|p| p.into_inner()).get(&row.app_slug).cloned().unwrap_or_default();
     let mut manifest = match &row.manifest {
         Some(value) => crate::repository_views::merged(state.repository.parse_manifest(value.clone()).map_err(internal)?, &live_views),
@@ -57,7 +57,7 @@ fn proposed_manifest(row: &crate::repository_proposals::ProposalRow, state: &Sha
 
 /// Whether this person may open a preview of the proposal: the one who made it, a person who may decide it, or a
 /// Platform Admin. `manage_workspace` is the right the decision needs.
-fn authorize(caller: &AuthUser, row: &crate::repository_proposals::ProposalRow, state: &SharedState) -> Result<(), ServiceError> {
+pub(crate) fn authorize(caller: &AuthUser, row: &crate::repository_proposals::ProposalRow, state: &SharedState) -> Result<(), ServiceError> {
     if row.proposed_by.eq_ignore_ascii_case(&caller.eppn) {
         return Ok(());
     }

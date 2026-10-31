@@ -49,6 +49,7 @@ pub mod openapi;
 pub mod mcp_ui;
 pub mod client_ts;
 pub mod preview;
+pub mod trials;
 pub mod token_scope;
 pub mod view_as;
 pub mod views;
