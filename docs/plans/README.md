@@ -231,7 +231,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 124 | [import-export.md](import-export.md) | 2 | Spreadsheet import and export, with exports logged as disclosures | **COMPLETED** |
 | 125 | [import-export.md](import-export.md) | 3 | App bundles. Importing one makes a proposal | **COMPLETED** |
 | 126 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had | **COMPLETED** |
-| 127 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first |
+| 127 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first | **COMPLETED** |
 | 128 | [import-export.md](import-export.md) | 6 | Moving off a spreadsheet tool, with every decision listed |
 | 129 | [links.md](links.md) | 5 | Converting old value joins to links, with a preview |
 | 130 | [links.md](links.md) | 6 | Link cells, paste, and a linked records section in the grid |
@@ -421,6 +421,7 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Running ClamAV as a separate daemon for upload scanning | Files show as not scanned. An operator can require a scanner |
 | Who supplies the NIST catalog files, and the 800-171 revision CMMC requires | `oscal-catalog.md` stops until `governance/catalog/source/` and `PROVENANCE.json` exist |
 | MCP tools for templates (`list_templates`, `instantiate_template`). The tool list has about 10 bytes of room under its 24,000-byte budget, so a tool needs either shorter descriptions elsewhere or a higher budget with a stated reason | Templates are reachable through REST and the desk. No MCP tool |
+| Snapshot expiry. Snapshots carry `expires_at` and nothing purges them, because retention policies and legal holds (`lifecycle.md` phases 3 and 4) are not built. When they are, the purge must skip a held app's snapshots | Snapshots are kept until someone removes them. `import-export.md` phase 5 test 5 is not built |
 | Where the master key file for the secrets store is kept, and who holds it | Secrets routes answer `master_key_missing` |
 | The retention numbers and the records officer who owns them | Placeholders, and a banner until real ones are set |
 | Whether Scaffoldry is also offered as a hosted service, and whether that is one stack for each institution | Self-hosting stays supported. Nothing assumes more than one institution in a database. `stateless-server.md` removes the one thing that blocks a second instance |
