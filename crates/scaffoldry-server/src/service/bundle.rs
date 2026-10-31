@@ -10,6 +10,7 @@
 
 use crate::repository_views::{materialize, StoredView};
 use crate::service::proposals::{self, ProposeInput};
+use crate::service::records::{self, PageQuery};
 use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use serde_json::{json, Map, Value};
@@ -145,33 +146,38 @@ pub fn export(caller: &AuthUser, slug: &str, sample: bool, state: &SharedState) 
         "integrations": { "webhooks": [] },
     });
     if sample {
-        doc["sample_data"] = sample_data(&manifest, state)?;
+        doc["sample_data"] = sample_data(caller, &manifest, state)?;
     }
     doc["sha256"] = json!(digest_of(&doc));
     Ok(doc)
 }
 
-/// Up to 5,000 records, a table at a time, as plain field values. Sensitive fields and the server's own keys are left out.
-fn sample_data(manifest: &scaffoldry_engine::AppManifest, state: &SharedState) -> Result<Value, ServiceError> {
+/// Up to 5,000 records, a table at a time, as plain field values. The records are read the way the exporter would read them:
+/// a row a rule hides from them, or a field it hides, is not in the bundle. Sensitive fields and the server's own keys are
+/// left out as well.
+fn sample_data(caller: &AuthUser, manifest: &scaffoldry_engine::AppManifest, state: &SharedState) -> Result<Value, ServiceError> {
     let sensitive = proposals::sensitive_fields(manifest, state);
     let mut left = MAX_SAMPLE_RECORDS;
     let mut out = Map::new();
     for table in &manifest.tables {
         let mut rows: Vec<Value> = Vec::new();
-        let mut cursor: Option<(String, String)> = None;
+        let mut cursor: Option<String> = None;
         while left > 0 {
-            let page = state.repository.list_records_page(&manifest.slug, &table.id, left.min(500), cursor.clone()).map_err(internal)?;
-            let Some(last) = page.last() else { break };
-            cursor = Some((last.created_at.clone(), last.id.clone()));
-            let full = page.len() == left.min(500);
-            for record in page {
+            let page = records::list_page(
+                caller,
+                &manifest.slug,
+                PageQuery { table_id: table.id.clone(), filter: None, sort: None, limit: left.min(500), cursor: cursor.clone(), max_bytes: None, must_exist: false, search: None },
+                state,
+            )?;
+            for record in page.records {
                 let mut data = record.data.as_object().cloned().unwrap_or_default();
                 data.retain(|k, _| !k.starts_with('_') && !sensitive.contains(&(table.id.clone(), k.clone())));
                 rows.push(Value::Object(data));
-                left -= 1;
+                left = left.saturating_sub(1);
             }
-            if !full {
-                break;
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
             }
         }
         if !rows.is_empty() {

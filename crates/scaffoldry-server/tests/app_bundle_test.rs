@@ -159,8 +159,14 @@ async fn live(w: &World) {
 }
 
 async fn live_as(w: &World, slug: &str, rule_id: &str) {
+    live_manifest(w, manifest(slug), rule_id).await;
+}
+
+/// Puts this manifest live with a rule, and adds three records to its `cases` table.
+async fn live_manifest(w: &World, manifest: Value, rule_id: &str) {
+    let slug = manifest["slug"].as_str().expect("a slug").to_string();
     let p = tool(w, "propose_app_change", json!({
-        "workspace_id": WORKSPACE, "manifest": manifest(slug), "rules": [rule(rule_id)],
+        "workspace_id": WORKSPACE, "manifest": manifest, "rules": [rule(rule_id)],
         "summary": "Set up the source app", "page_sources": [PAGE],
     }))
     .await
@@ -420,4 +426,22 @@ async fn the_hash_does_not_depend_on_the_order_of_the_keys() {
         let (s, p) = import(&w, reordered, json!({})).await;
         assert_eq!(s, StatusCode::CREATED, "{p}");
     }
+}
+
+// 11. Sample data follows the exporter's row rules: a row they may not read is not in the bundle.
+#[tokio::test]
+async fn sample_data_leaves_out_rows_the_exporter_may_not_read() {
+    let w = world().await;
+    let mut m = manifest(&w.slug);
+    m["access"] = json!({ "rows": [{
+        "id": "hide-two", "table_id": "cases", "ops": ["read"],
+        "visible_when": { "cmp": { "field": "title", "op": "ne", "value": { "literal": "two" } } },
+        "except_roles": [], "message": null
+    }], "columns": [] });
+    live_manifest(&w, m, &format!("urgent-{}", w.tag)).await;
+    let (s, bundle) = export(&w, true).await;
+    assert_eq!(s, StatusCode::OK, "{bundle}");
+    let titles: Vec<&str> = bundle["sample_data"]["cases"].as_array().expect("sample rows").iter().filter_map(|r| r["title"].as_str()).collect();
+    assert_eq!(titles, vec!["one", "three"], "the row the rule hides is not exported: {bundle}");
+    assert!(!bundle.to_string().contains("note two"), "nor any of its values");
 }
