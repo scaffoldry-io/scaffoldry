@@ -128,7 +128,8 @@ async fn live_app(w: &World, fields: &[(&str, bool)], n: i64) {
     // A sensitive field is a flagged change, so it may wait for a second person.
     if s == StatusCode::ACCEPTED {
         let id = b["proposal_id"].as_str().expect("a proposal").to_string();
-        tool_as(w, &w.admin, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Set up", "digest": b["digest"] })).await.expect("live");
+        let (_, full) = rest(&w.app, "GET", &format!("/api/v1/proposals/{id}"), &w.owner, None).await;
+        tool_as(w, &w.admin, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Set up", "digest": full["digest"] })).await.expect("live");
     } else {
         assert_eq!(s, StatusCode::CREATED, "{b}");
     }
