@@ -315,7 +315,8 @@ impl PostgresRepository {
             let p = row_of(&row);
 
             // 1. Only a pending proposal can be decided.
-            if p.status != "Pending" {
+            // A proposal waiting for its snapshot is `Approving`. The snapshot job finishes the approval.
+            if p.status != "Pending" && p.status != "Approving" {
                 return Ok(Approval::NotPending(p.status));
             }
 

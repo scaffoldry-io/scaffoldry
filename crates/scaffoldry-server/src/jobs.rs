@@ -212,6 +212,22 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::import_jobs::import_run,
     },
     JobKind {
+        name: "snapshot_take",
+        title: "Taking a snapshot",
+        description: "Writes an app's definition and every record to a compressed file. A change that loses data waits for it.",
+        max_attempts: 1,
+        max_concurrent: 1,
+        run: crate::snapshot_jobs::snapshot_take,
+    },
+    JobKind {
+        name: "snapshot_restore",
+        title: "Restoring a snapshot",
+        description: "Loads a snapshot's records into a new, empty app with new record ids.",
+        max_attempts: 2,
+        max_concurrent: 1,
+        run: crate::snapshot_jobs::snapshot_restore,
+    },
+    JobKind {
         name: "export_run",
         title: "Exporting records",
         description: "Streams records to an export file with scope and redaction rules applied.",

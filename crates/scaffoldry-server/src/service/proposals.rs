@@ -1050,6 +1050,9 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
     let id = parse_id(proposal_id)?;
     let repo = repo(state)?;
     let row = repo.get_proposal(id).map_err(internal)?.ok_or_else(|| ServiceError::NotFound("Proposal not found".to_string()))?;
+    if row.status == "Approving" {
+        return Err(ServiceError::Conflict("This proposal is waiting for its snapshot. It is approved when the snapshot is done".to_string()));
+    }
     // What is required is worked out from the tables as they are now, not as they were when the proposal was made.
     let need = if matches!(decision, "approve" | "reject") { Some(crate::service::authority::requirement_for(state, &row.workspace_id, &row.checks, &row.proposed_by)?) } else { None };
     let approver_path = need.as_ref().is_some_and(|n| n.requirement.path == scaffoldry_core::authority::Path::Approver);
@@ -1107,6 +1110,10 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                 }
             }
             let other_person = need.as_ref().is_some_and(|n| n.requirement.path != scaffoldry_core::authority::Path::Direct);
+            // A change that loses data needs a snapshot from the last seven days. The approval waits for one.
+            if crate::service::snapshots::hold_for_snapshot(caller, &row, rationale, &stored, other_person, state)? {
+                return get(proposal_id, state);
+            }
             match repo.approve_proposal(id, &caller.eppn, rationale, &stored, other_person).map_err(|e| match e {
                 // The approval would start more background work than the person may have. Nothing was kept.
                 crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),

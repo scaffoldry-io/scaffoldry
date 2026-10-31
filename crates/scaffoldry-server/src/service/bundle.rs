@@ -94,6 +94,19 @@ pub fn export(caller: &AuthUser, slug: &str, sample: bool, state: &SharedState) 
         return Err(ServiceError::forbidden("Forbidden: exporting an app needs the owner or admin role of its workspace"));
     }
 
+    let mut doc = definition(slug, state)?;
+    if sample {
+        doc["sample_data"] = sample_data(caller, &manifest, state)?;
+        doc["sha256"] = json!(digest_of(&doc));
+    }
+    Ok(doc)
+}
+
+/// An app's definition as a sealed bundle: manifest, saved views, rules and page sources. No role is checked here; the
+/// caller has done that. A snapshot takes its definition the same way.
+pub(crate) fn definition(slug: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    let repo = &*state.repository;
+    let manifest = repo.get_app_manifest(slug).map_err(internal)?.ok_or_else(|| ServiceError::NotFound(format!("App '{slug}' not found")))?;
     let mut manifest_json = serde_json::to_value(&manifest).map_err(internal)?;
     if let Some(o) = manifest_json.as_object_mut() {
         for key in PLACE_KEYS {
@@ -145,9 +158,6 @@ pub fn export(caller: &AuthUser, slug: &str, sample: bool, state: &SharedState) 
         "page_sources": page_sources,
         "integrations": { "webhooks": [] },
     });
-    if sample {
-        doc["sample_data"] = sample_data(caller, &manifest, state)?;
-    }
     doc["sha256"] = json!(digest_of(&doc));
     Ok(doc)
 }

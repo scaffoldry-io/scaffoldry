@@ -341,7 +341,8 @@ async fn a_snapshot_is_not_downloadable_by_an_editor_and_no_tool_returns_it() {
 
     let (_, listing) = rest(&w.app, "POST", "/api/mcp", &w.owner, Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))).await;
     let names: Vec<String> = listing["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str().map(str::to_string)).collect();
-    assert!(!names.iter().any(|n| n.contains("snapshot")), "no tool returns a snapshot: {names:?}");
+    // `read_library_snapshot` reads the policy library's own snapshot, which is not an app's data.
+    assert!(!names.iter().any(|n| n.contains("snapshot") && n != "read_library_snapshot"), "no tool returns an app snapshot: {names:?}");
     runner.stop();
 }
 

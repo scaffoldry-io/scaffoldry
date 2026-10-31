@@ -10,6 +10,8 @@ pub mod jwt;
 pub mod repository;
 pub mod repository_clients;
 pub mod repository_ownership;
+pub mod repository_snapshots;
+pub mod snapshot_jobs;
 pub mod repository_templates;
 pub mod repository_trials;
 pub mod repository_comments;
