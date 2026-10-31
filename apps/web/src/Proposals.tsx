@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { apiClient, type ProposalCheck, type ProposalRow } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { apiClient, type ProposalCheck, type ProposalRow, type ProposalTrial } from "./api";
 import { ConfirmAction, DataTable, Drawer, PageHeader, StatusBadge, type DataTableColumn } from "./ui";
 
 /** The checks that need a second person when they fail. */
@@ -45,9 +45,11 @@ export interface ProposalsProps {
   viewerEppn: string;
   /** Opens the proposed app read-only. The desk swaps its token and shows a banner. */
   onPreview?: (proposal: ProposalRow) => void | Promise<void>;
+  /** Opens a trial copy of the proposed app. The desk shows it as any other app. */
+  onTrial?: (trial: ProposalTrial, proposal: ProposalRow) => void | Promise<void>;
 }
 
-export function Proposals({ workspaceId, viewerEppn, onPreview }: ProposalsProps) {
+export function Proposals({ workspaceId, viewerEppn, onPreview, onTrial }: ProposalsProps) {
   const [open, setOpen] = useState<ProposalRow | null>(null);
   const [version, setVersion] = useState(0);
 
@@ -95,6 +97,7 @@ export function Proposals({ workspaceId, viewerEppn, onPreview }: ProposalsProps
             proposal={open}
             viewerEppn={viewerEppn}
             onPreview={onPreview}
+            onTrial={onTrial}
             onDecided={() => {
               setOpen(null);
               setVersion((v) => v + 1);
@@ -139,13 +142,44 @@ function ProposalDetail({
   viewerEppn,
   onDecided,
   onPreview,
+  onTrial,
 }: {
   proposal: ProposalRow;
   viewerEppn: string;
   onDecided: () => void;
   onPreview?: (proposal: ProposalRow) => void | Promise<void>;
+  onTrial?: (trial: ProposalTrial, proposal: ProposalRow) => void | Promise<void>;
 }) {
   const [mode, setMode] = useState<"approve" | "reject" | null>(null);
+  const [trials, setTrials] = useState<{ limit: number; open: number } | null>(null);
+  const [trying, setTrying] = useState(false);
+  const [trialError, setTrialError] = useState<string | null>(null);
+  const waiting = proposal.status === "Pending";
+  useEffect(() => {
+    if (!onTrial || !waiting) return;
+    let live = true;
+    apiClient
+      .myTrials()
+      .then((t) => live && setTrials({ limit: t.limit, open: t.trials.length }))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [onTrial, waiting]);
+
+  const tryIt = async () => {
+    if (!onTrial) return;
+    setTrying(true);
+    setTrialError(null);
+    try {
+      const trial = await apiClient.openTrial(proposal.id);
+      await onTrial(trial, proposal);
+    } catch (e) {
+      setTrialError(e instanceof Error ? e.message : "The trial copy could not be made.");
+    } finally {
+      setTrying(false);
+    }
+  };
   const pending = proposal.status === "Pending";
   const needsSecondPerson = isFlagged(proposal) && proposal.proposed_by.toLowerCase() === viewerEppn.toLowerCase();
 
@@ -192,6 +226,14 @@ function ProposalDetail({
               A second person must approve this change.
             </p>
           )}
+          {onTrial && trials && trials.open >= trials.limit && (
+            <p className="text-xs text-gray-500">You have {trials.limit} trial copies open. Let one end, and you can make another.</p>
+          )}
+          {trialError && (
+            <p role="alert" className="text-xs font-medium text-red-700 dark:text-red-300">
+              {trialError}
+            </p>
+          )}
           <div className="flex gap-2">
             {onPreview && (
               <button
@@ -200,6 +242,16 @@ function ProposalDetail({
                 className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 dark:border-gray-700"
               >
                 Preview
+              </button>
+            )}
+            {onTrial && trials && trials.open < trials.limit && (
+              <button
+                type="button"
+                disabled={trying}
+                onClick={() => void tryIt()}
+                className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 dark:border-gray-700 disabled:opacity-50"
+              >
+                Try it
               </button>
             )}
             <button

@@ -1042,6 +1042,8 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
         }
         _ => return Err(ServiceError::BadRequest("Argument 'decision' must be 'approve' or 'reject'".to_string())),
     }
+    // A trial copy lasts while its proposal waits.
+    crate::service::trials::destroy_for_proposal(state, id);
     get(proposal_id, state)
 }
 

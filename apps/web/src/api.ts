@@ -884,6 +884,18 @@ export interface AuthorityLoad {
   decision_time: { decided: number; median_seconds: number | null; p95_seconds: number | null };
 }
 
+/** A trial copy of a proposed app: synthetic records only, owned by the person who made it. */
+export interface ProposalTrial {
+  trial_id: string;
+  proposal_id: string;
+  app_slug: string;
+  workspace_id: string;
+  records: number;
+  created_at: string;
+  last_opened_at: string;
+  expires_at: string;
+}
+
 export interface LibraryRuleSummary {
   id: string;
   policy_id: string;
@@ -1445,6 +1457,15 @@ export const apiClient = {
       target: { eppn: string; name: string };
       read_only: boolean;
     }>(`/apps/${appSlug}/view-as`, { method: "POST", body: JSON.stringify({ eppn }) }),
+
+  /** Makes a trial copy of a pending proposal's app, filled with synthetic records. A refusal at the limit is a 429. */
+  openTrial: (proposalId: string) => request<ProposalTrial>(`/proposals/${encodeURIComponent(proposalId)}/trial`, { method: "POST" }),
+
+  /** The person's open trial copies and how many they may have. */
+  myTrials: () => request<{ limit: number; trials: ProposalTrial[] }>("/me/trials"),
+
+  /** Opening a trial again starts its days over. */
+  reopenTrial: (trialId: string) => request<ProposalTrial>(`/me/trials/${encodeURIComponent(trialId)}/open`, { method: "POST" }),
 
   /** Opens a read-only preview of a pending proposal. The token reaches the proposed app only, for 30 minutes. */
   previewProposal: (id: string) =>

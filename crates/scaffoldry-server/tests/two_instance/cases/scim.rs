@@ -1,4 +1,4 @@
-//! The SCIM provisioning routes. They use the provisioning token every database starts with.
+//! The SCIM provisioning routes. They use the test provisioning credential `TestDb::new()` adds: a server ships with none.
 
 use super::*;
 

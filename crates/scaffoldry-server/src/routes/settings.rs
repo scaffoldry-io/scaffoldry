@@ -37,6 +37,9 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "files.require_scan",
     "import.max_rows",
     "import.max_mb",
+    "preview.trials_per_person",
+    "preview.trial_records",
+    "preview.trial_days",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -68,6 +71,9 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "files.app_quota_mb" => value.as_i64().is_some_and(|n| (1..=10_000_000).contains(&n)),
         "import.max_rows" => value.as_i64().is_some_and(|n| (1..=10_000_000).contains(&n)),
         "import.max_mb" => value.as_i64().is_some_and(|n| (1..=10_000).contains(&n)),
+        "preview.trials_per_person" => value.as_i64().is_some_and(|n| (1..=20).contains(&n)),
+        "preview.trial_records" => value.as_i64().is_some_and(|n| (1..=5_000).contains(&n)),
+        "preview.trial_days" => value.as_i64().is_some_and(|n| (1..=90).contains(&n)),
         "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
