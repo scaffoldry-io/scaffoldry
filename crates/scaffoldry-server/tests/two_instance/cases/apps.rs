@@ -13,6 +13,8 @@ pub fn add(m: &mut Entries) {
     exempt(m, "POST /api/v1/apps/{slug}/fields/convert-preview", "reports what a field conversion would do and stores nothing");
     m.insert("POST /api/v1/proposals/{id}/decision".into(), case!(proposal_decide));
     m.insert("POST /api/v1/proposals/{id}/preview".into(), case!(proposal_preview));
+    m.insert("POST /api/v1/proposals/{id}/trial".into(), case!(proposal_trial));
+    m.insert("POST /api/v1/me/trials/{id}/open".into(), case!(trial_reopen));
 
     m.insert("POST /api/v1/apps/{slug}/records".into(), case!(record_create));
     m.insert("PATCH /api/v1/apps/{slug}/records/{id}".into(), case!(record_patch));
@@ -132,6 +134,36 @@ async fn proposal_preview(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/proposals/{id}/decision"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] }))).await, StatusCode::OK, "A approves")?;
     status(World::call_with(&w.b, "GET", &format!("/api/v1/apps/{shadow}/schema"), &token, None).await, StatusCode::UNAUTHORIZED, "B refuses the token once the proposal is decided")?;
     Ok(())
+}
+
+/// A proposal for a changed app, pending.
+async fn pending_change(w: &World) -> Result<(String, Value), String> {
+    let slug = make_app(w).await?;
+    let mut changed = manifest(&slug);
+    changed["tables"][0]["fields"].as_array_mut().ok_or("fields")?.push(json!({ "name": "pet", "label": "pet", "field_type": "Text", "required": false, "ferpa_sensitive": false }));
+    let proposed = w.tool_a(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": changed, "summary": "A field" })).await?;
+    Ok((proposed["proposal_id"].as_str().ok_or("a proposal id")?.to_string(), proposed))
+}
+
+/// A makes a trial copy. B reads its synthetic records, and neither finds it once A approves the proposal.
+async fn proposal_trial(w: World) -> Outcome {
+    let (id, proposed) = pending_change(&w).await?;
+    let trial = status(w.wa("POST", &format!("/api/v1/proposals/{id}/trial"), OWNER, None).await, StatusCode::CREATED, "A makes the trial")?;
+    let slug = trial["app_slug"].as_str().ok_or("a trial slug")?.to_string();
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/tables/apps/records"), OWNER, None).await, StatusCode::OK, "B reads the trial's records")?;
+    ensure(seen["records"].as_array().is_some_and(|r| !r.is_empty()), format!("B finds the synthetic records: {seen}"))?;
+    status(w.wa("POST", &format!("/api/v1/proposals/{id}/decision"), OWNER, Some(json!({ "decision": "approve", "rationale": "Reviewed", "digest": proposed["digest"] }))).await, StatusCode::OK, "A approves")?;
+    status(w.rb("GET", &format!("/api/v1/apps/{slug}/tables/apps/records"), OWNER, None).await, StatusCode::NOT_FOUND, "B no longer finds the trial")?;
+    Ok(())
+}
+
+/// A makes a trial. B opens it again, which starts its days over.
+async fn trial_reopen(w: World) -> Outcome {
+    let (id, _) = pending_change(&w).await?;
+    let trial = status(w.wa("POST", &format!("/api/v1/proposals/{id}/trial"), OWNER, None).await, StatusCode::CREATED, "A makes the trial")?;
+    let trial_id = trial["trial_id"].as_str().ok_or("a trial id")?.to_string();
+    let again = status(w.rb("POST", &format!("/api/v1/me/trials/{trial_id}/open"), OWNER, None).await, StatusCode::OK, "B opens A's trial again")?;
+    ensure(again["trial_id"] == trial_id.as_str(), format!("B names the trial: {again}"))
 }
 
 // --- records -------------------------------------------------------------------------------------------------------------

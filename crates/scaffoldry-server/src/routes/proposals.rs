@@ -20,6 +20,9 @@ pub fn router() -> Router<SharedState> {
         .route("/proposals/{id}", get(get_proposal))
         .route("/proposals/{id}/decision", post(decide_proposal))
         .route("/proposals/{id}/preview", post(preview_proposal))
+        .route("/proposals/{id}/trial", post(open_trial))
+        .route("/me/trials", get(my_trials))
+        .route("/me/trials/{id}/open", post(reopen_trial))
 }
 
 type Reply = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -77,4 +80,22 @@ async fn decide_proposal(State(state): State<SharedState>, headers: HeaderMap, P
 async fn preview_proposal(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     blocking(move || crate::service::preview::start(&user, &id, &state)).await.map(Json)
+}
+
+/// Makes a trial copy of the proposed app, with synthetic records. `429` when the caller has their limit open already.
+async fn open_trial(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    blocking(move || crate::service::trials::open(&user, &id, &state)).await.map(|v| (StatusCode::CREATED, Json(v)))
+}
+
+/// The caller's open trials and the limit.
+async fn my_trials(State(state): State<SharedState>, headers: HeaderMap) -> Reply {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    blocking(move || crate::service::trials::mine(&user, &state)).await.map(Json)
+}
+
+/// Opening a trial again starts its days over.
+async fn reopen_trial(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    blocking(move || crate::service::trials::reopen(&user, &id, &state)).await.map(Json)
 }
