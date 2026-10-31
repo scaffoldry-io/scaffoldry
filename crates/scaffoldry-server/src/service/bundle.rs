@@ -38,13 +38,48 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The hash a bundle carries: SHA-256 of the document without its own `sha256`, as compact JSON with sorted keys.
+/// A document as compact JSON with the keys of every object in sorted order. serde_json keeps keys in the order they were
+/// written here, so the hash is worked out from this form instead: a tool that sorts or reorders a bundle's keys does not
+/// damage it, and anyone can work the hash out again with any JSON library.
+fn canonical(v: &Value, out: &mut String) {
+    match v {
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(k).unwrap_or_default());
+                out.push(':');
+                canonical(&o[k], out);
+            }
+            out.push('}');
+        }
+        Value::Array(a) => {
+            out.push('[');
+            for (i, item) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                canonical(item, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&serde_json::to_string(other).unwrap_or_default()),
+    }
+}
+
+/// The hash a bundle carries: SHA-256 of the document without its own `sha256`, in the canonical form above.
 pub fn digest_of(doc: &Value) -> String {
     let mut without = doc.clone();
     if let Some(o) = without.as_object_mut() {
         o.remove("sha256");
     }
-    hex(&Sha256::digest(serde_json::to_string(&without).unwrap_or_default().as_bytes()))
+    let mut text = String::new();
+    canonical(&without, &mut text);
+    hex(&Sha256::digest(text.as_bytes()))
 }
 
 /// The bundle of one app. `sample` adds up to 5,000 records, with the sensitive fields left out. Needs the app's owner or an

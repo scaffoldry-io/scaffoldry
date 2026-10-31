@@ -34,10 +34,36 @@ fn sha(text: &str) -> String {
     Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The hash a bundle carries: SHA-256 of the document without its own `sha256`, as compact JSON with sorted keys.
+/// The same document with its keys in sorted order at every depth.
+fn sorted(v: &Value) -> Value {
+    match v {
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            Value::Object(keys.into_iter().map(|k| (k.clone(), sorted(&o[k]))).collect())
+        }
+        Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
+        other => other.clone(),
+    }
+}
+
+/// The same document with its keys in the opposite order at every depth.
+fn reversed(v: &Value) -> Value {
+    match v {
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            Value::Object(keys.into_iter().rev().map(|k| (k.clone(), reversed(&o[k]))).collect())
+        }
+        Value::Array(a) => Value::Array(a.iter().map(reversed).collect()),
+        other => other.clone(),
+    }
+}
+
+/// The hash a bundle carries: SHA-256 of the document without its own `sha256`, as compact JSON with the keys sorted.
 fn seal(mut bundle: Value) -> Value {
     bundle.as_object_mut().expect("a bundle is an object").remove("sha256");
-    let hash = sha(&serde_json::to_string(&bundle).unwrap());
+    let hash = sha(&serde_json::to_string(&sorted(&bundle)).unwrap());
     bundle["sha256"] = json!(hash);
     bundle
 }
@@ -127,17 +153,21 @@ fn rule(id: &str) -> Value {
     })
 }
 
-/// Puts the source app live, with a rule and three records, a comment, and a second member.
+/// Puts the source app live, with a rule and three records.
 async fn live(w: &World) {
+    live_as(w, &w.slug.clone(), &format!("urgent-{}", w.tag)).await;
+}
+
+async fn live_as(w: &World, slug: &str, rule_id: &str) {
     let p = tool(w, "propose_app_change", json!({
-        "workspace_id": WORKSPACE, "manifest": manifest(&w.slug), "rules": [rule(&format!("urgent-{}", w.tag))],
+        "workspace_id": WORKSPACE, "manifest": manifest(slug), "rules": [rule(rule_id)],
         "summary": "Set up the source app", "page_sources": [PAGE],
     }))
     .await
     .expect("proposed");
     tool(w, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "Set up", "digest": p["digest"] })).await.expect("live");
     for title in ["one", "two", "three"] {
-        tool(w, "create_record", json!({ "app_slug": w.slug, "data": { "_table_id": "cases", "title": title, "note": format!("note {title}") } })).await.expect("record");
+        tool(w, "create_record", json!({ "app_slug": slug, "data": { "_table_id": "cases", "title": title, "note": format!("note {title}") } })).await.expect("record");
     }
 }
 
@@ -323,7 +353,7 @@ async fn a_custom_page_keeps_its_source_hash_and_a_modified_source_fails() {
     assert_eq!(bundle["manifest"]["pages"][0]["kind"]["Custom"]["source_sha256"], json!(sha(PAGE)));
     let (s, p) = import(&w, bundle.clone(), json!({})).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
-    assert_eq!(p["checks"].to_string().contains("page_source"), true, "the page check ran: {p}");
+    assert!(p["checks"].to_string().contains("page_source"), "the page check ran: {p}");
 
     // The source is changed and the bundle sealed again, so only the page check can catch it.
     let mut edited = bundle.clone();
@@ -362,4 +392,32 @@ async fn only_an_owner_or_admin_may_export() {
     let stranger = issue_test_token_and_user(&format!("stranger-{}@state.edu", w.tag));
     let (s, _) = rest(&w.app, "POST", &format!("/api/v1/apps/{}/bundle", w.slug), &stranger, Some(json!({}))).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
+}
+
+// 9. The exported document is the committed example, and the schema in governance/schema validates that example.
+#[tokio::test]
+async fn the_exported_document_is_the_committed_example() {
+    let w = world().await;
+    live_as(&w, "bundle-example", "flag-urgent").await;
+    let (s, doc) = rest(&w.app, "POST", "/api/v1/apps/bundle-example/bundle", &w.owner, Some(json!({ "sample_data": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{doc}");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../governance/fixtures/app-bundle.example.json");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, serde_json::to_string_pretty(&doc).unwrap() + "\n").expect("write the example");
+    }
+    let committed: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("governance/fixtures/app-bundle.example.json")).expect("the example is JSON");
+    assert_eq!(doc, committed, "the export changed. Run with UPDATE_GOLDEN=1 to write the new example, and read the diff");
+}
+
+// 10. The hash does not depend on the order of the keys, so a tool that sorts or reorders them does not damage a bundle.
+#[tokio::test]
+async fn the_hash_does_not_depend_on_the_order_of_the_keys() {
+    let w = world().await;
+    live(&w).await;
+    let (_, bundle) = export(&w, true).await;
+    for reordered in [sorted(&bundle), reversed(&bundle)] {
+        assert_ne!(reordered.to_string(), bundle.to_string(), "the keys really are in another order");
+        let (s, p) = import(&w, reordered, json!({})).await;
+        assert_eq!(s, StatusCode::CREATED, "{p}");
+    }
 }

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/app-bundle.schema.json",
+  "title": "App bundle",
+  "description": "One document that holds an app's definition, as POST /api/v1/apps/{slug}/bundle exports it and POST /api/v1/workspaces/{id}/bundle-import reads it. It never holds a secret, a token, a member, a comment, history or an attachment. Importing one makes a proposal, never a live app. The sha256 is the SHA-256 of the document without its own sha256, written as compact JSON with the keys sorted, and detects damage. A bundle holds at most 5,000 sample records in all; this schema limits each table, and the server counts all of them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bundle_version", "manifest", "sha256"],
+  "properties": {
+    "bundle_version": { "const": 1, "description": "The version of this format." },
+    "manifest": { "$ref": "https://scaffoldry.io/schema/app-manifest.schema.json", "description": "The app. Its workspace, coordinates and custom domain stay behind: they belong to the place it lived." },
+    "views": {
+      "type": "array",
+      "description": "Collaborative and locked saved views. A person's own view is never included. An import gives each one an id of its own.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "ownership", "config"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "kind": { "type": "string", "minLength": 1, "maxLength": 32 },
+          "table_id": { "type": ["string", "null"] },
+          "ownership": { "enum": ["collaborative", "locked"] },
+          "config": { "type": "object" }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "description": "The app's process rules. A rule's id is unique across apps, so an import gives a rule a new id when another app holds its id.",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "enabled", "trigger"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "trigger": {}
+        }
+      }
+    },
+    "page_sources": {
+      "type": "object",
+      "description": "The source of each custom page, filed under its SHA-256. The bundle holds every source its pages run, and each hashes to its key.",
+      "propertyNames": { "pattern": "^[0-9a-f]{64}$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "integrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "webhooks": {
+          "type": "array",
+          "description": "Webhooks without their secrets. Each arrives off and needs its own approval, a host on the outbound allowlist, and the named secret supplied by the importing workspace.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "url"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "url": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 2048 },
+              "events": { "type": "array", "items": { "type": "string" } },
+              "enabled": { "type": "boolean", "description": "Ignored on import: a webhook arrives off." },
+              "secret_name": { "type": ["string", "null"], "description": "The name of the secret the webhook needs. Never its value." }
+            }
+          }
+        }
+      }
+    },
+    "sample_data": {
+      "type": "object",
+      "description": "Optional sample records by table id, with the sensitive fields removed. Each record is its field values.",
+      "additionalProperties": { "type": "array", "maxItems": 5000, "items": { "type": "object" } }
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}
