@@ -160,6 +160,8 @@ fn sample_data(caller: &AuthUser, manifest: &scaffoldry_engine::AppManifest, sta
     let mut left = MAX_SAMPLE_RECORDS;
     let mut out = Map::new();
     for table in &manifest.tables {
+        // Sensitive by the manifest's reckoning, and by the disclosure log's. Either one keeps a field out.
+        let logged_sensitive: std::collections::BTreeSet<String> = records::sensitive_fields_of(&manifest.slug, &table.id, state).into_iter().collect();
         let mut rows: Vec<Value> = Vec::new();
         let mut cursor: Option<String> = None;
         while left > 0 {
@@ -171,7 +173,7 @@ fn sample_data(caller: &AuthUser, manifest: &scaffoldry_engine::AppManifest, sta
             )?;
             for record in page.records {
                 let mut data = record.data.as_object().cloned().unwrap_or_default();
-                data.retain(|k, _| !k.starts_with('_') && !sensitive.contains(&(table.id.clone(), k.clone())));
+                data.retain(|k, _| !k.starts_with('_') && !sensitive.contains(&(table.id.clone(), k.clone())) && !logged_sensitive.contains(k));
                 rows.push(Value::Object(data));
                 left = left.saturating_sub(1);
             }

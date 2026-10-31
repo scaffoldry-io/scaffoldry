@@ -81,8 +81,12 @@ async fn rest(app: &Router, method: &str, uri: &str, token: &str, body: Option<V
 }
 
 async fn tool(w: &World, name: &str, args: Value) -> Result<Value, String> {
+    tool_as(w, &w.owner, name, args).await
+}
+
+async fn tool_as(w: &World, token: &str, name: &str, args: Value) -> Result<Value, String> {
     let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": args } });
-    let (_, v) = rest(&w.app, "POST", "/api/mcp", &w.owner, Some(payload)).await;
+    let (_, v) = rest(&w.app, "POST", "/api/mcp", token, Some(payload)).await;
     if let Some(err) = v.get("error") {
         return Err(err["message"].as_str().unwrap_or("").to_string());
     }
@@ -444,4 +448,28 @@ async fn sample_data_leaves_out_rows_the_exporter_may_not_read() {
     let titles: Vec<&str> = bundle["sample_data"]["cases"].as_array().expect("sample rows").iter().filter_map(|r| r["title"].as_str()).collect();
     assert_eq!(titles, vec!["one", "three"], "the row the rule hides is not exported: {bundle}");
     assert!(!bundle.to_string().contains("note two"), "nor any of its values");
+}
+
+// 12. A sensitive field is never in the sample data, so the sample data releases nothing the disclosure log keeps.
+#[tokio::test]
+async fn a_sensitive_field_is_never_in_the_sample_data() {
+    let w = world().await;
+    let mut m = manifest(&w.slug);
+    m["tables"][0]["fields"].as_array_mut().unwrap().push(json!({
+        "name": "ssn", "label": "ssn", "field_type": "Text", "required": false, "ferpa_sensitive": true, "mask": { "kind": "last4" }
+    }));
+    let p = tool(&w, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": m, "summary": "A sensitive field", "page_sources": [PAGE] })).await.expect("proposed");
+    // A sensitive field is a flagged change, so a second person approves it.
+    let admin = issue_test_token_and_user("jordan.lee@state.edu");
+    tool_as(&w, &admin, "decide_proposal", json!({ "proposal_id": p["proposal_id"], "decision": "approve", "rationale": "Set up", "digest": p["digest"] })).await.expect("live");
+    for title in ["one", "two"] {
+        tool(&w, "create_record", json!({ "app_slug": w.slug, "data": { "_table_id": "cases", "title": title, "note": "n", "ssn": "123-45-6789" } })).await.expect("record");
+    }
+    let (s, bundle) = export(&w, true).await;
+    assert_eq!(s, StatusCode::OK, "{bundle}");
+    let rows = bundle["sample_data"]["cases"].as_array().expect("sample rows");
+    assert_eq!(rows.len(), 2, "{bundle}");
+    assert!(rows.iter().all(|r| r.get("ssn").is_none()), "the sensitive field is left out: {bundle}");
+    let text = bundle["sample_data"].to_string();
+    assert!(!text.contains("6789") && !text.contains("123-45"), "and so is every part of its value: {text}");
 }
