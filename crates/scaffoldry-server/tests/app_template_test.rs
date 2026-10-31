@@ -295,7 +295,7 @@ async fn changing_one_field_raises_the_checks_for_that_field_only() {
 
     // The sensitive field's mask is loosened. That field's check is raised, and the owner cannot approve it alone.
     let mut loose = manifest(&format!("tpl-loose-{}", w.tag));
-    loose["tables"][0]["fields"][2]["mask"] = json!({ "kind": "none" });
+    loose["tables"][0]["fields"][2]["mask"] = json!({ "kind": "initials" });
     let (s, p) = instantiate(&w, &w.owner, FERPA, &id, json!({ "slug": format!("tpl-loose-{}", w.tag), "manifest": loose, "approve": true })).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
     assert_eq!(check(&p, "mask_weakened").map(|c| c["outcome"].clone()), Some(json!("fail")), "the changed field's check is raised: {p}");
