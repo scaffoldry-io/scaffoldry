@@ -187,11 +187,20 @@ async fn export_then_import_yields_a_proposal_that_matches_the_source_app() {
     assert_eq!(proposal_count(&w), before + 1, "one proposal, and nothing else");
     assert_eq!(p["workspace_id"], TARGET, "{p}");
 
-    // The change list names every table and field of the source app.
+    // The change list describes the source app: its title, its two tables, its page and its rule.
+    let source = &bundle["manifest"];
+    let sentence = format!("A new app \"{}\" with {} table(s) and {} page(s).", source["title"].as_str().unwrap(), source["tables"].as_array().unwrap().len(), source["pages"].as_array().unwrap().len());
     let changes = p["changes"].to_string();
-    for word in ["Cases", "People", "title", "note", "name"] {
-        assert!(changes.contains(word), "the change list names {word}: {changes}");
-    }
+    assert!(p["changes"].as_array().unwrap().iter().any(|c| *c == json!(sentence)), "the change list says {sentence}: {changes}");
+    assert!(changes.contains("Board") && changes.contains("Rule"), "and names its page and its rule: {changes}");
+    // The stored proposal holds the source app's tables and fields, whatever slug it was given.
+    let stored: Value = w.db.run({
+        let id = uuid::Uuid::parse_str(p["proposal_id"].as_str().unwrap()).unwrap();
+        move |c| c.query_one("SELECT manifest FROM app_proposals WHERE id = $1", &[&id]).unwrap().get(0)
+    });
+    assert_eq!(stored["tables"], source["tables"], "the proposal holds the tables of the source app");
+    assert_eq!(stored["pages"], source["pages"], "and its pages");
+    assert_eq!(stored["workspace_id"], TARGET, "in the workspace it was imported into");
     // It is a proposal. No app of that name is live in the target workspace.
     let new_slug = p["app_slug"].as_str().expect("an app slug").to_string();
     let (s, _) = rest(&w.app, "GET", &format!("/api/v1/apps/{new_slug}"), &w.owner, None).await;

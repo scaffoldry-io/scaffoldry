@@ -164,6 +164,20 @@ impl PostgresRepository {
     }
 
     /// The source stored under a hash.
+    /// Whether an app, or a pending proposal, already holds this slug.
+    pub fn slug_in_use(&self, slug: &str) -> Result<bool, RepositoryError> {
+        let slug = slug.to_string();
+        self.with_client(move |client| {
+            Ok(client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM app_manifests WHERE slug = $1) \
+                         OR EXISTS (SELECT 1 FROM app_proposals WHERE app_slug = $1 AND status = 'Pending')",
+                    &[&slug],
+                )?
+                .get(0))
+        })
+    }
+
     pub fn page_source(&self, sha256: &str) -> Result<Option<String>, RepositoryError> {
         let sha = sha256.to_lowercase();
         self.with_client(move |client| {

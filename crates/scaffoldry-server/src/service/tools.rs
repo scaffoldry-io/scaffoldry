@@ -1313,6 +1313,7 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
             rules: a.rules,
             summary: a.summary,
             page_sources: a.page_sources,
+        notes: vec![],
         },
         state,
     )
