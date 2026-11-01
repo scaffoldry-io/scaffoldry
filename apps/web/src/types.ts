@@ -87,7 +87,9 @@ export type FieldType =
   | "LongText"
   | "Duration"
   | "DateTime"
-  | "Attachment";
+  | "Attachment"
+  /** A link by record id. The record holds the ids; the server keeps the mirror and the index. */
+  | "Link";
 
 export type LinkCardinality = "single" | "multiple" | "one-to-one" | "one-to-many" | "many-to-many";
 
@@ -135,6 +137,10 @@ export interface FieldSpec {
   cardinality?: LinkCardinality;
   allow_multiple?: boolean;
   link_filter?: LinkFilter;
+  /** A `Link` field: the table it points at, how many records it holds, and the field that shows it from the other side. */
+  link_target_table?: string;
+  link_cardinality?: "One" | "Many";
+  link_related_field?: string;
   formula_expression?: string;
   rollup_function?: "sum" | "avg" | "min" | "max" | "count" | "concat";
   select_options?: (SelectOption | string)[];

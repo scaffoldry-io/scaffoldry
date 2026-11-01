@@ -234,7 +234,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 127 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first | **COMPLETED** |
 | 128 | [import-export.md](import-export.md) | 6 | Moving off a spreadsheet tool, with every decision listed | **COMPLETED** |
 | 129 | [links.md](links.md) | 5 | Converting old value joins to links, with a preview | **COMPLETED** |
-| 130 | [links.md](links.md) | 6 | Link cells, paste, and a linked records section in the grid |
+| 130 | [links.md](links.md) | 6 | Link cells, paste, and a linked records section in the grid | **COMPLETED** |
 | 131 | [lifecycle.md](lifecycle.md) | 2 | Retired fields and archived apps |
 | 132 | [lifecycle.md](lifecycle.md) | 3 | Retention policies, nightly purge, and a certificate of destruction |
 | 133 | [attachments.md](attachments.md) | 4 | Orphan blob purge, retention, and bundles with files |

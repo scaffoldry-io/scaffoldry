@@ -9,6 +9,8 @@ import {
 import { FieldSpec, RowDensity, FieldType, AppView, AppTable } from "./types";
 import { explainError } from "./ui/explainError";
 import { AttachmentChips, type AttachedFile } from "./ui/Attachments";
+import { LinkCell } from "./LinkCell";
+import { linkedIds, recordLabel } from "./LinkedRecords";
 
 export type CellAddr = { recordId: string; fieldName: string };
 
@@ -21,6 +23,8 @@ export type DataGridProps = {
   fields: FieldSpec[];
   records: Record<string, unknown>[];
   tables?: AppTable[];
+  /** The app the records belong to. A link column searches its target table through it. */
+  appSlug?: string;
   rowDensity?: RowDensity;
   column_order?: string[];
   column_widths?: [string, number][];
@@ -66,7 +70,14 @@ const READ_ONLY_TYPES = new Set<FieldType>([
   "LastModifiedBy",
   // Files are added in the record drawer.
   "Attachment",
+  // A link cell edits itself with the picker and resolves pasted labels. The grid never writes text into it.
+  "Link",
 ]);
+
+/** A link column the grid can search: it needs the app and the target table. */
+function isLinkCell(field: FieldSpec): boolean {
+  return field.field_type === "Link" && !!field.link_target_table;
+}
 
 function isReadOnlyField(field?: FieldSpec): boolean {
   if (!field) return true;
@@ -203,6 +214,7 @@ export function DataGrid({
   fields,
   records,
   tables,
+  appSlug,
   rowDensity = "medium",
   column_order,
   column_widths,
@@ -227,7 +239,7 @@ export function DataGrid({
   const isCancellingRef = useRef<boolean>(false);
   const editTriggerRef = useRef<"key" | "click" | "action">("click");
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
-  const activeCellRef = useRef<HTMLTableCellElement | null>(null);
+  const activeCellRef = useRef<HTMLElement | null>(null);
 
   // The grid keeps no old values. It keeps which batches this person wrote, so the server can undo them.
   const gestures = useRef<Gesture[]>([]);
@@ -893,6 +905,8 @@ export function DataGrid({
     }
 
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+      // A link cell reads the paste itself, as labels to look up.
+      if (field.field_type === "Link") return;
       e.preventDefault();
       handlePaste();
       return;
@@ -1166,7 +1180,7 @@ export function DataGrid({
                   return (
                     <td
                       key={cell.id}
-                      ref={isFocus && !isCellEditing ? activeCellRef : undefined}
+                      ref={isFocus && !isCellEditing && !(appSlug && isLinkCell(field)) ? (activeCellRef as React.RefObject<HTMLTableCellElement>) : undefined}
                       tabIndex={isFocus ? 0 : -1}
                       data-testid={`cell-${recordId}-${fieldName}`}
                       data-focused={isFocus ? "true" : "false"}
@@ -1376,6 +1390,27 @@ export function DataGrid({
                           }}
                           className="w-full px-1.5 py-0.5 text-xs rounded border border-blue-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
                         />
+                      ) : appSlug && isLinkCell(field) ? (
+                        (() => {
+                          const target = tables?.find((t) => t.id === field.link_target_table);
+                          const ids = linkedIds(cellVal);
+                          const one = field.link_cardinality === "One";
+                          return (
+                            <LinkCell
+                              appSlug={appSlug as string}
+                              tableId={field.link_target_table as string}
+                              label={field.label}
+                              cardinality={one ? "one" : "many"}
+                              value={ids.map((id) => ({ id, label: recordLabel(target, target?.records?.find((r) => String(r.id) === id), id) }))}
+                              cellRef={isFocus ? (el) => (activeCellRef.current = el) : undefined}
+                              onChange={(next) => {
+                                const patchVal = one ? (next[0]?.id ?? null) : next.map((n) => n.id);
+                                const batchId = pushUndoGesture([{ recordId, fieldName: field.name, oldValue: cellVal, newValue: patchVal }]);
+                                onPatch(recordId, field.name, patchVal, batchId);
+                              }}
+                            />
+                          );
+                        })()
                       ) : field.field_type === "Relation" ? (
                         /* Linked Field (Airtable-style Relation) */
                         <div className="relative inline-flex items-center gap-1.5 flex-wrap">

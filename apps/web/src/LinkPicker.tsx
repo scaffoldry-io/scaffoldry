@@ -44,10 +44,14 @@ export interface LinkPickerProps {
   cardinality?: "one" | "many";
   canOpen?: (id: string) => boolean;
   onOpen?: (id: string) => void;
+  /** Puts the cursor in the search box when the picker appears, as a grid cell's editor does. */
+  autoFocus?: boolean;
+  /** Called on Escape, after the list closes, so an editor can close too and hand focus back. */
+  onEscape?: () => void;
 }
 
 /** Chooses the record a link points at. A combobox: type to search, arrows to move, Enter to choose, Escape to close. */
-export function LinkPicker({ appSlug, tableId, value, onChange, cardinality = "many", canOpen, onOpen }: LinkPickerProps) {
+export function LinkPicker({ appSlug, tableId, value, onChange, cardinality = "many", canOpen, onOpen, autoFocus, onEscape }: LinkPickerProps) {
   const base = useId();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -93,6 +97,7 @@ export function LinkPicker({ appSlug, tableId, value, onChange, cardinality = "m
       choose(options[active]);
     } else if (e.key === "Escape") {
       setOpen(false);
+      onEscape?.();
     }
   };
 
@@ -116,6 +121,7 @@ export function LinkPicker({ appSlug, tableId, value, onChange, cardinality = "m
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
+        autoFocus={autoFocus}
       />
       <div role="status" aria-live="polite" className="text-sm">
         {status}
