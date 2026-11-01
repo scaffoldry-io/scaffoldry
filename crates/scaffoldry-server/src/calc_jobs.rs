@@ -329,6 +329,9 @@ pub fn convert_field(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 }
 
 
+/// A page of source records (id and the joined text) and, for each distinct text on it, the ids of the target records that hold it.
+type PreviewPage = (Vec<(String, Option<String>)>, HashMap<String, Vec<String>>);
+
 /// For each record of a table, how many records of another table hold the same text in the joined field. Nothing is written.
 /// A record whose field is blank is counted apart: it has nothing to link.
 pub fn relation_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
@@ -350,7 +353,7 @@ pub fn relation_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError>
             return Err(JobError::Cancelled);
         }
         let (a, t, f, from_id, tt, tf) = (app.clone(), table.clone(), field.clone(), after.clone(), target_table.clone(), target_field.clone());
-        let (rows, found): (Vec<(String, Option<String>)>, HashMap<String, Vec<String>>) = repo
+        let (rows, found): PreviewPage = repo
             .with_client(move |c| {
                 let rows: Vec<(String, Option<String>)> = c
                     .query(
