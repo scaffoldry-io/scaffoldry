@@ -233,7 +233,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 126 | [import-export.md](import-export.md) | 4 | Approved templates. An unchanged template skips a review it already had | **COMPLETED** |
 | 127 | [import-export.md](import-export.md) | 5 | Snapshots and restore as a new app. A destructive approval takes one first | **COMPLETED** |
 | 128 | [import-export.md](import-export.md) | 6 | Moving off a spreadsheet tool, with every decision listed | **COMPLETED** |
-| 129 | [links.md](links.md) | 5 | Converting old value joins to links, with a preview |
+| 129 | [links.md](links.md) | 5 | Converting old value joins to links, with a preview | **COMPLETED** |
 | 130 | [links.md](links.md) | 6 | Link cells, paste, and a linked records section in the grid |
 | 131 | [lifecycle.md](lifecycle.md) | 2 | Retired fields and archived apps |
 | 132 | [lifecycle.md](lifecycle.md) | 3 | Retention policies, nightly purge, and a certificate of destruction |

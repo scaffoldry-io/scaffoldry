@@ -90,10 +90,50 @@ pub(crate) fn sync_calcs_in_tx(tx: &mut postgres::Transaction<'_>, old: Option<&
             mark(tx, &new.slug, &table.id, std::slice::from_ref(&change.field), job)?;
         }
     }
+    if let Some(old) = old {
+        // A text field that was one end of a value join becomes a link. The text is matched to records by a job.
+        for change in type_changes(old, new).into_iter().filter(|c| c.from == FieldType::Text && c.to == FieldType::Link) {
+            let Some(relation) = old.relationships.iter().find(|r| r.source_table_id == change.table_id && r.source_field == change.field) else { continue };
+            let Some(table) = new.tables.iter().find(|t| t.id == change.table_id) else { continue };
+            if table.fields.iter().find(|f| f.name == change.field).and_then(|f| f.link_target_table.as_deref()) != Some(relation.target_table_id.as_str()) {
+                continue;
+            }
+            let indexed = scaffoldry_engine::indexed_fields(new, &table.id);
+            let index_fields: Vec<_> = table.fields.iter().filter(|f| indexed.contains(&f.name)).cloned().collect();
+            let payload = json!({
+                "app_slug": new.slug,
+                "table_id": table.id,
+                "field": change.field,
+                "relation_id": relation.id,
+                "target_table_id": relation.target_table_id,
+                "target_field": relation.target_field,
+                "batch_id": uuid::Uuid::new_v4(),
+                "actor": requested_by,
+                "index_fields": index_fields,
+                "links": crate::repository_links::link_specs_in(new, &table.id),
+            });
+            let key = format!("convert_relation_to_link:{}", hex(&Sha256::digest(payload.to_string().as_bytes())));
+            let job = crate::jobs::enqueue_in_tx(tx, "convert_relation_to_link", &payload, requested_by, Some(&key))?;
+            mark(tx, &new.slug, &table.id, std::slice::from_ref(&change.field), job)?;
+        }
+    }
     Ok(())
 }
 
 impl PostgresRepository {
+    /// The result of the newest finished preview of this value join, when there is one.
+    pub fn latest_relation_preview(&self, app_slug: &str, relation_id: &str) -> Result<Option<Value>, RepositoryError> {
+        let (slug, relation) = (app_slug.to_string(), relation_id.to_string());
+        self.with_client(move |client| {
+            let row = client.query_opt(
+                "SELECT result FROM jobs WHERE kind = 'relation_preview' AND state = 'done' AND payload->>'app_slug' = $1 AND payload->>'relation_id' = $2 \
+                 ORDER BY finished_at DESC NULLS LAST LIMIT 1",
+                &[&slug, &relation],
+            )?;
+            Ok(row.and_then(|r| r.get::<_, Option<Value>>(0)))
+        })
+    }
+
     /// The fields of a table that are being calculated, each with the percent its job has done.
     pub fn calc_states(&self, app_slug: &str, table_id: &str) -> Result<Vec<(String, i64)>, RepositoryError> {
         let app_slug = scaffoldry_engine::stored_slug(app_slug);

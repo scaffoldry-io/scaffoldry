@@ -329,6 +329,189 @@ pub fn convert_field(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 }
 
 
+/// A page of source records (id and the joined text) and, for each distinct text on it, the ids of the target records that hold it.
+type PreviewPage = (Vec<(String, Option<String>)>, HashMap<String, Vec<String>>);
+
+/// For each record of a table, how many records of another table hold the same text in the joined field. Nothing is written.
+/// A record whose field is blank is counted apart: it has nothing to link.
+pub fn relation_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    let (app, table, field, relation) = (text(&payload, "app_slug")?, text(&payload, "table_id")?, text(&payload, "field")?, text(&payload, "relation_id")?);
+    let (target_table, target_field) = (text(&payload, "target_table_id")?, text(&payload, "target_field")?);
+    let repo = ctx.repository();
+    let total = count_rows(ctx, &app, &table)?;
+    let (mut after, mut done) = resume(ctx);
+    let (mut matched, mut unmatched, mut ambiguous, mut blank) = (0i64, 0i64, 0i64, 0i64);
+    let (mut unmatched_examples, mut ambiguous_examples): (Vec<Value>, Vec<Value>) = (Vec::new(), Vec::new());
+    if let Some(cp) = ctx.load_checkpoint() {
+        let n = |k: &str| cp.get(k).and_then(Value::as_i64).unwrap_or(0);
+        (matched, unmatched, ambiguous, blank) = (n("matched"), n("unmatched"), n("ambiguous"), n("blank"));
+        unmatched_examples = cp.get("unmatched_examples").and_then(Value::as_array).cloned().unwrap_or_default();
+        ambiguous_examples = cp.get("ambiguous_examples").and_then(Value::as_array).cloned().unwrap_or_default();
+    }
+    loop {
+        if ctx.cancelled()? {
+            return Err(JobError::Cancelled);
+        }
+        let (a, t, f, from_id, tt, tf) = (app.clone(), table.clone(), field.clone(), after.clone(), target_table.clone(), target_field.clone());
+        let (rows, found): PreviewPage = repo
+            .with_client(move |c| {
+                let rows: Vec<(String, Option<String>)> = c
+                    .query(
+                        "SELECT id, data ->> $3::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ($4::text IS NULL OR id > $4) ORDER BY id LIMIT $5",
+                        &[&a, &t, &f, &from_id, &(FIELD_BATCH * 2)],
+                    )?
+                    .iter()
+                    .map(|r| (r.get(0), r.get(1)))
+                    .collect();
+                let values: Vec<String> = rows.iter().filter_map(|(_, v)| v.clone()).filter(|v| !v.is_empty()).collect();
+                let found = c
+                    .query(
+                        "SELECT data ->> $3::text, array_agg(id ORDER BY id) FROM dataset_records \
+                         WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND data ->> $3::text = ANY($4) GROUP BY 1",
+                        &[&a, &tt, &tf, &values],
+                    )?
+                    .iter()
+                    .map(|r| (r.get::<_, String>(0), r.get::<_, Vec<String>>(1)))
+                    .collect();
+                Ok((rows, found))
+            })
+            .map_err(retry)?;
+        for (id, value) in &rows {
+            let Some(value) = value.as_deref().filter(|v| !v.is_empty()) else {
+                blank += 1;
+                continue;
+            };
+            match found.get(value).map(Vec::as_slice) {
+                Some([_]) => matched += 1,
+                Some(many) => {
+                    ambiguous += 1;
+                    if ambiguous_examples.len() < EXAMPLES {
+                        ambiguous_examples.push(json!({ "id": id, "value": value, "matches": many }));
+                    }
+                }
+                None => {
+                    unmatched += 1;
+                    if unmatched_examples.len() < EXAMPLES {
+                        unmatched_examples.push(json!({ "id": id, "value": value }));
+                    }
+                }
+            }
+        }
+        done += rows.len() as i64;
+        if let Some((last, _)) = rows.last() {
+            after = Some(last.clone());
+        }
+        ctx.checkpoint(json!({
+            "after": after, "done": done, "matched": matched, "unmatched": unmatched, "ambiguous": ambiguous, "blank": blank,
+            "unmatched_examples": unmatched_examples, "ambiguous_examples": ambiguous_examples,
+        }))?;
+        ctx.progress(done, total.max(done))?;
+        if (rows.len() as i64) < FIELD_BATCH * 2 {
+            break;
+        }
+    }
+    ctx.result(json!({
+        "relation_id": relation,
+        "field": field,
+        "scanned": done,
+        "matched": matched,
+        "unmatched": unmatched,
+        "ambiguous": ambiguous,
+        "blank": blank,
+        "examples": { "unmatched": unmatched_examples, "ambiguous": ambiguous_examples },
+    }))
+}
+
+/// Turns the text of a joined field into links. A record whose text matches exactly one record of the target table gets a
+/// link to it. A record whose text matches none, or several, is left blank. Each changed record is a normal write by the
+/// system in one batch, so the old text is in `record_history` and the batch can be undone. A record that is already a link
+/// is left alone, so the job can run again.
+pub fn convert_relation_to_link(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
+    let (app, table, field, actor) = (text(&payload, "app_slug")?, text(&payload, "table_id")?, text(&payload, "field")?, text(&payload, "actor")?);
+    let (target_table, target_field) = (text(&payload, "target_table_id")?, text(&payload, "target_field")?);
+    let batch_id = uuid::Uuid::parse_str(&text(&payload, "batch_id")?).map_err(|e| JobError::Permanent(e.to_string()))?;
+    let mut write = WriteCtx::system(&actor);
+    write.batch_id = batch_id;
+    write.index_fields = parse(&payload, "index_fields")?;
+    write.links = parse(&payload, "links")?;
+    let repo = ctx.repository();
+    let total = count_rows(ctx, &app, &table)?;
+    let (mut after, mut done) = resume(ctx);
+    let (mut linked, mut blanked) = match ctx.load_checkpoint() {
+        Some(cp) => (cp.get("linked").and_then(Value::as_i64).unwrap_or(0), cp.get("blanked").and_then(Value::as_i64).unwrap_or(0)),
+        None => (0, 0),
+    };
+    loop {
+        if ctx.cancelled()? {
+            return Err(JobError::Cancelled);
+        }
+        let (a, t, f, from_id, w) = (app.clone(), table.clone(), field.clone(), after.clone(), write.clone());
+        let (tt, tf) = (target_table.clone(), target_field.clone());
+        let (last, read, l, b) = repo
+            .with_client(move |c| {
+                let mut tx = c.transaction()?;
+                let rows = tx.query(
+                    "SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ($3::text IS NULL OR id > $3) \
+                     ORDER BY id LIMIT $4 FOR UPDATE",
+                    &[&a, &t, &from_id, &(FIELD_BATCH / 2)],
+                )?;
+                let page: Vec<(String, Value)> = rows.iter().map(|r| (r.get(0), r.get(1))).collect();
+                let values: Vec<String> = page.iter().filter_map(|(_, d)| d.get(&f).and_then(Value::as_str).map(str::to_string)).filter(|v| !v.is_empty()).collect();
+                let found: HashMap<String, Vec<String>> = tx
+                    .query(
+                        "SELECT data ->> $3::text, array_agg(id ORDER BY id) FROM dataset_records \
+                         WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND data ->> $3::text = ANY($4) GROUP BY 1",
+                        &[&a, &tt, &tf, &values],
+                    )?
+                    .iter()
+                    .map(|r| (r.get::<_, String>(0), r.get::<_, Vec<String>>(1)))
+                    .collect();
+                let (mut linked, mut blanked) = (0i64, 0i64);
+                for (id, data) in &page {
+                    // Only text is converted. A link already there, or no value at all, stays as it is.
+                    let Some(old) = data.get(&f).and_then(Value::as_str).filter(|v| !v.is_empty()) else { continue };
+                    let mut new = data.clone();
+                    let Some(m) = new.as_object_mut() else { continue };
+                    match found.get(old).map(Vec::as_slice) {
+                        Some([only]) => {
+                            m.insert(f.clone(), json!([only]));
+                            linked += 1;
+                        }
+                        _ => {
+                            m.remove(&f);
+                            blanked += 1;
+                        }
+                    }
+                    crate::repository::update_record_in_tx(&mut tx, &a, id, &new, None, &w)?;
+                }
+                tx.commit()?;
+                Ok((page.last().map(|(id, _)| id.clone()), page.len() as i64, linked, blanked))
+            })
+            .map_err(retry)?;
+        done += read;
+        linked += l;
+        blanked += b;
+        if last.is_some() {
+            after = last;
+        }
+        ctx.checkpoint(json!({ "after": after, "done": done, "linked": linked, "blanked": blanked }))?;
+        ctx.progress(done, total.max(done))?;
+        if read < FIELD_BATCH / 2 {
+            break;
+        }
+    }
+    let (a, t, f, job) = (app.clone(), table.clone(), field.clone(), ctx.job_id());
+    repo.with_client(move |c| {
+        c.execute(
+            "UPDATE calc_status SET state = 'ready', updated_at = NOW() WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND job_id = $4",
+            &[&a, &t, &f, &job],
+        )?;
+        Ok(())
+    })
+    .map_err(retry)?;
+    ctx.result(json!({ "records": done, "linked": linked, "blanked": blanked, "batch_id": batch_id }))
+}
+
 /// Converts every string value of a select field to its option ID.
 /// Values matching no option become blank and are counted in the result.
 /// Old values are written into record_history with system actor.
