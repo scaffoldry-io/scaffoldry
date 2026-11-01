@@ -63,9 +63,19 @@ fn fnv(bytes: &[u8], mut h: u64) -> u64 {
     h
 }
 
-/// The name of the migrated template database. It changes when a migration changes, or `repository.rs`, which lists the
-/// migrations and applies them, so a template is never reused for a schema it was not built for.
-fn template_name() -> String {
+/// A template database is replaced this often. Migrations seed times relative to when they ran (the schedule that expires
+/// trial copies is first due an hour later), so a template left on the server for longer would start every test with a
+/// schedule already due. Half the hour keeps the seeded times at least half an hour ahead.
+pub const TEMPLATE_BUCKET_SECS: u64 = 1_800;
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("the clock").as_secs()
+}
+
+/// The name of the migrated template database for the half hour that holds `at_secs`. It changes when a migration changes, or
+/// `repository.rs`, which lists the migrations and applies them, so a template is never reused for a schema it was not built
+/// for. It also changes every `TEMPLATE_BUCKET_SECS`, so a template is never older than that when it is cloned.
+pub fn template_name_at(at_secs: u64) -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("../scaffoldry-core/migrations"))
         .expect("the migrations")
@@ -78,14 +88,18 @@ fn template_name() -> String {
         h = fnv(f.file_name().expect("a file name").as_encoded_bytes(), h);
         h = fnv(&std::fs::read(f).expect("a migration file"), h);
     }
-    format!("scaffoldry_tpl_{h:016x}")
+    format!("scaffoldry_tpl_{h:016x}_{:x}", at_secs / TEMPLATE_BUCKET_SECS)
+}
+
+fn template_name() -> String {
+    template_name_at(now_secs())
 }
 
 /// Takes the lock that lets one test process build the template while the others wait for it.
 const TEMPLATE_LOCK: i64 = 742_200;
 
 /// Makes sure the migrated template exists. One process builds it, under an advisory lock. It is built under another name and
-/// renamed when it is whole, so no one clones half of it. Templates for older migrations are dropped.
+/// renamed when it is whole, so no one clones half of it. Templates for older migrations, and for any half hour before the last, are dropped.
 fn ensure_template(name: &str) -> Result<(), String> {
     let (admin, name) = (admin_url(), name.to_string());
     std::thread::spawn(move || -> Result<(), String> {
@@ -107,8 +121,10 @@ fn ensure_template(name: &str) -> Result<(), String> {
             c.batch_execute(&format!("ALTER DATABASE {building} ALLOW_CONNECTIONS false")).map_err(why)?;
             c.batch_execute(&format!("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{building}'")).map_err(why)?;
             c.batch_execute(&format!("ALTER DATABASE {building} RENAME TO {name}")).map_err(why)?;
+            // The half hour before this one is kept: a process that began cloning from it a moment ago may still be at it.
+            let previous = template_name_at(now_secs().saturating_sub(TEMPLATE_BUCKET_SECS));
             for old in c
-                .query("SELECT datname FROM pg_database WHERE datname LIKE 'scaffoldry\\_tpl\\_%' AND datname <> $1", &[&name])
+                .query("SELECT datname FROM pg_database WHERE datname LIKE 'scaffoldry\\_tpl\\_%' AND datname <> $1 AND datname <> $2", &[&name, &previous])
                 .map_err(why)?
             {
                 let old: String = old.get(0);
