@@ -55,7 +55,8 @@ fn a_template_is_replaced_every_half_hour() {
     assert_eq!(t0 % common::TEMPLATE_BUCKET_SECS, 0);
     assert_eq!(common::template_name_at(t0), common::template_name_at(t0 + common::TEMPLATE_BUCKET_SECS - 1), "one half hour has one template");
     assert_ne!(common::template_name_at(t0), common::template_name_at(t0 + common::TEMPLATE_BUCKET_SECS), "the next half hour has another");
-    assert!(common::TEMPLATE_BUCKET_SECS <= 1_800, "the bucket is no longer than half the hour the seeded schedules are ahead");
+    // The bucket is no longer than half the hour the seeded schedules are ahead. A longer one fails to compile.
+    const { assert!(common::TEMPLATE_BUCKET_SECS <= 1_800) };
 }
 
 #[test]
