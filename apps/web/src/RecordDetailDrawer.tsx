@@ -5,6 +5,7 @@ import { AppTable } from "./types";
 import { LongTextEditor } from "./LongTextEditor";
 import { AttachmentField, type AttachedFile } from "./ui/Attachments";
 import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
+import { LinkedRecords } from "./LinkedRecords";
 
 export interface RecordDetailDrawerProps {
   selectedRecordId: string | null;
@@ -17,6 +18,8 @@ export interface RecordDetailDrawerProps {
   onUpdateRecordField: (recordId: string, fieldName: string, value: any) => void;
   onDuplicateRecord: (recordId: string) => void;
   onDeleteRecord: (recordId: string) => void;
+  /** Opens another record's drawer, from a linked records section. */
+  onOpenRecord?: (tableId: string, recordId: string) => void;
 }
 
 export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
@@ -29,6 +32,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
   onUpdateRecordField,
   onDuplicateRecord,
   onDeleteRecord,
+  onOpenRecord,
 }) => {
   if (!selectedRecordId) return null;
   const activeDetailRecord = (activeTable.records || []).find(
@@ -132,6 +136,8 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {activeTable.fields.map((field) => {
+                // A link field is shown in the linked records section below.
+                if (field.field_type === "Link") return null;
                 // An attachment field draws its own frame, so a field the person may not read leaves no trace.
                 if (field.field_type === "Attachment") {
                   return appSlug ? (
@@ -347,6 +353,25 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
               })}
             </div>
           </div>
+
+          {/* LINKED RECORDS: every link field of this table, mirror fields included */}
+          {activeTable.fields.some((f) => f.field_type === "Link") && (
+            <section aria-label="Linked records" className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+              <h4 className="text-xs font-bold font-mono text-slate-400 uppercase tracking-wider">Linked records</h4>
+              {activeTable.fields
+                .filter((f) => f.field_type === "Link")
+                .map((field) => (
+                  <LinkedRecords
+                    key={field.name}
+                    field={field}
+                    target={tables.find((t) => t.id === field.link_target_table)}
+                    value={activeDetailRecord[field.name]}
+                    onChange={(next) => onUpdateRecordField(activeDetailRecord.id, field.name, next)}
+                    onOpen={onOpenRecord}
+                  />
+                ))}
+            </section>
+          )}
 
           {/* REVERSE RELATIONAL SUB-TABLES */}
           <div

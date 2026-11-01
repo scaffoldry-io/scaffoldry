@@ -299,6 +299,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
               fields={fields}
               records={filteredRecords}
               tables={app.manifest.tables}
+              appSlug={app.slug}
               rowDensity={app.manifest.views[0]?.row_density}
               onPatch={handleUpdateCell}
             />

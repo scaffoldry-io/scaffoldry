@@ -6,9 +6,11 @@ export interface BannerProps {
   kind: BannerKind;
   children: ReactNode;
   icon?: ReactNode;
+  /** Names the banner for assistive technology when a page holds more than one. */
+  label?: string;
 }
 
-export function Banner({ kind, children, icon }: BannerProps) {
+export function Banner({ kind, children, icon, label }: BannerProps) {
   const role = kind === "error" ? "alert" : "status";
 
   const config = {
@@ -29,6 +31,7 @@ export function Banner({ kind, children, icon }: BannerProps) {
   return (
     <div
       role={role}
+      aria-label={label}
       className={`p-3.5 rounded-lg border flex items-start gap-3 text-sm ${config.bg}`}
     >
       <span className="font-bold select-none" aria-hidden="true">
