@@ -642,8 +642,11 @@ async fn million_rows_with_grants() {
 
     let base = format!("/api/v1/apps/{}/tables/t1", w.slug);
     let near_end = cursor_at(&w.slug, ROWS - 200, None);
+    // Each person's token is issued once, before anything is timed. Issuing one opens its own database connection and
+    // commits several rows, so issuing it inside a timed run measured the test's own setup as the route's latency.
+    let tokens: std::collections::HashMap<&str, String> = [alex, bea, cy].into_iter().map(|who| (who, issue_test_token_and_user(who))).collect();
     let call = |who: &'static str, method: &'static str, uri: String| {
-        let (app, token) = (w.app.clone(), issue_test_token_and_user(who));
+        let (app, token) = (w.app.clone(), tokens[who].clone());
         async move { send(&app, method, &uri, &token, None).await }
     };
     // Each person sees the share their grants reach. The check makes the timings mean something.
