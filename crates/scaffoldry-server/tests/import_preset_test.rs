@@ -81,7 +81,7 @@ fn field(name: &str, label: &str, ty: FieldType) -> FieldSpec {
 }
 
 async fn fixture() -> Fixture {
-    let db = common::TestDb::new();
+    let testdb = common::TestDb::new();
     let dir = std::env::temp_dir().join(format!("scaffoldry-preset-files-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("SCAFFOLDRY_FILES_DIR", &dir);
@@ -156,7 +156,7 @@ async fn fixture() -> Fixture {
         .unwrap();
     });
 
-    Fixture { app: build_app_with_state(state.clone()).expect("router"), state, slug, _dir: dir, token: issue_test_token_and_user(USER), _db: db }
+    Fixture { app: build_app_with_state(state.clone()).expect("router"), state, slug, _dir: dir, token: issue_test_token_and_user(USER), _db: testdb }
 }
 
 async fn upload(f: &Fixture, content: &str) -> Uuid {
