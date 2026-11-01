@@ -44,3 +44,23 @@ fn two_test_databases_do_not_share_rows() {
     let seen_by_c: i64 = TestDb::bare().run(|c| c.query_one("SELECT count(*) FROM platform_settings WHERE key = 'template.isolation'", &[]).unwrap().get(0));
     assert_eq!(seen_by_c, 0, "and it is not in the template, so the next test does not get it either");
 }
+
+// A template is cached on the server, and migrations seed times relative to when they ran: the schedule that expires trial
+// copies is first due an hour after it was seeded. A template older than that would hand every test a schedule that is
+// already due, and a test that counts the jobs a scheduler tick makes would count one too many. So a template is replaced
+// every half hour: its name carries the half hour it was built in.
+#[test]
+fn a_template_is_replaced_every_half_hour() {
+    let t0 = 1_800_000_000_u64; // a multiple of the bucket
+    assert_eq!(t0 % common::TEMPLATE_BUCKET_SECS, 0);
+    assert_eq!(common::template_name_at(t0), common::template_name_at(t0 + common::TEMPLATE_BUCKET_SECS - 1), "one half hour has one template");
+    assert_ne!(common::template_name_at(t0), common::template_name_at(t0 + common::TEMPLATE_BUCKET_SECS), "the next half hour has another");
+    assert!(common::TEMPLATE_BUCKET_SECS <= 1_800, "the bucket is no longer than half the hour the seeded schedules are ahead");
+}
+
+#[test]
+fn the_oldest_template_a_test_can_clone_still_has_its_seeded_times_ahead() {
+    let db = TestDb::bare();
+    let minutes_ahead: f64 = db.run(|c| c.query_one("SELECT COALESCE(MIN(EXTRACT(EPOCH FROM (next_run_at - NOW()))), 99999)::float8 / 60 FROM job_schedules", &[]).unwrap().get(0));
+    assert!(minutes_ahead >= 25.0, "a schedule seeded by a migration is {minutes_ahead:.0} minutes from due. A template this old would start tests with a schedule already due");
+}
