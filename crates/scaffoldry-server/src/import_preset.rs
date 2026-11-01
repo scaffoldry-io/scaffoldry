@@ -168,7 +168,7 @@ impl Plan {
         match &field.field_type {
             FieldType::MultiSelect if self.on("multi", column) => {
                 if cell.is_empty() {
-                    return None;
+                    return Some(Converted::Skip);
                 }
                 let mut picked = Vec::new();
                 for part in cell.split(',').map(str::trim).filter(|p| !p.is_empty()) {
@@ -188,7 +188,7 @@ impl Plan {
             }),
             FieldType::Currency if self.on("currency", column) => {
                 if cell.is_empty() {
-                    return None;
+                    return Some(Converted::Skip);
                 }
                 Some(match parse_currency(cell) {
                     Some(n) => Converted::Value(json!(n)),

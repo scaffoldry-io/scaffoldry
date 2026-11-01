@@ -1,6 +1,7 @@
 //! Background jobs for import phase 1: analyze, dry-run validate, and run.
 
 use calamine::DataType;
+use crate::import_preset::{self, Converted};
 use crate::jobs::{JobCtx, JobError};
 use crate::repository::{ActorKind, AppendDecisionParams, PostgresRepository, WriteCtx};
 use crate::repository_files::NewRef;
@@ -489,6 +490,16 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
         }
     }
 
+    // The preset for files from another tool, when the mapping asks for it. Its name matches add to the mapping.
+    let preset_plan = import_preset::requested(mapping).map(|off| import_preset::plan(&headers, &field_map, table, &off));
+    if let Some(plan) = &preset_plan {
+        for (column, field) in plan.name_matches() {
+            field_map.entry(column).or_insert(field);
+        }
+    }
+    let mut preview: Vec<Value> = Vec::new();
+    let mut attachment_report: Vec<Value> = Vec::new();
+
     let mut valid_count: usize = 0;
     let mut invalid_count: usize = 0;
     let mut create_count: usize = 0;
@@ -507,6 +518,29 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
             };
             let cell_value = row.get(col_idx).map(|s| s.as_str()).unwrap_or("").trim();
             let target_field = table.fields.iter().find(|f| &f.name == target_field_name);
+
+            if let (Some(plan), Some(f)) = (&preset_plan, target_field) {
+                for (name, url) in plan.attachments(header, cell_value) {
+                    if attachment_report.len() < import_preset::MAX_REPORT {
+                        attachment_report.push(json!({ "row": row_num, "column": header, "name": name, "url": url }));
+                    }
+                }
+                match plan.convert(header, f, cell_value) {
+                    Some(Converted::Value(v)) => {
+                        row_data.insert(target_field_name.clone(), v);
+                        continue;
+                    }
+                    Some(Converted::Skip) => continue,
+                    Some(Converted::Error(message)) => {
+                        row_has_error = true;
+                        if errors.len() < 100 {
+                            errors.push(json!({ "row": row_num, "column": header, "message": format!("Row {}: {}", row_num, message) }));
+                        }
+                        continue;
+                    }
+                    None => {}
+                }
+            }
 
             if let Some(f) = target_field {
                 match &f.field_type {
@@ -604,6 +638,10 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
             }
         }
 
+        if preset_plan.is_some() && preview.len() < 5 {
+            preview.push(Value::Object(row_data.clone()));
+        }
+
         if !row_has_error && !rules.is_empty() {
             if let Some(ref p) = person {
                 let scope = row_scope(p, None, false, &rules, &table.id, RowOp::Create);
@@ -662,7 +700,7 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
     }
 
     let status = if invalid_count == 0 { "dry_run_passed" } else { "dry_run" };
-    let result = json!({
+    let mut result = json!({
         "valid_count": valid_count,
         "invalid_count": invalid_count,
         "create_count": create_count,
@@ -670,6 +708,11 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
         "errors": errors,
         "proposed_options": proposed_options,
     });
+    if let Some(plan) = &preset_plan {
+        result["decisions"] = plan.to_json();
+        result["preview"] = Value::Array(preview);
+        result["attachment_report"] = Value::Array(attachment_report);
+    }
 
     repo.update_import_dry_run(import_id, status, &result)
         .map_err(|e| JobError::Retry(e.to_string()))?;
@@ -768,6 +811,13 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         }
     }
 
+    let preset_plan = import_preset::requested(mapping).map(|off| import_preset::plan(&headers, &field_map, table, &off));
+    if let Some(plan) = &preset_plan {
+        for (column, field) in plan.name_matches() {
+            field_map.entry(column).or_insert(field);
+        }
+    }
+
     let checkpoint = ctx.load_checkpoint();
     let mut processed_rows: usize = checkpoint.as_ref()
         .and_then(|cp| cp.get("processed_rows"))
@@ -811,6 +861,7 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         let b_processed_offset = processed_rows;
         let b_rules = rules.clone();
         let b_person = person.clone();
+        let b_preset = preset_plan.clone();
 
         let (batch_created, batch_updated, batch_rejected) = repo.with_client(move |c| {
             let mut tx = c.transaction()?;
@@ -829,6 +880,21 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
                     };
                     let cell_value = row.get(col_idx).map(|s| s.as_str()).unwrap_or("").trim();
                     let target_field = b_table.fields.iter().find(|f| &f.name == target_field_name);
+
+                    if let (Some(plan), Some(f)) = (&b_preset, target_field) {
+                        match plan.convert(header, f, cell_value) {
+                            Some(Converted::Value(v)) => {
+                                row_data.insert(target_field_name.clone(), v);
+                                continue;
+                            }
+                            Some(Converted::Skip) => continue,
+                            Some(Converted::Error(message)) => {
+                                row_has_error = Some(message);
+                                break;
+                            }
+                            None => {}
+                        }
+                    }
 
                     if let Some(f) = target_field {
                         match &f.field_type {
