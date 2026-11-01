@@ -16,6 +16,13 @@ permissions:
   contents: read
   pull-requests: read
 
+# A newer push to a pull request replaces the run that is still going for it. Without this, every push to a branch starts
+# a full run on top of the last one, and the old run keeps its runners for the half hour the long jobs take. A run on
+# main, the nightly run and a manual run each get a group of their own, so none of them is ever cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
