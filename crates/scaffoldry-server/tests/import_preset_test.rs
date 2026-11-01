@@ -216,7 +216,7 @@ async fn a_file_from_another_tool_maps_as_described_and_each_decision_is_listed(
     let rows = result["preview"].as_array().expect("a preview of the first rows");
     assert_eq!(rows[0]["first_name"], "Ada", "{result}");
     assert_eq!(rows[0]["tags"], json!(["red", "blue"]), "{result}");
-    assert_eq!(rows[0]["project"], "Apollo", "{result}");
+    assert_eq!(rows[0]["project"], format!("rec-apollo-{}", f.slug), "the linked name is resolved by the primary field of Projects: {result}");
     assert_eq!(rows[0]["done"], true, "{result}");
     assert_eq!(rows[0]["budget"], json!(1200.5), "{result}");
     assert_eq!(rows[1]["done"], false, "a blank checkbox is no: {result}");
