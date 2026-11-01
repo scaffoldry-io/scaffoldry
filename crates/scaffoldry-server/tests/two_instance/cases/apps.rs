@@ -11,6 +11,8 @@ pub fn add(m: &mut Entries) {
     exempt(m, "POST /api/v1/apps/{slug}/automations/simulate", "runs a rule against a sample and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/access/preview", "asks what a person could see and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/fields/convert-preview", "reports what a field conversion would do and stores nothing");
+    exempt(m, "POST /api/v1/apps/{slug}/relations/{id}/convert-preview", "queues a count of what a value join matches and writes no record");
+    m.insert("POST /api/v1/apps/{slug}/relations/{id}/convert".into(), case!(relation_convert));
     m.insert("POST /api/v1/proposals/{id}/decision".into(), case!(proposal_decide));
     m.insert("POST /api/v1/proposals/{id}/preview".into(), case!(proposal_preview));
     m.insert("POST /api/v1/proposals/{id}/trial".into(), case!(proposal_trial));
@@ -251,6 +253,22 @@ async fn snapshot_restore(w: World) -> Outcome {
     let pid = r["proposal_id"].as_str().ok_or("a proposal id")?;
     let seen = status(w.rb("GET", &format!("/api/v1/proposals/{pid}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
     ensure(seen["app_slug"] == new_slug.as_str(), format!("B shows the proposal A made: {seen}"))
+}
+
+/// A proposes turning a value join into a link. B reads the proposal.
+async fn relation_convert(w: World) -> Outcome {
+    let slug = unique("p5rel");
+    let mut manifest = manifest(&slug);
+    manifest["tables"] = json!([
+        { "id": "programs", "name": "Programs", "slug": "programs", "fields": [{ "name": "code", "label": "Code", "field_type": "Text", "required": false, "ferpa_sensitive": false }] },
+        { "id": "apps", "name": "Apps", "slug": "apps", "fields": [{ "name": "program_code", "label": "Program code", "field_type": "Text", "required": false, "ferpa_sensitive": false }] },
+    ]);
+    manifest["relationships"] = json!([{ "id": "r1", "name": "Program", "source_table_id": "apps", "target_table_id": "programs", "source_field": "program_code", "target_field": "code", "relationship_type": "many_to_one", "display_field": "code" }]);
+    status(w.wa("POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(manifest)).await, StatusCode::CREATED, "A makes the app")?;
+    let made = status(w.wa("POST", &format!("/api/v1/apps/{slug}/relations/r1/convert"), OWNER, Some(json!({}))).await, StatusCode::CREATED, "A proposes the conversion")?;
+    let id = made["proposal_id"].as_str().ok_or("a proposal id")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/proposals/{id}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
+    ensure(seen["app_slug"] == slug.as_str() && seen["status"] == "Pending", format!("B shows the pending proposal A made: {seen}"))
 }
 
 /// A makes a trial. B opens it again, which starts its days over.

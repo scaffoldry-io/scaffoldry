@@ -132,6 +132,22 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::calc_jobs::convert_preview,
     },
     JobKind {
+        name: "relation_preview",
+        title: "Checking a value join",
+        description: "Counts the records a value join matches to exactly one record, to none and to several, without changing anything.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::calc_jobs::relation_preview,
+    },
+    JobKind {
+        name: "convert_relation_to_link",
+        title: "Turning a value join into links",
+        description: "Links each record to the one record its text matched, leaves the others blank, and keeps the old text in history.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::calc_jobs::convert_relation_to_link,
+    },
+    JobKind {
         name: "convert_field",
         title: "Changing a field's type",
         description: "Converts every value in a field to its new type and records the change in history.",

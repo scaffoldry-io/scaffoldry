@@ -463,6 +463,26 @@ fn check_manifest_part(
     if let (Some(l), true) = (live, records_exist(&manifest.slug, state)) {
         for change in scaffoldry_engine::recalc::type_changes(l, &manifest) {
             let what = format!("field '{}' of table '{}'", change.field, change.table_id);
+            // A text field that is one end of a value join becomes a link. A job matches the text to records, and the
+            // preview of that job says how many records it cannot match.
+            if change.from == FieldType::Text && change.to == FieldType::Link {
+                if let Some(relation) = l.relationships.iter().find(|r| r.source_table_id == change.table_id && r.source_field == change.field) {
+                    match repo.latest_relation_preview(&manifest.slug, &relation.id).map_err(internal)? {
+                        None => loss.push(format!(
+                            "{what} changes from a value join to a link and no preview was run. POST /apps/{}/relations/{}/convert-preview first",
+                            manifest.slug, relation.id
+                        )),
+                        Some(result) => {
+                            let (none, several) = (result["unmatched"].as_i64().unwrap_or(0), result["ambiguous"].as_i64().unwrap_or(0));
+                            if none + several > 0 {
+                                loss.push(format!("{none} values of {what} match no record and {several} match several, so they would be left blank"));
+                            }
+                            previews.push(result);
+                        }
+                    }
+                    continue;
+                }
+            }
             if !scaffoldry_engine::recalc::conversion_supported(change.from, change.to) {
                 loss.push(format!("{what} cannot change from {:?} to {:?}", change.from, change.to));
                 continue;
