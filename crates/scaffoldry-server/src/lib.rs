@@ -13,6 +13,7 @@ pub mod repository_ownership;
 pub mod holds;
 pub mod purge;
 pub mod library_fetch;
+pub mod notifications;
 pub mod net;
 pub mod secrets;
 pub mod realtime;
