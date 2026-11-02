@@ -603,6 +603,18 @@ export interface HoldScope {
   include_future?: boolean;
 }
 
+/** One notice in the signed-in person's inbox (notifications phase 1). Names and links only. */
+export interface InboxNotice {
+  id: string;
+  kind: string;
+  app_slug: string | null;
+  title: string;
+  body: string;
+  link: { path?: string; [key: string]: unknown } | null;
+  created_at: string;
+  read: boolean;
+}
+
 /** A policy as the console lists it (policy library phase 6). */
 export interface AdminLibraryPolicy {
   id: string;
@@ -1616,6 +1628,22 @@ export const apiClient = {
     if (params?.limit) sp.set("limit", String(params.limit));
     const qs = sp.toString() ? `?${sp.toString()}` : "";
     return request<AdminJobsResponse>(`/admin/jobs${qs}`);
+  },
+
+  /** The signed-in person's inbox (notifications phase 1). */
+  notificationCount: async (): Promise<number> => {
+    const res = await request<{ unread: number }>("/me/notifications/count");
+    return typeof res?.unread === "number" ? res.unread : 0;
+  },
+
+  listNotifications: async (params: { unread?: boolean } = {}): Promise<InboxNotice[]> => {
+    const res = await request<{ notifications: InboxNotice[] }>(`/me/notifications${params.unread ? "?unread=true" : ""}`);
+    return Array.isArray(res?.notifications) ? res.notifications : [];
+  },
+
+  markNotificationsRead: async (body: { ids: string[] } | { all: true }): Promise<number> => {
+    const res = await request<{ marked: number }>("/me/notifications/read", { method: "POST", body: JSON.stringify(body) });
+    return res?.marked ?? 0;
   },
 
   /** The policy library's console views (policy library phase 6). */

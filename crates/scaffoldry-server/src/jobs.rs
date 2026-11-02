@@ -188,6 +188,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::holds::hold_preview,
     },
     JobKind {
+        name: "purge_notifications",
+        title: "Clearing old notices",
+        description: "Deletes notices read more than 90 days ago, and any notice older than a year.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::notifications::purge_job,
+    },
+    JobKind {
         name: "library_fetch",
         title: "Checking policy sources",
         description: "Fetches the web sources of the policy library that are due, at most once a day each, and marks the rules whose cited passages left them.",
