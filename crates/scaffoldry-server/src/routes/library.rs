@@ -27,6 +27,8 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/admin/library/policies/{id}/sources", post(add_source))
         .route("/admin/library/sources/{id}/snapshots", post(add_snapshot))
+        .route("/admin/library/sources/{id}/check", post(check_source))
+        .route("/admin/library/policies/{id}/reviewed", post(mark_reviewed))
         .route("/admin/library/snapshots/{id}", get(get_snapshot))
         .route("/admin/library/policies/{id}/rules", post(draft_rule))
         .route("/admin/library/policies/{id}/rules/{key}/bindings", post(add_binding))
@@ -172,4 +174,17 @@ async fn delete_binding(State(state): State<SharedState>, headers: HeaderMap, Pa
 async fn catalog(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
     let c = caller(&state, &headers)?;
     blocking(move || library_public::catalog(&state, &c)).await.map(Json)
+}
+
+/// Policy library phase 5: fetch a web source now.
+async fn check_source(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    blocking(move || library::check_now(&state, &c, &id)).await.map(Json)
+}
+
+/// Policy library phase 5: mark a policy reviewed, with a note.
+async fn mark_reviewed(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body);
+    blocking(move || library::mark_reviewed(&state, &c, &id, &body)).await.map(Json)
 }

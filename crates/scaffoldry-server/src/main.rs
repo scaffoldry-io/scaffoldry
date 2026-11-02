@@ -112,6 +112,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "purge_unattached_files", 60 * 60)?;
     // A safety net for uploads whose scan job could not be queued.
     jobs::register_schedule(repo, "scan_file", 10 * 60)?;
+    // The policy library's web sources are checked every hour. Each one is fetched at most once a day.
+    jobs::register_schedule(repo, "library_fetch", 60 * 60)?;
     // Access receipts are sealed into a hash-chained batch every minute.
     jobs::register_schedule(repo, "seal_receipts", 60)?;
     // Retention destroys what its policies no longer keep, nightly at 02:00 in the institution's zone.

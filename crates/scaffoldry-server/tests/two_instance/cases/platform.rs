@@ -65,10 +65,13 @@ pub fn add(m: &mut Entries) {
             k("POST", "/admin/library/policies/{id}/rules"),
             case!(library_rule_draft, root),
         );
+        m.insert(k("POST", "/admin/library/sources/{id}/check"), case!(library_source_check, root));
+        m.insert(k("POST", "/admin/library/policies/{id}/reviewed"), case!(library_policy_reviewed, root));
     }
     m.insert("POST /api/v1/library/rules/{id}/submit".into(), case!(library_rule_submit));
     m.insert("POST /api/v1/library/rules/{id}/decide".into(), case!(library_rule_decide));
     m.insert("POST /api/v1/library/rules/{id}/retire".into(), case!(library_rule_retire));
+    m.insert("POST /api/v1/library/rules/{id}/confirm".into(), case!(library_rule_confirm));
     m.insert("POST /api/v1/library/questions/{id}/answer".into(), case!(library_question_answer));
     for (root, prefix) in [("/api/v1", "/api/v1"), ("", "")] {
         let k = |method: &str, path: &str| format!("{method} {prefix}{path}");
@@ -1204,4 +1207,42 @@ async fn secret_delete(w: World, root: &'static str) -> Outcome {
     status(w.wa("DELETE", &format!("{root}/admin/secrets/{name}"), ADMIN, Some(json!({ "reason": "Retired" }))).await, StatusCode::OK, "A deletes it")?;
     let list = status(w.rb("GET", "/api/v1/admin/secrets", ADMIN, None).await, StatusCode::OK, "B lists secrets")?;
     ensure(list["secrets"].as_array().is_some_and(|l| !l.iter().any(|s| s["name"] == name.as_str())), format!("B no longer lists it: {list}"))
+}
+
+/// A checks a web source now. The allowlist is empty, so nothing is connected to. B reads the outcome.
+async fn library_source_check(w: World, root: &'static str) -> Outcome {
+    let (policy, _, _) = library_fixture(&w, root).await?;
+    let src = status(
+        w.wa("POST", &format!("/api/v1/admin/library/policies/{policy}/sources"), ADMIN, Some(json!({ "title": "Web", "kind": "url", "href": "https://policy.invalid/schedule", "reason": "Fixture" }))).await,
+        StatusCode::CREATED,
+        "A adds a web source",
+    )?;
+    let source = src["source"]["id"].as_str().ok_or("a source id")?.to_string();
+    status(w.wa("POST", &format!("{root}/admin/library/sources/{source}/check"), ADMIN, Some(json!({}))).await, StatusCode::OK, "A checks it")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/library/policies/{policy}"), ADMIN, None).await, StatusCode::OK, "B reads the policy")?;
+    let row = seen["sources"].as_array().and_then(|l| l.iter().find(|s| s["id"] == source.as_str()).cloned()).ok_or("the source on B")?;
+    ensure(row["last_status"] == "not_allowed", format!("B sees the check A ran: {row}"))
+}
+
+/// A marks a policy reviewed. B reads who and when.
+async fn library_policy_reviewed(w: World, root: &'static str) -> Outcome {
+    let (policy, _, _) = library_fixture(&w, root).await?;
+    status(w.wa("POST", &format!("{root}/admin/library/policies/{policy}/reviewed"), ADMIN, Some(json!({ "note": "Read through" }))).await, StatusCode::OK, "A marks it reviewed")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/library/policies/{policy}"), ADMIN, None).await, StatusCode::OK, "B reads the policy")?;
+    ensure(seen["policy"]["last_reviewed_by"] == ADMIN && seen["policy"]["due"] == false, format!("B sees the review A marked: {seen}"))
+}
+
+/// A reviewer on A confirms a published rule whose source changed. B no longer lists it as changed.
+async fn library_rule_confirm(w: World) -> Outcome {
+    let (owner, _, rule) = library_review_fixture(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/submit"), ADMIN, Some(json!({}))).await, StatusCode::OK, "A submits it")?;
+    status(w.rb("POST", &format!("/api/v1/library/rules/{rule}/decide"), &owner, Some(json!({ "decision": "publish", "note": "Reviewed" }))).await, StatusCode::OK, "B publishes it")?;
+    // As a fetch would, when the source's words changed. The passage is still there, so no new citation is needed.
+    let id = uuid::Uuid::parse_str(&rule).map_err(|e| e.to_string())?;
+    w.db.run(move |c| c.execute("UPDATE library_rules SET source_changed = TRUE, source_changed_at = NOW() WHERE id = $1", &[&id]).map(|_| ()).map_err(|e| e.to_string()))?;
+    let before = status(w.rb("GET", "/api/v1/me/library/reviews", &owner, None).await, StatusCode::OK, "B lists the reviewer's work")?;
+    ensure(before["source_changed"].as_array().is_some_and(|l| l.iter().any(|r| r["rule_id"] == rule.as_str())), format!("B lists the changed rule: {before}"))?;
+    status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/confirm"), &owner, Some(json!({ "note": "Still says the same" }))).await, StatusCode::OK, "A confirms it")?;
+    let after = status(w.rb("GET", "/api/v1/me/library/reviews", &owner, None).await, StatusCode::OK, "B lists it again")?;
+    ensure(after["source_changed"].as_array().is_some_and(|l| !l.iter().any(|r| r["rule_id"] == rule.as_str())), format!("B no longer lists it: {after}"))
 }

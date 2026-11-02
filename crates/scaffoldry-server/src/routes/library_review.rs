@@ -21,6 +21,7 @@ pub fn router() -> Router<SharedState> {
         .route("/library/rules/{id}/review", get(review_view))
         .route("/library/rules/{id}/decide", post(decide))
         .route("/library/rules/{id}/retire", post(retire))
+        .route("/library/rules/{id}/confirm", post(confirm))
         .route("/library/questions/{id}/answer", post(answer))
 }
 
@@ -68,4 +69,11 @@ async fn answer(State(state): State<SharedState>, headers: HeaderMap, Path(id): 
     let c = caller(&state, &headers)?;
     let body = parse(&body);
     blocking(move || review::answer_question(&state, &c, &id, &body)).await.map(Json)
+}
+
+/// Policy library phase 5: a reviewer confirms a rule whose source changed.
+async fn confirm(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    let body = parse(&body);
+    blocking(move || review::confirm_source_change(&state, &c, &id, &body)).await.map(Json)
 }

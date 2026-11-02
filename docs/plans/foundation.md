@@ -331,6 +331,7 @@ The keys are a closed list. Reject any other key with 400. Validate the value's 
 | `realtime.max_streams_per_user` | integer 1 to 1,000 | 20 | Event streams one person may hold open on one server. Added by `realtime.md` phase 1 |
 | `realtime.max_streams` | integer 1 to 1,000,000 | 5,000 | Event streams one server holds open. Added by `realtime.md` phase 1 |
 | `egress.allow` | array of `{ "host", "ports" }` and `{ "cidr", "ports" }` | empty: nothing may leave | Where the server may connect. Added by `integrations.md` phase 1 |
+| `platform.contact_email` | string, an email address | none | The institution's contact address. The policy library sends it in a `From` header when it fetches a source. Added by `policy-library.md` phase 5 |
 | `platform.timezone` | string | UTC | An IANA zone name. Added by `calc-graph.md` phase 4 |
 
 Do not add a key that turns a check off. There is no `auth.disabled`, no `dev_mode`, and no `allow_insecure`.

@@ -8,8 +8,9 @@
 //!   cannot steer it elsewhere (DNS rebinding). TLS still checks the certificate against the name.
 //! - Loopback, private, link-local (the cloud metadata address is one), unique-local, carrier-grade NAT, multicast and
 //!   unspecified addresses are refused unless a `cidr` entry names that network on purpose.
-//! - No redirect is followed. A redirect is a failure.
-//! - 5 seconds to connect, 30 in all, and at most 5 MB of response.
+//! - No redirect is followed, and a redirect is a failure, unless the caller allows a few (`FetchOptions::max_redirects`).
+//!   Then each hop is resolved and checked against the list again, and none may go from https to http.
+//! - 5 seconds to connect, 30 in all, and at most 5 MB of response, unless the caller asks for less.
 //!
 //! NIST SP 800-53 SC-7 and AC-4; the OWASP Server-Side Request Forgery Prevention Cheat Sheet.
 
@@ -247,11 +248,42 @@ pub fn resolve_and_check(host: &str, port: u16, allow: &Allow, resolver: &dyn Re
     })
 }
 
-/// An answer: the status and at most 5 MB of body.
+/// An answer: the status, the media type, and at most the limit of body.
 #[derive(Debug)]
 pub struct Response {
     pub status: u16,
+    /// The `Content-Type` header, as sent.
+    pub content_type: Option<String>,
     pub body: Vec<u8>,
+}
+
+/// How one request may go. The defaults are the module's limits and no redirects.
+#[derive(Debug, Clone)]
+pub struct FetchOptions {
+    pub total_timeout: Duration,
+    pub max_bytes: u64,
+    /// How many redirects to follow, each checked against the list as a new request is.
+    pub max_redirects: u8,
+    pub headers: Vec<(String, String)>,
+}
+
+impl Default for FetchOptions {
+    fn default() -> Self {
+        FetchOptions { total_timeout: TOTAL_TIMEOUT, max_bytes: MAX_RESPONSE_BYTES, max_redirects: 0, headers: Vec::new() }
+    }
+}
+
+/// Where a redirect points, from the page that sent it. `None` when it names nothing usable.
+fn redirect_target(from: &Uri, location: &str) -> Option<String> {
+    let location = location.trim();
+    if location.starts_with("https://") || location.starts_with("http://") {
+        return Some(location.to_string());
+    }
+    if location.starts_with('/') && !location.starts_with("//") {
+        let (scheme, authority) = (from.scheme_str()?, from.authority()?);
+        return Some(format!("{scheme}://{authority}{location}"));
+    }
+    None
 }
 
 /// The address the check passed, handed to the HTTP client in place of its own lookup.
@@ -289,14 +321,39 @@ impl Client {
     }
 
     pub fn get(&self, url: &str) -> Result<Response, EgressError> {
-        self.send("GET", url, &[], None)
+        self.fetch(url, &FetchOptions::default())
     }
 
     pub fn post(&self, url: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<Response, EgressError> {
-        self.send("POST", url, headers, Some(body))
+        self.send("POST", url, headers, Some(body), &FetchOptions::default())
     }
 
-    fn send(&self, method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>) -> Result<Response, EgressError> {
+    /// A `GET` with these limits. Redirects, when allowed, are followed one hop at a time, and each hop is a new request
+    /// through the same checks. A redirect from https to http is refused.
+    pub fn fetch(&self, url: &str, options: &FetchOptions) -> Result<Response, EgressError> {
+        let headers: Vec<(&str, &str)> = options.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let mut current = url.to_string();
+        for hop in 0..=options.max_redirects {
+            match self.send("GET", &current, &headers, None, options) {
+                Err(EgressError::Redirect(location)) if hop < options.max_redirects => {
+                    let from: Uri = current.parse().map_err(|_| EgressError::Failed("The address is not a valid URL".to_string()))?;
+                    let next = redirect_target(&from, &location).ok_or_else(|| EgressError::Failed("A redirect named no usable address".to_string()))?;
+                    if from.scheme_str() == Some("https") && next.starts_with("http://") {
+                        return Err(EgressError::NotAllowed("A redirect from https to http is not followed".to_string()));
+                    }
+                    current = next;
+                }
+                Err(EgressError::Redirect(_)) if options.max_redirects == 0 => {
+                    return Err(EgressError::Redirect("The answer was a redirect, which is not followed".to_string()))
+                }
+                Err(EgressError::Redirect(_)) => return Err(EgressError::Redirect(format!("More than {} redirects", options.max_redirects))),
+                other => return other,
+            }
+        }
+        Err(EgressError::Redirect(format!("More than {} redirects", options.max_redirects)))
+    }
+
+    fn send(&self, method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, options: &FetchOptions) -> Result<Response, EgressError> {
         let uri: Uri = url.parse().map_err(|_| EgressError::Failed("The address is not a valid URL".to_string()))?;
         let default_port = match uri.scheme_str() {
             Some("https") => 443,
@@ -306,7 +363,7 @@ impl Client {
         let host = uri.host().ok_or_else(|| EgressError::Failed("The address names no host".to_string()))?;
         let port = uri.port_u16().unwrap_or(default_port);
         let addr = resolve_and_check(host, port, &self.allow, self.resolver.as_ref())?;
-        let agent = agent(addr);
+        let agent = agent(addr, options.total_timeout);
         let mut answer = match (method, body) {
             ("POST", Some(body)) => {
                 let mut req = agent.post(url);
@@ -326,13 +383,17 @@ impl Client {
         .map_err(|e| EgressError::Failed(format!("The request to {host} failed: {}", short(&e))))?;
         let status = answer.status().as_u16();
         if (300..400).contains(&status) {
-            return Err(EgressError::Redirect(format!("{host} answered with a redirect ({status}), which is not followed")));
+            // The target travels in the error, for `fetch` to check as a new request. Nothing follows it here.
+            let location = answer.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+            return Err(EgressError::Redirect(location));
         }
-        let body = answer.body_mut().with_config().limit(MAX_RESPONSE_BYTES).read_to_vec().map_err(|e| match e {
-            ureq::Error::BodyExceedsLimit(_) => EgressError::TooLarge(format!("The answer from {host} is larger than 5 MB")),
+        let content_type = answer.headers().get("content-type").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let limit = options.max_bytes;
+        let body = answer.body_mut().with_config().limit(limit).read_to_vec().map_err(|e| match e {
+            ureq::Error::BodyExceedsLimit(_) => EgressError::TooLarge(format!("The answer from {host} is larger than {} KB", limit / 1024)),
             e => EgressError::Failed(format!("The answer from {host} could not be read: {}", short(&e))),
         })?;
-        Ok(Response { status, body })
+        Ok(Response { status, content_type, body })
     }
 }
 
@@ -349,7 +410,7 @@ fn short(e: &ureq::Error) -> String {
 
 /// An HTTP client for one request, pinned to `addr`. No proxy, no redirects, rustls on ring, and the system's
 /// certificate store.
-fn agent(addr: SocketAddr) -> ureq::Agent {
+fn agent(addr: SocketAddr, total: Duration) -> ureq::Agent {
     let roots: Vec<ureq::tls::Certificate<'static>> =
         rustls_native_certs::load_native_certs().certs.iter().map(|c| ureq::tls::Certificate::from_der(c.as_ref()).to_owned()).collect();
     let tls = ureq::tls::TlsConfig::builder()
@@ -362,7 +423,7 @@ fn agent(addr: SocketAddr) -> ureq::Agent {
         .max_redirects(0)
         .http_status_as_error(false)
         .timeout_connect(Some(CONNECT_TIMEOUT))
-        .timeout_global(Some(TOTAL_TIMEOUT))
+        .timeout_global(Some(total.min(TOTAL_TIMEOUT)))
         .tls_config(tls)
         .build();
     ureq::Agent::with_parts(config, ureq::unversioned::transport::DefaultConnector::new(), Pinned(addr))

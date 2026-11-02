@@ -131,6 +131,10 @@ fn decorate(state: &SharedState, rule: &mut Value, cache: &mut HashMap<Uuid, Vec
     rule["enforcement"] = json!(enforcement);
     rule["enforced_by"] = json!(by);
     rule["warning"] = json!(warning);
+    // A rule whose cited passage left its source stays published, with a note saying when.
+    if rule["source_changed"] == true {
+        rule["note"] = json!(format!("Its source changed on {}.", rule["source_changed_on"].as_str().unwrap_or("an earlier date")));
+    }
 }
 
 /// `enforcement` for the agent's `find_library_rules` tool.

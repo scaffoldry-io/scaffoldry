@@ -188,6 +188,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::holds::hold_preview,
     },
     JobKind {
+        name: "library_fetch",
+        title: "Checking policy sources",
+        description: "Fetches the web sources of the policy library that are due, at most once a day each, and marks the rules whose cited passages left them.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::library_fetch::library_fetch_job,
+    },
+    JobKind {
         name: "purge_orphan_blobs",
         title: "Removing files no record holds",
         description: "Deletes stored files that no record has referred to for a day, and records only how many in the ledger.",
