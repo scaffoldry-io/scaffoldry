@@ -6,7 +6,10 @@ import { LongTextEditor } from "./LongTextEditor";
 import { AttachmentField, type AttachedFile } from "./ui/Attachments";
 import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
 import { LinkedRecords } from "./LinkedRecords";
-import { apiClient } from "./api";
+import { apiClient, type DisclosureEntry } from "./api";
+import { RecordHistory } from "./RecordHistory";
+import { RecordComments } from "./RecordComments";
+import { Tabs, EmptyState, ErrorState, Skeleton } from "./ui";
 
 export interface RecordDetailDrawerProps {
   selectedRecordId: string | null;
@@ -21,6 +24,8 @@ export interface RecordDetailDrawerProps {
   onDeleteRecord: (recordId: string) => void;
   /** Opens another record's drawer, from a linked records section. */
   onOpenRecord?: (tableId: string, recordId: string) => void;
+  /** Who is looking. It decides which tabs show and what they offer. Without it, the drawer shows Details only. */
+  viewer?: { eppn: string; role: "owner" | "admin" | "editor" | "commenter" | "viewer"; compliance?: boolean };
 }
 
 export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
@@ -34,12 +39,14 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
   onDuplicateRecord,
   onDeleteRecord,
   onOpenRecord,
+  viewer,
 }) => {
   if (!selectedRecordId) return null;
   const activeDetailRecord = (activeTable.records || []).find(
     (r) => r.id === selectedRecordId
   );
   const [editingFields, setEditingFields] = React.useState<Record<string, boolean>>({});
+  const [tab, setTab] = React.useState("details");
   // Only a Platform Admin or compliance is told about a hold. Anyone else gets nothing back, and sees nothing.
   const [holdMarker, setHoldMarker] = React.useState<string | null>(null);
   React.useEffect(() => {
@@ -142,6 +149,22 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
           </div>
         </div>
 
+        {viewer && appSlug && (
+          <div className="px-5 pt-3">
+            <Tabs
+              ariaLabel="Record"
+              selectedId={tab}
+              onSelect={setTab}
+              tabs={[
+                { id: "details", label: "Details" },
+                { id: "history", label: "History" },
+                { id: "comments", label: "Comments" },
+                ...(viewer.role === "owner" || viewer.role === "admin" || viewer.compliance ? [{ id: "disclosures", label: "Disclosures" }] : []),
+              ]}
+            />
+          </div>
+        )}
+
         {/* DRAWER CONTENT */}
         <div className="p-6 overflow-y-auto space-y-6 flex-1">
           {holdMarker && (
@@ -149,6 +172,15 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
               {holdMarker}
             </p>
           )}
+          {viewer && appSlug && tab === "history" && (
+            <RecordHistory appSlug={appSlug} recordId={activeDetailRecord.id} fields={activeTable.fields} canRestore={["owner", "admin", "editor"].includes(viewer.role)} />
+          )}
+          {viewer && appSlug && tab === "comments" && (
+            <RecordComments appSlug={appSlug} recordId={activeDetailRecord.id} viewerEppn={viewer.eppn} role={viewer.role} />
+          )}
+          {viewer && appSlug && tab === "disclosures" && <RecordDisclosures appSlug={appSlug} recordId={activeDetailRecord.id} />}
+          {tab === "details" && (
+          <>
           {/* FIELDS SECTION */}
           <div className="space-y-4">
             <h4 className="text-xs font-bold font-mono text-slate-400 uppercase tracking-wider">
@@ -501,8 +533,53 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
               </div>
             )}
           </div>
+          </>
+          )}
         </div>
       </div>
     </div>
   );
 };
+
+const DISCLOSURE_VERBS: Record<string, string> = { export: "Exported", download: "Downloaded", agent: "Read by an agent", api: "Read through the API", share: "Shared" };
+
+function dayMonth(at: string): string {
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? at : `${d.getUTCDate()} ${d.toLocaleString("en-GB", { month: "long", timeZone: "UTC" })}`;
+}
+
+/** `Exported 340 records including Student ID, by Dr. Rivera, 3 March.` */
+export function disclosureSentence(d: DisclosureEntry): string {
+  const verb = DISCLOSURE_VERBS[d.kind] ?? "Released";
+  const fields = d.fields.length ? ` including ${d.fields.join(", ")}` : "";
+  return `${verb} ${d.record_count.toLocaleString("en-US")} ${d.record_count === 1 ? "record" : "records"}${fields}, by ${d.actor_name || d.actor}, ${dayMonth(d.at)}.`;
+}
+
+/** The disclosure log of one record, for owners, admins and compliance. */
+function RecordDisclosures({ appSlug, recordId }: { appSlug: string; recordId: string }) {
+  const [rows, setRows] = React.useState<DisclosureEntry[] | null>(null);
+  const [error, setError] = React.useState<unknown>(null);
+  React.useEffect(() => {
+    let live = true;
+    apiClient
+      .getRecordDisclosures(appSlug, recordId)
+      .then((r) => live && setRows(r.disclosures))
+      .catch((e) => live && setError(e));
+    return () => {
+      live = false;
+    };
+  }, [appSlug, recordId]);
+  if (error !== null) return <ErrorState error={error} />;
+  if (rows === null) return <Skeleton rows={2} />;
+  if (rows.length === 0) return <EmptyState title="No disclosures" description="No release of this record's sensitive fields is on the log." />;
+  return (
+    <ul aria-label="Disclosures" className="space-y-2">
+      {rows.map((d) => (
+        <li key={d.id} className="text-sm">
+          <p>{disclosureSentence(d)}</p>
+          {d.recipient && <p className="text-xs text-gray-600 dark:text-gray-400">To {d.recipient}</p>}
+        </li>
+      ))}
+    </ul>
+  );
+}

@@ -273,6 +273,33 @@ export interface UnitPositionRow {
 }
 
 /** One comment on a record. A removed comment has no body. */
+/** One write to one record. `changes` maps a field to its old and new values, or to `{ changed: true }` when masked. */
+export interface HistoryEntry {
+  id: number;
+  record_id: string;
+  table_id: string;
+  version: number;
+  action: string;
+  changes: Record<string, { old?: unknown; new?: unknown; changed?: boolean }>;
+  actor: string;
+  actor_name: string;
+  actor_kind: string;
+  token_label: string | null;
+  at: string;
+}
+
+/** One release of sensitive fields that named this record. */
+export interface DisclosureEntry {
+  id: string;
+  at: string;
+  actor: string;
+  actor_name?: string;
+  kind: string;
+  record_count: number;
+  fields: string[];
+  recipient?: string | null;
+}
+
 export interface CommentRow {
   id: string;
   record_id: string;
@@ -1446,6 +1473,21 @@ export const apiClient = {
       `/orgs/${encodeURIComponent(unit)}/positions/${encodeURIComponent(key)}/holders/${encodeURIComponent(eppn)}`,
       { method: "DELETE", body: JSON.stringify({ reason }) }
     );
+  },
+
+  /** One record's history, newest first. Masked fields arrive as `{ changed: true }`. */
+  getRecordHistory: async (appSlug: string, recordId: string): Promise<{ entries: HistoryEntry[]; next_cursor: string | null }> => {
+    return request(`/apps/${encodeURIComponent(appSlug)}/records/${encodeURIComponent(recordId)}/history`);
+  },
+
+  /** The app's activity feed, newest first. */
+  getAppHistory: async (appSlug: string): Promise<{ entries: HistoryEntry[]; next_cursor: string | null }> => {
+    return request(`/apps/${encodeURIComponent(appSlug)}/history`);
+  },
+
+  /** The disclosure log of one record. Owners, admins and compliance only; anyone else gets 404. */
+  getRecordDisclosures: async (appSlug: string, recordId: string): Promise<{ disclosures: DisclosureEntry[] }> => {
+    return request(`/apps/${encodeURIComponent(appSlug)}/records/${encodeURIComponent(recordId)}/disclosures`);
   },
 
   listComments: async (appSlug: string, recordId: string) => {

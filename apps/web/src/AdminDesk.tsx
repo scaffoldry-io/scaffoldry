@@ -2876,6 +2876,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 setStudioOpen(true);
               }}
               onRecordCreated={() => showToast("Registered new record with Cedar policy validation.")}
+              canSeeActivity
             />
           ) : !hasAccessToCurrentWs ? (
             /* CEDAR ABAC 403 FORBIDDEN WORKSPACE SHARING BOUNDARY */
