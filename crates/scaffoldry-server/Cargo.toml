@@ -11,7 +11,9 @@ scaffoldry-policy = { path = "../scaffoldry-policy" }
 scaffoldry-engine = { path = "../scaffoldry-engine" }
 
 axum = { version = "0.8", features = ["json"] }
-tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "signal", "time"] }
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "signal", "sync", "time"] }
+# The `Stream` trait an event stream is served through (real-time phase 1). Already built as part of axum.
+futures-core = "0.3"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -267,6 +267,8 @@ pub struct ServerState {
     /// The archived apps and workspaces (lifecycle phase 2): `("app", slug)` and `("workspace", id)`.
     pub archives: RwLock<std::collections::HashSet<crate::repository_archives::ArchiveKey>>,
     pub formula_rate_limits: RwLock<HashMap<String, (std::time::Instant, u32)>>,
+    /// The open event streams of this process and its one database listener (real-time phase 1).
+    pub realtime_streams: Arc<crate::realtime::Hub>,
     /// The domain tree (`access_domains`): `(key, parent key)`. It changes only by migration, so it is read once.
     pub domains: std::sync::OnceLock<Vec<(String, Option<String>)>>,
 }
@@ -727,6 +729,7 @@ impl ServerState {
             archives: RwLock::new(archives),
             settings: RwLock::new(settings_map),
             formula_rate_limits: RwLock::new(HashMap::new()),
+            realtime_streams: crate::realtime::Hub::new(),
             domains: std::sync::OnceLock::new(),
         })
     }
