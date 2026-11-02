@@ -59,6 +59,7 @@ pub mod view_as;
 pub mod views;
 pub mod lifecycle;
 pub mod retention;
+pub mod secrets;
 pub mod holds;
 pub mod link_options;
 pub mod grants;
@@ -192,6 +193,8 @@ pub enum ServiceError {
     Archived(String),
     /// Too many of something at once, such as event streams (real-time phase 1). Waiting or closing one helps.
     RateLimited(String),
+    /// The secrets store has no master key to work with (integrations phase 1).
+    MasterKeyMissing(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
     TokenScope(String),
     /// An outside app asked for something its ceiling does not cover.
@@ -256,7 +259,7 @@ impl ServiceError {
             Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) | Self::MasterKeyMissing(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -286,6 +289,7 @@ impl ServiceError {
             Self::AuthorityLoosens(_) => "authority_loosens",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::Archived(_) => "archived",
+            Self::MasterKeyMissing(_) => "master_key_missing",
             Self::RateLimited(_) => "rate_limited",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
@@ -325,6 +329,7 @@ impl ServiceError {
             | Self::PreviewReadOnly(msg)
             | Self::Archived(msg)
             | Self::RateLimited(msg)
+            | Self::MasterKeyMissing(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)
             | Self::LastOwner(msg)

@@ -262,6 +262,7 @@ async fn a_secret_in_use_cannot_be_deleted_and_the_refusal_names_what_uses_it() 
     assert_eq!(list["secrets"][0]["references"], 1);
     let (s, b, _) = rest(&w.app, "DELETE", "/api/v1/admin/secrets/sis_password", &w.admin, Some(json!({ "reason": "Retired" }))).await;
     assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert_eq!(b["code"], "constraint_violated");
     let message = b["error"].as_str().unwrap_or_default();
     assert!(message.contains("nightly_feeds") && message.contains(&user.to_string()), "{message}");
 

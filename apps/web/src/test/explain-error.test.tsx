@@ -207,8 +207,13 @@ describe("UX standards phase 2: errors that explain", () => {
         { message: "Files cannot be uploaded right now.", next: "Try again in a few minutes, or ask an admin to check the virus scanner." },
       ],
       [
+        "master_key_missing",
+        new ApiError(503, "No master key is configured", { code: "master_key_missing" }),
+        { message: "The secrets store has no master key.", next: "Ask the operator to mount the key file and set SCAFFOLDRY_MASTER_KEY_FILE." },
+      ],
+      [
         "any other code uses the server's sentence and the body's remedy",
-        new ApiError(422, "The vault is sealed", { code: "master_key_missing", remedy: "Try again later." }),
+        new ApiError(422, "The vault is sealed", { code: "a_code_no_brief_has_added_yet", remedy: "Try again later." }),
         { message: "The vault is sealed", next: "Try again later." },
       ],
     ];

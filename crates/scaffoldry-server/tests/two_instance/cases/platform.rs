@@ -11,6 +11,8 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/admin/holds".into(), case!(hold_place, "/api/v1"));
     m.insert("POST /api/v1/admin/holds/{id}/release".into(), case!(hold_release, "/api/v1"));
     exempt(m, "POST /api/v1/admin/holds/preview", "queues a count of what a hold would cover and holds nothing");
+    m.insert("PUT /api/v1/admin/secrets/{name}".into(), case!(secret_put, "/api/v1"));
+    m.insert("DELETE /api/v1/admin/secrets/{name}".into(), case!(secret_delete, "/api/v1"));
     m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
     exempt(m, "POST /api/v1/admin/ownership/transfer/preview", "reports what a transfer would do and stores nothing");
     // Workspaces are mounted at the root and under /api/v1: two paths, one handler, a case for each.
@@ -1183,4 +1185,23 @@ async fn hold_release(w: World, root: &'static str) -> Outcome {
     status(w.wa("POST", &format!("{root}/admin/holds/{id}/release"), &second, Some(json!({ "reason": "Settled" }))).await, StatusCode::OK, "another person releases it")?;
     let list = status(w.rb("GET", "/api/v1/admin/holds", ADMIN, None).await, StatusCode::OK, "B lists holds")?;
     ensure(list["holds"].as_array().is_some_and(|l| l.iter().any(|h| h["id"] == id.as_str() && h["active"] == false)), format!("B shows it released: {list}"))
+}
+
+/// A writes a secret. B lists it, which needs B to open the store with the same master key.
+async fn secret_put(w: World, root: &'static str) -> Outcome {
+    let name = format!("hook_{}", unique("s").to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), "_"));
+    let body = json!({ "value": "two-instance-value", "reason": "Set" });
+    status(w.wa("PUT", &format!("{root}/admin/secrets/{name}"), ADMIN, Some(body)).await, StatusCode::OK, "A writes the secret")?;
+    let list = status(w.rb("GET", "/api/v1/admin/secrets", ADMIN, None).await, StatusCode::OK, "B lists secrets")?;
+    ensure(list["secrets"].as_array().is_some_and(|l| l.iter().any(|s| s["name"] == name.as_str())), format!("B lists A's secret: {list}"))?;
+    ensure(!list.to_string().contains("two-instance-value"), "no value is listed")
+}
+
+/// A deletes a secret. B no longer lists it.
+async fn secret_delete(w: World, root: &'static str) -> Outcome {
+    let name = format!("gone_{}", unique("s").to_lowercase().replace(|c: char| !c.is_ascii_alphanumeric(), "_"));
+    status(w.wa("PUT", &format!("/api/v1/admin/secrets/{name}"), ADMIN, Some(json!({ "value": "v", "reason": "Set" }))).await, StatusCode::OK, "A writes the secret")?;
+    status(w.wa("DELETE", &format!("{root}/admin/secrets/{name}"), ADMIN, Some(json!({ "reason": "Retired" }))).await, StatusCode::OK, "A deletes it")?;
+    let list = status(w.rb("GET", "/api/v1/admin/secrets", ADMIN, None).await, StatusCode::OK, "B lists secrets")?;
+    ensure(list["secrets"].as_array().is_some_and(|l| !l.iter().any(|s| s["name"] == name.as_str())), format!("B no longer lists it: {list}"))
 }

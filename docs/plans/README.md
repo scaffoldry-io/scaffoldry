@@ -249,7 +249,7 @@ People are told, see each other work, and run real committee processes.
 | --- | --- | --- | --- |
 | 136 | [realtime.md](realtime.md) | 1 | Live change events over server-sent events, with no data in them | **COMPLETED** |
 | 137 | [realtime.md](realtime.md) | 2 | The grid updates in place and keeps what you are typing | **COMPLETED** |
-| 138 | [integrations.md](integrations.md) | 1 | An encrypted secrets store and an outbound allowlist |
+| 138 | [integrations.md](integrations.md) | 1 | An encrypted secrets store and an outbound allowlist | **COMPLETED** |
 | 139 | [policy-library.md](policy-library.md) | 5 | Web sources are fetched through the allowlist. A changed source sends its rules back for review | |
 | 140 | [policy-library.md](policy-library.md) | 6 | A console panel and one screen for the state of the library | |
 | 141 | [notifications.md](notifications.md) | 1 | An inbox and a bell |
