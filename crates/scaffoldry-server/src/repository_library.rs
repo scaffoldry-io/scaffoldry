@@ -455,6 +455,137 @@ impl PostgresRepository {
         })
     }
 
+    /// For every policy, its rule counts by status and how many questions are open, in one statement.
+    pub fn library_policy_tallies(&self) -> Result<std::collections::HashMap<Uuid, (Value, i64)>, RepositoryError> {
+        self.with_client(|c| {
+            let rows = c.query(
+                // Two grouped scans joined once, not a subquery per policy.
+                "WITH counts AS (SELECT policy_id, status, count(*) AS n FROM library_rules GROUP BY policy_id, status), \
+                      by_policy AS (SELECT policy_id, jsonb_object_agg(status, n) AS counts FROM counts GROUP BY policy_id), \
+                      open_q AS (SELECT policy_id, count(*) AS n FROM library_questions WHERE answer IS NULL GROUP BY policy_id) \
+                 SELECT p.id, COALESCE(b.counts, '{}'::jsonb), COALESCE(q.n, 0) FROM library_policies p \
+                 LEFT JOIN by_policy b ON b.policy_id = p.id LEFT JOIN open_q q ON q.policy_id = p.id",
+                &[],
+            )?;
+            Ok(rows.iter().map(|r| (r.get::<_, Uuid>(0), (r.get::<_, Value>(1), r.get::<_, i64>(2)))).collect())
+        })
+    }
+
+    /// Every rule of a policy, newest version of each key first.
+    pub fn library_rules_of(&self, policy: Uuid) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query(&format!("{} WHERE r.policy_id = $1 ORDER BY r.key, r.version DESC LIMIT 1000", rule_select()), &[&policy])?.iter().map(rule_of).collect())
+        })
+    }
+
+    /// Every snapshot of a policy's sources, newest first, without their text.
+    pub fn library_snapshots_of(&self, policy: Uuid) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query(
+                &format!("SELECT n.id, n.source_id, {}, n.media_type, n.text_origin, n.text_sha256 FROM library_snapshots n JOIN library_sources s ON s.id = n.source_id WHERE s.policy_id = $1 ORDER BY n.taken_at DESC, n.id DESC LIMIT 200", ts("n.taken_at")),
+                &[&policy],
+            )?
+            .iter()
+            .map(|r| json!({ "id": r.get::<_, Uuid>(0), "source_id": r.get::<_, Uuid>(1), "taken_at": r.get::<_, String>(2), "media_type": r.get::<_, String>(3), "text_origin": r.get::<_, String>(4), "text_sha256": r.get::<_, String>(5) }))
+            .collect())
+        })
+    }
+
+    /// The four lists of the health screen, each from one statement, each capped at `HEALTH_LIMIT` with its full count.
+    /// `scope` limits them to policies of those units; `None` is every policy. The rules that have bindings come back
+    /// with them, because whether a binding's target exists is known only to the server.
+    pub fn library_health(&self, scope: Option<Vec<Uuid>>) -> Result<Value, RepositoryError> {
+        self.with_client(move |c| {
+            let scope: Option<Vec<Uuid>> = scope;
+            let none = c.query(
+                "SELECT p.id, p.key, p.title, count(*) OVER () FROM library_policies p \
+                 WHERE p.status = 'Active' AND ($1::uuid[] IS NULL OR p.organization_id = ANY($1)) \
+                   AND NOT EXISTS (SELECT 1 FROM library_rules r WHERE r.policy_id = p.id AND r.status = 'Published') \
+                 ORDER BY p.key LIMIT 50",
+                &[&scope],
+            )?;
+            // The page of unbound rules streams in policy order from the indexes; its count is its own subquery, so
+            // the page does not wait for every row to be sorted.
+            let rules = c.query(
+                "(SELECT 'unbound', r.id, r.key, p.id, p.key, '[]'::jsonb, \
+                         (SELECT count(*) FROM library_rules r2 JOIN library_policies p2 ON p2.id = r2.policy_id \
+                           WHERE r2.status = 'Published' AND p2.status = 'Active' AND ($1::uuid[] IS NULL OR p2.organization_id = ANY($1)) \
+                             AND NOT EXISTS (SELECT 1 FROM library_bindings b WHERE b.rule_key_policy_id = r2.policy_id AND b.rule_key = r2.key)) \
+                    FROM library_policies p JOIN library_rules r ON r.policy_id = p.id AND r.status = 'Published' \
+                   WHERE p.status = 'Active' AND ($1::uuid[] IS NULL OR p.organization_id = ANY($1)) \
+                     AND NOT EXISTS (SELECT 1 FROM library_bindings b WHERE b.rule_key_policy_id = r.policy_id AND b.rule_key = r.key) \
+                   ORDER BY p.key, r.key LIMIT 50) \
+                 UNION ALL \
+                 (SELECT 'bound', r.id, r.key, p.id, p.key, \
+                         jsonb_agg(jsonb_build_object('id', b.id, 'rule_key', b.rule_key, 'target_kind', b.target_kind, 'target_ref', b.target_ref)), 0 \
+                    FROM library_bindings b JOIN library_rules r ON r.policy_id = b.rule_key_policy_id AND r.key = b.rule_key AND r.status = 'Published' \
+                    JOIN library_policies p ON p.id = r.policy_id AND p.status = 'Active' \
+                   WHERE ($1::uuid[] IS NULL OR p.organization_id = ANY($1)) \
+                   GROUP BY r.id, r.key, p.id, p.key)",
+                &[&scope],
+            )?;
+            let sources = c.query(
+                // The sources a marked rule cites are found once, from the few marked rules, not once per source.
+                "WITH changed AS ( \
+                   SELECT DISTINCT n.source_id FROM library_rules r JOIN library_citations ci ON ci.rule_id = r.id \
+                   JOIN library_snapshots n ON n.id = ci.snapshot_id WHERE r.source_changed AND r.status = 'Published') \
+                 SELECT s.id, s.title, p.id, p.key, CASE WHEN c.source_id IS NOT NULL THEN 'changed' ELSE s.last_status END, count(*) OVER () \
+                 FROM library_sources s JOIN library_policies p ON p.id = s.policy_id LEFT JOIN changed c ON c.source_id = s.id \
+                 WHERE p.status = 'Active' AND ($1::uuid[] IS NULL OR p.organization_id = ANY($1)) \
+                   AND (s.last_status IN ('unreachable', 'needs_text') OR c.source_id IS NOT NULL) \
+                 ORDER BY p.key, s.title, s.id LIMIT 50",
+                &[&scope],
+            )?;
+            let review = c.query(
+                "SELECT p.id, p.key, p.title, \
+                        (p.last_reviewed_at IS NULL OR p.last_reviewed_at + make_interval(days => p.review_every_days) < NOW()), \
+                        (SELECT (EXTRACT(EPOCH FROM NOW() - min(q.asked_at)) / 86400)::int FROM library_questions q WHERE q.policy_id = p.id AND q.answer IS NULL), \
+                        count(*) OVER () \
+                 FROM library_policies p \
+                 WHERE p.status = 'Active' AND ($1::uuid[] IS NULL OR p.organization_id = ANY($1)) \
+                   AND ((p.last_reviewed_at IS NULL OR p.last_reviewed_at + make_interval(days => p.review_every_days) < NOW()) \
+                        OR EXISTS (SELECT 1 FROM library_questions q WHERE q.policy_id = p.id AND q.answer IS NULL AND q.asked_at < NOW() - INTERVAL '30 days')) \
+                 ORDER BY p.key LIMIT 50",
+                &[&scope],
+            )?;
+            let count = |rows: &[postgres::Row], i: usize| rows.first().map(|r| r.get::<_, i64>(i)).unwrap_or(0);
+            Ok(json!({
+                "no_published_rule": { "count": count(&none, 3), "items": none.iter().map(|r| json!({ "policy_id": r.get::<_, Uuid>(0), "policy_key": r.get::<_, String>(1), "title": r.get::<_, String>(2) })).collect::<Vec<_>>() },
+                "rules": rules.iter().map(|r| json!({ "kind": r.get::<_, String>(0), "rule_id": r.get::<_, Uuid>(1), "rule_key": r.get::<_, String>(2), "policy_id": r.get::<_, Uuid>(3), "policy_key": r.get::<_, String>(4), "bindings": r.get::<_, Value>(5), "count": r.get::<_, i64>(6) })).collect::<Vec<_>>(),
+                "sources": { "count": count(&sources, 5), "items": sources.iter().map(|r| json!({ "source_id": r.get::<_, Uuid>(0), "title": r.get::<_, String>(1), "policy_id": r.get::<_, Uuid>(2), "policy_key": r.get::<_, String>(3), "problem": r.get::<_, Option<String>>(4) })).collect::<Vec<_>>() },
+                "review": { "count": count(&review, 5), "items": review.iter().map(|r| json!({ "policy_id": r.get::<_, Uuid>(0), "policy_key": r.get::<_, String>(1), "title": r.get::<_, String>(2), "past_review": r.get::<_, bool>(3), "oldest_open_question_days": r.get::<_, Option<i32>>(4) })).collect::<Vec<_>>() },
+            }))
+        })
+    }
+
+    /// The previous and the latest snapshot of a source, with their text, and the passages that published rules cite in
+    /// the previous one.
+    pub fn library_compare(&self, source: Uuid) -> Result<Value, RepositoryError> {
+        self.with_client(move |c| {
+            let snaps = c.query(
+                &format!("SELECT id, {}, text_origin, text FROM library_snapshots WHERE source_id = $1 ORDER BY taken_at DESC, id DESC LIMIT 2", ts("taken_at")),
+                &[&source],
+            )?;
+            let side = |r: &postgres::Row| json!({ "snapshot_id": r.get::<_, Uuid>(0), "taken_at": r.get::<_, String>(1), "text_origin": r.get::<_, String>(2), "untrusted_text": r.get::<_, String>(3) });
+            let new = snaps.first().map(side);
+            let old = snaps.get(1).map(side);
+            let cited: Vec<String> = match snaps.get(1) {
+                Some(r) => {
+                    let old_id: Uuid = r.get(0);
+                    c.query(
+                        "SELECT DISTINCT ci.passage FROM library_citations ci JOIN library_rules r ON r.id = ci.rule_id WHERE ci.snapshot_id = $1 AND r.status = 'Published' ORDER BY 1",
+                        &[&old_id],
+                    )?
+                    .iter()
+                    .map(|r| r.get(0))
+                    .collect()
+                }
+                None => Vec::new(),
+            };
+            Ok(json!({ "old": old, "new": new, "cited": cited }))
+        })
+    }
+
     /// Every rule waiting for review, oldest first.
     pub fn library_rules_in_review(&self) -> Result<Vec<Value>, RepositoryError> {
         self.with_client(|c| Ok(c.query(&format!("{} WHERE r.status = 'InReview' ORDER BY r.submitted_at, r.id LIMIT 500", rule_select()), &[])?.iter().map(rule_of).collect()))
@@ -668,11 +799,17 @@ fn question_of(r: &postgres::Row) -> Value {
 }
 
 fn rule_select() -> String {
-    format!("SELECT r.id, r.policy_id, r.key, r.version, r.statement, r.applies_to, r.status, r.submitted_by, r.submitted_via, {}, r.decided_by, {}, r.decision_note, p.title FROM library_rules r JOIN library_policies p ON p.id = r.policy_id", ts("r.submitted_at"), ts("r.decided_at"))
+    format!(
+        "SELECT r.id, r.policy_id, r.key, r.version, r.statement, r.applies_to, r.status, r.submitted_by, r.submitted_via, {}, r.decided_by, {}, r.decision_note, p.title, r.source_changed, {} FROM library_rules r JOIN library_policies p ON p.id = r.policy_id",
+        ts("r.submitted_at"),
+        ts("r.decided_at"),
+        ts("r.source_changed_at")
+    )
 }
 
 fn rule_of(r: &postgres::Row) -> Value {
     json!({ "id": r.get::<_, Uuid>(0), "policy_id": r.get::<_, Uuid>(1), "key": r.get::<_, String>(2), "version": r.get::<_, i32>(3), "statement": r.get::<_, String>(4), "applies_to": r.get::<_, String>(5),
             "status": r.get::<_, String>(6), "submitted_by": r.get::<_, String>(7), "submitted_via": r.get::<_, String>(8), "submitted_at": r.get::<_, String>(9),
-            "decided_by": r.get::<_, Option<String>>(10), "decided_at": r.get::<_, Option<String>>(11), "decision_note": r.get::<_, String>(12), "policy_title": r.get::<_, String>(13) })
+            "decided_by": r.get::<_, Option<String>>(10), "decided_at": r.get::<_, Option<String>>(11), "decision_note": r.get::<_, String>(12), "policy_title": r.get::<_, String>(13),
+            "source_changed": r.get::<_, bool>(14), "source_changed_at": r.get::<_, Option<String>>(15) })
 }

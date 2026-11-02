@@ -137,6 +137,11 @@ fn decorate(state: &SharedState, rule: &mut Value, cache: &mut HashMap<Uuid, Vec
     }
 }
 
+/// `Enforced` or `Guidance` for one rule key and its bindings, as they resolve now.
+pub(crate) fn enforcement_state(state: &SharedState, rule_key: &str, bindings: &[Value]) -> &'static str {
+    enforcement_of(state, rule_key, bindings).0
+}
+
 /// `enforcement` for the agent's `find_library_rules` tool.
 pub fn enforcement_for(state: &SharedState, policy_id: Uuid, rule_key: &str) -> &'static str {
     let bindings = state.repository.library_bindings_of(policy_id).unwrap_or_default();
