@@ -1641,6 +1641,12 @@ export const apiClient = {
     return Array.isArray(res?.notifications) ? res.notifications : [];
   },
 
+  /** Where a mailed link `/n/{id}` leads. Following it marks the notice read. */
+  openNotification: async (id: string): Promise<string> => {
+    const res = await request<{ path: string }>(`/me/notifications/${encodeURIComponent(id)}/open`);
+    return typeof res?.path === "string" && res.path.startsWith("/") && !res.path.startsWith("//") ? res.path : "/";
+  },
+
   markNotificationsRead: async (body: { ids: string[] } | { all: true }): Promise<number> => {
     const res = await request<{ marked: number }>("/me/notifications/read", { method: "POST", body: JSON.stringify(body) });
     return res?.marked ?? 0;

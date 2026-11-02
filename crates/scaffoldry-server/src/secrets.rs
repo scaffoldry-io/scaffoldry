@@ -132,21 +132,31 @@ pub fn open(key: &MasterKey, id: Uuid, ciphertext: &[u8], nonce: &[u8]) -> Resul
         .map_err(|_| SecretError::Decrypt("A stored secret does not open with this master key".to_string()))
 }
 
+/// The key file named by `SCAFFOLDRY_MASTER_KEY_FILE`, for a job, which has no server state.
+pub fn key_file_from_env() -> Option<std::path::PathBuf> {
+    std::env::var_os("SCAFFOLDRY_MASTER_KEY_FILE").filter(|v| !v.is_empty()).map(std::path::PathBuf::from)
+}
+
+fn key_at(path: Option<&Path>) -> Result<MasterKey, SecretError> {
+    let path = path.ok_or_else(|| SecretError::MasterKeyMissing("No master key is configured. Set SCAFFOLDRY_MASTER_KEY_FILE to a key file".to_string()))?;
+    MasterKey::from_file(path)
+}
+
 /// The master key this server is configured with.
 pub fn master_key(state: &ServerState) -> Result<MasterKey, SecretError> {
-    let path = state
-        .master_key_file
-        .as_deref()
-        .ok_or_else(|| SecretError::MasterKeyMissing("No master key is configured. Set SCAFFOLDRY_MASTER_KEY_FILE to a key file".to_string()))?;
-    MasterKey::from_file(path)
+    key_at(state.master_key_file.as_deref())
 }
 
 /// A secret, by name, for the server's use.
 pub fn get(state: &ServerState, name: &str) -> Result<Secret, SecretError> {
-    let key = master_key(state)?;
+    get_in(&state.repository, state.master_key_file.as_deref(), name)
+}
+
+/// A secret, by name, with the key in `key_file`: for a job, which has a repository and no server state.
+pub fn get_in(repo: &PostgresRepository, key_file: Option<&Path>, name: &str) -> Result<Secret, SecretError> {
+    let key = key_at(key_file)?;
     let owned = name.to_string();
-    let row = state
-        .repository
+    let row = repo
         .with_client(move |c| Ok(c.query_opt("SELECT id, ciphertext, nonce FROM secrets WHERE name = $1", &[&owned])?))?
         .ok_or_else(|| SecretError::NotFound(format!("No secret is named {name}")))?;
     open(&key, row.get(0), &row.get::<_, Vec<u8>>(1), &row.get::<_, Vec<u8>>(2))
@@ -184,6 +194,10 @@ pub fn references(repo: &PostgresRepository, name: &str) -> Result<Vec<String>, 
     let name = name.to_string();
     repo.with_client(move |c| {
         let mut found = Vec::new();
+        // A setting names a secret in its `secret` field, as `mail.smtp` does.
+        for r in c.query("SELECT key FROM platform_settings WHERE value->>'secret' = $1 ORDER BY 1", &[&name])? {
+            found.push(format!("the setting {}", r.get::<_, String>(0)));
+        }
         for (table, has_id) in referring_tables(c)? {
             let id = if has_id { "id::text" } else { "NULL::text" };
             let sql = format!("SELECT {id} FROM {} WHERE secret = $1 ORDER BY 1 LIMIT 50", quoted(&table));
@@ -203,6 +217,9 @@ pub fn references(repo: &PostgresRepository, name: &str) -> Result<Vec<String>, 
 pub fn list(repo: &PostgresRepository) -> Result<Vec<Listed>, RepositoryError> {
     repo.with_client(|c| {
         let mut counts = std::collections::HashMap::<String, usize>::new();
+        for r in c.query("SELECT value->>'secret' FROM platform_settings WHERE value->>'secret' IS NOT NULL", &[])? {
+            *counts.entry(r.get(0)).or_default() += 1;
+        }
         for (table, _) in referring_tables(c)? {
             let sql = format!("SELECT secret, count(*) FROM {} WHERE secret IS NOT NULL GROUP BY secret", quoted(&table));
             for r in c.query(&sql, &[])? {

@@ -14,6 +14,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/me/notifications/read".into(), case!(notifications_read, "/api/v1"));
     m.insert("PUT /api/v1/admin/secrets/{name}".into(), case!(secret_put, "/api/v1"));
     m.insert("DELETE /api/v1/admin/secrets/{name}".into(), case!(secret_delete, "/api/v1"));
+    m.insert("POST /api/v1/admin/mail/test".into(), case!(mail_test, "/api/v1"));
     m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
     exempt(m, "POST /api/v1/admin/ownership/transfer/preview", "reports what a transfer would do and stores nothing");
     // Workspaces are mounted at the root and under /api/v1: two paths, one handler, a case for each.
@@ -1208,6 +1209,21 @@ async fn secret_delete(w: World, root: &'static str) -> Outcome {
     status(w.wa("DELETE", &format!("{root}/admin/secrets/{name}"), ADMIN, Some(json!({ "reason": "Retired" }))).await, StatusCode::OK, "A deletes it")?;
     let list = status(w.rb("GET", "/api/v1/admin/secrets", ADMIN, None).await, StatusCode::OK, "B lists secrets")?;
     ensure(list["secrets"].as_array().is_some_and(|l| !l.iter().any(|s| s["name"] == name.as_str())), format!("B no longer lists it: {list}"))
+}
+
+/// A turns mail on and queues a test mail to the caller. B sees it in the queue. Mail is off again afterwards.
+async fn mail_test(w: World, root: &'static str) -> Outcome {
+    let smtp = json!({ "host": "mail.invalid", "port": 465, "security": "tls", "from": "desk@state.edu" });
+    for (key, value) in [("mail.smtp", smtp), ("platform.base_url", json!("https://desk.state.edu")), ("mail.enabled", json!(true))] {
+        status(w.wa("PUT", &format!("/api/v1/settings/{key}"), ADMIN, Some(value)).await, StatusCode::OK, "A sets mail up")?;
+    }
+    let before = status(w.rb("GET", "/api/v1/admin/mail", ADMIN, None).await, StatusCode::OK, "B reads the mail console")?;
+    let sent = w.wa("POST", &format!("{root}/admin/mail/test"), ADMIN, Some(json!({ "reason": "Checking the relay" }))).await;
+    let after = w.rb("GET", "/api/v1/admin/mail", ADMIN, None).await;
+    status(w.wa("PUT", "/api/v1/settings/mail.enabled", ADMIN, Some(json!(false))).await, StatusCode::OK, "A turns mail off")?;
+    status(sent, StatusCode::OK, "A queues a test mail")?;
+    let after = status(after, StatusCode::OK, "B reads the mail console")?;
+    ensure(after["enabled"] == true && after["queued"].as_i64() > before["queued"].as_i64(), format!("B sees the mail A queued: {before} then {after}"))
 }
 
 /// A checks a web source now. The allowlist is empty, so nothing is connected to. B reads the outcome.

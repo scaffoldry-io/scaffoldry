@@ -253,7 +253,7 @@ People are told, see each other work, and run real committee processes.
 | 139 | [policy-library.md](policy-library.md) | 5 | Web sources are fetched through the allowlist. A changed source sends its rules back for review | **COMPLETED** |
 | 140 | [policy-library.md](policy-library.md) | 6 | A console panel and one screen for the state of the library | **COMPLETED** |
 | 141 | [notifications.md](notifications.md) | 1 | An inbox and a bell | **COMPLETED** |
-| 142 | [notifications.md](notifications.md) | 2 | Email through an allowlisted SMTP host |
+| 142 | [notifications.md](notifications.md) | 2 | Email through an allowlisted SMTP host | **COMPLETED** |
 | 143 | [realtime.md](realtime.md) | 3 | Presence and a channel for the person's notices and jobs |
 | 144 | [approvers.md](approvers.md) | 4 | Delegation by date |
 | 145 | [approvers.md](approvers.md) | 5 | The workflow builder picks who decides and previews it |
@@ -408,6 +408,7 @@ Settled. These were open and are now decided. Each is written into the brief nam
 | `calamine`, `rust_xlsxwriter` and `flate2` are approved, each added only in the phase that names it and only if the license audit passes. `aes-gcm` waits for the master key decision | `import-export.md`, approved 2026-10-13 |
 | CI runs the Rust tests with `cargo-nextest`, in parallel, with a time limit per test | `.github/workflows/ci.yml`, approved 2026-10-13 |
 | The million-row test met every limit. The JSON record with a pivot index stays | `row-scale.md` phase 6, PR 114 |
+| `lettre` is approved for `notifications.md` phase 2, without default features, on `rustls` with `ring` and the system certificate store | `notifications.md` phase 2, approved 2026-11-02 |
 | `aes-gcm`, and `ureq` with `rustls`, are approved for `integrations.md` phase 1. `ureq` runs without default features, on `ring`, with the system certificate store read by `rustls-native-certs`, so `webpki-roots` (not on the license list) is not in the lockfile | `integrations.md` phase 1, approved 2026-11-02 |
 
 Open decisions. These are Johann's. Do not settle them in a session.
@@ -417,7 +418,7 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Browser redirect to the identity provider, and which provider the first pilot uses | The desk signs in with a pasted token |
 | What the Cloud Run demo becomes once one image needs PostgreSQL | `deploy.yml` and `Dockerfile.web` are not touched |
 | Git export of app definitions and of the ledger head hash | Not built |
-| The crates still waiting in the master brief: `lettre`, and a PostgreSQL TLS connector | Each phase that needs one stops until Johann says yes and the license audit passes |
+| The crate still waiting in the master brief: a PostgreSQL TLS connector | A phase that needs it stops until Johann says yes and the license audit passes |
 | Adding `axe-core` (MPL-2.0) as a dev-only test dependency | Not added. Accessibility is tested with role, name, and keyboard tests |
 | Running ClamAV as a separate daemon for upload scanning | Files show as not scanned. An operator can require a scanner |
 | Who supplies the NIST catalog files, and the 800-171 revision CMMC requires | `oscal-catalog.md` stops until `governance/catalog/source/` and `PROVENANCE.json` exist |

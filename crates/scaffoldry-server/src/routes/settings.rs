@@ -45,6 +45,9 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "realtime.max_streams",
     "egress.allow",
     "platform.contact_email",
+    "mail.enabled",
+    "mail.smtp",
+    "platform.base_url",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -69,7 +72,9 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "tokens.max_days" | "process.stale_days" => {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
-        "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" => value.is_boolean(),
+        "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" | "mail.enabled" => value.is_boolean(),
+        "mail.smtp" => crate::mail::Smtp::parse(value).is_ok(),
+        "platform.base_url" => crate::mail::valid_base_url(value),
         // No scanner is null. Otherwise `{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }`.
         "files.scanner" => value.is_null() || crate::scan::Scanner::from_setting(Some(value)).is_some(),
         "files.max_mb" => value.as_i64().is_some_and(|n| (1..=crate::files::MAX_MAX_MB as i64).contains(&n)),

@@ -16,6 +16,30 @@ pub fn router() -> Router<SharedState> {
         .route("/me/notifications", get(list))
         .route("/me/notifications/count", get(count))
         .route("/me/notifications/read", post(read))
+        .route("/me/notifications/{id}/open", get(open))
+}
+
+/// Where a mailed link leads (notifications phase 2). The desk serves `/n/{id}`, signs the person in when they have
+/// no session, and then asks here. Only the notice's recipient gets an answer, and following it marks it read.
+async fn open(State(state): State<SharedState>, headers: HeaderMap, axum::extract::Path(id): axum::extract::Path<String>) -> Result<Json<Value>, ServiceError> {
+    let who = me(&state, &headers)?;
+    let id = uuid::Uuid::parse_str(&id).map_err(|_| ServiceError::NotFound("No such notice".to_string()))?;
+    let link = blocking(move || {
+        state
+            .repository
+            .with_client(move |c| {
+                Ok(c.query_opt(
+                    "UPDATE notifications SET read_at = COALESCE(read_at, NOW()) WHERE id = $1 AND lower(recipient) = lower($2) RETURNING link",
+                    &[&id, &who],
+                )?
+                .map(|r| r.get::<_, Option<Value>>(0)))
+            })
+            .map_err(storage)
+    })
+    .await?
+    .ok_or_else(|| ServiceError::NotFound("No such notice".to_string()))?;
+    let path = link.as_ref().and_then(|l| l.get("path")).and_then(Value::as_str).filter(|p| p.starts_with('/') && !p.starts_with("//")).unwrap_or("/");
+    Ok(Json(json!({ "path": path })))
 }
 
 fn me(state: &SharedState, headers: &HeaderMap) -> Result<String, ServiceError> {

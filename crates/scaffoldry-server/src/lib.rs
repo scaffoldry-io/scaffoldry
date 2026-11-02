@@ -14,6 +14,7 @@ pub mod holds;
 pub mod purge;
 pub mod library_fetch;
 pub mod notifications;
+pub mod mail;
 pub mod net;
 pub mod secrets;
 pub mod realtime;

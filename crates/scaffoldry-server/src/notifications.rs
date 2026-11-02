@@ -329,10 +329,8 @@ pub fn notify(state: &SharedState, to: &Recipients, actor: Option<&str>, notice:
     if resolved.is_empty() {
         return Ok(0);
     }
-    let people: Vec<Person> = state
-        .repository
-        .users_by_names(&resolved)
-        .unwrap_or_default()
+    let users = state.repository.users_by_names(&resolved).unwrap_or_default();
+    let people: Vec<Person> = users
         .iter()
         .map(|u| Person { eppn: u.user_name.clone(), display_name: crate::service::people::display_name(u), active: u.active, on_hold: u.admin_hold })
         .collect();
@@ -350,12 +348,25 @@ pub fn notify(state: &SharedState, to: &Recipients, actor: Option<&str>, notice:
     let (title, body, link) = render(state, notice);
     let (kind, app) = (notice.kind().to_string(), notice.app().map(str::to_string));
     let ids: Vec<uuid::Uuid> = told.iter().map(|_| uuid::Uuid::new_v4()).collect();
+    // Mail goes only when it is on and complete. Then each notice's mail is queued in the same transaction.
+    let base_url = crate::mail::mailing(&state.settings.read().unwrap_or_else(|p| p.into_inner())).ok();
+    let directory: Vec<(String, Option<String>)> =
+        told.iter().map(|e| (e.clone(), users.iter().find(|u| u.user_name.eq_ignore_ascii_case(e)).and_then(crate::service::people::primary_email))).collect();
     state.repository.with_client(move |c| {
-        let n = c.execute(
+        let mut tx = c.transaction()?;
+        let n = tx.execute(
             "INSERT INTO notifications (id, recipient, kind, app_slug, title, body, link) SELECT * FROM unnest($1::uuid[], $2::varchar[]) AS t(id, recipient) \
              CROSS JOIN (SELECT $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::jsonb) AS v",
             &[&ids, &told, &kind, &app, &title, &body, &link],
         )?;
+        if let Some(base) = base_url {
+            for (id, (eppn, email)) in ids.iter().zip(&directory) {
+                if let Some(to) = crate::mail::address_of(&mut tx, eppn, email.as_deref())? {
+                    crate::mail::queue(&mut tx, Some(*id), &to, &title, &crate::mail::compose(&title, &body, &base, *id))?;
+                }
+            }
+        }
+        tx.commit()?;
         Ok(n as usize)
     })
 }
