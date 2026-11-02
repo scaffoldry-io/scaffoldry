@@ -6,6 +6,7 @@ import { LongTextEditor } from "./LongTextEditor";
 import { AttachmentField, type AttachedFile } from "./ui/Attachments";
 import { computeFieldValue, getFieldTypeIcon } from "./computedFields";
 import { LinkedRecords } from "./LinkedRecords";
+import { apiClient } from "./api";
 
 export interface RecordDetailDrawerProps {
   selectedRecordId: string | null;
@@ -39,6 +40,20 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
     (r) => r.id === selectedRecordId
   );
   const [editingFields, setEditingFields] = React.useState<Record<string, boolean>>({});
+  // Only a Platform Admin or compliance is told about a hold. Anyone else gets nothing back, and sees nothing.
+  const [holdMarker, setHoldMarker] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    setHoldMarker(null);
+    if (appSlug && selectedRecordId) {
+      void apiClient.getRecordHold(appSlug, selectedRecordId).then((h) => {
+        if (live && h?.held && h.marker) setHoldMarker(h.marker);
+      });
+    }
+    return () => {
+      live = false;
+    };
+  }, [appSlug, selectedRecordId]);
   if (!activeDetailRecord) return null;
 
   const relatedTables = tables.filter((t) => t.id !== activeTable.id);
@@ -129,6 +144,11 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
 
         {/* DRAWER CONTENT */}
         <div className="p-6 overflow-y-auto space-y-6 flex-1">
+          {holdMarker && (
+            <p role="status" className="text-xs font-semibold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded px-2 py-1">
+              {holdMarker}
+            </p>
+          )}
           {/* FIELDS SECTION */}
           <div className="space-y-4">
             <h4 className="text-xs font-bold font-mono text-slate-400 uppercase tracking-wider">
