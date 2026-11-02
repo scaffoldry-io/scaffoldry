@@ -408,6 +408,7 @@ Settled. These were open and are now decided. Each is written into the brief nam
 | `calamine`, `rust_xlsxwriter` and `flate2` are approved, each added only in the phase that names it and only if the license audit passes. `aes-gcm` waits for the master key decision | `import-export.md`, approved 2026-10-13 |
 | CI runs the Rust tests with `cargo-nextest`, in parallel, with a time limit per test | `.github/workflows/ci.yml`, approved 2026-10-13 |
 | The million-row test met every limit. The JSON record with a pivot index stays | `row-scale.md` phase 6, PR 114 |
+| `aes-gcm`, and `ureq` with `rustls`, are approved for `integrations.md` phase 1. `ureq` runs without default features, on `ring`, with the system certificate store read by `rustls-native-certs`, so `webpki-roots` (not on the license list) is not in the lockfile | `integrations.md` phase 1, approved 2026-11-02 |
 
 Open decisions. These are Johann's. Do not settle them in a session.
 
@@ -416,7 +417,7 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Browser redirect to the identity provider, and which provider the first pilot uses | The desk signs in with a pasted token |
 | What the Cloud Run demo becomes once one image needs PostgreSQL | `deploy.yml` and `Dockerfile.web` are not touched |
 | Git export of app definitions and of the ledger head hash | Not built |
-| The crates still waiting in the master brief: `ureq` with `rustls`, `aes-gcm`, `lettre`, and a PostgreSQL TLS connector | Each phase that needs one stops until Johann says yes and the license audit passes |
+| The crates still waiting in the master brief: `lettre`, and a PostgreSQL TLS connector | Each phase that needs one stops until Johann says yes and the license audit passes |
 | Adding `axe-core` (MPL-2.0) as a dev-only test dependency | Not added. Accessibility is tested with role, name, and keyboard tests |
 | Running ClamAV as a separate daemon for upload scanning | Files show as not scanned. An operator can require a scanner |
 | Who supplies the NIST catalog files, and the 800-171 revision CMMC requires | `oscal-catalog.md` stops until `governance/catalog/source/` and `PROVENANCE.json` exist |
