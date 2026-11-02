@@ -247,7 +247,7 @@ People are told, see each other work, and run real committee processes.
 
 | Order | Brief | Phase | What is true after it |
 | --- | --- | --- | --- |
-| 136 | [realtime.md](realtime.md) | 1 | Live change events over server-sent events, with no data in them |
+| 136 | [realtime.md](realtime.md) | 1 | Live change events over server-sent events, with no data in them | **COMPLETED** |
 | 137 | [realtime.md](realtime.md) | 2 | The grid updates in place and keeps what you are typing |
 | 138 | [integrations.md](integrations.md) | 1 | An encrypted secrets store and an outbound allowlist |
 | 139 | [policy-library.md](policy-library.md) | 5 | Web sources are fetched through the allowlist. A changed source sends its rules back for review | |

@@ -569,6 +569,16 @@ pub(crate) fn write_history(
             &ctx.acted_by,
         ],
     )?;
+    // Real-time phase 1: every open stream of the app hears of the change. NOTIFY is delivered only when this
+    // transaction commits, so a rolled-back write sends nothing. Five keys, ids and a version, never a value.
+    // A comment changes no value and no version, so it is not a change to the record.
+    let kind = match at.action {
+        "comment" => return Ok(()),
+        "create" | "delete" | "restore" => at.action,
+        _ => "update",
+    };
+    let notice = serde_json::json!({ "app": at.app_slug, "table": at.table_id, "record": at.record_id, "version": at.version, "kind": kind }).to_string();
+    tx.execute("SELECT pg_notify('scaffoldry_changes', $1)", &[&notice])?;
     Ok(())
 }
 
@@ -1248,6 +1258,11 @@ impl PostgresRepository {
             lost,
         };
         Ok(repo)
+    }
+
+    /// The database this repository talks to. The real-time listener opens its own connection to it.
+    pub fn database_url(&self) -> String {
+        self.db_url.as_str().to_string()
     }
 
     /// The number of calls to `with_client` so far.

@@ -29,7 +29,13 @@ const FIELD_COLLECTION: &[(&str, &str)] = &[
 /// N times the limit, which still bounds the load on each. It is not a copy of anything in PostgreSQL, so no instance
 /// can be wrong about it. Moving it to the database would add a table and a statement to each preview. The list does not
 /// grow without a person deciding it should.
-const PER_PROCESS: &[&str] = &["formula_rate_limits"];
+///
+/// `realtime_streams` (real-time phase 1) is the event streams open on this process and its one database listener.
+/// A stream is a connection to this process, so no other instance could serve it. Each instance hears every write
+/// through PostgreSQL `LISTEN`, so no instance misses a change. Its per-person and total stream limits count streams on
+/// this process, so with N instances a person may hold N times the limit, as with `formula_rate_limits`. It copies
+/// nothing stored in PostgreSQL.
+const PER_PROCESS: &[&str] = &["formula_rate_limits", "realtime_streams"];
 
 /// The `static` locks that may remain. None does after phase 2.
 const ALLOWED_STATICS: &[&str] = &[];
@@ -50,6 +56,45 @@ fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+/// The structs under `src` with a `Mutex` or `RwLock` field, other than `ServerState` itself.
+fn types_holding_a_lock() -> Vec<String> {
+    let mut files = Vec::new();
+    rust_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    let mut out = Vec::new();
+    for f in files {
+        let text = std::fs::read_to_string(&f).unwrap();
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find("pub struct ") {
+            let after = &rest[i + "pub struct ".len()..];
+            let name: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            let end = after.find("\n}\n").unwrap_or(after.len());
+            let body = &after[..end];
+            if name != "ServerState" && body.contains('{') && (body.contains("Mutex<") || body.contains("RwLock<")) {
+                out.push(name);
+            }
+            rest = &after[end.min(after.len())..];
+        }
+    }
+    out
+}
+
+/// Whether a line names a type as a whole word.
+fn names_type(line: &str, ty: &str) -> bool {
+    line.match_indices(ty).any(|(i, _)| {
+        let before = line[..i].chars().last();
+        let after = line[i + ty.len()..].chars().next();
+        let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        !word(before) && !word(after)
+    })
+}
+
+#[test]
+fn a_type_that_hides_its_lock_is_seen() {
+    assert!(types_holding_a_lock().iter().any(|t| t == "Hub"), "realtime::Hub holds locks");
+    assert!(names_type("pub realtime_streams: Arc<crate::realtime::Hub>,", "Hub"));
+    assert!(!names_type("pub hubs: Vec<HubName>,", "Hub"));
+}
+
 #[test]
 fn server_state_holds_no_lock_that_is_not_on_the_list() {
     let text = source("src/state.rs");
@@ -59,10 +104,13 @@ fn server_state_holds_no_lock_that_is_not_on_the_list() {
             .find("\n}\n")
             .map(|i| start + i)
             .expect("the end of the struct")];
+    // A field may hide its lock inside a type of this crate, such as `Arc<realtime::Hub>`. Those types count too.
+    let lock_holders = types_holding_a_lock();
     let mut found = Vec::new();
     for line in body.lines().skip(1) {
         let line = line.trim();
-        if line.starts_with("//") || !(line.contains("RwLock<") || line.contains("Mutex<")) {
+        let holds_lock = line.contains("RwLock<") || line.contains("Mutex<") || lock_holders.iter().any(|t| names_type(line, t));
+        if line.starts_with("//") || !holds_lock {
             continue;
         }
         let name = line
@@ -82,7 +130,7 @@ fn server_state_holds_no_lock_that_is_not_on_the_list() {
         assert!(scaffoldry_server::cache::NAMES.contains(collection), "{field} belongs to '{collection}', which is not on the closed list");
     }
     assert!(!found.iter().any(|f| f == "memory_records"), "memory_records is gone");
-    assert_eq!(PER_PROCESS, ["formula_rate_limits"], "the per-process list does not grow");
+    assert_eq!(PER_PROCESS, ["formula_rate_limits", "realtime_streams"], "the per-process list does not grow");
 }
 
 #[test]

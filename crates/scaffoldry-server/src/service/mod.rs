@@ -190,6 +190,8 @@ pub enum ServiceError {
     PreviewReadOnly(String),
     /// A write to an archived app or workspace (lifecycle phase 2). An archive only reads until it is unarchived.
     Archived(String),
+    /// Too many of something at once, such as event streams (real-time phase 1). Waiting or closing one helps.
+    RateLimited(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
     TokenScope(String),
     /// An outside app asked for something its ceiling does not cover.
@@ -252,7 +254,7 @@ impl ServiceError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) => StatusCode::CONFLICT,
-            Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
+            Self::QuotaExceeded(_) | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -284,6 +286,7 @@ impl ServiceError {
             Self::AuthorityLoosens(_) => "authority_loosens",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::Archived(_) => "archived",
+            Self::RateLimited(_) => "rate_limited",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
             Self::LastOwner(_) => "last_owner",
@@ -321,6 +324,7 @@ impl ServiceError {
             | Self::AuthorityLoosens(msg)
             | Self::PreviewReadOnly(msg)
             | Self::Archived(msg)
+            | Self::RateLimited(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)
             | Self::LastOwner(msg)

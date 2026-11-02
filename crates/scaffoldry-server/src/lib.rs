@@ -12,6 +12,7 @@ pub mod repository_clients;
 pub mod repository_ownership;
 pub mod holds;
 pub mod purge;
+pub mod realtime;
 pub mod repository_archives;
 pub mod repository_snapshots;
 pub mod snapshot_jobs;

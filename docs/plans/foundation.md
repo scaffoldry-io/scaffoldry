@@ -328,6 +328,8 @@ The keys are a closed list. Reject any other key with 400. Validate the value's 
 | `process.stale_days` | integer 1 to 365 | 14 | A waiting process step older than this is shown as stale. Added by `admin-console.md` phase 6 |
 | `mcp.disabled_tools` | array of strings | empty | Tool names an administrator has switched off. Each must be a name in `TOOLS`. Added by `admin-console.md` phase 7 |
 | `pages.disabled` | array of strings | empty | Custom pages that may not run, as `app_slug/page_id`. Added by `admin-console.md` phase 7 |
+| `realtime.max_streams_per_user` | integer 1 to 1,000 | 20 | Event streams one person may hold open on one server. Added by `realtime.md` phase 1 |
+| `realtime.max_streams` | integer 1 to 1,000,000 | 5,000 | Event streams one server holds open. Added by `realtime.md` phase 1 |
 | `platform.timezone` | string | UTC | An IANA zone name. Added by `calc-graph.md` phase 4 |
 
 Do not add a key that turns a check off. There is no `auth.disabled`, no `dev_mode`, and no `allow_insecure`.
