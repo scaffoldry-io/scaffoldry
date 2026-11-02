@@ -23,7 +23,7 @@ const WORKSPACE: &str = "ws-physics-optics";
 const CLASSIFICATION: &str = "Internal";
 const OWNER: &str = "einstein@physics.state.edu";
 const ADMIN: &str = "jordan.lee@state.edu";
-const COMPLIANCE: &str = "elena.rodriguez@state.edu";
+const COMPLIANCE: &str = "retention.officer@state.edu";
 
 struct World {
     db: common::TestDb,
@@ -254,7 +254,18 @@ async fn the_certificate_proves_which_records_went_without_keeping_them() {
     let (s, list) = rest(&w.app, "GET", "/api/v1/admin/purges", &w.admin, None).await;
     assert_eq!(s, StatusCode::OK, "{list}");
     let row = list["certificates"].as_array().and_then(|l| l.iter().find(|c| c["app_slug"] == w.slug.as_str())).cloned().expect("listed");
-    let (s, one) = rest(&w.app, "GET", &format!("/api/v1/admin/purges/{}", row["id"].as_str().unwrap()), &issue_test_token_and_user(COMPLIANCE), None).await;
+    // A compliance officer is appointed on the root unit, not claimed.
+    let officer = issue_test_token_and_user(COMPLIANCE);
+    w.db.run(|c| {
+        c.execute(
+            "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source) \
+             SELECT gen_random_uuid(), p.id, o.id, 'Compliance Officer', 'compliance', true, 'api' \
+             FROM persons p, organizations o WHERE LOWER(p.eppn) = LOWER($1) AND o.parent_id IS NULL",
+            &[&COMPLIANCE],
+        )
+        .unwrap();
+    });
+    let (s, one) = rest(&w.app, "GET", &format!("/api/v1/admin/purges/{}", row["id"].as_str().unwrap()), &officer, None).await;
     assert_eq!(s, StatusCode::OK, "compliance reads a certificate: {one}");
     assert_eq!(one["ids_sha256"], sha_of(&ids));
     assert!(!one.to_string().contains("alpha-0001"), "the certificate names no record: {one}");
@@ -344,7 +355,7 @@ async fn a_run_that_stops_halfway_resumes_and_certifies_every_record_once() {
     let ids = trashed(&w, "bulk", 2_500, 400);
     // The run stops after its first batch of 1,000, as a job killed mid-run does.
     let state = w.state.clone();
-    tokio::task::spawn_blocking(move || scaffoldry_server::purge::run(&state, Some(1))).await.unwrap().expect("the first part runs");
+    tokio::task::spawn_blocking(move || scaffoldry_server::purge::run(&state.repository, Some(1))).await.unwrap().expect("the first part runs");
     assert_eq!(present(&w, &ids), 1_500, "one batch of 1,000 went");
     assert!(certificates(&w).is_empty(), "no certificate until the app is done");
 

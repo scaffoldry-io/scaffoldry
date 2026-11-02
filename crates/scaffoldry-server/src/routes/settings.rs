@@ -204,6 +204,7 @@ async fn put_setting(
         if let Some(tz) = payload.as_str() {
             scaffoldry_engine::formula::set_institution_timezone(tz);
             let _ = crate::jobs::register_volatile_schedule(&state.repository, tz);
+            let _ = crate::jobs::register_daily_schedule(&state.repository, "purge_expired", tz, "02:00:00");
         }
     }
     (StatusCode::OK, Json(json!({ "key": key, "value": payload }))).into_response()

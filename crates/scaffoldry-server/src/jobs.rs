@@ -164,6 +164,22 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::calc_jobs::convert_select_options,
     },
     JobKind {
+        name: "purge_expired",
+        title: "Destroying what retention has expired",
+        description: "Destroys trashed records, history and retired values that their retention policy no longer keeps, and leaves a certificate.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::purge::purge_expired,
+    },
+    JobKind {
+        name: "retention_preview",
+        title: "Previewing a retention policy",
+        description: "Counts, for each app, what the next purge would destroy under a proposed policy, and destroys nothing.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::purge::retention_preview,
+    },
+    JobKind {
         name: "purge_jobs",
         title: "Clearing old job records",
         description: "Deletes finished jobs after 30 days and failed jobs after 90 days.",
@@ -499,6 +515,24 @@ pub fn register_volatile_schedule(
         c.execute(
             "INSERT INTO job_schedules (kind, every_seconds, next_run_at, enabled)              VALUES ('recalc_volatile', 86400, ((CASE                  WHEN (NOW() AT TIME ZONE $1)::time < '00:05:00'::time                  THEN date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '5 minutes'                  ELSE date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '1 day 5 minutes'              END) AT TIME ZONE $1)::timestamptz, TRUE)              ON CONFLICT (kind) DO UPDATE SET next_run_at = ((CASE                  WHEN (NOW() AT TIME ZONE $1)::time < '00:05:00'::time                  THEN date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '5 minutes'                  ELSE date_trunc('day', NOW() AT TIME ZONE $1) + INTERVAL '1 day 5 minutes'              END) AT TIME ZONE $1)::timestamptz",
             &[&tz],
+        )?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// Registers a schedule that runs once a day at `at` (`HH:MM:SS`) in an IANA timezone. A new time or zone moves the
+/// next run, so changing `platform.timezone` takes effect the same day.
+pub fn register_daily_schedule(repo: &PostgresRepository, kind: &str, timezone: &str, at: &str) -> Result<(), JobsError> {
+    let (kind, tz, at) = (kind.to_string(), timezone.to_string(), at.to_string());
+    repo.with_client(move |c| {
+        c.execute(
+            "INSERT INTO job_schedules (kind, every_seconds, next_run_at, enabled) \
+             VALUES ($1, 86400, ((CASE WHEN (NOW() AT TIME ZONE $2)::time < $3::time \
+                 THEN date_trunc('day', NOW() AT TIME ZONE $2) + $3::time \
+                 ELSE date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day' + $3::time END) AT TIME ZONE $2)::timestamptz, TRUE) \
+             ON CONFLICT (kind) DO UPDATE SET every_seconds = 86400, next_run_at = EXCLUDED.next_run_at",
+            &[&kind, &tz, &at],
         )?;
         Ok(())
     })?;
