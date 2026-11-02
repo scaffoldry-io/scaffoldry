@@ -8,6 +8,9 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/admin/retention/policies".into(), case!(retention_create, "/api/v1"));
     m.insert("PUT /api/v1/admin/retention/policies/{id}".into(), case!(retention_update, "/api/v1"));
     exempt(m, "POST /api/v1/admin/retention/preview", "queues a count of what a policy would destroy and destroys nothing");
+    m.insert("POST /api/v1/admin/holds".into(), case!(hold_place, "/api/v1"));
+    m.insert("POST /api/v1/admin/holds/{id}/release".into(), case!(hold_release, "/api/v1"));
+    exempt(m, "POST /api/v1/admin/holds/preview", "queues a count of what a hold would cover and holds nothing");
     m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
     exempt(m, "POST /api/v1/admin/ownership/transfer/preview", "reports what a transfer would do and stores nothing");
     // Workspaces are mounted at the root and under /api/v1: two paths, one handler, a case for each.
@@ -1147,4 +1150,37 @@ async fn retention_update(w: World, root: &'static str) -> Outcome {
     status(w.wa("PUT", &format!("{root}/admin/retention/policies/{pid}"), ADMIN, Some(body)).await, StatusCode::OK, "A changes it")?;
     let list = status(w.rb("GET", "/api/v1/admin/retention/policies", ADMIN, None).await, StatusCode::OK, "B lists policies")?;
     ensure(list["policies"].as_array().is_some_and(|l| l.iter().any(|p| p["id"] == pid && p["keep_trash_days"] == 45)), format!("B serves the change: {list}"))
+}
+
+/// A places a legal hold on an app. B lists it.
+async fn hold_place(w: World, root: &'static str) -> Outcome {
+    let slug = make_app(&w).await?;
+    let body = json!({ "scope_kind": "app", "app_slug": slug, "name": "Matter", "case_ref": "C-1", "reason": "Counsel asked" });
+    status(w.wa("POST", &format!("{root}/admin/holds"), ADMIN, Some(body)).await, StatusCode::CREATED, "A places the hold")?;
+    let list = status(w.rb("GET", "/api/v1/admin/holds", ADMIN, None).await, StatusCode::OK, "B lists holds")?;
+    ensure(list["holds"].as_array().is_some_and(|l| l.iter().any(|h| h["app_slug"] == slug.as_str() && h["active"] == true)), format!("B lists A's hold: {list}"))
+}
+
+/// One person places a hold and another releases it on A. B lists it as released.
+async fn hold_release(w: World, root: &'static str) -> Outcome {
+    let slug = make_app(&w).await?;
+    let body = json!({ "scope_kind": "app", "app_slug": slug, "name": "Matter", "case_ref": "C-2", "reason": "Counsel asked" });
+    let made = status(w.wa("POST", "/api/v1/admin/holds", ADMIN, Some(body)).await, StatusCode::CREATED, "A places the hold")?;
+    let id = made["id"].as_str().ok_or("a hold id")?.to_string();
+    // A compliance officer, appointed on the root unit, is the second person.
+    let second = person("p4release");
+    issue_test_token_and_user(&second);
+    let who = second.clone();
+    w.db.run(move |c| {
+        c.execute(
+            "INSERT INTO roles (id, person_id, organization_id, role_title, scoped_affiliation, is_primary, source) \
+             SELECT gen_random_uuid(), p.id, o.id, 'Compliance Officer', 'compliance', true, 'api' \
+             FROM persons p, organizations o WHERE LOWER(p.eppn) = LOWER($1) AND o.parent_id IS NULL",
+            &[&who],
+        )
+        .unwrap();
+    });
+    status(w.wa("POST", &format!("{root}/admin/holds/{id}/release"), &second, Some(json!({ "reason": "Settled" }))).await, StatusCode::OK, "another person releases it")?;
+    let list = status(w.rb("GET", "/api/v1/admin/holds", ADMIN, None).await, StatusCode::OK, "B lists holds")?;
+    ensure(list["holds"].as_array().is_some_and(|l| l.iter().any(|h| h["id"] == id.as_str() && h["active"] == false)), format!("B shows it released: {list}"))
 }

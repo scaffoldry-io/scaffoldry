@@ -15,6 +15,7 @@ use scaffoldry_server::jobs::{enqueue, get_job, JobConfig, JobRunner, JOB_KINDS}
 use scaffoldry_server::service::identity::issue_test_token_and_user;
 use scaffoldry_server::state::ServerState;
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
@@ -61,7 +62,7 @@ async fn world() -> World {
     });
     let tag = uuid::Uuid::new_v4().to_string()[..8].to_string();
     let app = build_app_with_state(state.clone()).expect("router");
-    let w = World { db, state, app, owner: issue_test_token_and_user(OWNER), admin: issue_test_token_and_user(ADMIN), compliance, slug: format!("hold-{tag}") };
+    let w = World { db, state, app, owner: issue_test_token_and_user(OWNER), admin: issue_test_token_and_user(ADMIN), compliance, slug: format!("matter-{tag}") };
     let manifest = json!({
         "slug": w.slug, "title": "Held", "description": "Records under a hold", "organization_code": "PHYS", "department": "physics",
         "workspace_id": WORKSPACE, "views": [],
@@ -269,4 +270,69 @@ async fn the_preview_counts_what_the_hold_then_pins() {
     let id: uuid::Uuid = hold["id"].as_str().unwrap().parse().unwrap();
     let pinned: i64 = w.db.run(move |c| c.query_one("SELECT count(*) FROM hold_records WHERE hold_id = $1", &[&id]).unwrap().get(0));
     assert_eq!(pinned, 7, "the hold pins what the preview counted");
+}
+
+fn files_dir() -> std::path::PathBuf {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("scaffoldry-holds-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("SCAFFOLDRY_FILES_DIR", &dir);
+        dir
+    })
+    .clone()
+}
+
+// Attachments phase 4, test 2: a held reference's blob is untouched by the orphan blob purge.
+#[tokio::test]
+async fn a_held_records_blob_survives_the_orphan_purge() {
+    let dir = files_dir();
+    let w = world().await;
+    let bytes = b"exhibit A".to_vec();
+    let id = create(&w, "Evidence", "smith").await;
+    // The record let go of the file a day ago. Only the hold keeps it now.
+    let sha: String = sha2::Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+    let path = dir.join(&sha[0..2]).join(&sha[2..4]).join(&sha);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let (slug, rid, k) = (w.slug.clone(), id.clone(), sha.clone());
+    w.db.run(move |c| {
+        c.execute("INSERT INTO files (sha256, size, media_type) VALUES ($1, 9, 'text/plain') ON CONFLICT DO NOTHING", &[&k]).unwrap();
+        c.execute(
+            "INSERT INTO file_refs (id, sha256, app_slug, table_id, record_id, field, name, uploaded_by, uploaded_at, attached_at, deleted_at) \
+             VALUES ($1, $2, $3, 'cases', $4, 'doc', 'exhibit.txt', 'x', NOW() - interval '2 days', NOW() - interval '2 days', NOW() - interval '1 day')",
+            &[&uuid::Uuid::new_v4(), &k, &slug, &rid],
+        )
+        .unwrap();
+    });
+    place(&w, json!({ "scope_kind": "app", "app_slug": w.slug })).await;
+    let r = runner(&w);
+    let job = enqueue(&w.state.repository, "purge_orphan_blobs", json!({}), "test@scaffoldry.internal", None).unwrap();
+    assert_eq!(wait(&w, job).state, "done");
+    r.stop();
+    assert!(path.exists(), "a held record's file stays");
+}
+
+// Lifecycle phase 2, test 4, the hold half: the retired-value strip does not run under a hold.
+#[tokio::test]
+async fn a_held_record_keeps_its_retired_values() {
+    let w = world().await;
+    let id = create(&w, "Held", "smith").await;
+    let (slug, rid) = (w.slug.clone(), id.clone());
+    w.db.run(move |c| {
+        c.execute(
+            "UPDATE app_manifests SET manifest = jsonb_set(manifest, '{tables,0,retired_fields}', jsonb_build_array(jsonb_build_object( \
+                'name', 'old_note', 'label', 'Old', 'field_type', 'Text', 'required', false, 'ferpa_sensitive', false, 'retired_at', '2020-01-01T00:00:00Z'))) WHERE slug = $1",
+            &[&slug],
+        )
+        .unwrap();
+        c.execute("UPDATE dataset_records SET data = data || '{\"old_note\": \"kept\"}'::jsonb WHERE id = $1", &[&rid]).unwrap();
+    });
+    place(&w, json!({ "scope_kind": "app", "app_slug": w.slug })).await;
+    purge_now(&w);
+    let rid = id.clone();
+    let data: Value = w.db.run(move |c| c.query_one("SELECT data FROM dataset_records WHERE id = $1", &[&rid]).unwrap().get(0));
+    assert_eq!(data["old_note"], "kept", "a held record keeps its retired value");
+    let stored = w.state.repository.get_app_manifest(&w.slug).unwrap().unwrap();
+    assert_eq!(stored.tables[0].retired_fields.len(), 1, "and the field stays restorable while a held record has it");
 }
