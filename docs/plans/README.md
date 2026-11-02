@@ -252,7 +252,7 @@ People are told, see each other work, and run real committee processes.
 | 138 | [integrations.md](integrations.md) | 1 | An encrypted secrets store and an outbound allowlist | **COMPLETED** |
 | 139 | [policy-library.md](policy-library.md) | 5 | Web sources are fetched through the allowlist. A changed source sends its rules back for review | **COMPLETED** |
 | 140 | [policy-library.md](policy-library.md) | 6 | A console panel and one screen for the state of the library | **COMPLETED** |
-| 141 | [notifications.md](notifications.md) | 1 | An inbox and a bell |
+| 141 | [notifications.md](notifications.md) | 1 | An inbox and a bell | **COMPLETED** |
 | 142 | [notifications.md](notifications.md) | 2 | Email through an allowlisted SMTP host |
 | 143 | [realtime.md](realtime.md) | 3 | Presence and a channel for the person's notices and jobs |
 | 144 | [approvers.md](approvers.md) | 4 | Delegation by date |

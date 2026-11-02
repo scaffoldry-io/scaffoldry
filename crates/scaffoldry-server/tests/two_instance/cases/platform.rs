@@ -11,6 +11,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/admin/holds".into(), case!(hold_place, "/api/v1"));
     m.insert("POST /api/v1/admin/holds/{id}/release".into(), case!(hold_release, "/api/v1"));
     exempt(m, "POST /api/v1/admin/holds/preview", "queues a count of what a hold would cover and holds nothing");
+    m.insert("POST /api/v1/me/notifications/read".into(), case!(notifications_read, "/api/v1"));
     m.insert("PUT /api/v1/admin/secrets/{name}".into(), case!(secret_put, "/api/v1"));
     m.insert("DELETE /api/v1/admin/secrets/{name}".into(), case!(secret_delete, "/api/v1"));
     m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
@@ -1245,4 +1246,20 @@ async fn library_rule_confirm(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/library/rules/{rule}/confirm"), &owner, Some(json!({ "note": "Still says the same" }))).await, StatusCode::OK, "A confirms it")?;
     let after = status(w.rb("GET", "/api/v1/me/library/reviews", &owner, None).await, StatusCode::OK, "B lists it again")?;
     ensure(after["source_changed"].as_array().is_some_and(|l| !l.iter().any(|r| r["rule_id"] == rule.as_str())), format!("B no longer lists it: {after}"))
+}
+
+/// A marks a notice read. B counts it as read.
+async fn notifications_read(w: World, root: &'static str) -> Outcome {
+    let who = person("n1reader");
+    make_user(&w, &who).await?;
+    let id = uuid::Uuid::new_v4();
+    let recipient = who.clone();
+    w.db.run(move |c| {
+        c.execute("INSERT INTO notifications (id, recipient, kind, title, body) VALUES ($1, $2, 'job_finished', 'Done', 'Finished.')", &[&id, &recipient]).map(|_| ()).map_err(|e| e.to_string())
+    })?;
+    let before = status(w.rb("GET", "/api/v1/me/notifications/count", &who, None).await, StatusCode::OK, "B counts")?;
+    ensure(before["unread"] == 1, format!("B sees one unread: {before}"))?;
+    status(w.wa("POST", &format!("{root}/me/notifications/read"), &who, Some(json!({ "ids": [id] }))).await, StatusCode::OK, "A marks it read")?;
+    let after = status(w.rb("GET", "/api/v1/me/notifications/count", &who, None).await, StatusCode::OK, "B counts again")?;
+    ensure(after["unread"] == 0, format!("B sees it read: {after}"))
 }

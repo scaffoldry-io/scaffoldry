@@ -26,6 +26,7 @@ pub mod retention;
 pub mod secrets;
 pub mod holds;
 pub mod realtime;
+pub mod notifications;
 pub mod link_options;
 pub mod calc;
 pub mod view_as;
@@ -96,6 +97,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(holds::router())
         .merge(secrets::router())
         .merge(realtime::router())
+        .merge(notifications::router())
         .merge(comments::router())
         .merge(disclosures::router())
         .merge(datasets::router())

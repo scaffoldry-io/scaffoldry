@@ -1,4 +1,5 @@
 import { UserSettingsModal } from "./UserSettingsModal";
+import { NotificationBell } from "./NotificationBell";
 import { TemplatePicker } from "./TemplatePicker";
 import React, { useState, useEffect, useRef, Suspense, lazy, useMemo } from "react";
 import { DatasetExplorer } from "./DatasetExplorer";
@@ -1985,6 +1986,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
         {/* Right: Actions, Theme & User Badge */}
         <div className="flex items-center gap-2">
+          <NotificationBell navigate={navigateTo} />
 
           {!isAdminPath && (
             <button
