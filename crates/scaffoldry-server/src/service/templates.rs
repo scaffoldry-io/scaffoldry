@@ -164,7 +164,7 @@ pub fn publish(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<V
     let name = text(body, "name", 120)?.filter(|s| !s.is_empty()).ok_or_else(|| bad("A template needs a 'name'"))?;
     let bundle = body.get("bundle").ok_or_else(|| bad("The request needs a 'bundle'"))?;
     bundle::verify(bundle)?;
-    if bundle.get("sample_data").is_some() {
+    if bundle.get("sample_data").is_some() || bundle.get("files").is_some() {
         return Err(bad("A template holds no sample data. Export the bundle without it"));
     }
     let manifest = manifest_of(bundle)?;

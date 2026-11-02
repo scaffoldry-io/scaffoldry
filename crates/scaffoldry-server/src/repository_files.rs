@@ -137,7 +137,12 @@ impl PostgresRepository {
                 &[&(hours as i32)],
             )? as usize;
             let orphans = tx
-                .query("DELETE FROM files WHERE sha256 NOT IN (SELECT sha256 FROM file_refs) RETURNING sha256", &[])?
+                // A snapshot's file has no record reference. The snapshot is its reference.
+                .query(
+                    "DELETE FROM files WHERE sha256 NOT IN (SELECT sha256 FROM file_refs) \
+                     AND sha256 NOT IN (SELECT file_sha256 FROM app_snapshots WHERE file_sha256 IS NOT NULL) RETURNING sha256",
+                    &[],
+                )?
                 .iter()
                 .map(|r| r.get::<_, String>(0).trim().to_string())
                 .collect();

@@ -21,7 +21,9 @@ pub const BUNDLE_VERSION: u64 = 1;
 /// The most sample records a bundle may hold.
 pub const MAX_SAMPLE_RECORDS: usize = 5_000;
 /// The parts a bundle may have. Anything else is refused.
-const PARTS: [&str; 8] = ["bundle_version", "manifest", "views", "rules", "page_sources", "integrations", "sample_data", "sha256"];
+const PARTS: [&str; 9] = ["bundle_version", "manifest", "views", "rules", "page_sources", "integrations", "sample_data", "files", "sha256"];
+/// The most bytes of sample files a bundle carries (attachments phase 4).
+pub const MAX_BUNDLE_FILE_BYTES: usize = 50 * 1024 * 1024;
 /// Keys a bundle may not have at any depth outside its sample records. `secret_name` names a secret and is not one.
 const BANNED_KEYS: [&str; 8] = ["secret", "token", "password", "members", "collaborators", "comments", "history", "attachments"];
 /// What the manifest holds that belongs to the place the app lives, not to the app.
@@ -73,10 +75,15 @@ fn canonical(v: &Value, out: &mut String) {
 }
 
 /// The hash a bundle carries: SHA-256 of the document without its own `sha256`, in the canonical form above.
+///
+/// The bytes of the sample files sit beside the document, in `files`, and are not part of this hash. The document names each
+/// file by its own SHA-256 in the sample records, so the hash still covers which files belong, and each file is checked
+/// against its name on import.
 pub fn digest_of(doc: &Value) -> String {
     let mut without = doc.clone();
     if let Some(o) = without.as_object_mut() {
         o.remove("sha256");
+        o.remove("files");
     }
     let mut text = String::new();
     canonical(&without, &mut text);
@@ -96,7 +103,12 @@ pub fn export(caller: &AuthUser, slug: &str, sample: bool, state: &SharedState) 
 
     let mut doc = definition(slug, state)?;
     if sample {
-        doc["sample_data"] = sample_data(caller, &manifest, state)?;
+        let mut samples = sample_data(caller, &manifest, state)?;
+        let files = sample_files(&manifest, &mut samples, state)?;
+        doc["sample_data"] = samples;
+        if !files.is_empty() {
+            doc["files"] = Value::Object(files);
+        }
         doc["sha256"] = json!(digest_of(&doc));
     }
     Ok(doc)
@@ -199,6 +211,68 @@ fn sample_data(caller: &AuthUser, manifest: &scaffoldry_engine::AppManifest, sta
     Ok(Value::Object(out))
 }
 
+/// The files the sample records hold, by hash, with their bytes. Each attachment in a sample record gains its `sha256`, so the
+/// document says which bytes are its. A file the app no longer holds, or whose bytes are missing, is left out of `files`.
+fn sample_files(manifest: &scaffoldry_engine::AppManifest, samples: &mut Value, state: &SharedState) -> Result<Map<String, Value>, ServiceError> {
+    use base64::Engine;
+    let mut files = Map::new();
+    let Some(dir) = crate::files::dir() else { return Ok(files) };
+    let mut total = 0usize;
+    for table in &manifest.tables {
+        let attachment_fields: Vec<&str> = table.fields.iter().filter(|f| matches!(f.field_type, scaffoldry_engine::FieldType::Attachment { .. })).map(|f| f.name.as_str()).collect();
+        let Some(rows) = samples.get_mut(&table.id).and_then(Value::as_array_mut) else { continue };
+        for row in rows {
+            for field in &attachment_fields {
+                let Some(entries) = row.get_mut(*field).and_then(Value::as_array_mut) else { continue };
+                for entry in entries {
+                    let Some(id) = entry.get("ref_id").and_then(Value::as_str).and_then(|s| uuid::Uuid::parse_str(s).ok()) else { continue };
+                    let Some(r) = state.repository.file_ref_any(id).map_err(internal)? else { continue };
+                    if r.deleted || r.app_slug != manifest.slug {
+                        continue;
+                    }
+                    let sha = r.sha256.trim().to_string();
+                    entry["sha256"] = json!(sha);
+                    if files.contains_key(&sha) {
+                        continue;
+                    }
+                    let Ok(bytes) = std::fs::read(crate::files::blob_path(&dir, &sha)) else { continue };
+                    total += bytes.len();
+                    if total > MAX_BUNDLE_FILE_BYTES {
+                        return Err(bad("The sample records hold more than 50 MB of files. Export without sample data, or with fewer files"));
+                    }
+                    files.insert(sha, json!({ "name": r.name, "media_type": r.media_type, "size": bytes.len(), "bytes": base64::engine::general_purpose::STANDARD.encode(&bytes) }));
+                }
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// Checks each file a bundle carries against the hash it is filed under, before anything is written. A damaged file is
+/// named, so the person who exported it knows which one to fix.
+fn check_files(doc: &Map<String, Value>) -> Result<(), ServiceError> {
+    use base64::Engine;
+    let Some(files) = doc.get("files") else { return Ok(()) };
+    let files = files.as_object().ok_or_else(|| bad("The bundle's files must map a hash to a file"))?;
+    let mut total = 0usize;
+    for (key, f) in files {
+        let name = f.get("name").and_then(Value::as_str).unwrap_or(key);
+        let bytes = f
+            .get("bytes")
+            .and_then(Value::as_str)
+            .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+            .ok_or_else(|| bad(format!("The file '{name}' in the bundle has no readable bytes. Nothing was imported")))?;
+        total += bytes.len();
+        if total > MAX_BUNDLE_FILE_BYTES {
+            return Err(bad("The bundle carries more than 50 MB of files"));
+        }
+        if !hex(&Sha256::digest(&bytes)).eq_ignore_ascii_case(key) {
+            return Err(bad(format!("The file '{name}' in the bundle is damaged: its bytes do not match its hash. Nothing was imported. Export the app again")));
+        }
+    }
+    Ok(())
+}
+
 /// The first key at any depth that a bundle may not have, outside its sample records and its own hash.
 fn banned_key(v: &Value, path: &str) -> Option<String> {
     match v {
@@ -294,6 +368,7 @@ pub(crate) fn verify(bundle: &Value) -> Result<(), ServiceError> {
     if !carried.eq_ignore_ascii_case(&digest_of(bundle)) {
         return Err(bad("The bundle is damaged: its sha256 does not match what it holds. Export it again."));
     }
+    check_files(doc)?;
     if doc.get("bundle_version").and_then(Value::as_u64) != Some(BUNDLE_VERSION) {
         return Err(bad(format!("This server reads bundle version {BUNDLE_VERSION}")));
     }
@@ -316,6 +391,7 @@ pub(crate) fn verify(bundle: &Value) -> Result<(), ServiceError> {
     let mut without_samples = bundle.clone();
     if let Some(o) = without_samples.as_object_mut() {
         o.remove("sample_data");
+        o.remove("files");
         o.remove("sha256");
     }
     if let Some(at) = banned_key(&without_samples, "bundle") {
@@ -415,6 +491,10 @@ pub(crate) fn prepare(bundle: &Value, workspace_id: &str, body: &Value, manifest
     let sample_records: usize = bundle["sample_data"].as_object().map(|t| t.values().map(|r| r.as_array().map_or(0, Vec::len)).sum()).unwrap_or(0);
     if sample_records > 0 {
         notes.push(format!("{sample_records} sample records came with the bundle. This import does not load them."));
+    }
+    let files = bundle["files"].as_object().map_or(0, Map::len);
+    if files > 0 {
+        notes.push(format!("{files} files came with the sample records, and each one matched its hash. This import does not load them."));
     }
     Ok(Prepared { manifest, rules, page_sources, notes, slug, original, wanted, rewritten, webhooks, sample_records })
 }
