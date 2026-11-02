@@ -101,6 +101,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "scan_file", 10 * 60)?;
     // Access receipts are sealed into a hash-chained batch every minute.
     jobs::register_schedule(repo, "seal_receipts", 60)?;
+    // Retention destroys what its policies no longer keep, nightly at 02:00 in the institution's zone.
+    let zone = repo.get_platform_settings()?.get("platform.timezone").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "UTC".to_string());
+    jobs::register_daily_schedule(repo, "purge_expired", &zone, "02:00:00")?;
     let job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?;
 
     let app = build_app_with_state(state)?;

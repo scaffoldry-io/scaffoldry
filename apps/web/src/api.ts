@@ -34,6 +34,8 @@ export interface AdminOverviewData {
     oldest_queued_age_secs: number | null;
     failed_last_24h: number;
   };
+  /** Lifecycle phase 3: true while any retention policy still has the placeholder basis. */
+  retention?: { placeholder: boolean };
   files?: {
     scanner: { configured: boolean; reachable: boolean; last_result: string | null };
     error: number;

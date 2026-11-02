@@ -688,6 +688,8 @@ impl ServerState {
             .map_err(|e| read("the ledger", e))?;
         }
 
+        // Retention starts with a placeholder policy per classification, which the Overview flags until it is set.
+        repository.seed_retention_policies().map_err(|e| read("the retention policies", e))?;
         let archives = repository.list_archives().map_err(|e| read("the archives", e))?;
         let cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()] =
             std::array::from_fn(|i| {

@@ -4,6 +4,10 @@ use super::*;
 use scaffoldry_server::service::identity::issue_test_token_and_user;
 
 pub fn add(m: &mut Entries) {
+    // Retention is mounted under /api/v1 only.
+    m.insert("POST /api/v1/admin/retention/policies".into(), case!(retention_create, "/api/v1"));
+    m.insert("PUT /api/v1/admin/retention/policies/{id}".into(), case!(retention_update, "/api/v1"));
+    exempt(m, "POST /api/v1/admin/retention/preview", "queues a count of what a policy would destroy and destroys nothing");
     m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
     exempt(m, "POST /api/v1/admin/ownership/transfer/preview", "reports what a transfer would do and stores nothing");
     // Workspaces are mounted at the root and under /api/v1: two paths, one handler, a case for each.
@@ -1122,4 +1126,25 @@ async fn request_rule_propose(w: World, root: &'static str) -> Outcome {
     let change = made["change_id"].as_str().ok_or("a change id")?.to_string();
     let seen = status(w.rb("GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
     ensure(has(&seen["changes"], &change), format!("B shows the change A stored: {seen}"))
+}
+
+/// A adds a retention policy for a workspace. B lists it.
+async fn retention_create(w: World, root: &'static str) -> Outcome {
+    let id = make_workspace(&w, &unique("RETC"), "restricted").await?;
+    let body = json!({ "name": "Lab", "scope_kind": "workspace", "workspace_id": id, "keep_trash_days": 30, "keep_retired_days": 90, "on_expiry": "trash", "basis": "Lab schedule", "reason": "Set by the records officer" });
+    status(w.wa("POST", &format!("{root}/admin/retention/policies"), ADMIN, Some(body)).await, StatusCode::CREATED, "A adds the policy")?;
+    let list = status(w.rb("GET", "/api/v1/admin/retention/policies", ADMIN, None).await, StatusCode::OK, "B lists policies")?;
+    ensure(list["policies"].as_array().is_some_and(|l| l.iter().any(|p| p["workspace_id"] == id.as_str() && p["keep_trash_days"] == 30)), format!("B lists A's policy: {list}"))
+}
+
+/// A changes a workspace's policy. B serves the change.
+async fn retention_update(w: World, root: &'static str) -> Outcome {
+    let id = make_workspace(&w, &unique("RETU"), "restricted").await?;
+    let mut body = json!({ "name": "Lab", "scope_kind": "workspace", "workspace_id": id, "keep_trash_days": 30, "keep_retired_days": 90, "on_expiry": "trash", "basis": "Lab schedule", "reason": "Set" });
+    let made = status(w.wa("POST", "/api/v1/admin/retention/policies", ADMIN, Some(body.clone())).await, StatusCode::CREATED, "A adds the policy")?;
+    body["keep_trash_days"] = json!(45);
+    let pid = made["id"].as_str().ok_or("a policy id")?;
+    status(w.wa("PUT", &format!("{root}/admin/retention/policies/{pid}"), ADMIN, Some(body)).await, StatusCode::OK, "A changes it")?;
+    let list = status(w.rb("GET", "/api/v1/admin/retention/policies", ADMIN, None).await, StatusCode::OK, "B lists policies")?;
+    ensure(list["policies"].as_array().is_some_and(|l| l.iter().any(|p| p["id"] == pid && p["keep_trash_days"] == 45)), format!("B serves the change: {list}"))
 }
