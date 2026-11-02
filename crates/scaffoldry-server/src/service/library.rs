@@ -173,6 +173,40 @@ pub(crate) fn may_write(state: &SharedState, caller: &AuthUser, policy: &Value) 
     resolves_to(state, &spec, unit, &caller.eppn)
 }
 
+/// The units the caller administers as an Org Unit Admin.
+fn admin_units(state: &SharedState, caller: &AuthUser) -> Vec<Uuid> {
+    state.roles_of(&caller.eppn).into_iter().filter(|r| r.scoped_affiliation == "unit_admin").map(|r| r.organization_id).collect()
+}
+
+/// Every unit at or below the ones the caller administers.
+fn admin_scope(state: &SharedState, caller: &AuthUser) -> Vec<Uuid> {
+    let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+    let mut out: Vec<Uuid> = admin_units(state, caller).into_iter().flat_map(|u| tree.descendants(u, None)).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Who may read a policy: anyone who may write it, and an Org Unit Admin of its unit or of a unit above it.
+pub(crate) fn may_read(state: &SharedState, caller: &AuthUser, policy: &Value) -> bool {
+    if may_write(state, caller, policy) {
+        return true;
+    }
+    let Some(unit) = policy["organization_id"].as_str().and_then(|u| Uuid::parse_str(u).ok()) else { return false };
+    let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+    admin_units(state, caller).into_iter().any(|a| tree.contains(a, unit))
+}
+
+/// The policy, when the caller may read it.
+pub(crate) fn readable(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Value, ServiceError> {
+    match state.repository.library_policy(id).map_err(internal)? {
+        Some(p) if may_read(state, caller, &p) => Ok(p),
+        Some(p) => Err(forbidden(Some(&p))),
+        None if is_admin(state, caller) => Err(ServiceError::NotFound("Policy not found".to_string())),
+        None => Err(forbidden(None)),
+    }
+}
+
 /// The owner of a policy in words a person can act on.
 fn owner_text(owner: &Value) -> String {
     if let Some(e) = owner["Person"]["eppn"].as_str() {
@@ -306,22 +340,40 @@ pub fn list_policies(state: &SharedState, caller: &AuthUser) -> Result<Value, Se
     let admin = is_admin(state, caller);
     let mine: Vec<Value> = all
         .into_iter()
-        .filter(|p| admin || may_write(state, caller, p))
+        .filter(|p| admin || may_read(state, caller, p))
         .collect();
-    if mine.is_empty() && !admin {
+    if mine.is_empty() && !admin && admin_units(state, caller).is_empty() {
         return Err(forbidden(None));
     }
+    // The table shows each policy's rule counts, open questions and unit, from one more statement.
+    let tallies = state.repository.library_policy_tallies().map_err(internal)?;
+    let orgs = state.organizations.read().unwrap_or_else(|p| p.into_inner());
+    let mine: Vec<Value> = mine
+        .into_iter()
+        .map(|mut p| {
+            let id = p["id"].as_str().and_then(|u| Uuid::parse_str(u).ok()).unwrap_or_default();
+            let (counts, open) = tallies.get(&id).cloned().unwrap_or((json!({}), 0));
+            p["rule_counts"] = counts;
+            p["open_questions"] = json!(open);
+            let unit = p["organization_id"].as_str().and_then(|u| Uuid::parse_str(u).ok());
+            p["unit_name"] = json!(unit.and_then(|u| orgs.get(&u)).map(|o| o.name.clone()));
+            p
+        })
+        .collect();
     Ok(json!({ "policies": mine }))
 }
 
 pub fn get_policy(state: &SharedState, caller: &AuthUser, id: &str) -> Result<Value, ServiceError> {
     let id = parse_id(id, "Policy")?;
-    let policy = writable(state, caller, id)?;
+    let policy = readable(state, caller, id)?;
     Ok(json!({
         "policy": policy,
         "sources": state.repository.library_sources_of(id).map_err(internal)?,
         "rule_counts": state.repository.library_rule_counts(id).map_err(internal)?,
         "open_questions": state.repository.library_open_questions(id).map_err(internal)?,
+        "rules": state.repository.library_rules_of(id).map_err(internal)?,
+        "snapshots": state.repository.library_snapshots_of(id).map_err(internal)?,
+        "bindings": state.repository.library_bindings_of(id).map_err(internal)?,
     }))
 }
 
@@ -897,4 +949,69 @@ pub fn mark_reviewed(state: &SharedState, caller: &AuthUser, policy_id: &str, bo
         return Err(ServiceError::forbidden("The person who marked this policy reviewed last cannot mark it again. Someone else must"));
     }
     Ok(json!({ "policy": state.repository.library_policy(id).map_err(internal)? }))
+}
+
+/// How many items each health list shows. Its count is always the whole number.
+const HEALTH_LIMIT: usize = 50;
+
+/// `GET /admin/library/health`: four questions about the state of the library, each with a count and links. A
+/// Platform Admin or compliance sees every policy. An Org Unit Admin sees the policies of their units.
+pub fn health(state: &SharedState, caller: &AuthUser) -> Result<Value, ServiceError> {
+    let scope = if is_admin(state, caller) {
+        None
+    } else {
+        let units = admin_scope(state, caller);
+        if units.is_empty() {
+            return Err(ServiceError::forbidden("Only a Platform Admin, compliance, or an Org Unit Admin may see the state of the library"));
+        }
+        Some(units)
+    };
+    let raw = state.repository.library_health(scope).map_err(internal)?;
+    let link_policy = |id: &Value| format!("/admin/library/{}", id.as_str().unwrap_or_default());
+    let with_links = |list: &Value, f: &dyn Fn(&Value) -> String| -> Value {
+        let items: Vec<Value> = list["items"].as_array().cloned().unwrap_or_default().into_iter().map(|mut i| {
+            i["link"] = json!(f(&i));
+            i
+        }).collect();
+        json!({ "count": list["count"], "items": items })
+    };
+    // Unbound rules are guidance by definition. A bound rule is guidance when none of its bindings resolves now.
+    let rules = raw["rules"].as_array().cloned().unwrap_or_default();
+    let unbound: Vec<&Value> = rules.iter().filter(|r| r["kind"] == "unbound").collect();
+    let unbound_count = unbound.first().and_then(|r| r["count"].as_u64()).unwrap_or(0);
+    let missing: Vec<&Value> = rules
+        .iter()
+        .filter(|r| r["kind"] == "bound")
+        .filter(|r| {
+            let bindings = r["bindings"].as_array().cloned().unwrap_or_default();
+            crate::service::library_public::enforcement_state(state, r["rule_key"].as_str().unwrap_or_default(), &bindings) == "Guidance"
+        })
+        .collect();
+    let guidance_items: Vec<Value> = unbound
+        .iter()
+        .chain(missing.iter())
+        .take(HEALTH_LIMIT)
+        .map(|r| {
+            json!({ "rule_id": r["rule_id"], "rule_key": r["rule_key"], "policy_id": r["policy_id"], "policy_key": r["policy_key"],
+                    "why": if r["kind"] == "bound" { "What enforced it is gone" } else { "Nothing enforces it" },
+                    "link": format!("{}#rule-{}", link_policy(&r["policy_id"]), r["rule_id"].as_str().unwrap_or_default()) })
+        })
+        .collect();
+    Ok(json!({
+        "no_published_rule": with_links(&raw["no_published_rule"], &|i| link_policy(&i["policy_id"])),
+        "guidance_only": { "count": unbound_count + missing.len() as u64, "items": guidance_items },
+        "sources": with_links(&raw["sources"], &|i| format!("{}#source-{}", link_policy(&i["policy_id"]), i["source_id"].as_str().unwrap_or_default())),
+        "review": with_links(&raw["review"], &|i| link_policy(&i["policy_id"])),
+    }))
+}
+
+/// `GET /admin/library/sources/{id}/compare`: the previous and the latest snapshot of a source, side by side, with the
+/// passages published rules cite in the previous one. Text is returned only as `untrusted_text`.
+pub fn compare(state: &SharedState, caller: &AuthUser, source_id: &str) -> Result<Value, ServiceError> {
+    let source_id = parse_id(source_id, "Source")?;
+    let Some((policy_id, _)) = state.repository.library_source(source_id).map_err(internal)? else {
+        return Err(if is_admin(state, caller) { ServiceError::NotFound("Source not found".to_string()) } else { forbidden(None) });
+    };
+    readable(state, caller, policy_id)?;
+    state.repository.library_compare(source_id).map_err(internal)
 }

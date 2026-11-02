@@ -28,6 +28,8 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/library/policies/{id}/sources", post(add_source))
         .route("/admin/library/sources/{id}/snapshots", post(add_snapshot))
         .route("/admin/library/sources/{id}/check", post(check_source))
+        .route("/admin/library/sources/{id}/compare", get(compare))
+        .route("/admin/library/health", get(health))
         .route("/admin/library/policies/{id}/reviewed", post(mark_reviewed))
         .route("/admin/library/snapshots/{id}", get(get_snapshot))
         .route("/admin/library/policies/{id}/rules", post(draft_rule))
@@ -187,4 +189,16 @@ async fn mark_reviewed(State(state): State<SharedState>, headers: HeaderMap, Pat
     let c = caller(&state, &headers)?;
     let body = parse(&body);
     blocking(move || library::mark_reviewed(&state, &c, &id, &body)).await.map(Json)
+}
+
+/// Policy library phase 6: the state of the library.
+async fn health(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    blocking(move || library::health(&state, &c)).await.map(Json)
+}
+
+/// Policy library phase 6: a changed source, side by side.
+async fn compare(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<Value>, ServiceError> {
+    let c = caller(&state, &headers)?;
+    blocking(move || library::compare(&state, &c, &id)).await.map(Json)
 }

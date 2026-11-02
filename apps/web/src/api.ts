@@ -603,6 +603,52 @@ export interface HoldScope {
   include_future?: boolean;
 }
 
+/** A policy as the console lists it (policy library phase 6). */
+export interface AdminLibraryPolicy {
+  id: string;
+  key: string;
+  title: string;
+  summary: string;
+  organization_id: string;
+  unit_name?: string | null;
+  owner: Record<string, any>;
+  review_every_days: number;
+  last_reviewed_at: string | null;
+  last_reviewed_by: string | null;
+  due: boolean;
+  status: string;
+  rule_counts?: Record<string, number>;
+  open_questions?: number;
+}
+
+/** One list of the health screen: its whole count and up to 50 items, each with a link. */
+export interface HealthList<T> {
+  count: number;
+  items: (T & { link: string })[];
+}
+
+export interface LibraryHealth {
+  no_published_rule: HealthList<{ policy_id: string; policy_key: string; title: string }>;
+  guidance_only: HealthList<{ rule_id: string; rule_key: string; policy_id: string; policy_key: string; why: string }>;
+  sources: HealthList<{ source_id: string; title: string; policy_id: string; policy_key: string; problem: string | null }>;
+  review: HealthList<{ policy_id: string; policy_key: string; title: string; past_review: boolean; oldest_open_question_days: number | null }>;
+}
+
+/** One side of a changed source. The text is untrusted: it is shown as text, never as markup. */
+export interface SnapshotSide {
+  snapshot_id: string;
+  taken_at: string;
+  text_origin: "fetched" | "supplied";
+  untrusted_text: string;
+}
+
+export interface SourceComparison {
+  old: SnapshotSide | null;
+  new: SnapshotSide | null;
+  /** The passages published rules cite in the old text. */
+  cited: string[];
+}
+
 /** A secret as the server lists it: never its value. */
 export interface SecretListing {
   name: string;
@@ -1571,6 +1617,27 @@ export const apiClient = {
     const qs = sp.toString() ? `?${sp.toString()}` : "";
     return request<AdminJobsResponse>(`/admin/jobs${qs}`);
   },
+
+  /** The policy library's console views (policy library phase 6). */
+  listAdminLibraryPolicies: async (): Promise<AdminLibraryPolicy[]> => {
+    const res = await request<{ policies: AdminLibraryPolicy[] }>("/admin/library/policies");
+    return Array.isArray(res?.policies) ? res.policies : [];
+  },
+
+  getAdminLibraryPolicy: async (id: string): Promise<any> => request<any>(`/admin/library/policies/${encodeURIComponent(id)}`),
+
+  createLibraryPolicy: async (body: { key: string; title: string; organization_id: string; owner: Record<string, any>; reason: string; summary?: string }): Promise<AdminLibraryPolicy> => {
+    const res = await request<{ policy: AdminLibraryPolicy }>("/admin/library/policies", { method: "POST", body: JSON.stringify(body) });
+    return res.policy;
+  },
+
+  patchLibraryPolicy: async (id: string, body: { title?: string; summary?: string; review_every_days?: number; reason: string }): Promise<void> => {
+    await request<unknown>(`/admin/library/policies/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
+  },
+
+  libraryHealth: async (): Promise<LibraryHealth> => request<LibraryHealth>("/admin/library/health"),
+
+  compareLibrarySource: async (sourceId: string): Promise<SourceComparison> => request<SourceComparison>(`/admin/library/sources/${encodeURIComponent(sourceId)}/compare`),
 
   /** The secrets store (integrations phase 1). A Platform Admin only. Names and dates: a value is never returned. */
   listSecrets: async (): Promise<SecretListing[]> => {
