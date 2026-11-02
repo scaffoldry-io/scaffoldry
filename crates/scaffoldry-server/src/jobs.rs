@@ -172,6 +172,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::purge::purge_expired,
     },
     JobKind {
+        name: "purge_orphan_blobs",
+        title: "Removing files no record holds",
+        description: "Deletes stored files that no record has referred to for a day, and records only how many in the ledger.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::purge::purge_orphan_blobs,
+    },
+    JobKind {
         name: "retention_preview",
         title: "Previewing a retention policy",
         description: "Counts, for each app, what the next purge would destroy under a proposed policy, and destroys nothing.",

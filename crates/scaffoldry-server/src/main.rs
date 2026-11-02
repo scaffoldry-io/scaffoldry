@@ -104,6 +104,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Retention destroys what its policies no longer keep, nightly at 02:00 in the institution's zone.
     let zone = repo.get_platform_settings()?.get("platform.timezone").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "UTC".to_string());
     jobs::register_daily_schedule(repo, "purge_expired", &zone, "02:00:00")?;
+    // Files no record holds any more are removed, once their 24 hours of grace are over.
+    jobs::register_daily_schedule(repo, "purge_orphan_blobs", &zone, "03:00:00")?;
     let job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?;
 
     let app = build_app_with_state(state)?;

@@ -227,7 +227,10 @@ Scaffoldry deploys as a single compose stack:
 3. **Automated Off-Machine Backup:**
    - A daily timer executes a snapshot script.
    - Dumps PostgreSQL (`pg_dump`). The ledger is contained directly within the PostgreSQL database dump.
-   - Encrypts the snapshot archive and uploads it to off-machine object storage (Backblaze B2, Google Cloud Storage, or Proton Drive).
+   - Copies the files directory (`SCAFFOLDRY_FILES_DIR`). Attachments and app snapshots live there as blobs named by their SHA-256, and the database holds only their references. A backup without the directory restores records whose files are gone.
+   - Takes the dump first and the directory second. A blob is written before its reference is committed, so a directory copied after the dump holds every blob the dump names. Blobs added in between are harmless: the next `purge_orphan_blobs` run removes the ones nothing refers to.
+   - Encrypts the snapshot archive, both parts in one archive, and uploads it to off-machine object storage (Backblaze B2, Google Cloud Storage, or Proton Drive).
+   - The backup script is an operator document, not code in this repository. It names both the database dump and the files directory.
 
 ---
 

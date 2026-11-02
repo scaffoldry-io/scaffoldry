@@ -466,3 +466,67 @@ pub fn retention_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError
     }
     Ok(json!({ "apps": out }))
 }
+
+/// How long a reference keeps its blob after it was made, even once no record holds it (attachments phase 4).
+pub const ORPHAN_GRACE_HOURS: i32 = 24;
+
+/// Deletes the blobs no live reference holds and no reference made in the last 24 hours holds, with the references that
+/// let go of them. The ledger entry `BlobsPurged` comes first and holds the count only: a file's name can say whose it
+/// was. Legal holds are lifecycle phase 4, so nothing is held yet.
+pub fn purge_orphan_blobs(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
+    let repo = ctx.repository();
+    let orphans: Vec<String> = repo
+        .with_client(|c| {
+            Ok(c.query(
+                "SELECT f.sha256 FROM files f WHERE NOT EXISTS (SELECT 1 FROM file_refs r WHERE r.sha256 = f.sha256 \
+                   AND (r.deleted_at IS NULL OR r.uploaded_at > NOW() - make_interval(hours => $1))) \
+                   AND NOT EXISTS (SELECT 1 FROM app_snapshots s WHERE s.file_sha256 = f.sha256)",
+                &[&ORPHAN_GRACE_HOURS],
+            )?
+            .iter()
+            .map(|r| r.get::<_, String>(0))
+            .collect())
+        })
+        .map_err(|e| JobError::Retry(e.to_string()))?;
+    if orphans.is_empty() {
+        return Ok(json!({ "deleted": 0 }));
+    }
+    repo.append_ledger_decision(AppendDecisionParams {
+        principal: ACTOR.to_string(),
+        organization_code: String::new(),
+        app_slug: None,
+        decision_type: DecisionType::BlobsPurged,
+        oscal_control_id: "MP-6".to_string(),
+        rationale: "Stored files that no record refers to any more".to_string(),
+        payload: json!({ "count": orphans.len() }),
+    })
+    .map_err(|e| JobError::Retry(format!("The ledger could not record the purge, so nothing was deleted: {e}")))?;
+    let gone: Vec<String> = repo
+        .with_client(move |c| {
+            let mut tx = c.transaction()?;
+            // Checked again in the transaction: a reference made since the list was read keeps its blob.
+            tx.execute(
+                "DELETE FROM file_refs r WHERE r.sha256 = ANY($1) AND r.deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM file_refs l WHERE l.sha256 = r.sha256 \
+                   AND (l.deleted_at IS NULL OR l.uploaded_at > NOW() - make_interval(hours => $2)))",
+                &[&orphans, &ORPHAN_GRACE_HOURS],
+            )?;
+            let gone = tx
+                .query(
+                    "DELETE FROM files f WHERE f.sha256 = ANY($1) AND NOT EXISTS (SELECT 1 FROM file_refs r WHERE r.sha256 = f.sha256) \
+                     AND NOT EXISTS (SELECT 1 FROM app_snapshots s WHERE s.file_sha256 = f.sha256) RETURNING sha256",
+                    &[&orphans],
+                )?
+                .iter()
+                .map(|r| r.get::<_, String>(0).trim().to_string())
+                .collect();
+            tx.commit()?;
+            Ok(gone)
+        })
+        .map_err(|e| JobError::Retry(e.to_string()))?;
+    if let Some(dir) = crate::files::dir() {
+        for sha in &gone {
+            let _ = std::fs::remove_file(crate::files::blob_path(&dir, sha));
+        }
+    }
+    Ok(json!({ "deleted": gone.len() }))
+}
