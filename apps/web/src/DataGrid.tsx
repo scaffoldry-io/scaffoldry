@@ -38,6 +38,12 @@ export type DataGridProps = {
   onUndoBatch?: (batchId: string) => Promise<{ batch_id: string }>;
   /** Names the table in the words that say what was undone. */
   tableName?: string;
+  /** Rows someone else just changed (real-time phase 2). They are marked for a moment. */
+  updatedByOthers?: ReadonlySet<string>;
+  /** The cell under edit, when someone else changed its value meanwhile. Its draft stays. */
+  changedUnderEdit?: { recordId: string; fieldName: string } | null;
+  /** Told which cell is being typed in, or none. */
+  onEditingChange?: (cell: { recordId: string; fieldName: string } | null) => void;
 };
 
 type Gesture = { batchId: string; label: string; at: number };
@@ -225,6 +231,9 @@ export function DataGrid({
   onPatch,
   onUndoBatch,
   tableName = "this table",
+  updatedByOthers,
+  changedUnderEdit,
+  onEditingChange,
 }: DataGridProps) {
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -240,6 +249,13 @@ export function DataGrid({
   const editTriggerRef = useRef<"key" | "click" | "action">("click");
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
   const activeCellRef = useRef<HTMLElement | null>(null);
+
+  // The cell being typed in, for the view that follows other people's changes.
+  const editingRecord = isEditing ? selection?.focus.recordId : undefined;
+  const editingField = isEditing ? selection?.focus.fieldName : undefined;
+  useEffect(() => {
+    onEditingChange?.(editingRecord && editingField ? { recordId: editingRecord, fieldName: editingField } : null);
+  }, [onEditingChange, editingRecord, editingField]);
 
   // The grid keeps no old values. It keeps which batches this person wrote, so the server can undo them.
   const gestures = useRef<Gesture[]>([]);
@@ -1142,12 +1158,14 @@ export function DataGrid({
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
           {table.getRowModel().rows.map((row, rowIdx) => {
             const recordId = getRecordId(row.original, rowIdx);
+            const updated = updatedByOthers?.has(recordId) ?? false;
             return (
               <tr
                 key={row.id}
-                className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors"
+                data-updated={updated ? "true" : undefined}
+                className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors ${updated ? "bg-amber-50 dark:bg-amber-950/30" : ""}`}
               >
-                {row.getVisibleCells().map((cell) => {
+                {row.getVisibleCells().map((cell, cellIdx) => {
                   const fieldName = cell.column.id;
                   const field = visibleFields.find((f) => f.name === fieldName);
                   if (!field) return null;
@@ -1222,6 +1240,12 @@ export function DataGrid({
                           : ""
                       } ${borderClasses}`}
                     >
+                      {cellIdx === 0 && updated && <span className="sr-only">Updated by someone else</span>}
+                      {isCellEditing && changedUnderEdit?.recordId === recordId && changedUnderEdit.fieldName === fieldName && (
+                        <span role="status" className="block mb-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                          Changed by someone else
+                        </span>
+                      )}
                       {/* Checkbox Type */}
                       {field.field_type === "Checkbox" ? (
                         <div className="flex items-center">

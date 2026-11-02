@@ -95,7 +95,7 @@ describe("MultiViewWorkspace shows stored rows", () => {
     const patch = calls.find((c) => c.method === "PATCH")!;
     expect(patch.body.version).toBe(3);
     expect(patch.body.data.amount).toBe(500);
-    expect(await screen.findByText("Someone else saved this record. Reloaded.")).toBeInTheDocument();
+    expect(await screen.findByText("Someone else changed this first. Your view has been refreshed. Review it and try again.")).toBeInTheDocument();
     expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
   });
 });

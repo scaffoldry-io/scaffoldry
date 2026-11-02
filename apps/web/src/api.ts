@@ -429,7 +429,7 @@ export const getAuthToken = (): string | null => {
   return null;
 };
 
-const getBaseUrl = (): string => {
+export const getBaseUrl = (): string => {
   const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
   return envUrl || "/api/v1";
 };
