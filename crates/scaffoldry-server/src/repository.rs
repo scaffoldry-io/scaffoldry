@@ -1018,6 +1018,9 @@ pub struct PostgresRepository {
     /// How many app definitions this repository has parsed from stored JSON. A test reads it to show that approving one
     /// app among many reads one.
     manifests_parsed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Raised when a job finds its connection closed, before its caller hears back, so the next job on any worker sees
+    /// it and checks its own connection.
+    lost: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl std::fmt::Debug for PostgresRepository {
@@ -1191,7 +1194,6 @@ impl PostgresRepository {
                     };
                     prepare_connection(&mut client, &db_url_0, &lost_0, &mut lost_seen);
                     job(&mut client);
-                    note_if_lost(&client, &lost_0);
                 }
             })
             .map_err(|e| RepositoryError::NotFound(format!("Failed to spawn db worker thread 0: {e}")))?;
@@ -1228,7 +1230,6 @@ impl PostgresRepository {
                         };
                         prepare_connection(&mut client, &db_url_w, &lost_w, &mut lost_seen);
                         job(&mut client);
-                        note_if_lost(&client, &lost_w);
                     }
                 })
                 .map_err(|e| {
@@ -1244,6 +1245,7 @@ impl PostgresRepository {
             db_url: std::sync::Arc::new(db_url),
             statements: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             manifests_parsed: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            lost,
         };
         Ok(repo)
     }
@@ -1301,9 +1303,13 @@ impl PostgresRepository {
         self.statements
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (tx, rx) = sync_channel(1);
+        let lost = self.lost.clone();
         self.worker_tx
             .send(Box::new(move |client| {
                 let res = f(client);
+                // Told before the caller hears back: the caller's next request may go to another worker at once, and
+                // that worker must know to check its connection first.
+                note_if_lost(client, &lost);
                 let _ = tx.send(res);
             }))
             .map_err(|_| RepositoryError::NotFound("Postgres worker channel closed".to_string()))?;
@@ -3501,7 +3507,7 @@ fn prepare_connection(client: &mut Client, url: &str, lost: &std::sync::atomic::
     }
 }
 
-/// After a job: a connection that has closed is told to the other workers.
+/// After a job, before its result goes back: a connection that has closed is told to the other workers.
 fn note_if_lost(client: &Client, lost: &std::sync::atomic::AtomicU64) {
     if client.is_closed() {
         lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
