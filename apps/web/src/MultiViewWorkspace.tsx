@@ -3,12 +3,15 @@ import { ManifestRenderer } from "./ManifestRenderer";
 import { RegisteredApp } from "./types";
 import { DataGrid } from "./DataGrid";
 import { useAppRecords } from "./useAppRecords";
+import { AppActivity } from "./RecordHistory";
 
 interface Props {
   app: RegisteredApp;
   onBack: () => void;
   onOpenStudio: () => void;
   onRecordCreated?: (record: Record<string, unknown>) => void;
+  /** Owners and admins see the app's activity feed. */
+  canSeeActivity?: boolean;
 }
 
 type TabularViewMode = "grid" | "kanban" | "calendar" | "gallery" | "form";
@@ -23,8 +26,10 @@ export const MultiViewWorkspace: React.FC<Props> = ({
   onBack,
   onOpenStudio,
   onRecordCreated,
+  canSeeActivity = false,
 }) => {
   const [viewMode, setViewMode] = useState<TabularViewMode>("grid");
+  const [showActivity, setShowActivity] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   // The stored rows of this app. Nothing is seeded or generated: the grid shows what the server holds.
@@ -158,6 +163,17 @@ export const MultiViewWorkspace: React.FC<Props> = ({
             📥 Export CSV
           </button>
 
+          {canSeeActivity && (
+            <button
+              type="button"
+              aria-pressed={showActivity}
+              onClick={() => setShowActivity((v) => !v)}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              Activity
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onOpenStudio}
@@ -271,6 +287,11 @@ export const MultiViewWorkspace: React.FC<Props> = ({
         </div>
       </div>
 
+      {canSeeActivity && showActivity && (
+        <section aria-label="App activity" className="mx-4 md:mx-6 mt-3 rounded-lg border border-slate-200 dark:border-slate-800 p-3">
+          <AppActivity appSlug={app.slug} fields={fields} />
+        </section>
+      )}
       {/* What the server said about the rows */}
       {loading && <div className="px-4 md:px-6 py-2 text-xs text-slate-500">Loading records…</div>}
       {error && (

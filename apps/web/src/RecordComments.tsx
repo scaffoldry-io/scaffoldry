@@ -7,6 +7,8 @@ export interface RecordCommentsProps {
   recordId: string;
   /** The signed-in person, so they can remove their own comment. */
   viewerEppn: string;
+  /** The person's role in the app. A viewer reads comments and cannot add them. */
+  role?: "owner" | "admin" | "editor" | "commenter" | "viewer";
 }
 
 function when(iso: string): string {
@@ -21,7 +23,8 @@ function mentionQuery(text: string): string | null {
   return rest.includes("]") || rest.includes(" ") ? null : rest;
 }
 
-export function RecordComments({ appSlug, recordId, viewerEppn }: RecordCommentsProps) {
+export function RecordComments({ appSlug, recordId, viewerEppn, role }: RecordCommentsProps) {
+  const canComment = role !== "viewer";
   const [text, setText] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const load = useCallback(async () => {
@@ -94,7 +97,11 @@ export function RecordComments({ appSlug, recordId, viewerEppn }: RecordComments
         </ul>
       )}
 
+      {!canComment ? (
+        <p className="text-xs text-gray-600 dark:text-gray-400">You can read comments. Your role cannot add them.</p>
+      ) : (
       <div className="relative">
+        {role === "commenter" && <p className="mb-1 text-xs text-gray-600 dark:text-gray-400">As a commenter you can add comments. You cannot change the record.</p>}
         <label className="block text-xs font-medium text-gray-700 dark:text-gray-300" htmlFor="new-comment">
           Write a comment
         </label>
@@ -129,6 +136,7 @@ export function RecordComments({ appSlug, recordId, viewerEppn }: RecordComments
           Comment
         </button>
       </div>
+      )}
     </section>
   );
 }

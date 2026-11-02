@@ -55,6 +55,21 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   onSaveApp,
 }) => {
   const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings" | "access">("pages");
+  // The Studio is for the app's owners and admins, so its record drawer shows them every tab. The server checks again.
+  const [studioViewer, setStudioViewer] = useState<{ eppn: string; role: "admin"; compliance: boolean } | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    apiClient
+      .getCurrentUser()
+      .then((me) => {
+        const eppn = me?.user?.eppn;
+        if (live && typeof eppn === "string") setStudioViewer({ eppn, role: "admin", compliance: me.user?.affiliation === "compliance" });
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   const [settingsTab, setSettingsTab] = useState<"general" | "access">("general");
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [activePageId, setActivePageId] = useState<string>("page-overview");
@@ -2272,6 +2287,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   onUpdateRecordField={handleUpdateRecordField}
                   onDuplicateRecord={handleDuplicateRecord}
                   onDeleteRecord={handleDeleteRecord}
+                  viewer={studioViewer}
                 />
 
                 {/* CSV IMPORT MODAL */}

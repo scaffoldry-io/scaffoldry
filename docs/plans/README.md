@@ -239,7 +239,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 132 | [lifecycle.md](lifecycle.md) | 3 | Retention policies, nightly purge, and a certificate of destruction | **COMPLETED** |
 | 133 | [attachments.md](attachments.md) | 4 | Orphan blob purge, retention, and bundles with files | **COMPLETED** |
 | 134 | [lifecycle.md](lifecycle.md) | 4 | Legal holds that override every destruction path | **COMPLETED** |
-| 135 | [record-history.md](record-history.md) | 5 | History, comments, and disclosures in the record drawer |
+| 135 | [record-history.md](record-history.md) | 5 | History, comments, and disclosures in the record drawer | **COMPLETED** |
 
 ### Wave 3 — collaboration and process
 
