@@ -172,6 +172,22 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::purge::purge_expired,
     },
     JobKind {
+        name: "pin_hold",
+        title: "Pinning the records a legal hold names",
+        description: "Lists the records a new legal hold matches now, so that none of them is ever destroyed while the hold stands.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::holds::pin_hold,
+    },
+    JobKind {
+        name: "hold_preview",
+        title: "Counting what a legal hold would cover",
+        description: "Counts, before a hold is placed, how many records it would cover and in how many apps.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::holds::hold_preview,
+    },
+    JobKind {
         name: "purge_orphan_blobs",
         title: "Removing files no record holds",
         description: "Deletes stored files that no record has referred to for a day, and records only how many in the ledger.",

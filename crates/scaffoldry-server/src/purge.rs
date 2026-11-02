@@ -5,7 +5,8 @@
 //! then destroys them in batches of 1,000, then writes a certificate: the counts and the SHA-256 of the sorted ids, one per
 //! line, which proves which records went without keeping them. A run that stops resumes from its notes, and the notes go
 //! in the same transaction as the certificate. The disclosure log is never touched: the fact of a disclosure outlives the
-//! record. Legal holds are lifecycle phase 4, so nothing is held yet and `held_skipped` is 0.
+//! record. A legal hold (lifecycle phase 4) wins over all of it: every path asks the database function `is_held`, a held
+//! record is skipped and counted in `held_skipped`, and its files stay.
 
 use crate::jobs::{JobCtx, JobError};
 use crate::repository::{AppendDecisionParams, PostgresRepository, RepositoryError};
@@ -246,22 +247,25 @@ fn days_ago(d: i32) -> chrono::DateTime<chrono::Utc> {
 
 /// What the policy would do to one app now. Reads only.
 fn plan(c: &mut postgres::Client, slug: &str, p: &Policy) -> Result<Plan, RepositoryError> {
-    let mut destroy: Vec<String> = c
-        .query("SELECT id FROM dataset_records WHERE app_slug = $1 AND deleted_at IS NOT NULL AND deleted_at < NOW() - make_interval(days => $2)", &[&slug, &p.keep_trash_days])?
-        .iter()
-        .map(|r| r.get(0))
-        .collect();
+    // Every record past its days, with whether a legal hold keeps it. A held record is never destroyed (phase 4).
+    let expired = c.query(
+        "SELECT id, is_held(app_slug, id) FROM dataset_records WHERE app_slug = $1 AND deleted_at IS NOT NULL AND deleted_at < NOW() - make_interval(days => $2)",
+        &[&slug, &p.keep_trash_days],
+    )?;
+    let mut held = expired.iter().filter(|r| r.get::<_, bool>(1)).count() as i64;
+    let mut destroy: Vec<String> = expired.iter().filter(|r| !r.get::<_, bool>(1)).map(|r| r.get(0)).collect();
     let mut age_to_trash = Vec::new();
     if let Some(max) = p.max_record_age_days {
-        let aged: Vec<String> = c
-            .query("SELECT id FROM dataset_records WHERE app_slug = $1 AND deleted_at IS NULL AND created_at < NOW() - make_interval(days => $2)", &[&slug, &max])?
-            .iter()
-            .map(|r| r.get(0))
-            .collect();
+        let aged = c.query(
+            "SELECT id, is_held(app_slug, id) FROM dataset_records WHERE app_slug = $1 AND deleted_at IS NULL AND created_at < NOW() - make_interval(days => $2)",
+            &[&slug, &max],
+        )?;
         if p.on_expiry == "purge" {
-            destroy.extend(aged);
+            held += aged.iter().filter(|r| r.get::<_, bool>(1)).count() as i64;
+            destroy.extend(aged.iter().filter(|r| !r.get::<_, bool>(1)).map(|r| r.get::<_, String>(0)));
         } else {
-            age_to_trash = aged;
+            // A held record may still go to trash. It is never destroyed.
+            age_to_trash = aged.iter().map(|r| r.get(0)).collect();
         }
     }
     destroy.sort();
@@ -270,7 +274,7 @@ fn plan(c: &mut postgres::Client, slug: &str, p: &Policy) -> Result<Plan, Reposi
     let mut history = one(c, "SELECT count(*) FROM record_history WHERE app_slug = $1 AND record_id = ANY($2)", &destroy)?;
     if let Some(keep) = p.keep_history_days {
         history += c.query_one(
-            "SELECT count(*) FROM record_history WHERE app_slug = $1 AND NOT (record_id = ANY($2)) AND at < NOW() - make_interval(days => $3)",
+            "SELECT count(*) FROM record_history WHERE app_slug = $1 AND NOT (record_id = ANY($2)) AND at < NOW() - make_interval(days => $3) AND NOT is_held(app_slug, record_id)",
             &[&slug, &destroy, &keep],
         )?.get::<_, i64>(0);
     }
@@ -287,14 +291,16 @@ fn plan(c: &mut postgres::Client, slug: &str, p: &Policy) -> Result<Plan, Reposi
             }
         }
     }
-    let counts = Counts { records: destroy.len() as i64, history, files, comments, fields: strip.len() as i64, trashed: age_to_trash.len() as i64, held: 0 };
+    let counts = Counts { records: destroy.len() as i64, history, files, comments, fields: strip.len() as i64, trashed: age_to_trash.len() as i64, held };
     Ok(Plan { counts, destroy, age_to_trash, strip })
 }
 
 /// Destroys records and everything that is theirs: index rows, link rows, remembered links, comments, history and file
 /// references. The disclosure log keeps its entries. The only place these rows are deleted (lifecycle phase 3 test 9).
-pub fn destroy(tx: &mut postgres::Transaction<'_>, app_slug: &str, ids: &[String]) -> Result<u64, postgres::Error> {
-    let ids = ids.to_vec();
+/// A hold placed after the plan was made still wins: the ids are checked again with `is_held` in this transaction, and a
+/// held one is left alone. Returns the ids it destroyed.
+pub fn destroy(tx: &mut postgres::Transaction<'_>, app_slug: &str, ids: &[String]) -> Result<Vec<String>, postgres::Error> {
+    let ids: Vec<String> = tx.query("SELECT id FROM unnest($2::text[]) AS id WHERE NOT is_held($1, id)", &[&app_slug, &ids.to_vec()])?.iter().map(|r| r.get(0)).collect();
     tx.execute("DELETE FROM record_index WHERE record_id = ANY($1)", &[&ids])?;
     tx.execute("DELETE FROM record_links WHERE from_record = ANY($1) OR to_record = ANY($1)", &[&ids])?;
     tx.execute("DELETE FROM trash_links WHERE record_id = ANY($1) OR other_record = ANY($1)", &[&ids])?;
@@ -303,13 +309,14 @@ pub fn destroy(tx: &mut postgres::Transaction<'_>, app_slug: &str, ids: &[String
     tx.execute("SELECT set_config('scaffoldry.purge', 'on', true)", &[])?;
     tx.execute("DELETE FROM record_history WHERE app_slug = $1 AND record_id = ANY($2)", &[&app_slug, &ids])?;
     tx.execute("DELETE FROM file_refs WHERE app_slug = $1 AND record_id = ANY($2)", &[&app_slug, &ids])?;
-    tx.execute("DELETE FROM dataset_records WHERE app_slug = $1 AND id = ANY($2)", &[&app_slug, &ids])
+    tx.execute("DELETE FROM dataset_records WHERE app_slug = $1 AND id = ANY($2)", &[&app_slug, &ids])?;
+    Ok(ids)
 }
 
-/// Destroys history older than `days` of the records that stay.
+/// Destroys history older than `days` of the records that stay, except a held record's.
 fn destroy_old_history(tx: &mut postgres::Transaction<'_>, app_slug: &str, days: i32) -> Result<u64, postgres::Error> {
     tx.execute("SELECT set_config('scaffoldry.purge', 'on', true)", &[])?;
-    tx.execute("DELETE FROM record_history WHERE app_slug = $1 AND at < NOW() - make_interval(days => $2)", &[&app_slug, &days])
+    tx.execute("DELETE FROM record_history WHERE app_slug = $1 AND at < NOW() - make_interval(days => $2) AND NOT is_held(app_slug, record_id)", &[&app_slug, &days])
 }
 
 /// Strips retired values from every record of a table and drops the fields from the definition, which can no longer
@@ -318,15 +325,21 @@ fn strip_retired(tx: &mut postgres::Transaction<'_>, app_slug: &str, strip: &[(S
     if strip.is_empty() {
         return Ok(());
     }
-    for (table, field) in strip {
-        tx.execute("UPDATE dataset_records SET data = data - $3 WHERE app_slug = $1 AND table_id = $2 AND data ? $3", &[&app_slug, table, field])?;
+    // A held record keeps its retired values, and while one does, the field stays restorable.
+    let mut kept: Vec<&(String, String)> = Vec::new();
+    for pair in strip {
+        let (table, field) = pair;
+        tx.execute("UPDATE dataset_records SET data = data - $3 WHERE app_slug = $1 AND table_id = $2 AND data ? $3 AND NOT is_held(app_slug, id)", &[&app_slug, table, field])?;
+        if tx.query_one("SELECT EXISTS (SELECT 1 FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND data ? $3)", &[&app_slug, table, field])?.get::<_, bool>(0) {
+            kept.push(pair);
+        }
     }
     let Some(row) = tx.query_opt("SELECT manifest FROM app_manifests WHERE slug = $1 FOR UPDATE", &[&app_slug])? else { return Ok(()) };
     let mut manifest: Value = row.get(0);
     for t in manifest["tables"].as_array_mut().into_iter().flatten() {
         let id = t["id"].as_str().unwrap_or("").to_string();
         if let Some(list) = t["retired_fields"].as_array_mut() {
-            list.retain(|f| !strip.iter().any(|(tid, name)| *tid == id && f["name"].as_str() == Some(name.as_str())));
+            list.retain(|f| kept.iter().any(|(tid, name)| *tid == id && f["name"].as_str() == Some(name.as_str())) || !strip.iter().any(|(tid, name)| *tid == id && f["name"].as_str() == Some(name.as_str())));
         }
     }
     tx.execute("UPDATE app_manifests SET manifest = $2, version = version + 1, updated_at = NOW() WHERE slug = $1", &[&app_slug, &manifest])?;
@@ -414,8 +427,18 @@ pub fn run(repo: &PostgresRepository, max_batches: Option<usize>) -> Result<Valu
                         return Ok(false);
                     }
                     let mut tx = c.transaction()?;
-                    destroy(&mut tx, &s, &ids)?;
-                    tx.execute("UPDATE purge_pending SET done = TRUE WHERE run_id = $1 AND record_id = ANY($2)", &[&run_id, &ids])?;
+                    let gone = destroy(&mut tx, &s, &ids)?;
+                    tx.execute("UPDATE purge_pending SET done = TRUE WHERE run_id = $1 AND record_id = ANY($2)", &[&run_id, &gone])?;
+                    // A hold placed during the run kept some: they leave the run, so the certificate names only what went.
+                    let kept: Vec<String> = ids.iter().filter(|id| !gone.contains(id)).cloned().collect();
+                    if !kept.is_empty() {
+                        let n = kept.len() as i64;
+                        tx.execute("DELETE FROM purge_pending WHERE run_id = $1 AND record_id = ANY($2)", &[&run_id, &kept])?;
+                        tx.execute(
+                            "UPDATE purge_runs SET counts = jsonb_set(jsonb_set(counts, '{records}', to_jsonb((counts->>'records')::bigint - $2)), '{held}', to_jsonb((counts->>'held')::bigint + $2)) WHERE id = $1",
+                            &[&run_id, &n],
+                        )?;
+                    }
                     tx.commit()?;
                     Ok(true)
                 })
@@ -428,13 +451,16 @@ pub fn run(repo: &PostgresRepository, max_batches: Option<usize>) -> Result<Valu
             }
         }
         // The certificate, and the notes go, in one transaction.
-        let (s, pol, c2) = (slug.clone(), policy.id, counts.clone());
+        let (s, pol) = (slug.clone(), policy.id);
         repo.with_client(move |c| {
             let mut tx = c.transaction()?;
             let ids: Vec<String> = tx.query("SELECT record_id FROM purge_pending WHERE run_id = $1", &[&run_id])?.iter().map(|r| r.get(0)).collect();
+            // The run's own counts, which a hold placed during the run may have changed.
+            let counts: Value = tx.query_one("SELECT counts FROM purge_runs WHERE id = $1", &[&run_id])?.get(0);
+            let held = i32::try_from(counts["held"].as_i64().unwrap_or(0)).unwrap_or(i32::MAX);
             tx.execute(
-                "INSERT INTO purge_certificates (id, policy_id, app_slug, counts, ids_sha256, held_skipped) VALUES ($1, $2, $3, $4, $5, 0)",
-                &[&Uuid::new_v4(), &pol, &s, &c2, &sha_of_sorted(ids)],
+                "INSERT INTO purge_certificates (id, policy_id, app_slug, counts, ids_sha256, held_skipped) VALUES ($1, $2, $3, $4, $5, $6)",
+                &[&Uuid::new_v4(), &pol, &s, &counts, &sha_of_sorted(ids), &held],
             )?;
             tx.execute("DELETE FROM purge_runs WHERE id = $1", &[&run_id])?;
             tx.commit()?;
@@ -472,7 +498,7 @@ pub const ORPHAN_GRACE_HOURS: i32 = 24;
 
 /// Deletes the blobs no live reference holds and no reference made in the last 24 hours holds, with the references that
 /// let go of them. The ledger entry `BlobsPurged` comes first and holds the count only: a file's name can say whose it
-/// was. Legal holds are lifecycle phase 4, so nothing is held yet.
+/// was. A blob any held record refers to stays, whatever its references say.
 pub fn purge_orphan_blobs(ctx: &JobCtx, _payload: Value) -> Result<Value, JobError> {
     let repo = ctx.repository();
     let orphans: Vec<String> = repo
@@ -480,7 +506,8 @@ pub fn purge_orphan_blobs(ctx: &JobCtx, _payload: Value) -> Result<Value, JobErr
             Ok(c.query(
                 "SELECT f.sha256 FROM files f WHERE NOT EXISTS (SELECT 1 FROM file_refs r WHERE r.sha256 = f.sha256 \
                    AND (r.deleted_at IS NULL OR r.uploaded_at > NOW() - make_interval(hours => $1))) \
-                   AND NOT EXISTS (SELECT 1 FROM app_snapshots s WHERE s.file_sha256 = f.sha256)",
+                   AND NOT EXISTS (SELECT 1 FROM app_snapshots s WHERE s.file_sha256 = f.sha256) \
+                   AND NOT EXISTS (SELECT 1 FROM file_refs h WHERE h.sha256 = f.sha256 AND h.record_id IS NOT NULL AND is_held(h.app_slug, h.record_id))",
                 &[&ORPHAN_GRACE_HOURS],
             )?
             .iter()
@@ -507,7 +534,7 @@ pub fn purge_orphan_blobs(ctx: &JobCtx, _payload: Value) -> Result<Value, JobErr
             // Checked again in the transaction: a reference made since the list was read keeps its blob.
             tx.execute(
                 "DELETE FROM file_refs r WHERE r.sha256 = ANY($1) AND r.deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM file_refs l WHERE l.sha256 = r.sha256 \
-                   AND (l.deleted_at IS NULL OR l.uploaded_at > NOW() - make_interval(hours => $2)))",
+                   AND (l.deleted_at IS NULL OR l.uploaded_at > NOW() - make_interval(hours => $2) OR (l.record_id IS NOT NULL AND is_held(l.app_slug, l.record_id))))",
                 &[&orphans, &ORPHAN_GRACE_HOURS],
             )?;
             let gone = tx

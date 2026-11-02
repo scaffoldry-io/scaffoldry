@@ -59,6 +59,7 @@ pub mod view_as;
 pub mod views;
 pub mod lifecycle;
 pub mod retention;
+pub mod holds;
 pub mod link_options;
 pub mod grants;
 pub mod members;

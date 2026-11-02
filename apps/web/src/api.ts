@@ -566,6 +566,31 @@ export const uploadRecordFile = (appSlug: string, file: File, opts: UploadOption
     xhr.send(file);
   });
 
+/** What a legal hold covers. A query hold names field = value pairs a record must contain. */
+export interface HoldScope {
+  scope_kind: "workspace" | "app" | "table" | "query";
+  workspace_id?: string | null;
+  app_slug?: string | null;
+  table_id?: string | null;
+  filter?: Record<string, string> | null;
+  include_future?: boolean;
+}
+
+export interface LegalHold extends HoldScope {
+  id: string;
+  name: string;
+  case_ref: string;
+  reason: string;
+  /** The scope in words. */
+  scope: string;
+  count: number;
+  created_by: string;
+  created_at: string;
+  released_by: string | null;
+  released_at: string | null;
+  active: boolean;
+}
+
 export interface LinkOption {
   id: string;
   label: string;
@@ -1493,6 +1518,33 @@ export const apiClient = {
     if (params?.limit) sp.set("limit", String(params.limit));
     const qs = sp.toString() ? `?${sp.toString()}` : "";
     return request<AdminJobsResponse>(`/admin/jobs${qs}`);
+  },
+
+  /** Legal holds (lifecycle phase 4). A Platform Admin or `compliance` only. */
+  listHolds: async (): Promise<LegalHold[]> => {
+    const res = await request<{ holds: LegalHold[] }>("/admin/holds");
+    return Array.isArray(res?.holds) ? res.holds : [];
+  },
+
+  previewHold: async (scope: HoldScope): Promise<{ job_id: string }> => {
+    return request<{ job_id: string }>("/admin/holds/preview", { method: "POST", body: JSON.stringify(scope) });
+  },
+
+  placeHold: async (hold: HoldScope & { name: string; case_ref: string; reason: string }): Promise<LegalHold> => {
+    return request<LegalHold>("/admin/holds", { method: "POST", body: JSON.stringify(hold) });
+  },
+
+  /** The drawer's hold marker. `null` for anyone the server tells nothing: it answers them 404. */
+  getRecordHold: async (slug: string, id: string): Promise<{ held: boolean; marker: string | null; holds: string[] } | null> => {
+    try {
+      return await request<{ held: boolean; marker: string | null; holds: string[] }>(`/apps/${encodeURIComponent(slug)}/records/${encodeURIComponent(id)}/hold`);
+    } catch {
+      return null;
+    }
+  },
+
+  releaseHold: async (id: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/holds/${encodeURIComponent(id)}/release`, { method: "POST", body: JSON.stringify({ reason }) });
   },
 
   getAdminJob: async (id: string) => {

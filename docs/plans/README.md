@@ -238,7 +238,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 131 | [lifecycle.md](lifecycle.md) | 2 | Retired fields and archived apps | **COMPLETED** |
 | 132 | [lifecycle.md](lifecycle.md) | 3 | Retention policies, nightly purge, and a certificate of destruction | **COMPLETED** |
 | 133 | [attachments.md](attachments.md) | 4 | Orphan blob purge, retention, and bundles with files | **COMPLETED** |
-| 134 | [lifecycle.md](lifecycle.md) | 4 | Legal holds that override every destruction path |
+| 134 | [lifecycle.md](lifecycle.md) | 4 | Legal holds that override every destruction path | **COMPLETED** |
 | 135 | [record-history.md](record-history.md) | 5 | History, comments, and disclosures in the record drawer |
 
 ### Wave 3 — collaboration and process
@@ -421,8 +421,7 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Running ClamAV as a separate daemon for upload scanning | Files show as not scanned. An operator can require a scanner |
 | Who supplies the NIST catalog files, and the 800-171 revision CMMC requires | `oscal-catalog.md` stops until `governance/catalog/source/` and `PROVENANCE.json` exist |
 | MCP tools for templates (`list_templates`, `instantiate_template`). The tool list has about 10 bytes of room under its 24,000-byte budget, so a tool needs either shorter descriptions elsewhere or a higher budget with a stated reason | Templates are reachable through REST and the desk. No MCP tool |
-| Snapshot expiry. Snapshots carry `expires_at` and nothing purges them, because retention policies and legal holds (`lifecycle.md` phases 3 and 4) are not built. When they are, the purge must skip a held app's snapshots | Snapshots are kept until someone removes them. `import-export.md` phase 5 test 5 is not built |
-| Holds on destruction. `purge_expired` destroys trash, history and retired values by policy, and `purge_orphan_blobs` deletes blobs no record holds. Both skip nothing, because legal holds are `lifecycle.md` phase 4. Phase 4 must make every destruction path skip a held record, app or workspace, and keep a held reference's blob | Nothing is held. `lifecycle.md` phase 2 test 4 and `attachments.md` phase 4 test 2 wait for phase 4 |
+| Snapshot expiry. Snapshots carry `expires_at` and nothing purges them. Retention (`purge.rs`) and legal holds (`is_held`) now exist, so the expiry can be one more path in `purge.rs` that skips a held app's snapshots. No brief phase asks for it yet | Snapshots are kept until someone removes them. `import-export.md` phase 5 test 5 is not built |
 | The import wizard offering `This file came from another tool`. The desk's `ImportWizard` reads and checks the file in the browser and never calls the server's import routes, so the preset (`preset: "other_tool"` in the import mapping) has no screen. The wizard must move onto the server import flow first | The preset is reachable through the import routes. The wizard does not offer it |
 | Where the master key file for the secrets store is kept, and who holds it | Secrets routes answer `master_key_missing` |
 | The retention numbers and the records officer who owns them | Placeholders, and a banner until real ones are set |

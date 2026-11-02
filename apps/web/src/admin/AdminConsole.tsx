@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Overview } from "./Overview";
 import { Jobs } from "./Jobs";
+import { LegalHolds } from "./LegalHolds";
 import { People } from "./People";
 import { Positions } from "./Positions";
 import { Authority } from "./Authority";
@@ -17,8 +18,8 @@ export interface AdminConsoleProps {
   realAdmin?: Persona | null;
   handleStopImpersonation?: () => void;
   navigateTo?: (path: string) => void;
-  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -55,7 +56,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -128,6 +129,8 @@ export function AdminConsole({
         <Authority />
       ) : currentTab === "clients" ? (
         <OutsideApps />
+      ) : currentTab === "holds" ? (
+        <LegalHolds />
       ) : currentTab === "workspaces" ? (
         <Workspaces />
       ) : currentTab === "people" ? (

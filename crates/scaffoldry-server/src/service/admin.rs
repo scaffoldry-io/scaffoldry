@@ -75,6 +75,10 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/admin/retention/preview"),
     ("GET", "/admin/purges"),
     ("GET", "/admin/purges/{id}"),
+    ("GET", "/admin/holds"),
+    ("POST", "/admin/holds"),
+    ("POST", "/admin/holds/preview"),
+    ("POST", "/admin/holds/{id}/release"),
     ("GET", "/admin/disclosures/export"),
 ];
 
