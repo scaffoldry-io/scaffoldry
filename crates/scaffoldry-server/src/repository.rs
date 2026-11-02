@@ -87,6 +87,7 @@ const SCHEMA_0079: &str = include_str!("../../scaffoldry-core/migrations/0079_ap
 const SCHEMA_0080: &str = include_str!("../../scaffoldry-core/migrations/0080_archives.sql");
 const SCHEMA_0081: &str = include_str!("../../scaffoldry-core/migrations/0081_retention.sql");
 const SCHEMA_0082: &str = include_str!("../../scaffoldry-core/migrations/0082_legal_holds.sql");
+const SCHEMA_0083: &str = include_str!("../../scaffoldry-core/migrations/0083_secrets.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1150,6 +1151,7 @@ impl PostgresRepository {
                             ("0080_archives.sql", SCHEMA_0080),
                             ("0081_retention.sql", SCHEMA_0081),
                             ("0082_legal_holds.sql", SCHEMA_0082),
+                            ("0083_secrets.sql", SCHEMA_0083),
                         ];
 
                         let mut fresh_install = false;

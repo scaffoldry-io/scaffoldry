@@ -100,15 +100,36 @@ impl World {
     }
 }
 
+/// One master key file for both servers, as every instance of a deployment mounts the same one.
+fn shared_key_file() -> std::path::PathBuf {
+    use base64::Engine;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    let dir = std::env::temp_dir().join(format!("scaffoldry-two-instance-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("master.key");
+    std::fs::write(&path, base64::engine::general_purpose::STANDARD.encode(bytes)).unwrap();
+    path
+}
+
+/// A server on the test database, with the shared master key.
+fn server(db: &TestDb, key: &std::path::Path) -> std::sync::Arc<scaffoldry_server::state::ServerState> {
+    let mut state = scaffoldry_server::state::ServerState::connect(db.url()).expect("a server on the test database");
+    state.master_key_file = Some(key.to_path_buf());
+    std::sync::Arc::new(state)
+}
+
 /// Two servers on a new database, with the demo data and the shared fixtures.
 pub async fn world() -> World {
     let db = TestDb::new();
+    let key = shared_key_file();
     let a = {
-        let state = db.state();
+        let state = server(&db, &key);
         state.seed_demo().expect("seed");
         scaffoldry_server::build_app_with_state(state).expect("router")
     };
-    let b = db.second_app();
+    let b = scaffoldry_server::build_app_with_state(server(&db, &key)).expect("router");
     let world = World(std::sync::Arc::new(Servers { db, a, b }));
     cases::prepare(&world).await.expect("the shared fixtures");
     world

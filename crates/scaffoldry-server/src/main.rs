@@ -21,6 +21,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
 
+    // Re-encrypts every stored secret from one master key file to another, in one transaction.
+    if args.len() > 1 && args[1] == "rotate-master-key" {
+        if args.len() != 4 {
+            return Err("Usage: scaffoldry-server rotate-master-key {old_key_file} {new_key_file}".into());
+        }
+        let state = ServerState::new()?;
+        let count = scaffoldry_server::secrets::rotate_master_key(&state.repository, std::path::Path::new(&args[2]), std::path::Path::new(&args[3]))?;
+        println!("Re-encrypted {count} secrets. Point SCAFFOLDRY_MASTER_KEY_FILE at the new key file and restart.");
+        return Ok(());
+    }
+
     if args.len() > 1 && args[1] == "seed-demo" {
         let state = ServerState::new()?;
         state.seed_demo()?;
@@ -69,6 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let state = Arc::new(ServerState::new()?);
+    // Stored secrets need their master key. Without it, or with the wrong one, the server does not start.
+    scaffoldry_server::secrets::boot_check(&state.repository, state.master_key_file.as_deref())?;
     if service::identity::boot_setup_token_needed(&state)
         && service::identity::create_setup_token(&state).is_ok()
     {

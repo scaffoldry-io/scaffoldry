@@ -269,6 +269,9 @@ pub struct ServerState {
     pub formula_rate_limits: RwLock<HashMap<String, (std::time::Instant, u32)>>,
     /// The open event streams of this process and its one database listener (real-time phase 1).
     pub realtime_streams: Arc<crate::realtime::Hub>,
+    /// The file holding the master key for the secrets store, from `SCAFFOLDRY_MASTER_KEY_FILE` (integrations phase 1).
+    /// The key is read from it each time a secret is used, so nothing keeps it in memory between requests.
+    pub master_key_file: Option<std::path::PathBuf>,
     /// The domain tree (`access_domains`): `(key, parent key)`. It changes only by migration, so it is read once.
     pub domains: std::sync::OnceLock<Vec<(String, Option<String>)>>,
 }
@@ -730,6 +733,7 @@ impl ServerState {
             settings: RwLock::new(settings_map),
             formula_rate_limits: RwLock::new(HashMap::new()),
             realtime_streams: crate::realtime::Hub::new(),
+            master_key_file: std::env::var_os("SCAFFOLDRY_MASTER_KEY_FILE").filter(|v| !v.is_empty()).map(std::path::PathBuf::from),
             domains: std::sync::OnceLock::new(),
         })
     }

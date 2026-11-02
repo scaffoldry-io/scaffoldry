@@ -6,6 +6,9 @@ use crate::state::{AuthUser, OrganizationNode, RecordDecisionInput, SharedState}
 use scaffoldry_core::ledger::DecisionType;
 
 pub const ADMIN_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/admin/secrets"),
+    ("PUT", "/admin/secrets/{name}"),
+    ("DELETE", "/admin/secrets/{name}"),
     ("GET", "/admin/overview"),
     ("POST", "/admin/library/policies/{id}/rules/{key}/bindings"),
     ("DELETE", "/admin/library/bindings/{id}"),

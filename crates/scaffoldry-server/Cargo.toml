@@ -22,6 +22,13 @@ uuid = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 postgres = { workspace = true }
 base64 = "0.22"
+# Integrations phase 1, approved by Johann 2026-11-02. AES-256-GCM for the secrets store, with buffers zeroized on drop.
+aes-gcm = "0.10"
+zeroize = "1"
+# The one outbound HTTP client, used only by net::egress. rustls on ring, and the platform's certificate store.
+ureq = { version = "3.5", default-features = false, features = ["rustls-no-provider"] }
+rustls-native-certs = "0.8"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 hmac = "0.13"
 sha2 = { workspace = true }
 calamine = { version = "0.26", features = ["dates"] }

@@ -231,6 +231,11 @@ Scaffoldry deploys as a single compose stack:
    - Takes the dump first and the directory second. A blob is written before its reference is committed, so a directory copied after the dump holds every blob the dump names. Blobs added in between are harmless: the next `purge_orphan_blobs` run removes the ones nothing refers to.
    - Encrypts the snapshot archive, both parts in one archive, and uploads it to off-machine object storage (Backblaze B2, Google Cloud Storage, or Proton Drive).
    - The backup script is an operator document, not code in this repository. It names both the database dump and the files directory.
+4. **The master key for the secrets store:**
+   - Stored secrets are AES-256-GCM ciphertext under a master key in a file the operator mounts (`SCAFFOLDRY_MASTER_KEY_FILE`). The key is never in the database or in its backup.
+   - Keep the key apart from the database backups. The backup holds the ciphertext. The key opens it.
+   - With secrets stored, a missing or wrong key stops the server at start. `scaffoldry-server rotate-master-key {old} {new}` re-encrypts them under a new key. See `docs/operations/master-key.md`.
+5. **Outbound connections:** the server connects only where the setting `egress.allow` says, through `net::egress`. It is empty by default, so nothing leaves.
 
 ---
 

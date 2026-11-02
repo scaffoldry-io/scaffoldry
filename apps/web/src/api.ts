@@ -603,6 +603,16 @@ export interface HoldScope {
   include_future?: boolean;
 }
 
+/** A secret as the server lists it: never its value. */
+export interface SecretListing {
+  name: string;
+  created_by: string;
+  created_at: string;
+  rotated_at: string | null;
+  /** How many things name this secret. */
+  references: number;
+}
+
 export interface LegalHold extends HoldScope {
   id: string;
   name: string;
@@ -1560,6 +1570,22 @@ export const apiClient = {
     if (params?.limit) sp.set("limit", String(params.limit));
     const qs = sp.toString() ? `?${sp.toString()}` : "";
     return request<AdminJobsResponse>(`/admin/jobs${qs}`);
+  },
+
+  /** The secrets store (integrations phase 1). A Platform Admin only. Names and dates: a value is never returned. */
+  listSecrets: async (): Promise<SecretListing[]> => {
+    const res = await request<{ secrets: SecretListing[] }>("/admin/secrets");
+    return Array.isArray(res?.secrets) ? res.secrets : [];
+  },
+
+  /** Creates a secret or replaces its value. */
+  putSecret: async (name: string, value: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/secrets/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ value, reason }) });
+  },
+
+  /** Deletes a secret nothing uses. One in use is refused with what uses it. */
+  deleteSecret: async (name: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/secrets/${encodeURIComponent(name)}`, { method: "DELETE", body: JSON.stringify({ reason }) });
   },
 
   /** Legal holds (lifecycle phase 4). A Platform Admin or `compliance` only. */
