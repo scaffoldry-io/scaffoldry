@@ -84,6 +84,7 @@ const SCHEMA_0076: &str = include_str!("../../scaffoldry-core/migrations/0076_cl
 const SCHEMA_0077: &str = include_str!("../../scaffoldry-core/migrations/0077_proposal_trials.sql");
 const SCHEMA_0078: &str = include_str!("../../scaffoldry-core/migrations/0078_app_templates.sql");
 const SCHEMA_0079: &str = include_str!("../../scaffoldry-core/migrations/0079_app_snapshots.sql");
+const SCHEMA_0080: &str = include_str!("../../scaffoldry-core/migrations/0080_archives.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1131,6 +1132,7 @@ impl PostgresRepository {
                             ("0077_proposal_trials.sql", SCHEMA_0077),
                             ("0078_app_templates.sql", SCHEMA_0078),
                             ("0079_app_snapshots.sql", SCHEMA_0079),
+                            ("0080_archives.sql", SCHEMA_0080),
                         ];
 
                         let mut fresh_install = false;

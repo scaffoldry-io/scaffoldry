@@ -186,6 +186,8 @@ pub enum ServiceError {
     AuthorityLoosens(String),
     /// A preview of a proposal tried to change something. A preview only reads.
     PreviewReadOnly(String),
+    /// A write to an archived app or workspace (lifecycle phase 2). An archive only reads until it is unarchived.
+    Archived(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
     TokenScope(String),
     /// An outside app asked for something its ceiling does not cover.
@@ -247,7 +249,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -279,6 +281,7 @@ impl ServiceError {
             Self::CitationNotFound(_) => "citation_not_found",
             Self::AuthorityLoosens(_) => "authority_loosens",
             Self::PreviewReadOnly(_) => "preview_read_only",
+            Self::Archived(_) => "archived",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
             Self::LastOwner(_) => "last_owner",
@@ -315,6 +318,7 @@ impl ServiceError {
             | Self::CitationNotFound(msg)
             | Self::AuthorityLoosens(msg)
             | Self::PreviewReadOnly(msg)
+            | Self::Archived(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)
             | Self::LastOwner(msg)

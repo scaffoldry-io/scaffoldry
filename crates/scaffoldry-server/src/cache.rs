@@ -7,8 +7,9 @@
 
 use crate::repository::RepositoryError;
 
-/// The closed list of cached collections. It matches the rows `0053_cache_versions.sql` inserts.
-pub const NAMES: [&str; 11] = [
+/// The closed list of cached collections. It matches the rows `0053_cache_versions.sql` inserts, and `archives`, which
+/// `0080_archives.sql` adds.
+pub const NAMES: [&str; 12] = [
     "settings",
     "labels",
     "position_types",
@@ -20,6 +21,7 @@ pub const NAMES: [&str; 11] = [
     "manifests",
     "rules",
     "policy",
+    "archives",
 ];
 
 /// The place of a name on the list.

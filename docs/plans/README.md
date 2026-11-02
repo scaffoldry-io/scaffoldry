@@ -235,7 +235,7 @@ Fields, files, views, import and export, and the million-row proof. A department
 | 128 | [import-export.md](import-export.md) | 6 | Moving off a spreadsheet tool, with every decision listed | **COMPLETED** |
 | 129 | [links.md](links.md) | 5 | Converting old value joins to links, with a preview | **COMPLETED** |
 | 130 | [links.md](links.md) | 6 | Link cells, paste, and a linked records section in the grid | **COMPLETED** |
-| 131 | [lifecycle.md](lifecycle.md) | 2 | Retired fields and archived apps |
+| 131 | [lifecycle.md](lifecycle.md) | 2 | Retired fields and archived apps | **COMPLETED** |
 | 132 | [lifecycle.md](lifecycle.md) | 3 | Retention policies, nightly purge, and a certificate of destruction |
 | 133 | [attachments.md](attachments.md) | 4 | Orphan blob purge, retention, and bundles with files |
 | 134 | [lifecycle.md](lifecycle.md) | 4 | Legal holds that override every destruction path |
@@ -422,6 +422,7 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | Who supplies the NIST catalog files, and the 800-171 revision CMMC requires | `oscal-catalog.md` stops until `governance/catalog/source/` and `PROVENANCE.json` exist |
 | MCP tools for templates (`list_templates`, `instantiate_template`). The tool list has about 10 bytes of room under its 24,000-byte budget, so a tool needs either shorter descriptions elsewhere or a higher budget with a stated reason | Templates are reachable through REST and the desk. No MCP tool |
 | Snapshot expiry. Snapshots carry `expires_at` and nothing purges them, because retention policies and legal holds (`lifecycle.md` phases 3 and 4) are not built. When they are, the purge must skip a held app's snapshots | Snapshots are kept until someone removes them. `import-export.md` phase 5 test 5 is not built |
+| Stripping retired field values. A retired field's values stay in the records until `purge_expired` strips them after the policy's `keep_retired_days`, through `purge::destroy` and not under a hold. Retention policies, `purge::destroy` and legal holds are `lifecycle.md` phases 3 and 4 | Retired values are kept. `lifecycle.md` phase 2 test 4 waits for phase 3 |
 | The import wizard offering `This file came from another tool`. The desk's `ImportWizard` reads and checks the file in the browser and never calls the server's import routes, so the preset (`preset: "other_tool"` in the import mapping) has no screen. The wizard must move onto the server import flow first | The preset is reachable through the import routes. The wizard does not offer it |
 | Where the master key file for the secrets store is kept, and who holds it | Secrets routes answer `master_key_missing` |
 | The retention numbers and the records officer who owns them | Placeholders, and a banner until real ones are set |

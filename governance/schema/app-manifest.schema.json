@@ -190,6 +190,11 @@
         "ferpa_sensitive": {
           "type": "boolean"
         },
+        "retired_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a proposal removed the field. A retired field is listed in its table's retired_fields, never in fields. Its values stay in the records until retention strips them."
+        },
         "mask": {
           "type": "object",
           "description": "What a reader who is not cleared for the field sees of it. The shape is mask.schema.json. Showing more than the category's default raises the flagged check mask_weakened.",
@@ -367,6 +372,12 @@
         "sealed": {
           "type": "boolean",
           "description": "A sealed table stops every grant anchored above it, for its rows too. Grants at the table reach. Unsealing needs a second person."
+        },
+        "retired_fields": {
+          "type": "array",
+          "maxItems": 200,
+          "description": "The fields a proposal removed, each with retired_at. Nothing reads, writes, indexes or calculates them. A proposal that puts one back in fields restores it with its values.",
+          "items": { "$ref": "#/$defs/field" }
         },
         "name": {
           "type": "string"

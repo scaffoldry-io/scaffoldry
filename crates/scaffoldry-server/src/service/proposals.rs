@@ -940,6 +940,9 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
         (None, Some(g)) => g.clone(),
         (None, None) => return Err(ServiceError::BadRequest("Argument 'app_slug' is required when there is no manifest".to_string())),
     };
+    if !dry_run {
+        crate::service::access::archived_refusal(&slug, Some(&ws.id), state)?;
+    }
     let live = live_manifest(&slug, state);
     if input.manifest.is_none() {
         match &live {

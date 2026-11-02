@@ -1,0 +1,21 @@
+{
+  "slug": "casework",
+  "title": "Casework",
+  "description": "A table whose note field was retired by a proposal",
+  "organization_code": "PHYS",
+  "department": "physics",
+  "views": [],
+  "tables": [
+    {
+      "id": "cases",
+      "name": "Cases",
+      "slug": "cases",
+      "fields": [
+        { "name": "title", "label": "Title", "field_type": "Text", "required": true, "ferpa_sensitive": false }
+      ],
+      "retired_fields": [
+        { "name": "note", "label": "Note", "field_type": "Text", "required": false, "ferpa_sensitive": false, "retired_at": "2026-11-01T12:00:00Z" }
+      ]
+    }
+  ]
+}

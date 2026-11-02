@@ -476,7 +476,7 @@ fn ledger_count(w: &World, kind: &str) -> i64 {
     let kind = kind.to_string();
     w.db.run(move |c| {
         c.query_one(
-            "SELECT count(*) FROM decision_ledger WHERE decision_type = $1",
+            "SELECT count(*) FROM governance_ledger WHERE decision_type = $1",
             &[&kind],
         )
         .unwrap()
