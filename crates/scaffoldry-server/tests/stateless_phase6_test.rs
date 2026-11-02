@@ -54,6 +54,23 @@ async fn readyz_follows_the_database_and_healthz_does_not() {
     assert_eq!(s, StatusCode::OK, "ready again with no restart: {body}");
 }
 
+// The first request after the database returns is served, whichever worker takes it. A worker that finds its connection
+// closed tells the others before its caller hears back, so the next request, on any worker, checks its connection first.
+// Twenty rounds of the pattern the test above makes once.
+#[tokio::test]
+async fn the_first_request_after_the_database_returns_is_served_on_any_worker() {
+    let db = TestDb::new();
+    let app = db.app();
+    for round in 0..20 {
+        db.cut_off();
+        let (s, _) = send(&app, "GET", "/readyz", None, None).await;
+        assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "round {round}: not ready while the database is away");
+        db.restore();
+        let (s, body) = send(&app, "GET", "/readyz", None, None).await;
+        assert_eq!(s, StatusCode::OK, "round {round}: ready on the first request back: {body}");
+    }
+}
+
 /// One HTTP exchange over a socket. Returns what the server sent, or an empty string if it sent nothing.
 async fn raw(addr: std::net::SocketAddr, request: &str) -> String {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
