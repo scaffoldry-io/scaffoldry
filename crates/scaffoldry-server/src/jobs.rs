@@ -196,6 +196,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::notifications::purge_job,
     },
     JobKind {
+        name: "send_email",
+        title: "Sending mail",
+        description: "Sends the mail that is due through the institution's mail server, and tries again later when it fails.",
+        max_attempts: 1,
+        max_concurrent: 1,
+        run: crate::mail::send_email_job,
+    },
+    JobKind {
         name: "library_fetch",
         title: "Checking policy sources",
         description: "Fetches the web sources of the policy library that are due, at most once a day each, and marks the rules whose cited passages left them.",

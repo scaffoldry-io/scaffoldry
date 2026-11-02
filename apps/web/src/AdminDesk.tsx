@@ -814,7 +814,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // My apps: the apps this person can reach, and the ones they pinned. Pins live in this browser, as workspace pins do.
@@ -887,6 +886,23 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     }
   };
   const [notificationToast, setNotificationToast] = useState<string | null>(null);
+
+  // A link from a mail is /n/{id} and carries no token. Once there is a session, the desk asks where it leads and goes.
+  useEffect(() => {
+    if (!authToken || typeof window === "undefined") return;
+    const m = window.location.pathname.match(/^\/n\/([A-Za-z0-9-]+)$/);
+    if (!m) return;
+    let cancelled = false;
+    apiClient
+      .openNotification(m[1])
+      .catch(() => "/")
+      .then((path) => {
+        if (!cancelled) navigateTo(path);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken]);
 
   useEffect(() => {
     let cancelled = false;

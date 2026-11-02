@@ -195,6 +195,11 @@ pub fn display_name(u: &ScimUser) -> String {
     }
 }
 
+/// A person's first directory address, when they have one.
+pub fn primary_email(u: &ScimUser) -> Option<String> {
+    u.emails.iter().find_map(|e| e.get("value").and_then(|v| v.as_str())).map(str::to_string)
+}
+
 fn email(u: &ScimUser) -> String {
     u.emails
         .iter()

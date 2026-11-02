@@ -733,7 +733,7 @@ impl ServerState {
             settings: RwLock::new(settings_map),
             formula_rate_limits: RwLock::new(HashMap::new()),
             realtime_streams: crate::realtime::Hub::new(),
-            master_key_file: std::env::var_os("SCAFFOLDRY_MASTER_KEY_FILE").filter(|v| !v.is_empty()).map(std::path::PathBuf::from),
+            master_key_file: crate::secrets::key_file_from_env(),
             domains: std::sync::OnceLock::new(),
         })
     }
