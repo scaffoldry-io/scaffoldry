@@ -459,9 +459,12 @@ impl PostgresRepository {
     pub fn library_policy_tallies(&self) -> Result<std::collections::HashMap<Uuid, (Value, i64)>, RepositoryError> {
         self.with_client(|c| {
             let rows = c.query(
-                "SELECT p.id, COALESCE((SELECT jsonb_object_agg(status, n) FROM (SELECT status, count(*) AS n FROM library_rules r WHERE r.policy_id = p.id GROUP BY status) s), '{}'::jsonb), \
-                        (SELECT count(*) FROM library_questions q WHERE q.policy_id = p.id AND q.answer IS NULL) \
-                 FROM library_policies p",
+                // Two grouped scans joined once, not a subquery per policy.
+                "WITH counts AS (SELECT policy_id, status, count(*) AS n FROM library_rules GROUP BY policy_id, status), \
+                      by_policy AS (SELECT policy_id, jsonb_object_agg(status, n) AS counts FROM counts GROUP BY policy_id), \
+                      open_q AS (SELECT policy_id, count(*) AS n FROM library_questions WHERE answer IS NULL GROUP BY policy_id) \
+                 SELECT p.id, COALESCE(b.counts, '{}'::jsonb), COALESCE(q.n, 0) FROM library_policies p \
+                 LEFT JOIN by_policy b ON b.policy_id = p.id LEFT JOIN open_q q ON q.policy_id = p.id",
                 &[],
             )?;
             Ok(rows.iter().map(|r| (r.get::<_, Uuid>(0), (r.get::<_, Value>(1), r.get::<_, i64>(2)))).collect())

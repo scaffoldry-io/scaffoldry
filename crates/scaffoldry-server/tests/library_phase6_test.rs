@@ -23,7 +23,12 @@ const ROOT: &str = "00000000-0000-0000-0000-000000000001";
 const PASSAGE: &str = "Student records are kept for seven years after the student leaves.";
 
 async fn send(app: &axum::Router, method: &str, uri: &str, who: &str, body: Option<Value>) -> (StatusCode, Value) {
-    let b = Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {}", issue_test_token_and_user(who)));
+    send_as(app, method, uri, &issue_test_token_and_user(who), body).await
+}
+
+/// A request with a token minted beforehand, so a timed call times the route and not the minting.
+async fn send_as(app: &axum::Router, method: &str, uri: &str, token: &str, body: Option<Value>) -> (StatusCode, Value) {
+    let b = Request::builder().method(method).uri(uri).header("authorization", format!("Bearer {token}"));
     let req = match body {
         Some(v) => b.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap(),
         None => b.body(Body::empty()).unwrap(),
@@ -223,13 +228,15 @@ async fn the_health_route_answers_in_under_200_ms_at_2000_policies_and_50000_rul
         let rules: i64 = c.query_one("SELECT count(*) FROM library_rules", &[]).unwrap().get(0);
         assert!(rules >= 50_000, "{rules} rules");
     });
-    // One call to warm the connection and plans, then the median of five.
-    let (s, h) = send(&app, "GET", "/api/v1/admin/library/health", ADMIN, None).await;
+    // The token is minted once, before the clock starts: the timing is the route's alone. One call warms the
+    // connection and plans, then the median of five.
+    let token = issue_test_token_and_user(ADMIN);
+    let (s, h) = send_as(&app, "GET", "/api/v1/admin/library/health", &token, None).await;
     assert_eq!(s, StatusCode::OK, "{h}");
     let mut times = Vec::new();
     for _ in 0..5 {
         let start = Instant::now();
-        let (s, _) = send(&app, "GET", "/api/v1/admin/library/health", ADMIN, None).await;
+        let (s, _) = send_as(&app, "GET", "/api/v1/admin/library/health", &token, None).await;
         times.push(start.elapsed());
         assert_eq!(s, StatusCode::OK);
     }
@@ -237,6 +244,12 @@ async fn the_health_route_answers_in_under_200_ms_at_2000_policies_and_50000_rul
     let median = times[2];
     println!("library health at 2,000 policies and 50,000 rules: median {} ms, all {:?}", median.as_millis(), times.iter().map(|t| t.as_millis()).collect::<Vec<_>>());
     assert!(median < Duration::from_millis(200), "median {median:?}");
+    // The policy list, with its counts, at the same size. Recorded, not held to the health screen's limit.
+    let start = Instant::now();
+    let (s, list) = send_as(&app, "GET", "/api/v1/admin/library/policies", &token, None).await;
+    println!("policy list at the same size: {} ms", start.elapsed().as_millis());
+    assert_eq!(s, StatusCode::OK);
+    assert!(list["policies"].as_array().unwrap().len() >= 2000);
     // The lists are capped. Counts say how many there are.
     assert!(h["guidance_only"]["count"].as_u64().unwrap() >= 40_000);
     assert!(h["guidance_only"]["items"].as_array().unwrap().len() <= 50);
