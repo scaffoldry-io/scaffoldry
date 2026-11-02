@@ -140,6 +140,9 @@ async fn get_overview(State(state): State<SharedState>, headers: HeaderMap) -> i
                 "entry_count": ledger_count,
                 "head_hash": head_hash,
             },
+            "retention": {
+                "placeholder": state.repository.list_retention_policies().map(|l| l.iter().any(|p| p.active && p.basis.trim() == crate::purge::PLACEHOLDER_BASIS)).unwrap_or(false),
+            },
             "files": crate::scan::overview(
                 Some(&*state.repository),
                 state.settings.read().ok().and_then(|s| s.get("files.scanner").cloned()).as_ref(),

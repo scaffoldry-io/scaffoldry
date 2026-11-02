@@ -394,10 +394,12 @@ fn every_record_write_method_takes_a_write_context() {
             assert!(signature.contains("WriteCtx"), "{file}: {m} takes no WriteCtx:\n{signature}");
         }
     }
-    // No other file writes the table.
+    // No other file writes the table, except `purge.rs`, the one place retention destroys a record or strips a retired
+    // value (lifecycle phase 3). That is destruction by policy, after a ledger entry, not an edit.
     for entry in std::fs::read_dir(&root).unwrap().chain(std::fs::read_dir(root.join("service")).unwrap()).chain(std::fs::read_dir(root.join("routes")).unwrap()) {
         let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "rs") && path.file_name().unwrap() != "repository.rs" {
+        let name = path.file_name().unwrap();
+        if path.extension().is_some_and(|e| e == "rs") && name != "repository.rs" && name != "purge.rs" {
             let text = std::fs::read_to_string(&path).unwrap();
             for verb in ["INSERT INTO dataset_records", "UPDATE dataset_records", "DELETE FROM dataset_records"] {
                 assert!(!text.contains(verb), "{} writes records by SQL", path.display());

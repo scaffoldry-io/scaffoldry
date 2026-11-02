@@ -31,8 +31,9 @@ async fn list(State(state): State<SharedState>, user: Option<Extension<AuthUser>
     Ok(Json(retention::list(&caller, &state)?))
 }
 
-async fn create(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Json(body): Json<Value>) -> Result<impl IntoResponse, ServiceError> {
+async fn create(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
     let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
     let (policy, _) = retention::save(&caller, None, &body, &state)?;
     Ok((StatusCode::CREATED, Json(policy)))
 }
@@ -42,16 +43,18 @@ async fn update(
     user: Option<Extension<AuthUser>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(body): Json<Value>,
+    body: Option<Json<Value>>,
 ) -> Result<impl IntoResponse, ServiceError> {
     let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
     let id = uuid::Uuid::parse_str(&id).map_err(|_| ServiceError::NotFound("Retention policy not found".to_string()))?;
     let (policy, _) = retention::save(&caller, Some(id), &body, &state)?;
     Ok(Json(policy))
 }
 
-async fn preview(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Json(body): Json<Value>) -> Result<impl IntoResponse, ServiceError> {
+async fn preview(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
     let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
     Ok((StatusCode::ACCEPTED, Json(retention::preview(&caller, &body, &state)?)))
 }
 

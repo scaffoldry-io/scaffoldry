@@ -265,6 +265,11 @@ export function Overview() {
           </div>
         )}
         {/* FILE SCANNER CARD */}
+        {data.retention?.placeholder && (
+          <Banner kind="warning">
+            Retention policies still have placeholder values. Nothing is destroyed early, but the records officer should set each policy and its basis.
+          </Banner>
+        )}
         {data.files && (
           <div
             data-testid="admin-overview-files-card"
