@@ -29,6 +29,7 @@ fn make_manifest(slug: &str) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "grants".to_string(),
             name: "Grants".to_string(),
             slug: "grants".to_string(),

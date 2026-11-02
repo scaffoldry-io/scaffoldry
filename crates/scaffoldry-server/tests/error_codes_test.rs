@@ -79,6 +79,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::GrantTooBroad("Broad".into()), "grant_too_broad", StatusCode::BAD_REQUEST),
         (ServiceError::ProposalChanged("Changed".into()), "proposal_changed", StatusCode::CONFLICT),
         (ServiceError::PreviewReadOnly("Read only".into()), "preview_read_only", StatusCode::FORBIDDEN),
+        (ServiceError::Archived("Archived".into()), "archived", StatusCode::CONFLICT),
         (ServiceError::TokenScope("Scoped".into()), "token_scope", StatusCode::FORBIDDEN),
         (ServiceError::ClientScope("Ceiling".into()), "client_scope", StatusCode::FORBIDDEN),
         (ServiceError::LastOwner("Last owner".into()), "last_owner", StatusCode::CONFLICT),
@@ -93,6 +94,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::GrantTooBroad(_)
             | ServiceError::ProposalChanged(_)
             | ServiceError::PreviewReadOnly(_)
+            | ServiceError::Archived(_)
             | ServiceError::TokenScope(_)
             | ServiceError::ClientScope(_)
             | ServiceError::ClientSensitiveField(_)

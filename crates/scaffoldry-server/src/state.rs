@@ -264,6 +264,8 @@ pub struct ServerState {
     /// Empty until the label table exists (admin console phase 4, later part).
     pub labels: RwLock<scaffoldry_engine::LabelSet>,
     pub settings: RwLock<HashMap<String, serde_json::Value>>,
+    /// The archived apps and workspaces (lifecycle phase 2): `("app", slug)` and `("workspace", id)`.
+    pub archives: RwLock<std::collections::HashSet<crate::repository_archives::ArchiveKey>>,
     pub formula_rate_limits: RwLock<HashMap<String, (std::time::Instant, u32)>>,
     /// The domain tree (`access_domains`): `(key, parent key)`. It changes only by migration, so it is read once.
     pub domains: std::sync::OnceLock<Vec<(String, Option<String>)>>,
@@ -274,6 +276,11 @@ impl ServerState {
     /// collection whose counter differs from the one this instance holds. The counter stored is the one read before
     /// the reload, so a write that lands during the reload is seen by the next call. A reload that fails keeps the old
     /// counter and returns the error, and the next call tries again.
+    /// Whether an app, or the workspace it belongs to, is archived.
+    pub fn is_archived(&self, kind: &str, id: &str) -> bool {
+        self.archives.read().unwrap_or_else(|p| p.into_inner()).contains(&(kind.to_string(), id.to_string()))
+    }
+
     pub fn refresh(&self) -> Result<(), crate::repository::RepositoryError> {
         use std::sync::atomic::Ordering::SeqCst;
         for (name, version) in self.repository.cache_versions()? {
@@ -331,6 +338,10 @@ impl ServerState {
             }
         }
         match name {
+            "archives" => {
+                let all = self.repository.list_archives()?;
+                *self.archives.write().unwrap_or_else(|p| p.into_inner()) = all;
+            }
             "organizations" => {
                 let all: HashMap<uuid::Uuid, OrganizationNode> = self
                     .repository
@@ -677,6 +688,7 @@ impl ServerState {
             .map_err(|e| read("the ledger", e))?;
         }
 
+        let archives = repository.list_archives().map_err(|e| read("the archives", e))?;
         let cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()] =
             std::array::from_fn(|i| {
                 let version = versions
@@ -710,6 +722,7 @@ impl ServerState {
             tree: RwLock::new(tree),
             position_types: RwLock::new(position_types),
             labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
+            archives: RwLock::new(archives),
             settings: RwLock::new(settings_map),
             formula_rate_limits: RwLock::new(HashMap::new()),
             domains: std::sync::OnceLock::new(),

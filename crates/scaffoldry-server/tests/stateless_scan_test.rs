@@ -21,6 +21,7 @@ const FIELD_COLLECTION: &[(&str, &str)] = &[
     ("position_types", "position_types"),
     ("labels", "labels"),
     ("settings", "settings"),
+    ("archives", "archives"),
 ];
 
 /// A lock that holds no stored data. `formula_rate_limits` counts the formula previews one user has made in the last

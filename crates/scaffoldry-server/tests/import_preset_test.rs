@@ -108,6 +108,7 @@ async fn fixture() -> Fixture {
         field("files", "Files", FieldType::Attachment { allow_multiple: true }),
     ];
     let table = |id: &str, name: &str, fields: Vec<FieldSpec>, primary: &str| AppTable {
+        retired_fields: Vec::new(),
         id: id.to_string(),
         name: name.to_string(),
         slug: id.to_string(),

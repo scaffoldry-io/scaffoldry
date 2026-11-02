@@ -114,6 +114,7 @@ fn manifest_with_fields(slug: &str, fields: Vec<FieldSpec>) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".to_string(),
             name: "Tasks".to_string(),
             slug: "tasks".to_string(),

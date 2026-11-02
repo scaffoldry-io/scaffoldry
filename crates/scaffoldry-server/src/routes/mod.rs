@@ -21,6 +21,7 @@ pub mod discovery;
 pub mod comments;
 pub mod disclosures;
 pub mod history;
+pub mod lifecycle;
 pub mod link_options;
 pub mod calc;
 pub mod view_as;
@@ -86,6 +87,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(view_as::router())
         .merge(views::router())
         .merge(link_options::router())
+        .merge(lifecycle::router())
         .merge(comments::router())
         .merge(disclosures::router())
         .merge(datasets::router())

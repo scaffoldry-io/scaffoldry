@@ -43,6 +43,7 @@ fn text(name: &str) -> FieldSpec {
 
 fn table(id: &str, fields: Vec<FieldSpec>, primary: &str) -> AppTable {
     AppTable {
+        retired_fields: Vec::new(),
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),

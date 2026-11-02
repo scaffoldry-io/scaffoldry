@@ -444,6 +444,18 @@ pub fn authorize_workspace_denying(
     require(state, caller, cedar_action, &resource, denied).map_err(|e| with_request(e, "workspace", &ws.id))
 }
 
+/// Refuses a change to an archived app, or to anything in an archived workspace.
+pub fn archived_refusal(app_slug: &str, workspace_id: Option<&str>, state: &SharedState) -> Result<(), ServiceError> {
+    let slug = crate::service::preview::stored_slug(app_slug);
+    if state.is_archived("app", slug) {
+        return Err(ServiceError::Archived(format!("The app '{slug}' is archived, so it only reads. Its owner or an admin can unarchive it")));
+    }
+    if let Some(ws) = workspace_id.filter(|ws| state.is_archived("workspace", ws)) {
+        return Err(ServiceError::Archived(format!("The workspace '{ws}' is archived, so it only reads. Its owner or a Platform Admin can unarchive it")));
+    }
+    Ok(())
+}
+
 /// What a person sends to ask for the access a refusal withheld. `None` for an action no role answers.
 fn request_for(kind: &str, id: &str, action: &str) -> Option<Value> {
     let (role, verb) = match action {
@@ -528,6 +540,12 @@ pub fn authorize_app_with_role(
             .cloned()
             .ok_or_else(|| ServiceError::NotFound(format!("App '{slug}' not found")))?
     };
+
+    // An archived app, or an app in an archived workspace, only reads (lifecycle phase 2). Asked before any role, so the
+    // answer is the same for everyone and says how to get out of it.
+    if action != AppAction::Read {
+        archived_refusal(slug, app.workspace_id.as_deref(), state)?;
+    }
 
     let ws_id = match app.workspace_id {
         Some(ref id) => id.clone(),

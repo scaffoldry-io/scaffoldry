@@ -154,6 +154,7 @@ fn views_pages_and_links_must_point_at_things_that_exist() {
     courses_link.link_target_table = Some("courses".to_string());
     m.tables[0].fields.push(courses_link);
     m.tables.push(AppTable {
+        retired_fields: Vec::new(),
         id: "courses".into(),
         name: "Courses".into(),
         slug: "courses".into(),

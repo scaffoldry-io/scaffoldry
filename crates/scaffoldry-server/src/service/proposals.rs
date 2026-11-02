@@ -167,6 +167,9 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
             Some(l) => {
                 for f in &t.fields {
                     match l.fields.iter().find(|x| x.name == f.name) {
+                        None if l.retired_fields.iter().any(|x| x.name == f.name) => {
+                            out.push(format!("Field \"{}\" of table \"{}\" is restored, with the values it kept.", f.name, t.name))
+                        }
                         None => out.push(format!("Field \"{}\" is added to table \"{}\".", f.name, t.name)),
                         Some(x) if x.field_type != f.field_type => out.push(format!(
                             "Field \"{}\" of table \"{}\" changes type from {:?} to {:?}.",
@@ -177,7 +180,7 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
                 }
                 for x in &l.fields {
                     if !t.fields.iter().any(|f| f.name == x.name) {
-                        out.push(format!("Field \"{}\" is removed from table \"{}\".", x.name, t.name));
+                        out.push(format!("Field \"{}\" of table \"{}\" is retired. Its values are kept.", x.name, t.name));
                     }
                 }
             }
@@ -307,6 +310,36 @@ fn count_records_using_option(
     }).unwrap_or(0)
 }
 
+/// What the `data_loss` check says of a retired field (lifecycle phase 2).
+pub const RETIRED_KEPT: &str = "The values stay for 90 days and can be restored.";
+
+/// Lifecycle phase 2. A field the live app has and this manifest leaves out is retired, not deleted: it moves to its
+/// table's `retired_fields`, stamped `at`, and its values stay in the records. A field retired before stays retired,
+/// with its first stamp, unless the manifest puts it back in `fields`, which restores it. Only the live app says what is
+/// retired, so a proposal cannot add an entry of its own. A removed table is not covered and is reported as before.
+pub(crate) fn retire_removed(live: Option<&AppManifest>, manifest: &mut AppManifest, at: &str) {
+    for t in &mut manifest.tables {
+        t.retired_fields.clear();
+        for f in &mut t.fields {
+            f.retired_at = None;
+        }
+        let Some(lt) = live.and_then(|l| l.tables.iter().find(|x| x.id == t.id)) else { continue };
+        let gone = |name: &str, t: &scaffoldry_engine::AppTable| !t.fields.iter().any(|f| f.name == name) && !t.retired_fields.iter().any(|r| r.name == name);
+        for lr in &lt.retired_fields {
+            if gone(&lr.name, t) {
+                t.retired_fields.push(lr.clone());
+            }
+        }
+        for lf in &lt.fields {
+            if gone(&lf.name, t) {
+                let mut retired = lf.clone();
+                retired.retired_at = Some(at.to_string());
+                t.retired_fields.push(retired);
+            }
+        }
+    }
+}
+
 fn check_manifest_part(
     input_manifest: Value,
     page_sources: Vec<String>,
@@ -330,6 +363,8 @@ fn check_manifest_part(
         return Err(ServiceError::BadRequest("schema: custom_domain_verified cannot be set by a proposal".to_string()));
     }
     manifest.custom_domain_verified = live_verified;
+
+    retire_removed(live, &mut manifest, &chrono::Utc::now().to_rfc3339());
 
     // schema: a failure stores no row.
     if let Err(problems) = validate_manifest(&manifest) {
@@ -439,7 +474,7 @@ fn check_manifest_part(
                 Some(t) => {
                     for lf in &lt.fields {
                         if !t.fields.iter().any(|f| f.name == lf.name) {
-                            loss.push(format!("field '{}' of table '{}' is removed", lf.name, lt.name));
+                            loss.push(format!("field '{}' of table '{}' is retired. {RETIRED_KEPT}", lf.name, lt.name));
                         } else if matches!(lf.field_type, FieldType::Select | FieldType::MultiSelect) {
                             if let Some(f) = t.fields.iter().find(|f| f.name == lf.name) {
                                 for live_opt in &lf.select_options {
@@ -905,6 +940,9 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
         (None, Some(g)) => g.clone(),
         (None, None) => return Err(ServiceError::BadRequest("Argument 'app_slug' is required when there is no manifest".to_string())),
     };
+    if !dry_run {
+        crate::service::access::archived_refusal(&slug, Some(&ws.id), state)?;
+    }
     let live = live_manifest(&slug, state);
     if input.manifest.is_none() {
         match &live {

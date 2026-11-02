@@ -110,6 +110,7 @@ async fn a_today_field_is_recomputed_by_the_nightly_job_and_not_by_anything_else
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "Things".into(),
             slug: "things".into(),
@@ -221,6 +222,7 @@ async fn a_volatile_field_on_a_600_000_row_table_is_refused() {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "Huge".into(),
             slug: "huge".into(),
@@ -294,6 +296,7 @@ async fn a_default_fills_a_missing_value_on_create_and_does_not_override_a_suppl
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "Items".into(),
             slug: "items".into(),
@@ -350,6 +353,7 @@ async fn status_changed_on_changes_only_when_status_changes() {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "Tickets".into(),
             slug: "tickets".into(),
@@ -422,6 +426,7 @@ async fn two_concurrent_writes_of_the_same_unique_value_exactly_one_succeeds() {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "Serials".into(),
             slug: "serials".into(),
@@ -496,6 +501,7 @@ async fn a_min_violation_is_constraint_violated_naming_the_field() {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "Scores".into(),
             slug: "scores".into(),
@@ -543,6 +549,7 @@ async fn adding_unique_to_a_field_with_3_duplicate_values_raises_data_loss_and_s
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "Codes".into(),
             slug: "codes".into(),

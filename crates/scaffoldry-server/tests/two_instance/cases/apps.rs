@@ -13,6 +13,11 @@ pub fn add(m: &mut Entries) {
     exempt(m, "POST /api/v1/apps/{slug}/fields/convert-preview", "reports what a field conversion would do and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/relations/{id}/convert-preview", "queues a count of what a value join matches and writes no record");
     m.insert("POST /api/v1/apps/{slug}/relations/{id}/convert".into(), case!(relation_convert));
+    m.insert("POST /api/v1/apps/{slug}/tables/{table_id}/fields/{field}/restore".into(), case!(field_restore));
+    m.insert("POST /api/v1/apps/{slug}/archive".into(), case!(app_archive));
+    m.insert("POST /api/v1/apps/{slug}/unarchive".into(), case!(app_unarchive));
+    m.insert("POST /api/v1/workspaces/{id}/archive".into(), case!(ws_archive));
+    m.insert("POST /api/v1/workspaces/{id}/unarchive".into(), case!(ws_unarchive));
     m.insert("POST /api/v1/proposals/{id}/decision".into(), case!(proposal_decide));
     m.insert("POST /api/v1/proposals/{id}/preview".into(), case!(proposal_preview));
     m.insert("POST /api/v1/proposals/{id}/trial".into(), case!(proposal_trial));
@@ -269,6 +274,60 @@ async fn relation_convert(w: World) -> Outcome {
     let id = made["proposal_id"].as_str().ok_or("a proposal id")?;
     let seen = status(w.rb("GET", &format!("/api/v1/proposals/{id}"), OWNER, None).await, StatusCode::OK, "B reads the proposal")?;
     ensure(seen["app_slug"] == slug.as_str() && seen["status"] == "Pending", format!("B shows the pending proposal A made: {seen}"))
+}
+
+/// A retires a field and restores it. B serves the field again.
+async fn field_restore(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let current = status(w.wa("GET", &format!("/api/v1/apps/{slug}"), OWNER, None).await, StatusCode::OK, "A reads the app")?;
+    let mut changed = manifest(&slug);
+    changed["tables"][0]["fields"].as_array_mut().ok_or("fields")?.retain(|f| f["name"] != "status");
+    changed["version"] = current["version"].clone();
+    status(w.wa("PUT", &format!("/api/v1/apps/{slug}"), OWNER, Some(changed)).await, StatusCode::OK, "A retires the field")?;
+    let gone = status(w.rb("GET", &format!("/api/v1/apps/{slug}/schema"), OWNER, None).await, StatusCode::OK, "B reads the schema")?;
+    let live = |v: &Value| v["tables"][0]["fields"].as_array().is_some_and(|l| l.iter().any(|f| f["name"] == "status"));
+    ensure(!live(&gone) && has(&gone["tables"][0]["retired_fields"], "status"), format!("B holds the field as retired: {gone}"))?;
+    let made = status(w.wa("POST", &format!("/api/v1/apps/{slug}/tables/apps/fields/status/restore"), OWNER, Some(json!({ "reason": "Needed" }))).await, StatusCode::CREATED, "A restores it")?;
+    ensure(made["approved"] == true, format!("the owner's restore applies at once: {made}"))?;
+    let back = status(w.rb("GET", &format!("/api/v1/apps/{slug}/schema"), OWNER, None).await, StatusCode::OK, "B reads the schema")?;
+    ensure(live(&back), format!("B serves the restored field: {back}"))
+}
+
+/// A archives an app. B refuses a write to it with `archived`.
+async fn app_archive(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/archive"), OWNER, Some(json!({ "reason": "Closed" }))).await, StatusCode::OK, "A archives it")?;
+    let (s, body) = w.rb("POST", &format!("/api/v1/apps/{slug}/records"), OWNER, Some(json!({ "data": { "_table_id": "apps", "name": "x" } }))).await;
+    ensure(s == StatusCode::CONFLICT && body["code"] == "archived", format!("B refuses the write: {s} {body}"))
+}
+
+/// A archives and unarchives an app. B writes to it again.
+async fn app_unarchive(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/archive"), OWNER, Some(json!({ "reason": "Closed" }))).await, StatusCode::OK, "A archives it")?;
+    let (s, _) = w.rb("POST", &format!("/api/v1/apps/{slug}/records"), OWNER, Some(json!({ "data": { "_table_id": "apps", "name": "x" } }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("B holds the archive first: {s}"))?;
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/unarchive"), OWNER, Some(json!({ "reason": "Reopened" }))).await, StatusCode::OK, "A unarchives it")?;
+    status(w.rb("POST", &format!("/api/v1/apps/{slug}/records"), OWNER, Some(json!({ "data": { "_table_id": "apps", "name": "x" } }))).await, StatusCode::CREATED, "B writes again").map(|_| ())
+}
+
+/// A archives a workspace. B hides it from the default list.
+async fn ws_archive(w: World) -> Outcome {
+    let id = make_workspace(&w, &unique("LC2A"), "restricted").await?;
+    status(w.wa("POST", &format!("/api/v1/workspaces/{id}/archive"), ADMIN, Some(json!({ "reason": "Closed" }))).await, StatusCode::OK, "A archives it")?;
+    let list = status(w.rb("GET", "/api/v1/workspaces", ADMIN, None).await, StatusCode::OK, "B lists workspaces")?;
+    ensure(!has(&list, &id), format!("B hides the archived workspace: {list}"))
+}
+
+/// A archives and unarchives a workspace. B lists it again.
+async fn ws_unarchive(w: World) -> Outcome {
+    let id = make_workspace(&w, &unique("LC2U"), "restricted").await?;
+    status(w.wa("POST", &format!("/api/v1/workspaces/{id}/archive"), ADMIN, Some(json!({ "reason": "Closed" }))).await, StatusCode::OK, "A archives it")?;
+    let hidden = status(w.rb("GET", "/api/v1/workspaces", ADMIN, None).await, StatusCode::OK, "B lists workspaces")?;
+    ensure(!has(&hidden, &id), format!("B holds the archive first: {hidden}"))?;
+    status(w.wa("POST", &format!("/api/v1/workspaces/{id}/unarchive"), ADMIN, Some(json!({ "reason": "Reopened" }))).await, StatusCode::OK, "A unarchives it")?;
+    let list = status(w.rb("GET", "/api/v1/workspaces", ADMIN, None).await, StatusCode::OK, "B lists workspaces")?;
+    ensure(has(&list, &id), format!("B lists it again: {list}"))
 }
 
 /// A makes a trial. B opens it again, which starts its days over.

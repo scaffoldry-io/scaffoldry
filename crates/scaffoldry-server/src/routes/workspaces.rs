@@ -73,9 +73,14 @@ async fn list_workspaces(
     State(state): State<SharedState>,
     user: Option<Extension<AuthUser>>,
     headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ServiceError> {
     let caller = resolve_caller(user, &headers, &state)?;
-    let list = workspace_service::list_workspaces(&caller, &state)?;
+    let mut list = workspace_service::list_workspaces(&caller, &state)?;
+    // An archived workspace is kept and hidden from this list unless it is asked for.
+    if q.get("include_archived").is_none_or(|v| v != "true") {
+        list.retain(|w| !state.is_archived("workspace", &w.workspace.id));
+    }
     Ok(Json(list))
 }
 

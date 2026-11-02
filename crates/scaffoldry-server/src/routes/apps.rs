@@ -497,7 +497,18 @@ async fn list_app_collaborators(
 async fn list_my_apps(
     State(state): State<SharedState>,
     headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
-    Ok(Json(serde_json::json!({ "apps": crate::service::my_apps::my_apps(&user, &state) })))
+    // An archived app, or one in an archived workspace, is kept and hidden from this list unless it is asked for.
+    let include = q.get("include_archived").is_some_and(|v| v == "true");
+    let mut apps = crate::service::my_apps::my_apps(&user, &state);
+    apps.retain_mut(|a| {
+        let archived = state.is_archived("app", a["slug"].as_str().unwrap_or("")) || state.is_archived("workspace", a["workspace_id"].as_str().unwrap_or(""));
+        if archived {
+            a["archived"] = Value::Bool(true);
+        }
+        include || !archived
+    });
+    Ok(Json(serde_json::json!({ "apps": apps })))
 }
