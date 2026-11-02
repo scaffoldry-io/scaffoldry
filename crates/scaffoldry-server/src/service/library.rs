@@ -577,7 +577,7 @@ pub fn get_snapshot(
 }
 
 /// One citation of a rule: the snapshot must be this policy's, and the passage must be in its text.
-fn check_citations(
+pub(crate) fn check_citations(
     state: &SharedState,
     policy_id: Uuid,
     body: &Value,
@@ -856,4 +856,45 @@ pub fn open_questions(state: &SharedState, caller: &AuthUser) -> Result<Value, S
         }
     }
     Ok(json!({ "questions": out }))
+}
+
+/// `POST /admin/library/sources/{id}/check`: fetches a web source now, for a person who may write its policy. A source
+/// is checked at most once a minute this way.
+pub fn check_now(state: &SharedState, caller: &AuthUser, source_id: &str) -> Result<Value, ServiceError> {
+    let source_id = parse_id(source_id, "Source")?;
+    let Some((policy_id, kind)) = state.repository.library_source(source_id).map_err(internal)? else {
+        return Err(if is_admin(state, caller) { ServiceError::NotFound("Source not found".to_string()) } else { forbidden(None) });
+    };
+    writable(state, caller, policy_id)?;
+    if kind != "url" {
+        return Err(ServiceError::bad_request("Only a web source is fetched. A text source's text is supplied"));
+    }
+    if !state.repository.library_claim_check(source_id).map_err(internal)? {
+        return Err(ServiceError::RateLimited("This source was checked less than a minute ago. Try again in a minute".to_string()));
+    }
+    let client = crate::library_fetch::client_for(&state.repository).map_err(internal)?;
+    let checked = crate::library_fetch::check_source(state, source_id, &client).map_err(internal)?;
+    Ok(json!({ "status": checked.status, "stored": checked.stored, "marked": checked.marked }))
+}
+
+/// `POST /admin/library/policies/{id}/reviewed`: a person who may write the policy marks it reviewed, with a note. The
+/// person who marked it last cannot mark it again.
+pub fn mark_reviewed(state: &SharedState, caller: &AuthUser, policy_id: &str, body: &Value) -> Result<Value, ServiceError> {
+    let id = parse_id(policy_id, "Policy")?;
+    let policy = writable(state, caller, id)?;
+    let note = body.get("note").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if note.is_empty() || note.len() > 2000 {
+        return Err(ServiceError::bad_request("Marking a policy reviewed needs a note of 1 to 2,000 characters"));
+    }
+    if policy["last_reviewed_by"].as_str().is_some_and(|by| by.eq_ignore_ascii_case(&caller.eppn)) {
+        return Err(ServiceError::forbidden("The person who marked this policy reviewed last cannot mark it again. Someone else must"));
+    }
+    let payload = json!({ "action": "policy_reviewed", "policy_key": policy["key"] });
+    let marked = admin_write(state, caller, DecisionType::PolicyLibraryChanged, OSCAL_CONTROL, &note, &payload, || {
+        state.repository.library_mark_reviewed(id, &caller.eppn).map_err(internal)
+    })?;
+    if !marked {
+        return Err(ServiceError::forbidden("The person who marked this policy reviewed last cannot mark it again. Someone else must"));
+    }
+    Ok(json!({ "policy": state.repository.library_policy(id).map_err(internal)? }))
 }

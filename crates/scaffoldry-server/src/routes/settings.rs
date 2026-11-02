@@ -44,6 +44,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "realtime.max_streams_per_user",
     "realtime.max_streams",
     "egress.allow",
+    "platform.contact_email",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -82,6 +83,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "realtime.max_streams_per_user" => value.as_i64().is_some_and(|n| (1..=1_000).contains(&n)),
         "realtime.max_streams" => value.as_i64().is_some_and(|n| (1..=1_000_000).contains(&n)),
         "egress.allow" => crate::net::egress::Allow::parse(value).is_ok(),
+        "platform.contact_email" => value.as_str().is_some_and(|s| s.len() <= 255 && s.contains('@') && !s.contains(char::is_whitespace)),
         "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }

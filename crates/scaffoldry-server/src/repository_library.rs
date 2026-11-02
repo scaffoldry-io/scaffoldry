@@ -16,11 +16,17 @@ fn policy_of(r: &postgres::Row) -> Value {
         "id": r.get::<_, Uuid>(0), "key": r.get::<_, String>(1), "title": r.get::<_, String>(2), "summary": r.get::<_, String>(3),
         "organization_id": r.get::<_, Uuid>(4), "owner": r.get::<_, Value>(5), "review_every_days": r.get::<_, i32>(6),
         "last_reviewed_at": r.get::<_, Option<String>>(7), "status": r.get::<_, String>(8), "created_by": r.get::<_, String>(9), "created_at": r.get::<_, String>(10),
+        "last_reviewed_by": r.get::<_, Option<String>>(11), "due": r.get::<_, bool>(12),
     })
 }
 
 fn policy_select() -> String {
-    format!("SELECT id, key, title, summary, organization_id, owner, review_every_days, {}, status, created_by, {} FROM library_policies", ts("last_reviewed_at"), ts("created_at"))
+    format!(
+        "SELECT id, key, title, summary, organization_id, owner, review_every_days, {}, status, created_by, {}, last_reviewed_by, \
+         (last_reviewed_at IS NULL OR last_reviewed_at + make_interval(days => review_every_days) < NOW()) FROM library_policies",
+        ts("last_reviewed_at"),
+        ts("created_at")
+    )
 }
 
 /// A new policy.
@@ -151,10 +157,12 @@ impl PostgresRepository {
         self.with_client(move |c| {
             let rows = c.query(
                 &format!(
-                    "SELECT s.id, s.title, s.kind, s.href, n.id, {}, n.text_origin, n.text_sha256 FROM library_sources s \
+                    "SELECT s.id, s.title, s.kind, s.href, n.id, {}, n.text_origin, n.text_sha256, s.last_status, {}, s.consecutive_failures, {} FROM library_sources s \
                      LEFT JOIN LATERAL (SELECT id, taken_at, text_origin, text_sha256 FROM library_snapshots WHERE source_id = s.id ORDER BY taken_at DESC, id LIMIT 1) n ON TRUE \
                      WHERE s.policy_id = $1 ORDER BY s.created_at, s.id",
-                    ts("n.taken_at")
+                    ts("n.taken_at"),
+                    ts("s.last_checked_at"),
+                    ts("s.next_check_at")
                 ),
                 &[&policy],
             )?;
@@ -166,6 +174,13 @@ impl PostgresRepository {
                         "id": r.get::<_, Uuid>(0), "title": r.get::<_, String>(1), "kind": r.get::<_, String>(2), "href": r.get::<_, Option<String>>(3),
                         "state": if snapshot.is_some() { "Stored" } else if r.get::<_, String>(2) == "url" { "Not yet fetched" } else { "No text yet" },
                         "latest_snapshot": snapshot.map(|id| json!({ "id": id, "taken_at": r.get::<_, Option<String>>(5), "text_origin": r.get::<_, Option<String>>(6), "text_sha256": r.get::<_, Option<String>>(7) })),
+                        "last_status": r.get::<_, Option<String>>(8), "last_checked_at": r.get::<_, Option<String>>(9), "consecutive_failures": r.get::<_, i32>(10), "next_check_at": r.get::<_, Option<String>>(11),
+                        "remedy": match r.get::<_, Option<String>>(8).as_deref() {
+                            Some("not_allowed") => Some(crate::library_fetch::NOT_ALLOWED_REMEDY),
+                            Some("needs_text") => Some("This page is not text the platform can read. Add the policy's text as a text source."),
+                            Some("unreachable") => Some("The page could not be fetched three times in a row. Check the address, or add the text as a text source."),
+                            _ => None,
+                        },
                     })
                 })
                 .collect())
@@ -382,6 +397,64 @@ impl PostgresRepository {
         })
     }
 
+    /// Published rules whose cited passage left their source, oldest mark first.
+    pub fn library_source_changed_rules(&self) -> Result<Vec<Value>, RepositoryError> {
+        self.with_client(|c| Ok(c.query(&format!("{} WHERE r.status = 'Published' AND r.source_changed ORDER BY r.source_changed_at, r.id LIMIT 500", rule_select()), &[])?.iter().map(rule_of).collect()))
+    }
+
+    /// Replaces the citations whose passage is gone with new ones, and clears the mark. False when the rule was not marked.
+    pub fn library_confirm_source_change(&self, rule: Uuid, drop: Vec<Uuid>, add: Vec<NewCitation>) -> Result<bool, RepositoryError> {
+        self.with_client(move |c| {
+            let mut tx = c.transaction()?;
+            let n = tx.execute("UPDATE library_rules SET source_changed = FALSE, source_changed_at = NULL WHERE id = $1 AND source_changed AND status = 'Published'", &[&rule])?;
+            if n == 0 {
+                return Ok(false);
+            }
+            for id in &drop {
+                tx.execute("DELETE FROM library_citations WHERE id = $1 AND rule_id = $2", &[id, &rule])?;
+            }
+            for cite in &add {
+                tx.execute("INSERT INTO library_citations (id, rule_id, snapshot_id, passage, locator) VALUES ($1, $2, $3, $4, $5)", &[&Uuid::new_v4(), &rule, &cite.snapshot_id, &cite.passage, &cite.locator])?;
+            }
+            tx.commit()?;
+            Ok(true)
+        })
+    }
+
+    /// Each citation of a rule with whether its passage is still in the latest snapshot of its source.
+    pub fn library_citations_still_present(&self, rule: Uuid) -> Result<Vec<(Uuid, bool)>, RepositoryError> {
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT c.id, c.passage, latest.text FROM library_citations c JOIN library_snapshots n ON n.id = c.snapshot_id \
+                 LEFT JOIN LATERAL (SELECT text FROM library_snapshots WHERE source_id = n.source_id ORDER BY taken_at DESC, id DESC LIMIT 1) latest ON TRUE \
+                 WHERE c.rule_id = $1",
+                &[&rule],
+            )?;
+            Ok(rows.iter().map(|r| (r.get(0), scaffoldry_core::library::passage_in(&r.get::<_, Option<String>>(2).unwrap_or_default(), &r.get::<_, String>(1)))).collect())
+        })
+    }
+
+    /// Marks a policy reviewed by `by`, unless `by` marked it last. False when they did.
+    pub fn library_mark_reviewed(&self, policy: Uuid, by: &str) -> Result<bool, RepositoryError> {
+        let by = by.to_string();
+        self.with_client(move |c| {
+            Ok(c.execute(
+                "UPDATE library_policies SET last_reviewed_at = NOW(), last_reviewed_by = $2 WHERE id = $1 AND (last_reviewed_by IS NULL OR lower(last_reviewed_by) <> lower($2))",
+                &[&policy, &by],
+            )? > 0)
+        })
+    }
+
+    /// Claims a manual check of a source: true unless it was checked within the last minute.
+    pub fn library_claim_check(&self, source: Uuid) -> Result<bool, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.execute(
+                "UPDATE library_sources SET last_checked_at = NOW() WHERE id = $1 AND (last_checked_at IS NULL OR last_checked_at < NOW() - INTERVAL '1 minute')",
+                &[&source],
+            )? > 0)
+        })
+    }
+
     /// Every rule waiting for review, oldest first.
     pub fn library_rules_in_review(&self) -> Result<Vec<Value>, RepositoryError> {
         self.with_client(|c| Ok(c.query(&format!("{} WHERE r.status = 'InReview' ORDER BY r.submitted_at, r.id LIMIT 500", rule_select()), &[])?.iter().map(rule_of).collect()))
@@ -576,12 +649,17 @@ impl PostgresRepository {
 }
 
 fn rule_select_with_policy() -> String {
-    format!("SELECT r.id, r.policy_id, r.key, r.version, r.statement, r.applies_to, p.key, p.title, {} FROM library_rules r JOIN library_policies p ON p.id = r.policy_id", ts("p.last_reviewed_at"))
+    format!(
+        "SELECT r.id, r.policy_id, r.key, r.version, r.statement, r.applies_to, p.key, p.title, {}, r.source_changed, {} FROM library_rules r JOIN library_policies p ON p.id = r.policy_id",
+        ts("p.last_reviewed_at"),
+        "to_char(r.source_changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')"
+    )
 }
 
 fn rule_with_policy_of(r: &postgres::Row) -> Value {
     json!({ "id": r.get::<_, Uuid>(0), "policy_id": r.get::<_, Uuid>(1), "rule_key": r.get::<_, String>(2), "version": r.get::<_, i32>(3), "statement": r.get::<_, String>(4), "applies_to": r.get::<_, String>(5),
-            "policy_key": r.get::<_, String>(6), "policy_title": r.get::<_, String>(7), "last_reviewed_at": r.get::<_, Option<String>>(8) })
+            "policy_key": r.get::<_, String>(6), "policy_title": r.get::<_, String>(7), "last_reviewed_at": r.get::<_, Option<String>>(8),
+            "source_changed": r.get::<_, bool>(9), "source_changed_on": r.get::<_, Option<String>>(10) })
 }
 
 fn question_of(r: &postgres::Row) -> Value {

@@ -333,6 +333,11 @@ async fn a_rule_whose_source_changed_stays_in_the_library_with_a_note() {
 async fn a_second_check_inside_a_minute_is_refused() {
     let w = world().await;
     let uri = format!("/api/v1/admin/library/sources/{}/check", w.source);
+    // The setup checked the source a moment ago. Move that check back past the minute.
+    let src = w.source;
+    w.db.run(move |c| {
+        c.execute("UPDATE library_sources SET last_checked_at = NOW() - INTERVAL '2 minutes' WHERE id = $1", &[&src]).unwrap();
+    });
     // The route uses the system resolver, which cannot find the test host. The check still runs, and fails.
     let (s, b) = send(&w.app, "POST", &uri, R1, Some(json!({}))).await;
     assert_eq!(s, StatusCode::OK, "{b}");

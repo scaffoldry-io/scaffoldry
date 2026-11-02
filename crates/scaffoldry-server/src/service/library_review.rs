@@ -92,6 +92,16 @@ pub fn my_reviews(state: &SharedState, caller: &AuthUser) -> Result<Value, Servi
             reviews.push(summary(&rule, false));
         }
     }
+    // Published rules whose source changed go back to their reviewers. Their status does not change.
+    let mut source_changed = Vec::new();
+    for rule in state.repository.library_source_changed_rules().map_err(internal)? {
+        let pid = rule["policy_id"].as_str().and_then(|u| Uuid::parse_str(u).ok()).unwrap_or_default();
+        let policy = policies.entry(pid).or_insert_with(|| state.repository.library_policy(pid).ok().flatten()).clone();
+        let Some(policy) = policy else { continue };
+        if reviewers(state, &policy, &rule).iter().any(|e| e.eq_ignore_ascii_case(&caller.eppn)) {
+            source_changed.push(summary(&rule, false));
+        }
+    }
     let admin = is_admin(state, caller);
     let mut questions = Vec::new();
     for q in state.repository.library_open_questions_all().map_err(internal)? {
@@ -101,7 +111,7 @@ pub fn my_reviews(state: &SharedState, caller: &AuthUser) -> Result<Value, Servi
             questions.push(q);
         }
     }
-    Ok(json!({ "reviews": reviews, "unassigned": unassigned, "questions": questions }))
+    Ok(json!({ "reviews": reviews, "unassigned": unassigned, "source_changed": source_changed, "questions": questions }))
 }
 
 /// Everything a reviewer reads before deciding.
@@ -224,4 +234,34 @@ pub fn retire(state: &SharedState, caller: &AuthUser, id: &str, body: &Value) ->
         }
         Ok(json!({ "rule": state.repository.library_rule(rule_id).map_err(internal)? }))
     })
+}
+
+/// A reviewer confirms a published rule whose source changed, with a note. When a cited passage is gone, the note must
+/// come with a new citation, which replaces the gone ones. The rule stays published.
+pub fn confirm_source_change(state: &SharedState, caller: &AuthUser, id: &str, body: &Value) -> Result<Value, ServiceError> {
+    let (rule_id, rule, policy) = load(state, id)?;
+    if status_of(&rule) != "Published" {
+        return Err(ServiceError::conflict("Only a published rule is confirmed"));
+    }
+    require_reviewer(state, caller, &policy, &rule)?;
+    let note = body.get("note").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if note.is_empty() || note.len() > 2000 {
+        return Err(ServiceError::bad_request("A confirmation needs a note of 1 to 2,000 characters"));
+    }
+    let policy_id = rule["policy_id"].as_str().and_then(|u| Uuid::parse_str(u).ok()).ok_or_else(|| internal("rule without policy"))?;
+    let gone: Vec<Uuid> = state.repository.library_citations_still_present(rule_id).map_err(internal)?.into_iter().filter(|(_, here)| !here).map(|(c, _)| c).collect();
+    let mut p = Problems::default();
+    let add = if body.get("citations").is_some() { crate::service::library::check_citations(state, policy_id, body, &mut p)? } else { Vec::new() };
+    p.done()?;
+    if !gone.is_empty() && add.is_empty() {
+        return Err(ServiceError::bad_request("A cited passage is no longer in its source. Confirm with a new citation from the latest snapshot"));
+    }
+    let payload = json!({ "action": "source_change_confirmed", "policy_key": policy["key"], "rule_id": rule_id, "replaced_citations": gone.len(), "added_citations": add.len() });
+    let cleared = admin_write(state, caller, DecisionType::PolicyLibraryChanged, OSCAL_CONTROL, &note, &payload, || {
+        state.repository.library_confirm_source_change(rule_id, gone.clone(), add).map_err(internal)
+    })?;
+    if !cleared {
+        return Err(ServiceError::conflict("This rule's source has not changed since it was published"));
+    }
+    Ok(json!({ "rule": state.repository.library_rule(rule_id).map_err(internal)? }))
 }
