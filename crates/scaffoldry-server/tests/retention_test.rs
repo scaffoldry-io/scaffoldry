@@ -244,8 +244,8 @@ async fn the_certificate_proves_which_records_went_without_keeping_them() {
     ids.extend(trashed(&w, "alpha", 3, 500));
     assert_eq!(purge_now(&w).state, "done");
     let certs = certificates(&w);
-    assert_eq!(certs.len(), 1, "{certs:?}");
-    assert_eq!(certs[0]["counts"]["records"], 7, "{certs:?}");
+    assert_eq!(certs.len(), 1, "one certificate for the app");
+    assert_eq!(certs[0]["counts"]["records"], 7, "the certificate counts every record destroyed");
     assert_eq!(certs[0]["ids_sha256"], sha_of(&ids), "the hash is of the sorted ids, one per line");
     assert_eq!(certs[0]["held_skipped"], 0);
     let pending: i64 = w.db.run(|c| c.query_one("SELECT count(*) FROM purge_pending", &[]).unwrap().get(0));
@@ -338,9 +338,9 @@ async fn the_preview_counts_what_the_run_then_destroys() {
     set_class_policy(&w, json!({ "keep_trash_days": 100 })).await;
     assert_eq!(purge_now(&w).state, "done");
     let certs = certificates(&w);
-    assert_eq!(certs.last().unwrap()["counts"]["records"], row["records"], "{certs:?}");
-    assert_eq!(certs.last().unwrap()["counts"]["history"], row["history"], "{certs:?}");
-    assert_eq!(certs.last().unwrap()["counts"]["files"], row["files"], "{certs:?}");
+    assert_eq!(certs.last().unwrap()["counts"]["records"], row["records"], "the run destroys the records the preview counted");
+    assert_eq!(certs.last().unwrap()["counts"]["history"], row["history"], "the run destroys the history the preview counted");
+    assert_eq!(certs.last().unwrap()["counts"]["files"], row["files"], "the run destroys the files the preview counted");
 }
 
 fn trashed_ids(prefix: &str, n: i64) -> Vec<String> {
@@ -362,8 +362,8 @@ async fn a_run_that_stops_halfway_resumes_and_certifies_every_record_once() {
     assert_eq!(purge_now(&w).state, "done");
     assert_eq!(present(&w, &ids), 0);
     let certs = certificates(&w);
-    assert_eq!(certs.len(), 1, "one certificate for the app: {certs:?}");
-    assert_eq!(certs[0]["counts"]["records"], 2_500, "{certs:?}");
+    assert_eq!(certs.len(), 1, "one certificate for the app, not one per attempt");
+    assert_eq!(certs[0]["counts"]["records"], 2_500, "every record, counted once");
     assert_eq!(certs[0]["ids_sha256"], sha_of(&ids));
     let entries: i64 = w.db.run(|c| c.query_one("SELECT count(*) FROM governance_ledger WHERE decision_type = 'RecordsPurged'", &[]).unwrap().get(0));
     assert_eq!(entries, 1, "the resumed run does not write a second entry");
