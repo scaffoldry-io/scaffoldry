@@ -3,6 +3,8 @@ import { ManifestRenderer } from "./ManifestRenderer";
 import { RegisteredApp } from "./types";
 import { DataGrid } from "./DataGrid";
 import { useAppRecords } from "./useAppRecords";
+import { Banner } from "./ui/Banner";
+import { Toast } from "./ui/Toast";
 import { AppActivity } from "./RecordHistory";
 
 interface Props {
@@ -33,7 +35,10 @@ export const MultiViewWorkspace: React.FC<Props> = ({
   const [searchQuery, setSearchQuery] = useState("");
 
   // The stored rows of this app. Nothing is seeded or generated: the grid shows what the server holds.
-  const { records: stored, loading, error, notice, clearNotice, reload, create, save } = useAppRecords(app.slug);
+  const {
+    records: stored, loading, error, notice, clearNotice, reload, create, save,
+    updatedByOthers, outsideChanges, refresh, liveNotice, clearLiveNotice, changedUnderEdit, setEditing,
+  } = useAppRecords(app.slug);
   const [actionError, setActionError] = useState<string | null>(null);
   const tableId = app.manifest.views[0]?.table_id ?? app.manifest.tables?.[0]?.id ?? "";
 
@@ -302,6 +307,18 @@ export const MultiViewWorkspace: React.FC<Props> = ({
           </button>
         </div>
       )}
+      {/* What other people changed while this view was open (real-time phase 2) */}
+      {outsideChanges > 0 && (
+        <div className="mx-4 md:mx-6 mt-3">
+          <Banner kind="info" label="Changes elsewhere">
+            <span>{outsideChanges === 1 ? "1 record changed." : `${outsideChanges} records changed.`} </span>
+            <button type="button" onClick={() => void refresh()} className="font-semibold underline cursor-pointer">
+              Refresh
+            </button>
+          </Banner>
+        </div>
+      )}
+      {liveNotice && <Toast tone="success" message={liveNotice} onClose={clearLiveNotice} />}
       {(notice || actionError) && (
         <div role="status" className="mx-4 md:mx-6 mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           <span>{notice || actionError}</span>
@@ -323,6 +340,9 @@ export const MultiViewWorkspace: React.FC<Props> = ({
               appSlug={app.slug}
               rowDensity={app.manifest.views[0]?.row_density}
               onPatch={handleUpdateCell}
+              updatedByOthers={updatedByOthers}
+              changedUnderEdit={changedUnderEdit}
+              onEditingChange={setEditing}
             />
 
             {/* Quick Add Row */}
@@ -368,8 +388,10 @@ export const MultiViewWorkspace: React.FC<Props> = ({
                     {colRecords.map((r) => (
                       <div
                         key={r.id}
-                        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/60 rounded-lg p-3 shadow-xs space-y-2 hover:border-blue-400 transition-all cursor-pointer"
+                        data-updated={updatedByOthers.has(r.id) ? "true" : undefined}
+                        className={`bg-white dark:bg-slate-800 border rounded-lg p-3 shadow-xs space-y-2 hover:border-blue-400 transition-all cursor-pointer ${updatedByOthers.has(r.id) ? "border-amber-400" : "border-slate-200 dark:border-slate-700/60"}`}
                       >
+                        {updatedByOthers.has(r.id) && <span className="sr-only">Updated by someone else</span>}
                         <div className="flex items-center justify-between">
                           <span className="font-mono text-[10px] text-slate-400">{r.id}</span>
                           <span className="font-mono text-[10px] text-slate-400">
@@ -486,9 +508,11 @@ export const MultiViewWorkspace: React.FC<Props> = ({
                         {dayRecords.map((r) => (
                           <div
                             key={r.id}
-                            className="p-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 text-[10px] font-semibold truncate"
+                            data-updated={updatedByOthers.has(r.id) ? "true" : undefined}
+                            className={`p-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 text-[10px] font-semibold truncate ${updatedByOthers.has(r.id) ? "ring-2 ring-amber-400" : ""}`}
                             title={String(r[fields[0]?.name] || r.id)}
                           >
+                            {updatedByOthers.has(r.id) && <span className="sr-only">Updated by someone else</span>}
                             {String(r[fields[0]?.name] || r.id)}
                           </div>
                         ))}
@@ -507,8 +531,10 @@ export const MultiViewWorkspace: React.FC<Props> = ({
             {filteredRecords.map((r) => (
               <div
                 key={r.id}
-                className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs space-y-3 hover:border-blue-400 transition-all"
+                data-updated={updatedByOthers.has(r.id) ? "true" : undefined}
+                className={`bg-white dark:bg-slate-900 rounded-xl border p-5 shadow-xs space-y-3 hover:border-blue-400 transition-all ${updatedByOthers.has(r.id) ? "border-amber-400" : "border-slate-200 dark:border-slate-800"}`}
               >
+                {updatedByOthers.has(r.id) && <span className="sr-only">Updated by someone else</span>}
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs font-semibold text-slate-400">{r.id}</span>
                   <span

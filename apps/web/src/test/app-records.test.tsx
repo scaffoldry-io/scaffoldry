@@ -79,7 +79,7 @@ describe("useAppRecords", () => {
     await waitFor(() => expect(result.current.records).toHaveLength(1));
     await act(async () => { await result.current.save("r1", { name: "Typed" }); });
     expect(result.current.records[0].data.name).toBe("Theirs");
-    expect(result.current.notice).toBe("Someone else saved this record. Reloaded.");
+    expect(result.current.notice).toBe("Someone else changed this first. Your view has been refreshed. Review it and try again.");
     expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
   });
 

@@ -171,6 +171,59 @@ describe("the grid listens", () => {
   });
 });
 
+describe("this person's own writes are not someone else's", () => {
+  beforeEach(() => {
+    setAuthToken("tok");
+    live.handlers.length = 0;
+    live.unsubscribed = 0;
+  });
+
+  /** A fetch stub whose writes wait until `release` is called, so an event can arrive first. */
+  function slowWrites(rows: any[], answer: (c: Call) => Reply) {
+    const calls: Call[] = [];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    global.fetch = vi.fn().mockImplementation(async (url, options: RequestInit = {}) => {
+      const path = String(url).replace(/^.*\/api\/v1/, "");
+      const call: Call = { method: (options.method || "GET").toUpperCase(), path, body: options.body ? JSON.parse(String(options.body)) : undefined };
+      calls.push(call);
+      const reply = call.method === "GET" && /\/records$/.test(path) ? { body: { records: rows } } : answer(call);
+      if (call.method !== "GET") await gate;
+      const status = reply.status ?? 200;
+      return { ok: status < 400, status, statusText: "", json: async () => reply.body };
+    }) as unknown as typeof fetch;
+    return { calls, release: () => release() };
+  }
+
+  it("a create whose event arrives before its answer is not counted as a change elsewhere", async () => {
+    const net = slowWrites([row("r1", "One")], (c) => (c.method === "POST" ? { status: 201, body: row("r2", "", 0) } : { status: 404, body: {} }));
+    open();
+    await screen.findByText("One");
+    fireEvent.click(screen.getByText("+ Add Record"));
+    await waitFor(() => expect(net.calls.some((c) => c.method === "POST")).toBe(true));
+    change("r2", 1, "create");
+    net.release();
+    await waitFor(() => expect(screen.getByTestId("cell-r2-name")).toBeInTheDocument());
+    expect(screen.queryByText(/changed\./)).not.toBeInTheDocument();
+  });
+
+  it("a save whose event arrives before its answer is not marked as someone else's", async () => {
+    const net = slowWrites([row("r1", "One", 5)], (c) =>
+      c.method === "PATCH" ? { body: row("r1", "One", 6, 2) } : c.path === "/apps/reg/records/r1" ? { body: row("r1", "One", 6, 2) } : { status: 404, body: {} }
+    );
+    open();
+    await screen.findByText("One");
+    fireEvent.click(screen.getByTestId("cell-r1-amount"));
+    fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "6" } });
+    fireEvent.keyDown(screen.getByRole("spinbutton"), { key: "Enter" });
+    await waitFor(() => expect(net.calls.some((c) => c.method === "PATCH")).toBe(true));
+    change("r1", 2);
+    net.release();
+    await waitFor(() => expect(screen.getByTestId("cell-r1-amount")).toHaveTextContent("6"));
+    expect(screen.queryByText("Updated by someone else")).not.toBeInTheDocument();
+  });
+});
+
 describe("realtime.ts", () => {
   it("parses server-sent events across chunk boundaries", () => {
     const first = parseEvents("event: change\ndata: {\"record\":\"r1\"}\n\nevent: pi");
