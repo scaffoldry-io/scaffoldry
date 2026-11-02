@@ -94,6 +94,7 @@ async fn fixture() -> Fixture {
             ceds_mappings: Default::default(),
             tables: vec![
                 AppTable {
+                    retired_fields: Vec::new(),
                     id: "t1".to_string(),
                     name: "Things".to_string(),
                     slug: "things".to_string(),
@@ -106,6 +107,7 @@ async fn fixture() -> Fixture {
                     row_place: Default::default(),
                 },
                 AppTable {
+                    retired_fields: Vec::new(),
                     id: "apps".to_string(),
                     name: "Applications".to_string(),
                     slug: "apps".to_string(),
@@ -118,6 +120,7 @@ async fn fixture() -> Fixture {
                     row_place: Default::default(),
                 },
                 AppTable {
+                    retired_fields: Vec::new(),
                     id: "programs".to_string(),
                     name: "Programs".to_string(),
                     slug: "programs".to_string(),

@@ -93,6 +93,11 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                 problems.push(format!("table '{}': field name '{}' is used twice", table.id, f.name));
             }
         }
+        // A retired field keeps its name, so a live field cannot take it while the values are kept.
+        let retired: HashSet<&str> = table.retired_fields.iter().map(|f| f.name.as_str()).collect();
+        for name in names.intersection(&retired) {
+            problems.push(format!("table '{}': field '{name}' is both live and retired. Restore it or leave it retired", table.id));
+        }
         let indexed = indexed_fields(m, &table.id);
         if indexed.len() > MAX_INDEXED_FIELDS {
             problems.push(format!("table '{}' indexes {} fields, the limit is {MAX_INDEXED_FIELDS}", table.id, indexed.len()));
@@ -157,7 +162,9 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                             Err(e) => problems.push(format!("table '{}': formula '{}' does not parse: {}", table.id, f.name, e.message)),
                             Ok(info) => {
                                 for r in info.field_refs {
-                                    if !names.contains(r.as_str()) {
+                                    if retired.contains(r.as_str()) && !names.contains(r.as_str()) {
+                                        problems.push(format!("table '{}': formula '{}' names the retired field '{r}'. Restore the field first", table.id, f.name));
+                                    } else if !names.contains(r.as_str()) {
                                         problems.push(format!("table '{}': formula '{}' names the field '{r}', which does not exist", table.id, f.name));
                                     }
                                 }

@@ -245,6 +245,9 @@ fn validate_known_fields_and_types(app_slug: &str, table_id: &str, data: &Value,
             continue;
         }
         let Some(field) = fields.iter().find(|f| f.name == *key) else {
+            if retired_field_names(app_slug, table_id, state).contains(key) {
+                return Err(ServiceError::BadRequest(format!("Field '{key}' is retired. A proposal can restore it, with its values, before it is written again")));
+            }
             return Err(ServiceError::BadRequest(format!("Field '{key}' is not a field of table '{table_name}'")));
         };
         if value.is_null() || field.field_type.is_computed() {
@@ -943,6 +946,7 @@ pub fn update_record(
         return Err(outside_scope());
     }
     keep_what_the_caller_cannot_touch(caller, app_slug, &table, &current.data, &mut new_data, state);
+    keep_retired_values(app_slug, &table, &current.data, &mut new_data, state);
     check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
 
@@ -1197,6 +1201,26 @@ fn is_viewer(caller: &AuthUser, app_slug: &str, state: &SharedState) -> bool {
 /// effective flag decides what is sensitive, so a label counts.
 pub(crate) fn hidden_fields_for(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSpec], state: &SharedState) -> Vec<String> {
     hidden_fields(caller, app_slug, table, fields, state)
+}
+
+/// The names of a table's retired fields (lifecycle phase 2). Their values stay in the records and are never served.
+pub(crate) fn retired_field_names(app_slug: &str, table_id: &str, state: &SharedState) -> Vec<String> {
+    let Ok(engine) = state.engine.read() else { return Vec::new() };
+    engine
+        .resolve_by_slug(app_slug)
+        .and_then(|m| m.tables.iter().find(|t| t.id == table_id || t.slug == table_id))
+        .map(|t| t.retired_fields.iter().map(|f| f.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// A write sends the fields it can see. A retired field is not one of them, so its stored value is put back and kept.
+fn keep_retired_values(app_slug: &str, table: &str, stored: &Value, new_data: &mut Value, state: &SharedState) {
+    let Some(map) = new_data.as_object_mut() else { return };
+    for name in retired_field_names(app_slug, table, state) {
+        if let Some(old) = stored.get(&name) {
+            map.insert(name, old.clone());
+        }
+    }
 }
 
 /// The fields of a table, or none when the app or table is unknown. For readers that must not fail.
@@ -1552,6 +1576,7 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
         let Ok((fields, canonical)) = table_fields(app_slug, &table, false, state) else { continue };
         let page = units_of_rows(app_slug, &canonical, &indices.iter().map(|i| &rows[*i]).collect::<Vec<_>>(), state);
         let withheld = withheld_on(caller, app_slug, &canonical, &fields, Some(&page), state);
+        let retired = retired_field_names(app_slug, &canonical, state);
         // A read that returns a protected field in full leaves one receipt for the call, not one for each row. A field shown
         // as a mask is not in full.
         let protected: Vec<String> = {
@@ -1580,6 +1605,10 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
                             map.remove(name);
                         }
                     }
+                }
+                // A retired field is hidden from everyone. Its value stays in the stored record.
+                for name in &retired {
+                    map.remove(name);
                 }
                 // A preview shows the proposed table: a field the proposal removes is not there.
                 if crate::service::preview::is_preview(app_slug) {

@@ -15,6 +15,7 @@ fn link(name: &str, target_table: &str) -> FieldSpec {
 
 fn table(id: &str, fields: Vec<FieldSpec>) -> AppTable {
     AppTable {
+        retired_fields: Vec::new(),
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),

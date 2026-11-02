@@ -135,6 +135,7 @@ fn manifest_with_select(slug: &str, options: Vec<SelectOption>) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".to_string(),
             name: "Applicants".to_string(),
             slug: "applicants".to_string(),
@@ -523,6 +524,7 @@ async fn multiselect_with_three_values_makes_three_index_rows_and_filters_by_any
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".to_string(),
             name: "Items".to_string(),
             slug: "items".to_string(),

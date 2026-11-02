@@ -34,7 +34,7 @@ fn computed(name: &str, t: FieldType, via: &str, target: Option<&str>) -> FieldS
 }
 
 fn table(id: &str, fields: Vec<FieldSpec>) -> AppTable {
-    AppTable { id: id.into(), name: id.into(), slug: id.into(), description: None, icon: None, fields, primary_field: None, sample_records: vec![], coordinates: None, sealed: false, row_place: Default::default() }
+    AppTable { retired_fields: Vec::new(), id: id.into(), name: id.into(), slug: id.into(), description: None, icon: None, fields, primary_field: None, sample_records: vec![], coordinates: None, sealed: false, row_place: Default::default() }
 }
 
 fn manifest(tables: Vec<AppTable>) -> AppManifest {

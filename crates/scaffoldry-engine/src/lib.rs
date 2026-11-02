@@ -514,6 +514,11 @@ pub struct FieldSpec {
     /// What a reader who is not cleared for this field sees of it. When absent, the default of the field's categories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<scaffoldry_core::mask::Mask>,
+    /// When a proposal removed the field (lifecycle phase 2). A retired field lives in its table's `retired_fields`, not
+    /// in `fields`, so nothing reads, writes, indexes or calculates it. Its values stay in the records until retention
+    /// strips them, and a proposal that puts the field back in `fields` restores it with its values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired_at: Option<String>,
 }
 
 /// How many records a link field holds.
@@ -639,6 +644,7 @@ impl FieldSpec {
             sensitivity: None,
             hierarchy: None,
             mask: None,
+            retired_at: None,
         }
     }
 }
@@ -751,6 +757,10 @@ pub struct AppTable {
     /// A sealed table stops every grant anchored above it. Unsealing is a widening change.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sealed: bool,
+    /// The fields a proposal removed, each with its `retired_at`. Their values are kept in the records. Nothing serves
+    /// them: a read, a write, the index and the formula graph see `fields` only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired_fields: Vec<FieldSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

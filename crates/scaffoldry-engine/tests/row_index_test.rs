@@ -23,6 +23,7 @@ fn manifest(fields: Vec<FieldSpec>) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
+            retired_fields: Vec::new(),
             id: "t1".into(),
             name: "T".into(),
             slug: "t".into(),

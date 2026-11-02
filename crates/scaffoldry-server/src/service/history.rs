@@ -188,7 +188,12 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
     for row in &rows {
         let hide = hidden.entry(row.table_id.clone()).or_insert_with(|| {
             let (fields, canonical) = table_fields_lenient(app_slug, &row.table_id, state);
-            withheld_for(caller, app_slug, &canonical, &fields, state)
+            let mut hide = withheld_for(caller, app_slug, &canonical, &fields, state);
+            // A retired field is hidden from everyone, in history as on the record (lifecycle phase 2).
+            for name in crate::service::records::retired_field_names(app_slug, &canonical, state) {
+                hide.insert(name, scaffoldry_core::mask::Mask::Hide);
+            }
+            hide
         });
         let name = names
             .entry(row.actor.clone())
