@@ -6,6 +6,7 @@ import { useAppRecords } from "./useAppRecords";
 import { Banner } from "./ui/Banner";
 import { Toast } from "./ui/Toast";
 import { AppActivity } from "./RecordHistory";
+import { PresenceAvatars } from "./ui/PresenceAvatars";
 
 interface Props {
   app: RegisteredApp;
@@ -37,7 +38,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
   // The stored rows of this app. Nothing is seeded or generated: the grid shows what the server holds.
   const {
     records: stored, loading, error, notice, clearNotice, reload, create, save,
-    updatedByOthers, outsideChanges, refresh, liveNotice, clearLiveNotice, changedUnderEdit, setEditing,
+    updatedByOthers, outsideChanges, refresh, liveNotice, clearLiveNotice, changedUnderEdit, setEditing, present,
   } = useAppRecords(app.slug);
   const [actionError, setActionError] = useState<string | null>(null);
   const tableId = app.manifest.views[0]?.table_id ?? app.manifest.tables?.[0]?.id ?? "";
@@ -145,6 +146,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
               <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                 ✓ Governed
               </span>
+              <PresenceAvatars present={present} />
             </div>
             <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               <span className="font-mono text-[11px] text-blue-600 dark:text-blue-400">

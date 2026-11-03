@@ -254,7 +254,7 @@ People are told, see each other work, and run real committee processes.
 | 140 | [policy-library.md](policy-library.md) | 6 | A console panel and one screen for the state of the library | **COMPLETED** |
 | 141 | [notifications.md](notifications.md) | 1 | An inbox and a bell | **COMPLETED** |
 | 142 | [notifications.md](notifications.md) | 2 | Email through an allowlisted SMTP host | **COMPLETED** |
-| 143 | [realtime.md](realtime.md) | 3 | Presence and a channel for the person's notices and jobs |
+| 143 | [realtime.md](realtime.md) | 3 | Presence and a channel for the person's notices and jobs | **COMPLETED** |
 | 144 | [approvers.md](approvers.md) | 4 | Delegation by date |
 | 145 | [approvers.md](approvers.md) | 5 | The workflow builder picks who decides and previews it |
 | 146 | [notifications.md](notifications.md) | 3 | Preferences and digests |

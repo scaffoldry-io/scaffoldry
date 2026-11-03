@@ -15,6 +15,7 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/admin/secrets/{name}".into(), case!(secret_put, "/api/v1"));
     m.insert("DELETE /api/v1/admin/secrets/{name}".into(), case!(secret_delete, "/api/v1"));
     m.insert("POST /api/v1/admin/mail/test".into(), case!(mail_test, "/api/v1"));
+    exempt(m, "POST /api/v1/apps/{slug}/presence", "stores nothing: it tells every server a stream is still open, and realtime_phase3_test proves two servers see each other");
     m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
     exempt(m, "POST /api/v1/admin/ownership/transfer/preview", "reports what a transfer would do and stores nothing");
     // Workspaces are mounted at the root and under /api/v1: two paths, one handler, a case for each.
