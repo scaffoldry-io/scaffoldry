@@ -14,6 +14,8 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/admin/secrets/{name}"),
     ("DELETE", "/admin/secrets/{name}"),
     ("GET", "/admin/mail"),
+    ("GET", "/admin/delegations"),
+    ("DELETE", "/admin/delegations/{id}"),
     ("POST", "/admin/mail/test"),
     ("GET", "/admin/overview"),
     ("POST", "/admin/library/policies/{id}/rules/{key}/bindings"),

@@ -1,4 +1,5 @@
 import { UserSettingsModal } from "./UserSettingsModal";
+import { DelegationBanner } from "./DelegationPanel";
 import { NotificationBell } from "./NotificationBell";
 import { TemplatePicker } from "./TemplatePicker";
 import React, { useState, useEffect, useRef, Suspense, lazy, useMemo } from "react";
@@ -1836,6 +1837,13 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-sm font-medium border border-slate-700 animate-fade-in">
           <span className="text-emerald-400 dark:text-emerald-600">✓</span>
           {notificationToast}
+        </div>
+      )}
+
+      {/* A delegation in force that this person received: whom they decide for, and until when. */}
+      {authToken && (
+        <div className="fixed top-16 right-6 z-40 max-w-sm">
+          <DelegationBanner />
         </div>
       )}
 
