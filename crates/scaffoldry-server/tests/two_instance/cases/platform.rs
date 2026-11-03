@@ -102,6 +102,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/orgs/{id}/positions/{key}/holders".into(), case!(holder_assign));
     m.insert("DELETE /api/v1/orgs/{id}/positions/{key}/holders/{eppn}".into(), case!(holder_vacate));
     m.insert("POST /api/v1/me/delegations".into(), case!(delegation_create));
+    m.insert("PUT /api/v1/me/notification-prefs".into(), case!(notification_pref_put));
     m.insert("DELETE /api/v1/me/delegations/{id}".into(), case!(delegation_revoke));
     m.insert("DELETE /api/v1/admin/delegations/{id}".into(), case!(delegation_admin_revoke));
     m.insert("POST /api/v1/admin/users".into(), case!(user_create));
@@ -417,6 +418,16 @@ async fn holder_assign(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/orgs/{unit}/positions/{key}/holders"), ADMIN, Some(json!({ "eppn": who, "reason": "Appointed" }))).await, StatusCode::CREATED, "assign")?;
     let seen = status(w.rb("GET", &format!("/api/v1/orgs/{unit}/positions"), ADMIN, None).await, StatusCode::OK, "B lists the unit's positions")?;
     ensure(has(&seen, &who), format!("B shows the holder A assigned: {seen}"))
+}
+
+/// A person chooses a channel through A. B lists it.
+async fn notification_pref_put(w: World) -> Outcome {
+    let who = person("p3prefs");
+    make_user(&w, &who).await?;
+    status(w.wa("PUT", "/api/v1/me/notification-prefs", &who, Some(json!({ "kind": "mention", "channel": "digest" }))).await, StatusCode::OK, "A stores the choice")?;
+    let seen = status(w.rb("GET", "/api/v1/me/notification-prefs", &who, None).await, StatusCode::OK, "B lists the choices")?;
+    let row = seen["kinds"].as_array().and_then(|l| l.iter().find(|k| k["kind"] == "mention").cloned()).ok_or("the mention row")?;
+    ensure(row["channel"] == "digest" && row["chosen"] == true, format!("B sees the choice A stored: {row}"))
 }
 
 /// A person who holds a position, and someone else to stand in for them. Returns (holder, delegate, delegation id).

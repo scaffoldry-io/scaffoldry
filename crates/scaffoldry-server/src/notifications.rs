@@ -112,6 +112,100 @@ impl Notice {
     }
 }
 
+/// Notifications phase 3: where a kind goes for a person.
+pub const CHANNELS: &[&str] = &["in_app", "email", "both", "digest", "off"];
+
+/// Kinds a person can never set below `in_app`: a decision waiting on them, a change to their own access, an
+/// infected file. Each with the reason the settings pane shows.
+pub const FORCED: &[(&str, &str)] = &[
+    ("decision_waiting", "A decision waiting on you always reaches your inbox, so nothing stalls unseen."),
+    ("access_changed", "A change to your own access always reaches your inbox."),
+    ("file_infected", "An infected file always reaches your inbox."),
+];
+
+/// The channel when neither the person nor the institution chose one.
+pub const DEFAULT_CHANNEL: &str = "both";
+
+pub fn is_forced(kind: &str) -> bool {
+    FORCED.iter().any(|(k, _)| *k == kind)
+}
+
+/// Each kind in plain words, for the settings pane.
+pub fn label(kind: &str) -> &'static str {
+    match kind {
+        "mention" => "Someone mentions you in a comment",
+        "decision_waiting" => "A decision is waiting on you",
+        "decision_made" => "A decision is made on something you started",
+        "process_escalated" => "A step is escalated",
+        "process_overdue" => "A step is overdue",
+        "proposal_pending" => "A proposal needs deciding",
+        "proposal_decided" => "Your proposal is decided",
+        "job_finished" => "Your background work finishes",
+        "import_finished" => "Your import finishes",
+        "sync_failed" => "A sync fails",
+        "webhook_disabled" => "A webhook is turned off",
+        "file_infected" => "A file is found infected",
+        "assigned" => "You are assigned to something",
+        "delegation_received" => "Someone asks you to decide for them",
+        "access_changed" => "Your access changes",
+        "view_shared" => "Someone shares a view with you",
+        _ => "Other notices",
+    }
+}
+
+/// Why a channel cannot be used for a kind, or nothing when it can.
+pub fn channel_problem(kind: &str, channel: &str) -> Option<String> {
+    if !KINDS.contains(&kind) {
+        return Some(format!("There is no kind of notice called {kind}"));
+    }
+    if !CHANNELS.contains(&channel) {
+        return Some(format!("A channel is one of {}", CHANNELS.join(", ")));
+    }
+    if channel == "off" && is_forced(kind) {
+        let reason = FORCED.iter().find(|(k, _)| *k == kind).map(|(_, r)| *r).unwrap_or("");
+        return Some(format!("You cannot turn this off. {reason}"));
+    }
+    None
+}
+
+/// Checks the setting `notifications.defaults`: an object from kind to channel, with no forced kind off.
+pub fn valid_defaults(value: &Value) -> bool {
+    value.as_object().is_some_and(|o| o.iter().all(|(k, v)| v.as_str().is_some_and(|c| channel_problem(k, c).is_none())))
+}
+
+/// Each recipient's channel for `kind`: their own choice, else the institution's, else `both`. A forced kind is never
+/// below `in_app`, whatever is stored.
+fn channels_for(state: &SharedState, kind: &str, people: &[String]) -> Result<Vec<String>, RepositoryError> {
+    let default = state
+        .settings
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .get("notifications.defaults")
+        .and_then(|d| d.get(kind))
+        .and_then(Value::as_str)
+        .unwrap_or(DEFAULT_CHANNEL)
+        .to_string();
+    let lower: Vec<String> = people.iter().map(|p| p.to_lowercase()).collect();
+    let kind_s = kind.to_string();
+    let chosen: Vec<(String, String)> = state.repository.with_client(move |c| {
+        Ok(c.query("SELECT lower(eppn), channel FROM notification_prefs WHERE lower(eppn) = ANY($1) AND kind = $2", &[&lower, &kind_s])?
+            .iter()
+            .map(|r| (r.get(0), r.get(1)))
+            .collect())
+    })?;
+    Ok(people
+        .iter()
+        .map(|p| {
+            let c = chosen.iter().find(|(e, _)| e.eq_ignore_ascii_case(p)).map(|(_, c)| c.clone()).unwrap_or_else(|| default.clone());
+            if c == "off" && is_forced(kind) {
+                "in_app".to_string()
+            } else {
+                c
+            }
+        })
+        .collect())
+}
+
 pub const MAX_TITLE: usize = 200;
 pub const MAX_BODY: usize = 500;
 
@@ -345,22 +439,38 @@ pub fn notify(state: &SharedState, to: &Recipients, actor: Option<&str>, notice:
     if told.is_empty() {
         return Ok(0);
     }
+    // Notifications phase 3: each person's channel for this kind. `off` creates nothing.
+    let channels = channels_for(state, notice.kind(), &told)?;
+    let (told, channels): (Vec<String>, Vec<String>) = told.into_iter().zip(channels).filter(|(_, c)| c != "off").unzip();
+    if told.is_empty() {
+        return Ok(0);
+    }
     let (title, body, link) = render(state, notice);
     let (kind, app) = (notice.kind().to_string(), notice.app().map(str::to_string));
     let ids: Vec<uuid::Uuid> = told.iter().map(|_| uuid::Uuid::new_v4()).collect();
     // Mail goes only when it is on and complete. Then each notice's mail is queued in the same transaction.
     let base_url = crate::mail::mailing(&state.settings.read().unwrap_or_else(|p| p.into_inner())).ok();
+    // With mail off, a mail-only choice still reaches the inbox, so nothing is lost.
+    let mail_on = base_url.is_some();
+    let read: Vec<bool> = channels.iter().map(|c| c == "email" && mail_on).collect();
+    let states: Vec<String> = channels.iter().map(|c| if c == "digest" { "digest".to_string() } else { "none".to_string() }).collect();
     let directory: Vec<(String, Option<String>)> =
         told.iter().map(|e| (e.clone(), users.iter().find(|u| u.user_name.eq_ignore_ascii_case(e)).and_then(crate::service::people::primary_email))).collect();
     state.repository.with_client(move |c| {
         let mut tx = c.transaction()?;
         let n = tx.execute(
-            "INSERT INTO notifications (id, recipient, kind, app_slug, title, body, link) SELECT * FROM unnest($1::uuid[], $2::varchar[]) AS t(id, recipient) \
-             CROSS JOIN (SELECT $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::jsonb) AS v",
-            &[&ids, &told, &kind, &app, &title, &body, &link],
+            "INSERT INTO notifications (id, recipient, kind, app_slug, title, body, link, read_at, email_state) \
+             SELECT t.id, t.recipient, v.kind, v.app, v.title, v.body, v.link, CASE WHEN t.read THEN NOW() END, t.state \
+             FROM unnest($1::uuid[], $2::varchar[], $8::bool[], $9::varchar[]) AS t(id, recipient, read, state) \
+             CROSS JOIN (SELECT $3::varchar AS kind, $4::varchar AS app, $5::varchar AS title, $6::varchar AS body, $7::jsonb AS link) AS v",
+            &[&ids, &told, &kind, &app, &title, &body, &link, &read, &states],
         )?;
         if let Some(base) = base_url {
-            for (id, (eppn, email)) in ids.iter().zip(&directory) {
+            for ((id, (eppn, email)), channel) in ids.iter().zip(&directory).zip(&channels) {
+                // Only email and both are mailed now. A digest notice waits for the morning.
+                if channel != "email" && channel != "both" {
+                    continue;
+                }
                 if let Some(to) = crate::mail::address_of(&mut tx, eppn, email.as_deref())? {
                     crate::mail::queue(&mut tx, Some(*id), &to, &title, &crate::mail::compose(&title, &body, &base, *id))?;
                 }

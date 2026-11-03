@@ -35,10 +35,16 @@ Do these in the console, or with `PUT /api/v1/settings/{key}`, as a Platform Adm
 | --- | --- |
 | `mail.enabled` is false | Nothing is queued and nothing is sent. Notices still reach the inbox. |
 | The relay refuses or cannot be reached | The mail is tried again after 1 minute, 10 minutes, 1 hour and 6 hours. Then it is marked failed. |
-| A person has had 50 mails in the last hour | Further notices stay in the inbox. The daily digest will pick them up when it exists (notifications phase 3). |
+| A person has had 50 mails in the last hour | Further notices stay in the inbox and go into that person's next morning digest. |
 | The server has sent 600 mails in the last minute | The rest wait for the next run, 15 seconds later. |
 | Someone follows a link | The desk asks them to sign in if they have no session, then opens what the notice is about. Only the person the notice was for can follow it. |
 
 The `send_email` job does the sending every 15 seconds. Each run claims up to 20 mails, so several server instances can run it at once without sending a mail twice. A server that stops in the middle of a run leaves its mails to be tried again five minutes later. In that rare case one mail can arrive twice.
 
 The password is read from the secrets store at the start of each run. It is never written to a log, an error, the ledger, or the queue. An error from the relay is recorded as what failed and the reply code only, because a relay can repeat back what it was sent.
+
+## Preferences and the digest
+
+Each person chooses, per kind of notice, where it goes: the inbox, mail only, both, a morning digest, or off. Someone who has not chosen gets the institution's default from the setting `notifications.defaults`, an object from kind to channel, and with no default, both. Three kinds can never be turned off: a decision waiting on the person, a change to their own access, and an infected file.
+
+The `send_digests` job runs at 07:00 in `platform.timezone`. It sends each person one mail listing their unread digest notices, grouped by app, with a link for each. Changing `platform.timezone` moves the digest to 07:00 in the new zone.

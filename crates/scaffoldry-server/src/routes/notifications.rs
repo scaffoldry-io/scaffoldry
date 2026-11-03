@@ -17,6 +17,58 @@ pub fn router() -> Router<SharedState> {
         .route("/me/notifications/count", get(count))
         .route("/me/notifications/read", post(read))
         .route("/me/notifications/{id}/open", get(open))
+        .route("/me/notification-prefs", get(prefs).put(set_pref))
+}
+
+/// Notifications phase 3: each kind in words, the caller's channel, which kinds are forced and why, and whether the
+/// institution sends mail at all.
+async fn prefs(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, ServiceError> {
+    let who = me(&state, &headers)?;
+    let settings = state.settings.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let mail_enabled = crate::mail::mailing(&settings).is_ok();
+    let defaults = settings.get("notifications.defaults").cloned().unwrap_or(Value::Null);
+    let chosen: Vec<(String, String)> = blocking(move || {
+        state
+            .repository
+            .with_client(move |c| Ok(c.query("SELECT kind, channel FROM notification_prefs WHERE lower(eppn) = lower($1)", &[&who])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
+            .map_err(storage)
+    })
+    .await?;
+    let kinds: Vec<Value> = crate::notifications::KINDS
+        .iter()
+        .map(|k| {
+            let default = defaults.get(*k).and_then(Value::as_str).unwrap_or(crate::notifications::DEFAULT_CHANNEL);
+            let mine = chosen.iter().find(|(kind, _)| kind == k).map(|(_, c)| c.as_str());
+            let reason = crate::notifications::FORCED.iter().find(|(f, _)| f == k).map(|(_, r)| *r);
+            json!({ "kind": k, "label": crate::notifications::label(k), "channel": mine.unwrap_or(default), "default": default, "chosen": mine.is_some(), "forced": reason.is_some(), "forced_reason": reason })
+        })
+        .collect();
+    Ok(Json(json!({ "kinds": kinds, "mail_enabled": mail_enabled })))
+}
+
+/// `PUT /me/notification-prefs` with `{ kind, channel }`. A forced kind cannot be turned off.
+async fn set_pref(State(state): State<SharedState>, headers: HeaderMap, body: Bytes) -> Result<Json<Value>, ServiceError> {
+    let who = me(&state, &headers)?;
+    let v: Value = serde_json::from_slice(&body).map_err(|_| ServiceError::bad_request("A body of { kind, channel } is needed"))?;
+    let (kind, channel) = (v["kind"].as_str().unwrap_or("").to_string(), v["channel"].as_str().unwrap_or("").to_string());
+    if let Some(problem) = crate::notifications::channel_problem(&kind, &channel) {
+        return Err(ServiceError::bad_request(problem));
+    }
+    let (k, c) = (kind.clone(), channel.clone());
+    blocking(move || {
+        state
+            .repository
+            .with_client(move |db| {
+                db.execute(
+                    "INSERT INTO notification_prefs (eppn, kind, channel) VALUES (lower($1), $2, $3) ON CONFLICT (eppn, kind) DO UPDATE SET channel = EXCLUDED.channel",
+                    &[&who, &k, &c],
+                )?;
+                Ok(())
+            })
+            .map_err(storage)
+    })
+    .await?;
+    Ok(Json(json!({ "kind": kind, "channel": channel })))
 }
 
 /// Where a mailed link leads (notifications phase 2). The desk serves `/n/{id}`, signs the person in when they have

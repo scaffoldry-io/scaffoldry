@@ -48,6 +48,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "mail.enabled",
     "mail.smtp",
     "platform.base_url",
+    "notifications.defaults",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -75,6 +76,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" | "mail.enabled" => value.is_boolean(),
         "mail.smtp" => crate::mail::Smtp::parse(value).is_ok(),
         "platform.base_url" => crate::mail::valid_base_url(value),
+        "notifications.defaults" => crate::notifications::valid_defaults(value),
         // No scanner is null. Otherwise `{ "kind": "clamd", "socket": "/run/clamav/clamd.ctl" }`.
         "files.scanner" => value.is_null() || crate::scan::Scanner::from_setting(Some(value)).is_some(),
         "files.max_mb" => value.as_i64().is_some_and(|n| (1..=crate::files::MAX_MAX_MB as i64).contains(&n)),
@@ -218,6 +220,7 @@ async fn put_setting(
             scaffoldry_engine::formula::set_institution_timezone(tz);
             let _ = crate::jobs::register_volatile_schedule(&state.repository, tz);
             let _ = crate::jobs::register_daily_schedule(&state.repository, "purge_expired", tz, "02:00:00");
+            let _ = crate::mail::register_digest_schedule(&state.repository);
         }
     }
     (StatusCode::OK, Json(json!({ "key": key, "value": payload }))).into_response()

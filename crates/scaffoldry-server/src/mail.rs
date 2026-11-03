@@ -340,3 +340,85 @@ pub fn status(repo: &PostgresRepository) -> Result<Value, RepositoryError> {
         }))
     })
 }
+
+/// A notice waiting for a digest: id, recipient, app slug, app title, notice title, notice body.
+type Pending = (Uuid, String, Option<String>, Option<String>, String, String);
+
+/// When the digest goes out, in `platform.timezone`.
+pub const DIGEST_AT: &str = "07:00:00";
+
+/// Schedules `send_digests` for 07:00 in the institution's zone. Called at start and when the zone changes.
+pub fn register_digest_schedule(repo: &PostgresRepository) -> Result<(), String> {
+    let zone = repo
+        .get_platform_settings()
+        .map_err(storage)?
+        .get("platform.timezone")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "UTC".to_string());
+    crate::jobs::register_daily_schedule(repo, "send_digests", &zone, DIGEST_AT).map_err(|e| e.to_string())
+}
+
+/// Notifications phase 3: one mail per person with a line per pending notice, grouped by app. Pending means unread
+/// and held for the digest, by the person's choice or by the hourly limit. Each notice goes in one digest only. The
+/// lines are the notices' own titles and bodies, which `render` built from names and counts, and a link.
+pub fn send_digests(repo: &PostgresRepository) -> Result<Value, String> {
+    let settings = repo.get_platform_settings().map_err(storage)?;
+    let base = match mailing(&settings) {
+        Ok(b) => b,
+        Err(why) => return Ok(json!({ "digests": 0, "idle": why })),
+    };
+    let pending: Vec<Pending> = repo
+        .with_client(|c| {
+            Ok(c.query(
+                "SELECT n.id, n.recipient, n.app_slug, m.title, n.title, n.body FROM notifications n LEFT JOIN app_manifests m ON m.slug = n.app_slug \
+                 WHERE n.email_state = 'digest' AND n.read_at IS NULL ORDER BY lower(n.recipient), m.title NULLS LAST, n.created_at",
+                &[],
+            )?
+            .iter()
+            .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4), r.get(5)))
+            .collect())
+        })
+        .map_err(storage)?;
+    let mut people: Vec<String> = pending.iter().map(|p| p.1.to_lowercase()).collect();
+    people.dedup();
+    let users = repo.users_by_names(&people).map_err(storage)?;
+    let mut digests = 0;
+    for who in people {
+        let mine: Vec<&Pending> = pending.iter().filter(|p| p.1.to_lowercase() == who).collect();
+        let mut text = String::new();
+        let mut heading: Option<String> = None;
+        for (id, _, slug, app_title, title, body) in &mine {
+            let group = app_title.clone().or_else(|| slug.as_ref().map(|_| "An app".to_string())).unwrap_or_else(|| "Elsewhere".to_string());
+            if heading.as_deref() != Some(group.as_str()) {
+                text.push_str(&format!("\n{group}\n"));
+                heading = Some(group);
+            }
+            text.push_str(&format!("- {title}. {body} Open it: {base}/n/{id}\n"));
+        }
+        let ids: Vec<Uuid> = mine.iter().map(|p| p.0).collect();
+        let subject = format!("{} notice{} waiting for you", ids.len(), if ids.len() == 1 { "" } else { "s" });
+        let body = format!("Here is what happened since your last digest.\n{text}");
+        let email = users.iter().find(|u| u.user_name.eq_ignore_ascii_case(&who)).and_then(crate::service::people::primary_email);
+        let sent = repo
+            .with_client(move |c| {
+                let mut tx = c.transaction()?;
+                let Some(to) = address_of(&mut tx, &who, email.as_deref())? else { return Ok(false) };
+                // The digest is the mail the hourly limit points to, so the limit does not hold it back.
+                tx.execute("INSERT INTO email_outbox (id, to_address, subject, body) VALUES ($1, $2, $3, $4)", &[&Uuid::new_v4(), &to, &subject, &body])?;
+                tx.execute("UPDATE notifications SET email_state = 'digested' WHERE id = ANY($1)", &[&ids])?;
+                tx.commit()?;
+                Ok(true)
+            })
+            .map_err(storage)?;
+        if sent {
+            digests += 1;
+        }
+    }
+    Ok(json!({ "digests": digests }))
+}
+
+/// The `send_digests` job, daily at 07:00 in the institution's zone.
+pub fn send_digests_job(ctx: &crate::jobs::JobCtx, _payload: Value) -> Result<Value, crate::jobs::JobError> {
+    send_digests(ctx.repository()).map_err(crate::jobs::JobError::Retry)
+}
