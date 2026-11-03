@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { FieldSpec, WorkflowAutomationRule, WorkflowTriggerEvent, WorkflowActionItem } from "./types";
+import { FieldSpec, WorkflowAutomationRule, WorkflowTriggerEvent, WorkflowActionItem, type ApproverSpec } from "./types";
+import { WhoDecides } from "./WhoDecides";
 import { Banner } from "./ui";
 import type { SaveOutcome } from "./api";
 
@@ -40,6 +41,10 @@ export const WorkflowBuilder: React.FC<Props> = ({
   const [actionType, setActionType] = useState<"NotifyCollaborator" | "CreateLedgerAuditEntry" | "UpdateRecordStatus">("NotifyCollaborator");
   const [actionParam, setActionParam] = useState("Candidate approved with honors fellowship eligibility");
   const [addAsServiceStep, setAddAsServiceStep] = useState(false);
+  // Approvers phase 5: an approval step, and who decides it.
+  const [addApproval, setAddApproval] = useState(false);
+  const [approver, setApprover] = useState<ApproverSpec | null>(null);
+  const [approvalPrompt, setApprovalPrompt] = useState("Review and decide");
   const [simulationResult, setSimulationResult] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -171,6 +176,26 @@ export const WorkflowBuilder: React.FC<Props> = ({
           ],
           kind: {
             Service: { action: stepAction },
+          },
+        },
+      ];
+    }
+
+    if (addApproval && approver) {
+      newRule.steps = [
+        ...(newRule.steps ?? []),
+        {
+          id: `step-approval-${Date.now()}`,
+          when: [],
+          kind: {
+            UserTask: {
+              // Who decides is the approver. A role is kept as text only for the workspace-role choice, as before.
+              role: "Role" in approver ? approver.Role.name : "",
+              prompt: approvalPrompt.trim() || "Review and decide",
+              approve: [{ UpdateRecordStatus: { new_status: "Approved" } }],
+              reject: [{ UpdateRecordStatus: { new_status: "Rejected" } }],
+              approver,
+            },
           },
         },
       ];
@@ -435,6 +460,27 @@ export const WorkflowBuilder: React.FC<Props> = ({
               />
               <span>Add as multi-step pipeline service step (Phase 6)</span>
             </label>
+          </div>
+
+          <div className="pt-1 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={addApproval} onChange={(e) => setAddApproval(e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500" />
+              <span>Add an approval step</span>
+            </label>
+            {addApproval && (
+              <div className="pl-5 space-y-2">
+                <label className="block text-xs">
+                  <span className="block text-[11px] text-slate-500 mb-1">What to decide</span>
+                  <input
+                    type="text"
+                    value={approvalPrompt}
+                    onChange={(e) => setApprovalPrompt(e.target.value)}
+                    className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </label>
+                <WhoDecides appSlug={appSlug} onChange={setApprover} />
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

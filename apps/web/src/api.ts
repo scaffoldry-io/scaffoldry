@@ -1642,6 +1642,16 @@ export const apiClient = {
   },
 
   /** Where a mailed link `/n/{id}` leads. Following it marks the notice read. */
+  /** Approvers phase 5: who a step would go to today. It creates nothing. */
+  previewApprovers: async (appSlug: string, body: { approver: unknown; created_by?: string }): Promise<ApproverPreview> =>
+    request<ApproverPreview>(`/apps/${encodeURIComponent(appSlug)}/automations/preview-approvers`, { method: "POST", body: JSON.stringify(body) }),
+
+  /** The position types the builder offers, by key and name. */
+  approverOptions: async (appSlug: string): Promise<{ key: string; name: string }[]> => {
+    const res = await request<{ positions: { key: string; name: string }[] }>(`/apps/${encodeURIComponent(appSlug)}/automations/approver-options`);
+    return res?.positions ?? [];
+  },
+
   /** The caller's delegations: made, received, and the positions they hold (approvers phase 4). */
   listMyDelegations: async (): Promise<MyDelegations> => {
     const res = await request<MyDelegations>("/me/delegations");
@@ -2184,4 +2194,13 @@ export interface MyDelegations {
   made: DelegationRow[];
   received: DelegationRow[];
   positions: string[];
+}
+
+/** Who a step would go to today (approvers phase 5). `via` is `Holder`, `Named`, `Role` or `{ DelegateOf: holder }`. */
+export interface ApproverPreview {
+  approvers: { eppn: string; display_name: string; via: string | { DelegateOf: string } }[];
+  unit_id: string | null;
+  unit_name: string | null;
+  start_unit_name: string | null;
+  problem: "position_vacant" | "only_submitter" | "person_unavailable" | "role_empty" | null;
 }

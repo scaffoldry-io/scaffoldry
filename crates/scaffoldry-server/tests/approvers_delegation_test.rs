@@ -438,3 +438,42 @@ async fn the_form_finds_active_people_by_name() {
     assert!(mine["received"][0]["delegator_name"].is_string(), "{mine}");
     assert_eq!(mine["positions"], json!(["chair"]), "{mine}");
 }
+
+// Approvers phase 5: the builder asks who a step would go to today. The answer names people, the unit and the path,
+// or the problem. It needs the app's Manage scope and creates nothing.
+#[tokio::test]
+async fn the_preview_says_who_a_step_would_go_to_today_and_creates_nothing() {
+    let _db = common::TestDb::new();
+    let (w, p) = world().await;
+    let path = format!("/api/v1/apps/{APP}/automations/preview-approvers");
+    let spec = json!({ "Position": { "key": "chair", "from": "Submitter", "walk_up": true } });
+    let before = w.list(&w.admin, "").await.len();
+    let (s, b) = send(&w.app, "POST", &path, &w.admin, Some(json!({ "approver": spec, "created_by": p.sam }))).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["approvers"][0]["eppn"], p.rivera.as_str(), "{b}");
+    assert_eq!(b["approvers"][0]["via"], "Holder");
+    assert!(b["approvers"][0]["display_name"].is_string());
+    assert_eq!(b["unit_id"], w.physics.as_str());
+    assert_eq!(b["unit_name"], "Physics");
+    assert!(b["problem"].is_null());
+    assert_eq!(w.list(&w.admin, "").await.len(), before, "nothing was created");
+
+    // Without walking up, a vacant chair is the problem, in its code.
+    let (s, _) = send(&w.app, "DELETE", &format!("/api/v1/orgs/{}/positions/chair/holders/{}", w.physics, p.rivera), &w.admin, Some(json!({ "reason": "Left" }))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, b) = send(&w.app, "POST", &path, &w.admin, Some(json!({ "approver": { "Position": { "key": "chair", "from": "Submitter", "walk_up": false } }, "created_by": p.sam }))).await;
+    assert_eq!(b["problem"], "position_vacant", "{b}");
+    assert_eq!(b["start_unit_name"], "Physics", "the problem names where the search started: {b}");
+    assert_eq!(b["approvers"], json!([]));
+    // A bad spec is a 400. Someone who may not manage the app is refused.
+    let (s, _) = send(&w.app, "POST", &path, &w.admin, Some(json!({ "approver": { "Position": { "key": "nope" } } }))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = send(&w.app, "POST", &path, &p.sam_t, Some(json!({ "approver": spec }))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    // The builder's list of position types, for anyone who may manage the app.
+    let (s, b) = send(&w.app, "GET", &format!("/api/v1/apps/{APP}/automations/approver-options"), &w.admin, None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["positions"], json!([{ "key": "chair", "name": "Chair" }]));
+    let (s, _) = send(&w.app, "GET", &format!("/api/v1/apps/{APP}/automations/approver-options"), &p.sam_t, None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}

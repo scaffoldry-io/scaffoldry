@@ -442,12 +442,20 @@ export type ProcessStepKind =
     }
   | {
       UserTask: {
+        /** The old free-text role. Empty when `approver` says who decides. */
         role: string;
         prompt: string;
         approve: any[];
         reject: any[];
+        approver?: ApproverSpec;
       };
     };
+
+/** Who decides a user task (approvers phase 3). */
+export type ApproverSpec =
+  | { Position: { key: string; from: "Submitter" | "Workspace"; walk_up: boolean } }
+  | { Person: { eppn: string } }
+  | { Role: { name: string } };
 
 export interface ProcessStepItem {
   id: string;
