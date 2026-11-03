@@ -116,6 +116,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "purge_notifications", 24 * 60 * 60)?;
     // Mail that is due is sent every 15 seconds. Nothing is sent while mail.enabled is false.
     jobs::register_schedule(repo, "send_email", 15)?;
+    // Each person's digest goes out at 07:00 in the institution's zone.
+    scaffoldry_server::mail::register_digest_schedule(repo)?;
     // The policy library's web sources are checked every hour. Each one is fetched at most once a day.
     jobs::register_schedule(repo, "library_fetch", 60 * 60)?;
     // Access receipts are sealed into a hash-chained batch every minute.

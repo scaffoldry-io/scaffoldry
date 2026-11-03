@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { NotificationDefaultsEditor } from "./NotificationPrefs";
 import { DecisionLedgerView } from "./DecisionLedgerView";
 import { UnitPositions } from "./admin/UnitPositions";
 import { LedgerEntryItem, OrganizationNode, OrgRole, Persona, RegisteredApp, SourceRule, Workspace } from "./types";
@@ -714,6 +715,10 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
               <span>🔑</span>
               <span>Mint SCIM token</span>
             </button>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+            <NotificationDefaultsEditor />
           </div>
 
           {scimSecret && (

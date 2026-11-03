@@ -204,6 +204,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::mail::send_email_job,
     },
     JobKind {
+        name: "send_digests",
+        title: "Sending digests",
+        description: "Sends each person one mail with the notices waiting for their daily digest, at 07:00 in the institution's zone.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::mail::send_digests_job,
+    },
+    JobKind {
         name: "library_fetch",
         title: "Checking policy sources",
         description: "Fetches the web sources of the policy library that are due, at most once a day each, and marks the rules whose cited passages left them.",
@@ -576,9 +584,9 @@ pub fn register_daily_schedule(repo: &PostgresRepository, kind: &str, timezone: 
     repo.with_client(move |c| {
         c.execute(
             "INSERT INTO job_schedules (kind, every_seconds, next_run_at, enabled) \
-             VALUES ($1, 86400, ((CASE WHEN (NOW() AT TIME ZONE $2)::time < $3::time \
-                 THEN date_trunc('day', NOW() AT TIME ZONE $2) + $3::time \
-                 ELSE date_trunc('day', NOW() AT TIME ZONE $2) + INTERVAL '1 day' + $3::time END) AT TIME ZONE $2)::timestamptz, TRUE) \
+             VALUES ($1, 86400, ((CASE WHEN (NOW() AT TIME ZONE $2::text)::time < $3::text::time \
+                 THEN date_trunc('day', NOW() AT TIME ZONE $2::text) + $3::text::time \
+                 ELSE date_trunc('day', NOW() AT TIME ZONE $2::text) + INTERVAL '1 day' + $3::text::time END) AT TIME ZONE $2::text)::timestamptz, TRUE) \
              ON CONFLICT (kind) DO UPDATE SET every_seconds = 86400, next_run_at = EXCLUDED.next_run_at",
             &[&kind, &tz, &at],
         )?;

@@ -1642,6 +1642,15 @@ export const apiClient = {
   },
 
   /** Where a mailed link `/n/{id}` leads. Following it marks the notice read. */
+  /** Notifications phase 3: each kind in words, the caller's channel, the forced kinds and whether mail is sent. */
+  getNotificationPrefs: async (): Promise<NotificationPrefs> => {
+    const res = await request<NotificationPrefs>("/me/notification-prefs");
+    return { kinds: Array.isArray(res?.kinds) ? res.kinds : [], mail_enabled: res?.mail_enabled === true };
+  },
+
+  setNotificationPref: async (kind: string, channel: string): Promise<{ kind: string; channel: string }> =>
+    request<{ kind: string; channel: string }>("/me/notification-prefs", { method: "PUT", body: JSON.stringify({ kind, channel }) }),
+
   /** Approvers phase 5: who a step would go to today. It creates nothing. */
   previewApprovers: async (appSlug: string, body: { approver: unknown; created_by?: string }): Promise<ApproverPreview> =>
     request<ApproverPreview>(`/apps/${encodeURIComponent(appSlug)}/automations/preview-approvers`, { method: "POST", body: JSON.stringify(body) }),
@@ -2203,4 +2212,20 @@ export interface ApproverPreview {
   unit_name: string | null;
   start_unit_name: string | null;
   problem: "position_vacant" | "only_submitter" | "person_unavailable" | "role_empty" | null;
+}
+
+/** One kind of notice in the settings pane (notifications phase 3). */
+export interface NotificationPrefRow {
+  kind: string;
+  label: string;
+  channel: string;
+  default: string;
+  chosen: boolean;
+  forced: boolean;
+  forced_reason: string | null;
+}
+
+export interface NotificationPrefs {
+  kinds: NotificationPrefRow[];
+  mail_enabled: boolean;
 }
