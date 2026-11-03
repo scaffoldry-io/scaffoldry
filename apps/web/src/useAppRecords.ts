@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient, ApiError, type AppRecord } from "./api";
-import { subscribe, type LiveEvent } from "./realtime";
+import { presenceAfter, subscribe, type LiveEvent, type PresenceState } from "./realtime";
 import { explainError } from "./ui/explainError";
 
 /** The words for an error, as one sentence pair. */
@@ -15,6 +15,8 @@ export const RESYNC_NOTICE = "Reloaded: changes may have been missed.";
 export const REMOVED_NOTICE = "Removed by someone else.";
 /** How long a row stays marked after someone else changed it. */
 export const HIGHLIGHT_MS = 4000;
+/** How often the desk tells the server it still has the app open. The server drops anyone silent for 45 seconds. */
+export const PRESENCE_PING_MS = 15_000;
 
 /** The cell a person is typing in. */
 export interface EditingCell {
@@ -139,12 +141,27 @@ export function useAppRecords(slug: string | null) {
     [slug, load, mark]
   );
 
+  /** Who else has the app open, and this stream's id. */
+  const [presence, setPresence] = useState<PresenceState>({ present: [] });
+
   const onLiveRef = useRef(onLive);
   onLiveRef.current = onLive;
   useEffect(() => {
     if (!slug) return;
-    return subscribe(slug, (e) => void onLiveRef.current(e));
+    setPresence({ present: [] });
+    return subscribe(slug, (e) => {
+      if (e.event === "presence") setPresence((s) => presenceAfter(s, e));
+      else void onLiveRef.current(e);
+    });
   }, [slug]);
+
+  // While the stream is open, ping so the others keep seeing this person.
+  useEffect(() => {
+    const stream = presence.stream;
+    if (!slug || !stream) return;
+    const timer = setInterval(() => void apiClient.pingPresence(slug, stream).catch(() => {}), PRESENCE_PING_MS);
+    return () => clearInterval(timer);
+  }, [slug, presence.stream]);
 
   /** The view says which cell is being typed in, or none. */
   const setEditing = useCallback((cell: EditingCell | null) => {
@@ -232,6 +249,7 @@ export function useAppRecords(slug: string | null) {
     refresh,
     liveNotice,
     clearLiveNotice: () => setLiveNotice(null),
+    present: presence.present,
     changedUnderEdit,
     setEditing,
   };

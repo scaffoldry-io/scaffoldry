@@ -3,6 +3,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { NotificationBell } from "../NotificationBell";
 import { apiClient, type InboxNotice } from "../api";
+import type { LiveEvent } from "../realtime";
+
+// The person's own stream, faked: a test sends it events.
+const live = vi.hoisted(() => ({ listeners: new Set<(e: LiveEvent) => void>() }));
+vi.mock("../realtime", async (orig) => ({
+  ...(await orig<typeof import("../realtime")>()),
+  onMeEvent: (l: (e: LiveEvent) => void) => {
+    live.listeners.add(l);
+    return () => live.listeners.delete(l);
+  },
+}));
+const emit = (e: LiveEvent) => live.listeners.forEach((l) => l(e));
 
 const notice = (id: string, read: boolean, path = "/app/admissions?instance=i1"): InboxNotice => ({
   id,
@@ -61,16 +73,26 @@ describe("the notification bell", () => {
     expect(await screen.findByText("Nothing new")).toBeInTheDocument();
   });
 
-  it("checks the count again every 60 seconds", async () => {
+  // Real-time phase 3, test 5: the count follows the person's stream, with no reload and no polling.
+  it("updates the count from an event, and no longer polls", async () => {
     vi.useFakeTimers();
     const count = vi.spyOn(apiClient, "notificationCount").mockResolvedValue(0);
     render(<NotificationBell navigate={() => {}} />);
     await act(async () => {
       await Promise.resolve();
     });
+    expect(screen.getByRole("button", { name: "Notifications, none unread" })).toBeInTheDocument();
+    act(() => emit({ event: "notification", data: { id: "n9", count: 4 } }));
+    expect(screen.getByRole("button", { name: "Notifications, 4 unread" })).toBeInTheDocument();
     const before = count.mock.calls.length;
     await act(async () => {
-      vi.advanceTimersByTime(60_000);
+      vi.advanceTimersByTime(120_000);
+      await Promise.resolve();
+    });
+    expect(count.mock.calls.length).toBe(before);
+    // After a reconnect the count is asked for once, since events may have been missed.
+    await act(async () => {
+      emit({ event: "resync", data: {} });
       await Promise.resolve();
     });
     expect(count.mock.calls.length).toBe(before + 1);

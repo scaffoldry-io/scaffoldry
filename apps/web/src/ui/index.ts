@@ -24,3 +24,4 @@ export * from "./ToneMark";
 export * from "./VirtualGrid";
 export * from "./charts";
 export * from "./Attachments";
+export * from "./PresenceAvatars";

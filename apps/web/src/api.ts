@@ -1642,6 +1642,11 @@ export const apiClient = {
   },
 
   /** Where a mailed link `/n/{id}` leads. Following it marks the notice read. */
+  /** Says this person still has the app open (real-time phase 3). The desk sends it every 15 seconds. */
+  pingPresence: async (appSlug: string, stream: string): Promise<void> => {
+    await request(`/apps/${encodeURIComponent(appSlug)}/presence`, { method: "POST", body: JSON.stringify({ stream }) });
+  },
+
   openNotification: async (id: string): Promise<string> => {
     const res = await request<{ path: string }>(`/me/notifications/${encodeURIComponent(id)}/open`);
     return typeof res?.path === "string" && res.path.startsWith("/") && !res.path.startsWith("//") ? res.path : "/";

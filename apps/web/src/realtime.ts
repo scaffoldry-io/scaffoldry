@@ -31,6 +31,34 @@ export function parseEvents(buffer: string): { events: LiveEvent[]; rest: string
   return { events, rest };
 }
 
+/** Someone with the app open: their address and their name in words. */
+export interface Present {
+  address: string;
+  name: string;
+}
+
+export interface PresenceState {
+  present: Present[];
+  /** This stream's id, which the desk pings with. */
+  stream?: string;
+}
+
+/**
+ * The presence list after one event: the list on connect, then `joined` and `left`. Any other event returns the
+ * state unchanged.
+ */
+export function presenceAfter(state: PresenceState, e: LiveEvent): PresenceState {
+  if (e.event !== "presence" || !e.data) return state;
+  const d = e.data;
+  if (Array.isArray(d.present)) return { present: d.present as Present[], stream: typeof d.stream === "string" ? d.stream : state.stream };
+  if (d.joined?.address) {
+    if (state.present.some((p) => p.address === d.joined.address)) return state;
+    return { ...state, present: [...state.present, d.joined as Present] };
+  }
+  if (d.left?.address) return { ...state, present: state.present.filter((p) => p.address !== d.left.address) };
+  return state;
+}
+
 /**
  * Follows the changes to one app. `fetch` with a streaming body, so the token travels in the `Authorization` header
  * as on every other call. A stream that ends or fails is reopened with backoff, from 1 to 30 seconds. After a
@@ -38,6 +66,30 @@ export function parseEvents(buffer: string): { events: LiveEvent[]; rest: string
  * reader may no longer read the app. Returns the function that stops it.
  */
 export function subscribe(appSlug: string, onEvent: (e: LiveEvent) => void, options: { firstDelayMs?: number } = {}): () => void {
+  return follow(`/apps/${encodeURIComponent(appSlug)}/events`, onEvent, options);
+}
+
+const meListeners = new Set<(e: LiveEvent) => void>();
+let stopMe: (() => void) | null = null;
+
+/**
+ * The signed-in person's own events (`notification`, `job`, `proposal`, and `resync` after a reconnect). One stream
+ * is shared by everything on the page that listens. It opens with the first listener and closes with the last.
+ */
+export function onMeEvent(listener: (e: LiveEvent) => void): () => void {
+  meListeners.add(listener);
+  if (!stopMe) stopMe = follow("/me/events", (e) => meListeners.forEach((l) => l(e)));
+  return () => {
+    meListeners.delete(listener);
+    if (meListeners.size === 0 && stopMe) {
+      stopMe();
+      stopMe = null;
+    }
+  };
+}
+
+/** One server-sent event stream under the API, reopened with backoff. */
+export function follow(path: string, onEvent: (e: LiveEvent) => void, options: { firstDelayMs?: number } = {}): () => void {
   const first = options.firstDelayMs ?? 1000;
   let stopped = false;
   let controller: AbortController | null = null;
@@ -51,7 +103,7 @@ export function subscribe(appSlug: string, onEvent: (e: LiveEvent) => void, opti
     const token = getAuthToken();
     let closed = false;
     try {
-      const response = await fetch(`${getBaseUrl()}/apps/${encodeURIComponent(appSlug)}/events`, {
+      const response = await fetch(`${getBaseUrl()}${path}`, {
         headers: { Accept: "text/event-stream", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         signal: controller.signal,
       });

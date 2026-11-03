@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient, type InboxNotice } from "./api";
+import { onMeEvent } from "./realtime";
 import { EmptyState, ErrorState } from "./ui";
-
-/** How often the bell checks the count while there is no live channel for it. */
-const POLL_MS = 60_000;
 
 function countName(n: number): string {
   return n === 0 ? "Notifications, none unread" : `Notifications, ${n} unread`;
@@ -30,10 +28,14 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
     }
   }, []);
 
+  // Real-time phase 3: the count is asked for once, then follows the person's own stream. A reconnect asks again,
+  // because events may have been missed meanwhile.
   useEffect(() => {
     void refreshCount();
-    const timer = setInterval(() => void refreshCount(), POLL_MS);
-    return () => clearInterval(timer);
+    return onMeEvent((e) => {
+      if (e.event === "notification" && typeof e.data?.count === "number") setUnread(e.data.count);
+      else if (e.event === "resync") void refreshCount();
+    });
   }, [refreshCount]);
 
   const load = useCallback(async () => {

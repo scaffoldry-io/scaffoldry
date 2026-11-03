@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { onMeEvent, type LiveEvent } from "../realtime";
 
 /** A job as the server describes it to the person who started it. */
 export interface BackgroundJob {
@@ -16,8 +17,8 @@ export interface BackgroundJob {
 export interface BackgroundWorkProps {
   /** Returns the signed-in person's recent jobs. */
   fetchJobs: () => Promise<BackgroundJob[]>;
-  /** Until `realtime.md` phase 3 pushes changes, the indicator asks every five seconds. */
-  intervalMs?: number;
+  /** The person's own event stream. A `job` event, or a `resync`, asks for the list again. */
+  subscribe?: (listener: (e: LiveEvent) => void) => () => void;
   /** Where the region sits. The default is an ordinary block. */
   className?: string;
 }
@@ -30,7 +31,7 @@ function progressWords(job: BackgroundJob): string {
 }
 
 /** The signed-in person's queued and running jobs. It shows nothing when there are none. */
-export function BackgroundWork({ fetchJobs, intervalMs = 5000, className = "" }: BackgroundWorkProps) {
+export function BackgroundWork({ fetchJobs, subscribe = onMeEvent, className = "" }: BackgroundWorkProps) {
   const [jobs, setJobs] = useState<BackgroundJob[]>([]);
 
   useEffect(() => {
@@ -44,12 +45,15 @@ export function BackgroundWork({ fetchJobs, intervalMs = 5000, className = "" }:
         .catch(() => {});
     };
     poll();
-    const timer = setInterval(poll, intervalMs);
+    // Real-time phase 3: the list is asked for again when one of the person's jobs changes, not on a timer.
+    const stop = subscribe((e) => {
+      if (e.event === "job" || e.event === "resync") poll();
+    });
     return () => {
       alive = false;
-      clearInterval(timer);
+      stop();
     };
-  }, [fetchJobs, intervalMs]);
+  }, [fetchJobs, subscribe]);
 
   if (jobs.length === 0) return null;
   return (
