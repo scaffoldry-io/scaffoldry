@@ -27,6 +27,8 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/pages/{id}/call", post(call_app_page))
         .route("/apps/{slug}/automations", get(list_app_automations).post(create_app_automation))
         .route("/apps/{slug}/automations/simulate", post(simulate_app_automation))
+        .route("/apps/{slug}/automations/preview-approvers", post(preview_approvers))
+        .route("/apps/{slug}/automations/approver-options", get(approver_options))
         .route("/apps/{slug}/processes", get(list_app_processes))
         .route("/apps/{slug}/processes/{id}/decide", post(decide_app_process))
         .route("/apps/{slug}/access/preview", post(preview_app_access))
@@ -291,6 +293,25 @@ async fn list_app_automations(
     let automations = state.automations.read().map_err(|_| lock_err())?;
     let rules = automations.get(&slug).cloned().unwrap_or_default();
     Ok(Json(rules))
+}
+
+/// Approvers phase 5: who a user task would go to today. It creates nothing.
+async fn preview_approvers(State(state): State<SharedState>, headers: HeaderMap, Path(slug): Path<String>, Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::approvers::preview(&user, &slug, &payload, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The request stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
+}
+
+async fn approver_options(State(state): State<SharedState>, headers: HeaderMap, Path(slug): Path<String>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::approvers::options(&user, &slug, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The request stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
 }
 
 async fn create_app_automation(

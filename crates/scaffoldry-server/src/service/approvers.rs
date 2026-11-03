@@ -63,6 +63,12 @@ pub fn context(
     started_by: Option<&str>,
     named: &[String],
 ) -> ResolveCtx {
+    let submitter = state.find_record(app_slug, record_id).ok().flatten().and_then(|r| r.created_by);
+    context_for(state, app_slug, submitter, started_by, named)
+}
+
+/// The resolver's inputs for a record of `app_slug` that `submitter` made.
+pub fn context_for(state: &SharedState, app_slug: &str, submitter: Option<String>, started_by: Option<&str>, named: &[String]) -> ResolveCtx {
     use scaffoldry_engine::HostRouter;
 
     let units: Vec<Unit> = state
@@ -103,12 +109,6 @@ pub fn context(
             affiliation: c.scoped_affiliation,
         })
         .collect();
-
-    let submitter = state
-        .find_record(app_slug, record_id)
-        .ok()
-        .flatten()
-        .and_then(|r| r.created_by);
 
     // The resolver walks from the workspace's unit, or the submitter's own, up to the root. It needs the holdings
     // on that path and the submitter's own, not everyone's.
@@ -170,6 +170,61 @@ pub fn context(
         starter: started_by.map(str::to_string),
         workspace_unit,
     }
+}
+
+/// Approvers phase 5: who a step with `spec` would go to today, for a record `submitter` made. Nothing is created.
+pub fn preview(caller: &AuthUser, app_slug: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::access::authorize_app(caller, app_slug, crate::service::access::AppAction::Manage, state)?;
+    let spec: ApproverSpec = serde_json::from_value(body.get("approver").cloned().unwrap_or(Value::Null))
+        .map_err(|e| ServiceError::bad_request(format!("approver: {e}")))?;
+    let submitter = body.get("created_by").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&caller.eppn).to_string();
+    let named: Vec<String> = match &spec {
+        ApproverSpec::Person { eppn } => vec![eppn.clone()],
+        _ => vec![],
+    };
+    let ctx = context_for(state, app_slug, Some(submitter), None, &named);
+    let resolution = resolve_approvers(&spec, &ctx);
+    let name_of = |id: &str| ctx.units.iter().find(|x| x.id == id).map(|u| u.name.clone());
+    let unit_name = resolution.unit_id.as_deref().and_then(name_of);
+    // Where a position search starts: the submitter's own unit, or the workspace's. A problem is said from there.
+    let start = match &spec {
+        ApproverSpec::Position { from: scaffoldry_core::approver::Origin::Submitter, .. } => ctx
+            .holdings
+            .iter()
+            .find(|h| ctx.submitter.as_deref().is_some_and(|s| h.eppn.eq_ignore_ascii_case(s)) && h.is_primary && h.position_key.is_none())
+            .map(|h| h.unit_id.clone())
+            .or_else(|| ctx.workspace_unit.clone()),
+        _ => ctx.workspace_unit.clone(),
+    };
+    let start_unit_name = start.as_deref().and_then(name_of);
+    let approvers: Vec<Value> = resolution
+        .approvers
+        .iter()
+        .map(|a| json!({ "eppn": a.eppn, "display_name": a.display_name, "via": a.via }))
+        .collect();
+    Ok(json!({
+        "approvers": approvers,
+        "unit_id": resolution.unit_id,
+        "unit_name": unit_name,
+        "start_unit_name": start_unit_name,
+        "problem": resolution.problem.map(problem_code),
+    }))
+}
+
+/// What the builder's `Who decides` control offers: the position types in use, by key and name.
+pub fn options(caller: &AuthUser, app_slug: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::access::authorize_app(caller, app_slug, crate::service::access::AppAction::Manage, state)?;
+    let positions: Vec<Value> = state
+        .position_types
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .filter(|p| p.retired_at.is_none())
+        .map(|p| json!({ "key": p.key, "name": p.name }))
+        .collect();
+    let mut positions = positions;
+    positions.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    Ok(json!({ "positions": positions }))
 }
 
 /// The delegations made by the people who hold a position on the path (approvers phase 4).

@@ -256,7 +256,7 @@ People are told, see each other work, and run real committee processes.
 | 142 | [notifications.md](notifications.md) | 2 | Email through an allowlisted SMTP host | **COMPLETED** |
 | 143 | [realtime.md](realtime.md) | 3 | Presence and a channel for the person's notices and jobs | **COMPLETED** |
 | 144 | [approvers.md](approvers.md) | 4 | Delegation by date | **COMPLETED** |
-| 145 | [approvers.md](approvers.md) | 5 | The workflow builder picks who decides and previews it |
+| 145 | [approvers.md](approvers.md) | 5 | The workflow builder picks who decides and previews it | **COMPLETED** |
 | 146 | [notifications.md](notifications.md) | 3 | Preferences and digests |
 | 147 | [notifications.md](notifications.md) | 4 | Every producer is wired. No notice carries a record value |
 | 148 | [process-v2.md](process-v2.md) | 1 | Process events and analytics: where time goes |
