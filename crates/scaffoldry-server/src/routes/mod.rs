@@ -25,6 +25,7 @@ pub mod lifecycle;
 pub mod retention;
 pub mod secrets;
 pub mod mail;
+pub mod delegations;
 pub mod holds;
 pub mod realtime;
 pub mod notifications;
@@ -98,6 +99,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(holds::router())
         .merge(secrets::router())
         .merge(mail::router())
+        .merge(delegations::router())
         .merge(realtime::router())
         .merge(notifications::router())
         .merge(comments::router())

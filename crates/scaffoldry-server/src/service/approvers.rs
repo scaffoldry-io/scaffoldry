@@ -118,6 +118,7 @@ pub fn context(
         .into_iter()
         .collect();
     let holdings: Vec<Holding> = path_holdings(state, &start_units, submitter.as_slice());
+    let delegations = delegations_of(state, &holdings);
 
     // People the platform holds a user record for carry their state. Anyone else, such as a
     // seeded persona, counts as active, since nothing says otherwise.
@@ -131,6 +132,7 @@ pub fn context(
     }
     extra.extend(submitter.iter().cloned());
     extra.extend(named.iter().cloned());
+    extra.extend(delegations.iter().map(|d| d.delegate.clone()));
     extra.extend(started_by.map(str::to_string));
     let wanted: Vec<String> = extra.iter().cloned().collect();
     let mut people: Vec<Person> = state
@@ -161,13 +163,21 @@ pub fn context(
         units,
         holdings,
         people,
-        delegations: vec![],
+        delegations,
         collaborators,
         now: Utc::now().timestamp(),
         submitter,
         starter: started_by.map(str::to_string),
         workspace_unit,
     }
+}
+
+/// The delegations made by the people who hold a position on the path (approvers phase 4).
+fn delegations_of(state: &SharedState, holdings: &[Holding]) -> Vec<scaffoldry_core::approver::Delegation> {
+    let mut holders: Vec<String> = holdings.iter().filter(|h| h.position_key.is_some()).map(|h| h.eppn.clone()).collect();
+    holders.sort();
+    holders.dedup();
+    crate::service::delegations::for_resolution(state, &holders)
 }
 
 /// The people an instance names itself: the person in the spec and the one it was assigned to. Their state

@@ -2,6 +2,7 @@ import { COMMON_TIMEZONES, getUserTimezone, setUserTimezone } from "./utils/dura
 import React, { useState, useEffect } from "react";
 import { apiClient, type Connection, type MyApp } from "./api";
 import { AccessRequestsPanel } from "./AccessRequestsPanel";
+import { DelegationPanel } from "./DelegationPanel";
 import { scopeSentence, TOKEN_OPS, type TokenOp, type TokenScope } from "./tokenScope";
 
 export interface UserSettingsModalProps {
@@ -235,6 +236,10 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
 
         <div className="pb-4 border-b border-slate-100 dark:border-slate-800">
           <AccessRequestsPanel />
+        </div>
+
+        <div className="pb-4 border-b border-slate-100 dark:border-slate-800">
+          <DelegationPanel />
         </div>
 
         {/* Outside apps */}

@@ -100,6 +100,9 @@ pub fn add(m: &mut Entries) {
     m.insert("PATCH /api/v1/admin/positions/{key}".into(), case!(position_patch));
     m.insert("POST /api/v1/orgs/{id}/positions/{key}/holders".into(), case!(holder_assign));
     m.insert("DELETE /api/v1/orgs/{id}/positions/{key}/holders/{eppn}".into(), case!(holder_vacate));
+    m.insert("POST /api/v1/me/delegations".into(), case!(delegation_create));
+    m.insert("DELETE /api/v1/me/delegations/{id}".into(), case!(delegation_revoke));
+    m.insert("DELETE /api/v1/admin/delegations/{id}".into(), case!(delegation_admin_revoke));
     m.insert("POST /api/v1/admin/users".into(), case!(user_create));
     m.insert("POST /api/v1/admin/users/{id}/hold".into(), case!(user_hold));
     m.insert("POST /api/v1/admin/users/{id}/revoke-tokens".into(), case!(user_revoke_tokens));
@@ -413,6 +416,47 @@ async fn holder_assign(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/orgs/{unit}/positions/{key}/holders"), ADMIN, Some(json!({ "eppn": who, "reason": "Appointed" }))).await, StatusCode::CREATED, "assign")?;
     let seen = status(w.rb("GET", &format!("/api/v1/orgs/{unit}/positions"), ADMIN, None).await, StatusCode::OK, "B lists the unit's positions")?;
     ensure(has(&seen, &who), format!("B shows the holder A assigned: {seen}"))
+}
+
+/// A person who holds a position, and someone else to stand in for them. Returns (holder, delegate, delegation id).
+async fn delegation_fixture(w: &World) -> Result<(String, String, String), String> {
+    let unit = make_unit(w, &unique("P4DL")).await?;
+    let key = unique("p4dlg").replace('-', "");
+    status(w.wa("POST", "/api/v1/admin/positions", ADMIN, Some(json!({ "key": key, "name": "Head", "org_types": ["Department"], "max_holders": 1, "reason": "Define" }))).await, StatusCode::CREATED, "create a position")?;
+    let (holder, delegate) = (person("p4head"), person("p4deputy"));
+    make_user(w, &holder).await?;
+    make_user(w, &delegate).await?;
+    status(w.wa("POST", &format!("/api/v1/orgs/{unit}/positions/{key}/holders"), ADMIN, Some(json!({ "eppn": holder, "reason": "Appointed" }))).await, StatusCode::CREATED, "assign")?;
+    let now = chrono::Utc::now();
+    let body = json!({ "delegate": delegate, "position_key": key, "starts_at": now.to_rfc3339(), "ends_at": (now + chrono::Duration::days(7)).to_rfc3339(), "reason": "Away" });
+    let made = status(w.wa("POST", "/api/v1/me/delegations", &holder, Some(body)).await, StatusCode::CREATED, "A delegates")?;
+    let id = made["id"].as_str().ok_or("a delegation id")?.to_string();
+    Ok((holder, delegate, id))
+}
+
+/// A delegates. B lists it for both people.
+async fn delegation_create(w: World) -> Outcome {
+    let (holder, delegate, id) = delegation_fixture(&w).await?;
+    let made = status(w.rb("GET", "/api/v1/me/delegations", &holder, None).await, StatusCode::OK, "B lists the holder's")?;
+    ensure(made["made"].as_array().is_some_and(|l| l.iter().any(|d| d["id"] == id.as_str() && d["state"] == "active")), format!("B shows what A made: {made}"))?;
+    let got = status(w.rb("GET", "/api/v1/me/delegations", &delegate, None).await, StatusCode::OK, "B lists the delegate's")?;
+    ensure(got["received"].as_array().is_some_and(|l| l.iter().any(|d| d["id"] == id.as_str())), format!("B shows what the delegate received: {got}"))
+}
+
+/// A revokes its own. B shows it revoked.
+async fn delegation_revoke(w: World) -> Outcome {
+    let (holder, _, id) = delegation_fixture(&w).await?;
+    status(w.wa("DELETE", &format!("/api/v1/me/delegations/{id}"), &holder, None).await, StatusCode::OK, "A revokes")?;
+    let made = status(w.rb("GET", "/api/v1/me/delegations", &holder, None).await, StatusCode::OK, "B lists")?;
+    ensure(made["made"].as_array().is_some_and(|l| l.iter().any(|d| d["id"] == id.as_str() && d["state"] == "revoked")), format!("B shows it revoked: {made}"))
+}
+
+/// A Platform Admin revokes through A. B's admin list shows it revoked.
+async fn delegation_admin_revoke(w: World) -> Outcome {
+    let (holder, _, id) = delegation_fixture(&w).await?;
+    status(w.wa("DELETE", &format!("/api/v1/admin/delegations/{id}"), ADMIN, Some(json!({ "reason": "Asked to" }))).await, StatusCode::OK, "A revokes as admin")?;
+    let all = status(w.rb("GET", &format!("/api/v1/admin/delegations?delegator={holder}&state=revoked"), ADMIN, None).await, StatusCode::OK, "B lists")?;
+    ensure(all["delegations"].as_array().is_some_and(|l| l.iter().any(|d| d["id"] == id.as_str())), format!("B shows it revoked: {all}"))
 }
 
 async fn holder_vacate(w: World) -> Outcome {

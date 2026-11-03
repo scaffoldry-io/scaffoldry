@@ -61,6 +61,7 @@ pub mod lifecycle;
 pub mod retention;
 pub mod secrets;
 pub mod mail;
+pub mod delegations;
 pub mod holds;
 pub mod link_options;
 pub mod grants;

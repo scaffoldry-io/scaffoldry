@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState, type FormEvent } from "react";
+import { PersonDelegations } from "../DelegationPanel";
 import { scopeSentence } from "../tokenScope";
 import {
   apiClient,
@@ -400,6 +401,8 @@ function UserDetail({
           </ul>
         )}
       </section>
+
+      <PersonDelegations eppn={u.user_name} />
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Tokens</h3>

@@ -1642,6 +1642,30 @@ export const apiClient = {
   },
 
   /** Where a mailed link `/n/{id}` leads. Following it marks the notice read. */
+  /** The caller's delegations: made, received, and the positions they hold (approvers phase 4). */
+  listMyDelegations: async (): Promise<MyDelegations> => {
+    const res = await request<MyDelegations>("/me/delegations");
+    return { made: res?.made ?? [], received: res?.received ?? [], positions: res?.positions ?? [] };
+  },
+
+  /** People who may be named as a delegate, by the start of a name or address. */
+  searchDelegates: async (q: string): Promise<{ eppn: string; name: string }[]> => {
+    const res = await request<{ people: { eppn: string; name: string }[] }>(`/me/delegations/people?q=${encodeURIComponent(q)}`);
+    return res?.people ?? [];
+  },
+
+  createDelegation: async (body: { delegate: string; position_key?: string | null; starts_at: string; ends_at: string; reason: string }): Promise<DelegationRow> =>
+    request<DelegationRow>("/me/delegations", { method: "POST", body: JSON.stringify(body) }),
+
+  revokeDelegation: async (id: string): Promise<DelegationRow> => request<DelegationRow>(`/me/delegations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  /** Platform Admin: every delegation, filtered. */
+  listDelegations: async (filter: { delegator?: string; delegate?: string; state?: string } = {}): Promise<DelegationRow[]> => {
+    const p = new URLSearchParams(Object.entries(filter).filter(([, v]) => v) as [string, string][]);
+    const res = await request<{ delegations: DelegationRow[] }>(`/admin/delegations?${p}`);
+    return res?.delegations ?? [];
+  },
+
   /** Says this person still has the app open (real-time phase 3). The desk sends it every 15 seconds. */
   pingPresence: async (appSlug: string, stream: string): Promise<void> => {
     await request(`/apps/${encodeURIComponent(appSlug)}/presence`, { method: "POST", body: JSON.stringify({ stream }) });
@@ -2139,3 +2163,25 @@ export const computeSha256 = async (message: string): Promise<string> => {
   }
   return "0000000000000000000000000000000000000000000000000000000000000000";
 };
+
+/** A delegation: someone decides for a position holder for a window (approvers phase 4). */
+export interface DelegationRow {
+  id: string;
+  delegator: string;
+  delegator_name?: string;
+  delegate: string;
+  delegate_name?: string;
+  position_key: string | null;
+  starts_at: string;
+  ends_at: string;
+  reason: string;
+  created_at: string;
+  revoked_at: string | null;
+  state: "active" | "scheduled" | "ended" | "revoked";
+}
+
+export interface MyDelegations {
+  made: DelegationRow[];
+  received: DelegationRow[];
+  positions: string[];
+}
