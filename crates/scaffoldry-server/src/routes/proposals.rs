@@ -52,11 +52,8 @@ async fn to_decide(State(state): State<SharedState>, headers: HeaderMap) -> Repl
 
 async fn get_proposal(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
-    blocking(move || {
-        let ws = crate::service::proposals::workspace_of(&id, &state)?;
-        authorize_workspace(&user, &ws, "manage_workspace", &state)?;
-        crate::service::proposals::get(&id, &state)
-    })
+    // An owner or admin of the home workspace sees all of it; one of another party sees their own part.
+    blocking(move || crate::service::proposals::get_for(&user, &id, &state))
     .await
     .map(Json)
 }
@@ -69,11 +66,14 @@ struct Decision {
     /// To approve: the digest of the proposal that was reviewed.
     #[serde(default)]
     digest: Option<String>,
+    /// For a flow that touches several workspaces: the workspace the caller decides for (workflows phase 2).
+    #[serde(default)]
+    workspace_id: Option<String>,
 }
 
 async fn decide_proposal(State(state): State<SharedState>, headers: HeaderMap, Path(id): Path<String>, Json(body): Json<Decision>) -> Reply {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
-    blocking(move || crate::service::proposals::decide(&user, &id, &body.decision, &body.rationale, body.digest.as_deref(), &state)).await.map(Json)
+    blocking(move || crate::service::proposals::decide_as(&user, &id, &body.decision, &body.rationale, body.digest.as_deref(), body.workspace_id.as_deref(), &state)).await.map(Json)
 }
 
 /// Opens a read-only preview of the proposed app. The reply holds a token for it.

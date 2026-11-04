@@ -256,7 +256,7 @@ fn live_manifest(slug: &str, state: &SharedState) -> Option<AppManifest> {
     state.engine.read().ok().and_then(|e| e.resolve_by_slug(slug).cloned())
 }
 
-fn live_version(slug: &str, state: &SharedState) -> Result<Option<i32>, ServiceError> {
+pub(crate) fn live_version(slug: &str, state: &SharedState) -> Result<Option<i32>, ServiceError> {
     repo(state)?.app_manifest_version(slug).map_err(internal)
 }
 
@@ -1007,6 +1007,7 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
     }
 
     let mut rules_json: Option<Value> = None;
+    let mut flow_plan: Option<crate::service::flow_parties::Plan> = None;
     if !input.rules.is_empty() {
         let effective = effective.as_ref().ok_or_else(|| ServiceError::NotFound(format!("App '{slug}' not found")))?;
         let part = check_rules_part(caller, input.rules, &slug, effective, reviewed.as_ref().map_or(&[][..], |r| &r.rules), state)?;
@@ -1014,6 +1015,12 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
             changes.extend(rule_sentences(rule, state));
         }
         checks.extend(part.checks);
+        // Workflows phase 2: what the flows touch, and which workspaces must approve.
+        let rules: Vec<AutomationRule> = part.rules.iter().map(|(r, _)| r.clone()).collect();
+        if let Some(plan) = crate::service::flow_parties::plan(state, &ws.id, effective, &rules)? {
+            checks.extend(plan.checks.clone());
+            flow_plan = Some(plan);
+        }
         rules_json = Some(Value::Array(
             part.rules.iter().map(|(r, base)| json!({ "rule": r, "base_version": base })).collect(),
         ));
@@ -1054,8 +1061,15 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
         decided_at: None,
         rules: rules_json,
         digest,
+        parties: flow_plan.as_ref().filter(|p| p.parties.len() > 1).map(|p| p.to_json()),
     };
     repo.insert_proposal(&row, &sources).map_err(internal)?;
+    // Each other party's owners and admins are told that a proposal needs them.
+    for party in crate::service::flow_parties::parties_of(&row.parties).iter().filter(|w| **w != ws.id) {
+        let notice = crate::notifications::Notice::ProposalPending { by: crate::notifications::PersonRef(caller.eppn.clone()), app: crate::notifications::AppRef(slug.clone()) };
+        let to = crate::notifications::Recipients::Workspace { workspace: party.clone(), roles: vec!["owner".into(), "admin".into()] };
+        let _ = crate::notifications::notify(state, &to, Some(&caller.eppn), &notice);
+    }
     let stored = repo.get_proposal(row.id).map_err(internal)?.ok_or_else(|| ServiceError::Internal("The proposal was not stored".to_string()))?;
     view(&stored, state)
 }
@@ -1076,6 +1090,12 @@ fn view(p: &ProposalRow, state: &SharedState) -> Result<Value, ServiceError> {
                 let live = repo(state)?.rule_live_version(&rule.id).map_err(internal)?;
                 if live != base {
                     messages.push(format!("rule '{}' is at version {live}, this proposal was made against {base}", rule.name));
+                }
+            }
+            for (slug, version) in crate::service::flow_parties::touched_of(&p.parties) {
+                let live = live_version(&slug, state)?;
+                if live != version {
+                    messages.push(format!("the app '{slug}' that the flow touches is at version {live:?}, this proposal was made against {version:?}"));
                 }
             }
         }
@@ -1101,7 +1121,54 @@ fn view(p: &ProposalRow, state: &SharedState) -> Result<Value, ServiceError> {
         "checks": checks,
         "changes": p.checks["changes"],
         "authority": authority_now(p, state),
+        "parties": parties_view(p, state)?,
     }))
+}
+
+/// Each party of a flow across workspaces, with its decision so far. Empty for a proposal with one party.
+fn parties_view(p: &ProposalRow, state: &SharedState) -> Result<Value, ServiceError> {
+    let parties = crate::service::flow_parties::parties_of(&p.parties);
+    if parties.is_empty() {
+        return Ok(json!([]));
+    }
+    let decided = repo(state)?.party_decisions(p.id).map_err(internal)?;
+    let sources = crate::service::flow_parties::sources_of(&p.parties);
+    Ok(Value::Array(
+        parties
+            .iter()
+            .map(|ws| {
+                let d = decided.iter().find(|(w, ..)| w == ws);
+                json!({
+                    "workspace_id": ws,
+                    "source": sources.contains(ws),
+                    "decision": d.map(|(_, _, decision, _)| decision.clone()),
+                    "decided_by": d.map(|(_, by, _, _)| by.clone()),
+                    "at": d.map(|(_, _, _, at)| at.clone()),
+                })
+            })
+            .collect(),
+    ))
+}
+
+/// The proposal as `caller` may see it. An owner or admin of the home workspace sees all of it. An owner or admin of
+/// another party sees the change list for their own workspace only.
+pub fn get_for(caller: &AuthUser, proposal_id: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    let id = parse_id(proposal_id)?;
+    let row = repo(state)?.get_proposal(id).map_err(internal)?.ok_or_else(|| ServiceError::NotFound("Proposal not found".to_string()))?;
+    let home = authorize_workspace(caller, &row.workspace_id, "manage_workspace", state);
+    if home.is_ok() {
+        return view(&row, state);
+    }
+    let party = crate::service::flow_parties::parties_of(&row.parties).into_iter().find(|ws| authorize_workspace(caller, ws, "manage_workspace", state).is_ok());
+    match party {
+        Some(ws) => {
+            let mut v = view(&row, state)?;
+            v["changes"] = row.parties.as_ref().map(|p| p["changes"][&ws].clone()).unwrap_or_else(|| json!([]));
+            v["party"] = json!(ws);
+            Ok(v)
+        }
+        None => home.map(|_| Value::Null),
+    }
 }
 
 /// What the proposal needs from the tables as they are now while it is pending, and what was recorded once it is not.
@@ -1135,19 +1202,43 @@ pub fn get(proposal_id: &str, state: &SharedState) -> Result<Value, ServiceError
 /// `digest` is what the decider reviewed. An approval must name it. A different one means the content is not what was
 /// reviewed, so nothing is applied.
 pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &str, digest: Option<&str>, state: &SharedState) -> Result<Value, ServiceError> {
+    decide_as(caller, proposal_id, decision, rationale, digest, None, state)
+}
+
+/// Decides a proposal. For a flow that touches several workspaces, `party` names the workspace the caller decides for.
+/// Without it, the caller decides for the first undecided party they own or administer.
+pub fn decide_as(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &str, digest: Option<&str>, party: Option<&str>, state: &SharedState) -> Result<Value, ServiceError> {
     let id = parse_id(proposal_id)?;
     let repo = repo(state)?;
     let row = repo.get_proposal(id).map_err(internal)?.ok_or_else(|| ServiceError::NotFound("Proposal not found".to_string()))?;
+    // Workflows phase 2: a flow across workspaces is decided party by party. The last party's approval goes on below,
+    // through the same requirement, snapshot hold and transaction as any approval, carrying every party with it.
+    let mut flow_final: Option<crate::repository_proposals::FlowFinal> = None;
+    if !crate::service::flow_parties::parties_of(&row.parties).is_empty() {
+        match decide_party(caller, &row, decision, rationale, digest, party, state)? {
+            PartyStep::Last(flow) => flow_final = Some(flow),
+            PartyStep::Recorded => {
+                if decision == "reject" {
+                    tell_decided(caller, &row, decision, state);
+                }
+                return get_for(caller, proposal_id, state);
+            }
+        }
+    }
+    // For a flow across workspaces the home party's own approver is the one the requirement is asked about.
+    let home_approver = flow_final.as_ref().and_then(|f| f.approvals.iter().find(|(w, _)| *w == row.workspace_id).map(|(_, by)| by.clone()));
+    let deciding = home_approver.clone().unwrap_or_else(|| caller.eppn.clone());
     if row.status == "Approving" {
         return Err(ServiceError::Conflict("This proposal is waiting for its snapshot. It is approved when the snapshot is done".to_string()));
     }
     // What is required is worked out from the tables as they are now, not as they were when the proposal was made.
     let need = if matches!(decision, "approve" | "reject") { Some(crate::service::authority::requirement_for(state, &row.workspace_id, &row.checks, &row.proposed_by)?) } else { None };
     let approver_path = need.as_ref().is_some_and(|n| n.requirement.path == scaffoldry_core::authority::Path::Approver);
-    let is_resolved = need.as_ref().is_some_and(|n| n.resolved.iter().any(|a| a.eppn.eq_ignore_ascii_case(&caller.eppn)));
+    let is_resolved = need.as_ref().is_some_and(|n| n.resolved.iter().any(|a| a.eppn.eq_ignore_ascii_case(&deciding)));
     // A proposer may withdraw their own proposal. A person the approver spec names needs no role in the workspace.
     let withdrawing = decision == "reject" && row.proposed_by.eq_ignore_ascii_case(&caller.eppn);
-    if !(withdrawing || approver_path && is_resolved) {
+    // The last party of a flow was authorized for its own workspace above.
+    if !(withdrawing || approver_path && is_resolved || flow_final.is_some()) {
         authorize_workspace(caller, &row.workspace_id, "manage_workspace", state)?;
     }
     if let Some(need) = &need {
@@ -1158,7 +1249,7 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                 format!("This change needs an approver other than the proposer. Who can decide: {}", need.resolved.iter().map(|a| a.eppn.as_str()).collect::<Vec<_>>().join(", "))
             }));
         }
-        if decision == "approve" && need.requirement.path != scaffoldry_core::authority::Path::Direct && row.proposed_by.eq_ignore_ascii_case(&caller.eppn) {
+        if decision == "approve" && need.requirement.path != scaffoldry_core::authority::Path::Direct && row.proposed_by.eq_ignore_ascii_case(&deciding) {
             return Err(ServiceError::forbidden("A change with a flagged check needs a second person to approve it. The proposer cannot"));
         }
     }
@@ -1197,12 +1288,12 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
                     return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
                 }
             }
-            let other_person = need.as_ref().is_some_and(|n| n.requirement.path != scaffoldry_core::authority::Path::Direct);
+            let other_person = need.as_ref().is_some_and(|n| n.requirement.path != scaffoldry_core::authority::Path::Direct) || flow_final.is_some() && crate::repository_proposals::has_flagged_failure(&row.checks);
             // A change that loses data needs a snapshot from the last seven days. The approval waits for one.
             if crate::service::snapshots::hold_for_snapshot(caller, &row, rationale, &stored, other_person, state)? {
                 return get(proposal_id, state);
             }
-            match repo.approve_proposal(id, &caller.eppn, rationale, &stored, other_person).map_err(|e| match e {
+            match repo.approve_proposal(id, &caller.eppn, rationale, &stored, other_person, flow_final.clone()).map_err(|e| match e {
                 // The approval would start more background work than the person may have. Nothing was kept.
                 crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
                 other => ServiceError::Internal(format!("The approval was not kept: {other}")),
@@ -1231,14 +1322,105 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
     }
     // A trial copy lasts while its proposal waits.
     crate::service::trials::destroy_for_proposal(state, id);
-    // Notifications phase 4: the proposer is told the decision. A proposer who withdrew is not told of their own act.
+    tell_decided(caller, &row, decision, state);
+    get(proposal_id, state)
+}
+
+/// Notifications phase 4: the proposer is told the decision. A proposer who withdrew is not told of their own act.
+fn tell_decided(caller: &AuthUser, row: &ProposalRow, decision: &str, state: &SharedState) {
     let notice = crate::notifications::Notice::ProposalDecided {
         by: crate::notifications::PersonRef(caller.eppn.clone()),
         app: crate::notifications::AppRef(row.app_slug.clone()),
         approved: crate::notifications::Flag(decision == "approve"),
     };
     let _ = crate::notifications::notify(state, &crate::notifications::Recipients::Person(row.proposed_by.clone()), Some(&caller.eppn), &notice);
-    get(proposal_id, state)
+}
+
+/// One party's decision on a flow that touches several workspaces (workflows phase 2). An owner or admin of the party
+/// decides for it; a Platform Admin may too. When a flagged check is raised, the proposer may not approve a party the
+/// flow reads from. Any party rejecting rejects the proposal. The last approval goes on through `decide_as`, which
+/// publishes it in one transaction that checks every app the flow touches is still at the version it was proposed against.
+fn decide_party(caller: &AuthUser, row: &ProposalRow, decision: &str, rationale: &str, digest: Option<&str>, party: Option<&str>, state: &SharedState) -> Result<PartyStep, ServiceError> {
+    let repo = repo(state)?;
+    if row.status != "Pending" {
+        return Err(ServiceError::Conflict(format!("This proposal is already {}", row.status)));
+    }
+    if decision != "approve" && decision != "reject" {
+        return Err(ServiceError::BadRequest("Argument 'decision' must be 'approve' or 'reject'".to_string()));
+    }
+    if rationale.trim().is_empty() {
+        return Err(ServiceError::BadRequest("Argument 'rationale' must say why".to_string()));
+    }
+    let parties = crate::service::flow_parties::parties_of(&row.parties);
+    let decided = repo.party_decisions(row.id).map_err(internal)?;
+    let withdrawing = decision == "reject" && row.proposed_by.eq_ignore_ascii_case(&caller.eppn);
+    let party = match party {
+        Some(p) => p.to_string(),
+        None => parties
+            .iter()
+            .find(|ws| !decided.iter().any(|(w, ..)| w == *ws) && authorize_workspace(caller, ws, "manage_workspace", state).is_ok())
+            .cloned()
+            .or_else(|| withdrawing.then(|| row.workspace_id.clone()))
+            .ok_or_else(|| ServiceError::forbidden("You are not an owner or admin of any workspace this flow still needs"))?,
+    };
+    if !parties.contains(&party) {
+        return Err(ServiceError::BadRequest(format!("The workspace '{party}' is not a party to this proposal. Its parties are {}", parties.join(", "))));
+    }
+    if !withdrawing {
+        authorize_workspace(caller, &party, "manage_workspace", state)?;
+    }
+    if decision == "reject" {
+        repo.record_party_decision(row.id, &party, &caller.eppn, "reject", rationale).map_err(internal)?;
+        repo.reject_proposal(row.id, &caller.eppn).map_err(internal)?.map_err(|status| ServiceError::Conflict(format!("This proposal is already {status}")))?;
+        return Ok(PartyStep::Recorded);
+    }
+    let flagged = crate::repository_proposals::has_flagged_failure(&row.checks);
+    if flagged && row.proposed_by.eq_ignore_ascii_case(&caller.eppn) && crate::service::flow_parties::sources_of(&row.parties).contains(&party) {
+        let others = crate::service::members::people_records(&party, state)
+            .iter()
+            .filter(|c| matches!(c.role.to_ascii_lowercase().as_str(), "owner" | "admin") && !c.eppn.eq_ignore_ascii_case(&row.proposed_by))
+            .count();
+        return Err(ServiceError::forbidden(if others == 0 {
+            format!("A flagged check is raised and the flow reads from {party}, so its approver must not be the proposer. You are the only owner or admin there, so this party waits for a Platform Admin")
+        } else {
+            format!("A flagged check is raised and the flow reads from {party}, so another owner or admin of {party} must approve it")
+        }));
+    }
+    let stored = digest_of(row, state)?;
+    match digest {
+        None => return Err(ServiceError::BadRequest("Argument 'digest' is required to approve. Send the digest of the proposal you reviewed".to_string())),
+        Some(named) if !named.trim().eq_ignore_ascii_case(&stored) => {
+            return Err(ServiceError::ProposalChanged(format!(
+                "The proposal is not what you reviewed. You named the digest {named}, and its digest is {stored}. Nothing was applied. Read the proposal again and approve its current digest"
+            )))
+        }
+        Some(_) => {}
+    }
+    if !repo.record_party_decision(row.id, &party, &caller.eppn, "approve", rationale).map_err(internal)? {
+        return Err(ServiceError::Conflict(format!("The workspace '{party}' has decided this proposal already")));
+    }
+    let decided = repo.party_decisions(row.id).map_err(internal)?;
+    let approvals: Vec<(String, String)> = parties
+        .iter()
+        .filter_map(|ws| decided.iter().find(|(w, _, d, _)| w == ws && d == "approve").map(|(w, by, _, _)| (w.clone(), by.clone())))
+        .collect();
+    if approvals.len() < parties.len() {
+        // Not live until every party has approved.
+        return Ok(PartyStep::Recorded);
+    }
+    Ok(PartyStep::Last(crate::repository_proposals::FlowFinal {
+        parties: json!(approvals.iter().map(|(w, by)| json!({ "workspace_id": w, "approved_by": by })).collect::<Vec<_>>()),
+        approvals,
+        touched: crate::service::flow_parties::touched_of(&row.parties),
+    }))
+}
+
+/// What one party's decision did.
+enum PartyStep {
+    /// Recorded. The proposal waits for other parties, or was rejected.
+    Recorded,
+    /// The last party approved: the proposal is published with these parties.
+    Last(crate::repository_proposals::FlowFinal),
 }
 
 /// What a direct route got from the proposal it made.

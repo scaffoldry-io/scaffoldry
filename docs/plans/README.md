@@ -261,7 +261,7 @@ People are told, see each other work, and run real committee processes.
 | 147 | [notifications.md](notifications.md) | 4 | Every producer is wired. No notice carries a record value | **COMPLETED** |
 | 148 | [process-v2.md](process-v2.md) | 1 | Process events and analytics: where time goes | **COMPLETED** |
 | 149 | [workflows.md](workflows.md) | 1 | Flows run with approved grants and reach records by address. They can span apps | **COMPLETED** |
-| 150 | [workflows.md](workflows.md) | 2 | A flow touching several workspaces needs approval from each. Moving sensitive data is flagged |
+| 150 | [workflows.md](workflows.md) | 2 | A flow touching several workspaces needs approval from each. Moving sensitive data is flagged | **COMPLETED** |
 | 151 | [process-v2.md](process-v2.md) | 2 | Branches, cross-table effects, manual and date triggers |
 | 152 | [workflows.md](workflows.md) | 3 | Schedules, called flows, chaining, and a circuit breaker |
 | 153 | [field-types.md](field-types.md) | 5 | A button field that starts a process |

@@ -51,6 +51,8 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "notifications.defaults",
     "flows.max_steps",
     "flows.max_writes_per_run",
+    "flows.cross_workspace_enabled",
+    "flows.disabled",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -75,7 +77,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "tokens.max_days" | "process.stale_days" => {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
-        "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" | "mail.enabled" => value.is_boolean(),
+        "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" | "mail.enabled" | "flows.cross_workspace_enabled" => value.is_boolean(),
         "mail.smtp" => crate::mail::Smtp::parse(value).is_ok(),
         "platform.base_url" => crate::mail::valid_base_url(value),
         "notifications.defaults" => crate::notifications::valid_defaults(value),
@@ -95,7 +97,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "flows.max_writes_per_run" => value.as_i64().is_some_and(|n| (1..=10_000).contains(&n)),
         "egress.allow" => crate::net::egress::Allow::parse(value).is_ok(),
         "platform.contact_email" => value.as_str().is_some_and(|s| s.len() <= 255 && s.contains('@') && !s.contains(char::is_whitespace)),
-        "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {
+        "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" | "flows.disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
         // The shape of these two is checked in full, with a path, where the state is known.

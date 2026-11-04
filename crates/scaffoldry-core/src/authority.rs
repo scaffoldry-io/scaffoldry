@@ -79,6 +79,8 @@ pub const FLAGGED: &[(&str, &str)] = &[
     ("request_write", "The request asks for a role that can change data."),
     ("request_sensitive", "The request asks for access to sensitive data."),
     ("request_outside_unit", "The request is for something outside the requester's own unit."),
+    ("cross_workspace", "A flow reads or writes in more than one workspace."),
+    ("data_movement", "A flow copies a sensitive field from one app into another."),
 ];
 
 /// What would avoid each flagged check, as one sentence. `None` where there is honestly nothing to change but the proposal
@@ -95,6 +97,8 @@ pub const REMEDIES: &[(&str, Option<&str>)] = &[
     ("request_write", Some("Ask for the viewer role if reading is enough.")),
     ("request_sensitive", None),
     ("request_outside_unit", None),
+    ("cross_workspace", Some("Keep the flow inside its own workspace.")),
+    ("data_movement", Some("Leave the sensitive field out of what the flow reads.")),
 ];
 
 /// What would avoid the flagged check `name`, if anything.

@@ -2016,7 +2016,8 @@ fn run_automations_in(
     let mut all_effects = Vec::new();
 
     for rule in &rules {
-        if !rule.enabled || applied_rule_ids.contains(&rule.id) {
+        // Workflows phase 2: a flow an administrator stopped through `flows.disabled` does not run.
+        if !rule.enabled || applied_rule_ids.contains(&rule.id) || crate::service::flow_parties::is_disabled(state, &rule.id) {
             continue;
         }
 

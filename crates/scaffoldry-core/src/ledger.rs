@@ -82,6 +82,8 @@ pub enum DecisionType {
     LegalHoldChanged,
     /// A secret was written, replaced or deleted (integrations phase 1). The entry names it and never holds its value.
     SecretChanged,
+    /// One party of a flow that touches several workspaces approved it (workflows phase 2).
+    FlowPartyApproved,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -147,6 +149,7 @@ impl DecisionType {
         DecisionType::BlobsPurged,
         DecisionType::LegalHoldChanged,
         DecisionType::SecretChanged,
+        DecisionType::FlowPartyApproved,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -211,6 +214,7 @@ impl DecisionType {
             DecisionType::BlobsPurged => "BlobsPurged",
             DecisionType::LegalHoldChanged => "LegalHoldChanged",
             DecisionType::SecretChanged => "SecretChanged",
+            DecisionType::FlowPartyApproved => "FlowPartyApproved",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",

@@ -370,6 +370,11 @@ Checks. Each check has an outcome: `pass`, `warn`, or `fail`. `warn` never block
 | `rule_loop` | `warn` when the trigger is `RecordUpdated` and the rule sets a field its own `when` reads |
 | `rule_approver` | `warn` when a user task resolves to no approver today, or only to the proposer. Resolve with `resolve_approvers` for the workspace's unit |
 | `stale` | Each rule's `base_version` against its live version |
+| `flow_grants` | Info. A flow's grants as sentences, per workspace. Added by `workflows.md` phase 2 |
+| `cross_workspace` | `fail`-flagged when a flow touches more than one workspace. Each workspace's owners or admins approve their part. A refusal that stores nothing when `flows.cross_workspace_enabled` is false |
+| `data_movement` | `fail`-flagged when a flow reads an effectively sensitive field in one app and writes into another |
+| `classification_downgrade` | `fail` when a sensitive field would move to a workspace whose `data_classification` ranks lower: `Public`, `Internal`, `Restricted`, `FERPA Sensitive` |
+| `flow_target_exists` | `fail` when a target table, field, or link does not exist. Raised through `rule_schema`, so the proposal is not stored |
 
 The change list covers rules with `describe_rule`: rules added, rules changed (the sentences of the new version), and rules enabled or disabled.
 

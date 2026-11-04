@@ -36,6 +36,7 @@ pub mod people;
 pub mod positions;
 pub mod processes;
 pub mod flows;
+pub mod flow_parties;
 pub mod pages;
 pub mod proposals;
 pub mod hints;
