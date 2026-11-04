@@ -1660,6 +1660,16 @@ export const apiClient = {
     return request<ProcessAnalytics>(`/apps/${encodeURIComponent(appSlug)}/process-analytics${qs ? `?${qs}` : ""}`);
   },
 
+  /** Field types phase 5: the record's buttons, each with whether the person may press it now and, if not, why. */
+  listRecordButtons: async (appSlug: string, recordId: string): Promise<RecordButton[]> => {
+    const res = await request<{ buttons: RecordButton[] }>(`/apps/${encodeURIComponent(appSlug)}/records/${encodeURIComponent(recordId)}/buttons`);
+    return Array.isArray(res?.buttons) ? res.buttons : [];
+  },
+
+  /** Presses a button: starts the rule it names for this record. */
+  pressRecordButton: async (appSlug: string, recordId: string, field: string): Promise<{ instance_id: string | null; started: boolean }> =>
+    request<{ instance_id: string | null; started: boolean }>(`/apps/${encodeURIComponent(appSlug)}/records/${encodeURIComponent(recordId)}/buttons/${encodeURIComponent(field)}`, { method: "POST" }),
+
   /** Approvers phase 5: who a step would go to today. It creates nothing. */
   previewApprovers: async (appSlug: string, body: { approver: unknown; created_by?: string }): Promise<ApproverPreview> =>
     request<ApproverPreview>(`/apps/${encodeURIComponent(appSlug)}/automations/preview-approvers`, { method: "POST", body: JSON.stringify(body) }),
@@ -2237,6 +2247,14 @@ export interface ProcessRuleAnalytics {
 export interface ProcessAnalytics {
   rules: ProcessRuleAnalytics[];
   slowest: string | null;
+}
+
+/** A button field of a record, as the person sees it now. */
+export interface RecordButton {
+  field: string;
+  label: string;
+  enabled: boolean;
+  reason: string | null;
 }
 
 export interface ApproverPreview {

@@ -47,8 +47,9 @@ struct World {
     slug: String,
 }
 
-/// One app with grants, which have an amount, a status and an indexed deadline, and a button that names `button_rule`.
-async fn world(button_rule: &str) -> World {
+/// One app with grants, which have an amount, a status and an indexed deadline. The stored app has no button: a button
+/// must name a live manual rule (field types phase 5). `manifest_with_button` adds one in memory.
+async fn world(_button_rule: &str) -> World {
     let db = TestDb::new();
     let state = db.state();
     state.seed_demo().expect("seed");
@@ -56,20 +57,27 @@ async fn world(button_rule: &str) -> World {
     let slug = format!("grants-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
     let mut deadline = field("deadline", "Date");
     deadline["indexed"] = json!(true);
-    let mut button = field("start_review", "Button");
-    button["button_rule"] = json!(button_rule);
     let mut title = field("title", "Text");
     title["required"] = json!(true);
     let manifest = json!({
         "slug": slug, "title": "Grants", "description": "", "organization_code": "PHYS", "department": "physics", "workspace_id": WORKSPACE, "views": [],
         "tables": [
-            { "id": "grants", "name": "Grants", "slug": "grants", "primary_field": "title", "fields": [title, field("amount", "Number"), field("status", "Text"), field("note", "Text"), deadline, button] },
+            { "id": "grants", "name": "Grants", "slug": "grants", "primary_field": "title", "fields": [title, field("amount", "Number"), field("status", "Text"), field("note", "Text"), deadline] },
             { "id": "reviews", "name": "Reviews", "slug": "reviews", "primary_field": "summary", "fields": [{ "name": "summary", "label": "summary", "field_type": "Text", "required": true, "ferpa_sensitive": false }, field("grade", "Text")] },
         ],
     });
     let (s, b) = send(&app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(manifest)).await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
     World { db, state, app, slug }
+}
+
+/// The app as a proposal would make it, with a button that names `rule`.
+fn manifest_with_button(w: &World, rule: &str) -> AppManifest {
+    let mut m = manifest(w);
+    let mut button = scaffoldry_engine::FieldSpec::simple("start_review", "Start review", scaffoldry_engine::FieldType::Button, false, false);
+    button.button_rule = Some(rule.to_string());
+    m.tables[0].fields.push(button);
+    m
 }
 
 fn manifest(w: &World) -> AppManifest {
@@ -227,11 +235,12 @@ async fn a_date_trigger_starts_each_record_once_per_date() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_manual_trigger_needs_a_button() {
     let w = world("start-review").await;
+    let with_button = manifest_with_button(&w, "start-review");
     let lonely = rule(&w, "no-button", TriggerEvent::Manual, vec![set_status("go", "Under review")]);
-    let problems = validate_rule(&w.state, &manifest(&w), &lonely);
+    let problems = validate_rule(&w.state, &with_button, &lonely);
     assert!(problems.iter().any(|p| p.contains("button")), "{problems:?}");
     let pressed = rule(&w, "start-review", TriggerEvent::Manual, vec![set_status("go", "Under review")]);
-    assert!(validate_rule(&w.state, &manifest(&w), &pressed).is_empty(), "{:?}", validate_rule(&w.state, &manifest(&w), &pressed));
+    assert!(validate_rule(&w.state, &with_button, &pressed).is_empty(), "{:?}", validate_rule(&w.state, &with_button, &pressed));
 }
 
 // 7. A branch's condition on a missing field fails validation, naming the field.

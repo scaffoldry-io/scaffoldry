@@ -39,6 +39,7 @@ pub mod flows;
 pub mod flow_parties;
 pub mod date_triggers;
 pub mod flow_chains;
+pub mod buttons;
 pub mod pages;
 pub mod proposals;
 pub mod hints;

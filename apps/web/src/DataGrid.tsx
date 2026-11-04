@@ -1,4 +1,5 @@
 import { formatDuration, formatDateTime } from "./utils/durationDatetime";
+import { GridButton } from "./RecordButtons";
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   useReactTable,
@@ -1584,6 +1585,8 @@ export function DataGrid({
                         </div>
                       ) : field.field_type === "Attachment" ? (
                         <AttachmentChips value={Array.isArray(cellVal) ? (cellVal as AttachedFile[]) : []} />
+                      ) : field.field_type === "Button" && appSlug ? (
+                        <GridButton appSlug={appSlug} recordId={String(recordId)} field={field.name} label={field.label} />
                       ) : (
                         /* Non-editing display */
                         <div className="flex items-center justify-between text-slate-800 dark:text-slate-200 min-h-[1.25rem]">
