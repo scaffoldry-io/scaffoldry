@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 /// The checks that need a second person to approve when they fail.
-pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity", "page_dependencies", "rule_effects", "access_loosened", "coordinates_widened", "mask_weakened", "request_write", "request_sensitive", "request_outside_unit"];
+pub const FLAGGED_CHECKS: &[&str] = &["sensitivity", "data_loss", "page_sensitivity", "page_dependencies", "rule_effects", "access_loosened", "coordinates_widened", "mask_weakened", "request_write", "request_sensitive", "request_outside_unit", "cross_workspace", "data_movement"];
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProposalRow {
@@ -31,6 +31,18 @@ pub struct ProposalRow {
     pub rules: Option<Value>,
     /// The digest of the content, set when the proposal is made. Empty on a proposal that predates it.
     pub digest: String,
+    /// A flow that touches several workspaces (workflows phase 2): `{ "parties": [ws], "sources": [ws],
+    /// "touched": [{ "slug", "version" }], "changes": { ws: [sentence] } }`. `None` for a proposal with one party.
+    pub parties: Option<Value>,
+}
+
+/// What the last party's approval of a flow brings to the final transaction: who approved each party, and the version
+/// each app the flow touches had when it was proposed.
+#[derive(Debug, Clone, Default)]
+pub struct FlowFinal {
+    pub approvals: Vec<(String, String)>,
+    pub touched: Vec<(String, Option<i32>)>,
+    pub parties: Value,
 }
 
 /// What an approval kept.
@@ -56,7 +68,7 @@ pub enum Approval {
 
 const COLUMNS: &str = "id, workspace_id, app_slug, base_version, manifest, checks, summary, status, proposed_by, decided_by, \
      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-     to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), rules, COALESCE(digest, '')";
+     to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), rules, COALESCE(digest, ''), parties";
 
 fn row_of(r: &postgres::Row) -> ProposalRow {
     ProposalRow {
@@ -74,6 +86,7 @@ fn row_of(r: &postgres::Row) -> ProposalRow {
         decided_at: r.get(11),
         rules: r.get(12),
         digest: r.get::<_, String>(13).trim().to_string(),
+        parties: r.get(14),
     }
 }
 
@@ -204,9 +217,9 @@ impl PostgresRepository {
                 )?;
             }
             tx.execute(
-                "INSERT INTO app_proposals (id, workspace_id, app_slug, base_version, manifest, checks, summary, proposed_by, rules, digest) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                &[&p.id, &p.workspace_id, &p.app_slug, &p.base_version, &p.manifest, &p.checks, &p.summary, &p.proposed_by, &p.rules, &p.digest],
+                "INSERT INTO app_proposals (id, workspace_id, app_slug, base_version, manifest, checks, summary, proposed_by, rules, digest, parties) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                &[&p.id, &p.workspace_id, &p.app_slug, &p.base_version, &p.manifest, &p.checks, &p.summary, &p.proposed_by, &p.rules, &p.digest, &p.parties],
             )?;
             tx.commit()?;
             Ok(())
@@ -232,6 +245,33 @@ impl PostgresRepository {
                 &[&ws, &limit],
             )?;
             Ok(rows.iter().map(row_of).collect())
+        })
+    }
+
+    /// Records one party's decision on a flow that touches several workspaces. False when that party has decided already.
+    pub fn record_party_decision(&self, id: uuid::Uuid, workspace_id: &str, by: &str, decision: &str, rationale: &str) -> Result<bool, RepositoryError> {
+        let (ws, by, decision, rationale) = (workspace_id.to_string(), by.to_string(), decision.to_string(), rationale.to_string());
+        self.with_client(move |client| {
+            Ok(client.execute(
+                "INSERT INTO proposal_approvals (proposal_id, workspace_id, decided_by, decision, rationale, at) VALUES ($1, $2, $3, $4, $5, NOW()) \
+                 ON CONFLICT (proposal_id, workspace_id) DO NOTHING",
+                &[&id, &ws, &by, &decision, &rationale],
+            )? == 1)
+        })
+    }
+
+    /// Each party's decision so far: `(workspace, decided_by, decision, at)`.
+    pub fn party_decisions(&self, id: uuid::Uuid) -> Result<Vec<(String, String, String, String)>, RepositoryError> {
+        self.with_client(move |client| {
+            Ok(client
+                .query(
+                    "SELECT workspace_id, COALESCE(decided_by, ''), COALESCE(decision, ''), to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
+                     FROM proposal_approvals WHERE proposal_id = $1 ORDER BY at, workspace_id",
+                    &[&id],
+                )?
+                .iter()
+                .map(|r| (r.get(0), r.get(1), r.get(2), r.get::<_, Option<String>>(3).unwrap_or_default()))
+                .collect())
         })
     }
 
@@ -305,7 +345,7 @@ impl PostgresRepository {
     ///
     /// `other_person` is true when the requirement at this moment is a person other than the proposer. A flagged failure
     /// needs one whatever the requirement says: no table lowers that.
-    pub fn approve_proposal(&self, id: uuid::Uuid, decider: &str, rationale: &str, digest: &str, other_person: bool) -> Result<Approval, RepositoryError> {
+    pub fn approve_proposal(&self, id: uuid::Uuid, decider: &str, rationale: &str, digest: &str, other_person: bool, flow: Option<FlowFinal>) -> Result<Approval, RepositoryError> {
         let (decider, rationale, digest) = (decider.to_string(), rationale.to_string(), digest.to_string());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
@@ -337,6 +377,16 @@ impl PostgresRepository {
             for (rule, base) in &changes {
                 if rule_live_version_in_tx(&mut tx, &rule.id)? != *base {
                     stale = true;
+                }
+            }
+            // A flow across workspaces: every app it touches must still be at the version it had when proposed.
+            for (slug, version) in flow.iter().flat_map(|f| f.touched.iter()) {
+                let now: Option<i32> = tx.query_opt("SELECT version FROM app_manifests WHERE slug = $1 FOR UPDATE", &[slug])?.map(|r| r.get(0));
+                if now != *version {
+                    stale = true;
+                    if slug != &p.app_slug {
+                        live = now;
+                    }
                 }
             }
             if stale {
@@ -378,8 +428,24 @@ impl PostgresRepository {
 
             // Each rule: its own ledger entry, a version row, and the live row.
             let mut saved_rules = Vec::new();
+            // A flow across workspaces: one entry per party, then the publication names every party.
+            for (workspace, by) in flow.iter().flat_map(|f| f.approvals.iter()) {
+                entries.push(append_ledger_in_tx(
+                    &mut tx,
+                    AppendDecisionParams {
+                        principal: by.clone(),
+                        organization_code: "institutional".to_string(),
+                        app_slug: Some(p.app_slug.clone()),
+                        decision_type: DecisionType::FlowPartyApproved,
+                        oscal_control_id: "CM-03".to_string(),
+                        rationale: format!("{by} approved for {workspace}"),
+                        payload: json!({ "proposal_id": p.id.to_string(), "workspace_id": workspace, "approved_by": by, "digest": digest }),
+                    },
+                )?);
+            }
+            let parties = flow.as_ref().map(|f| f.parties.clone());
             for (rule, _) in changes {
-                let (saved, entry) = save_rule_in_tx(&mut tx, rule, &p.summary, Some(p.id), Some(&digest), &decider, "institutional")?;
+                let (saved, entry) = save_rule_in_tx(&mut tx, rule, &p.summary, Some(p.id), Some(&digest), &decider, "institutional", parties.clone())?;
                 entries.push(entry);
                 saved_rules.push(saved);
             }
@@ -491,6 +557,7 @@ fn rule_live_version_in_tx(tx: &mut postgres::Transaction<'_>, rule_id: &str) ->
 /// Saves one version of a rule inside the caller's transaction: the ledger entry, the version row,
 /// and the live row. The ledger entry names the rule, the new version, the SHA-256 of the rule, and
 /// the proposal. Returns the rule as saved, with its version.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn save_rule_in_tx(
     tx: &mut postgres::Transaction<'_>,
     mut rule: AutomationRule,
@@ -499,6 +566,7 @@ pub(crate) fn save_rule_in_tx(
     digest: Option<&str>,
     changed_by: &str,
     organization_code: &str,
+    parties: Option<Value>,
 ) -> Result<(AutomationRule, LedgerEntry), RepositoryError> {
     rule.version = rule_live_version_in_tx(tx, &rule.id)? + 1;
     let rule_json = serde_json::to_value(&rule)?;
@@ -511,13 +579,20 @@ pub(crate) fn save_rule_in_tx(
             decision_type: DecisionType::ProcessDefinitionChanged,
             oscal_control_id: "CM-03".to_string(),
             rationale: summary.to_string(),
-            payload: json!({
-                "rule_id": rule.id,
-                "version": rule.version,
-                "rule_sha256": manifest_sha256(&rule_json),
-                "proposal_id": proposal_id.map(|p| p.to_string()),
-                "digest": digest,
-            }),
+            payload: {
+                let mut payload = json!({
+                    "rule_id": rule.id,
+                    "version": rule.version,
+                    "rule_sha256": manifest_sha256(&rule_json),
+                    "proposal_id": proposal_id.map(|p| p.to_string()),
+                    "digest": digest,
+                });
+                // A flow approved by several workspaces names them in its publication.
+                if let Some(parties) = parties {
+                    payload["parties"] = parties;
+                }
+                payload
+            },
         },
     )?;
     let version = rule.version as i32;
@@ -578,7 +653,7 @@ impl PostgresRepository {
         let (rule, summary, by, org) = (rule.clone(), summary.to_string(), changed_by.to_string(), organization_code.to_string());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let saved = save_rule_in_tx(&mut tx, rule, &summary, proposal_id, None, &by, &org)?;
+            let saved = save_rule_in_tx(&mut tx, rule, &summary, proposal_id, None, &by, &org, None)?;
             tx.commit()?;
             Ok(saved)
         })

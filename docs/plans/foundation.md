@@ -334,6 +334,8 @@ The keys are a closed list. Reject any other key with 400. Validate the value's 
 | `platform.contact_email` | string, an email address | none | The institution's contact address. The policy library sends it in a `From` header when it fetches a source. Added by `policy-library.md` phase 5 |
 | `platform.timezone` | string | UTC | An IANA zone name. Added by `calc-graph.md` phase 4 |
 | `flows.max_steps` | integer 1 to 200 | 50 | The most steps one flow may hold. Added by `workflows.md` phase 1 |
+| `flows.cross_workspace_enabled` | boolean | true | When false, a proposal for a flow that touches more than one workspace fails the `cross_workspace` check. Added by `workflows.md` phase 2 |
+| `flows.disabled` | array of flow ids | empty | Flows that may not run. A flow on the list stops at once. Added by `workflows.md` phase 2 |
 | `flows.max_writes_per_run` | integer 1 to 10,000 | 1,000 | The most writes one flow run may make. A run that would make more fails with the count. Added by `workflows.md` phase 1 |
 
 Do not add a key that turns a check off. There is no `auth.disabled`, no `dev_mode`, and no `allow_insecure`.

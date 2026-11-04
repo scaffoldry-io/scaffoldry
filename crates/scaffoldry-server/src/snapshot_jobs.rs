@@ -92,7 +92,7 @@ pub fn snapshot_take(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     if let (Some(t), Some(pid)) = (&then, proposal) {
         let text = |k: &str| t.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
         let other = t.get("other_person").and_then(Value::as_bool).unwrap_or(false);
-        match repo.approve_proposal(pid, &text("decider"), &text("rationale"), &text("digest"), other) {
+        match repo.approve_proposal(pid, &text("decider"), &text("rationale"), &text("digest"), other, None) {
             Ok(Approval::Approved(_)) => approved = true,
             Ok(_) => {
                 // Superseded, or someone else decided it. A proposal still waiting goes back to pending.
