@@ -38,6 +38,7 @@ pub fn add(m: &mut Entries) {
     m.insert("PATCH /api/v1/apps/{slug}/tables/{table_id}/records/{id}".into(), case!(table_record_patch));
     m.insert("DELETE /api/v1/apps/{slug}/tables/{table_id}/records/{id}".into(), case!(table_record_delete));
     m.insert("POST /api/v1/apps/{slug}/records/{id}/restore".into(), case!(record_restore_version));
+    m.insert("POST /api/v1/apps/{slug}/records/{id}/buttons/{field}".into(), case!(record_button_press));
     m.insert("POST /api/v1/apps/{slug}/trash/{what}/restore".into(), case!(trash_restore));
     m.insert("POST /api/v1/apps/{slug}/history/{batch_id}/undo".into(), case!(history_undo));
 
@@ -354,6 +355,24 @@ async fn record_patch(w: World) -> Outcome {
     status(w.wa("PATCH", &format!("/api/v1/apps/{slug}/records/{id}"), OWNER, Some(json!({ "data": { "name": "After" }, "version": 1 }))).await, StatusCode::OK, "patch")?;
     let seen = read_record(&w, &slug, &id).await?.ok_or("B does not find the record")?;
     ensure(has(&seen, "After") && !has(&seen, "Before"), format!("B shows the change: {seen}"))
+}
+
+/// Field types phase 5: a button pressed through A starts its rule, and B reads what the rule changed.
+async fn record_button_press(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let rule = unique("p6btn");
+    let mut changed = manifest(&slug);
+    changed["workspace_id"] = json!(WORKSPACE);
+    changed["tables"][0]["fields"].as_array_mut().ok_or("fields")?.push(json!({ "name": "go", "label": "Go", "field_type": "Button", "required": false, "ferpa_sensitive": false, "button_rule": rule }));
+    let rules = json!([{ "id": rule, "name": "Go", "enabled": true, "trigger": "Manual", "steps": [{ "id": "s", "when": [], "kind": { "Service": { "action": { "UpdateRecordStatus": { "new_status": "Pressed" } } } } }] }]);
+    let made = w.tool_a(OWNER, "propose_app_change", json!({ "workspace_id": WORKSPACE, "manifest": changed, "rules": rules, "summary": "A button" })).await?;
+    let id = made["proposal_id"].as_str().ok_or("a proposal id")?.to_string();
+    let digest = w.tool_a(OWNER, "get_proposal", json!({ "proposal_id": id })).await?["digest"].clone();
+    w.tool_a(OWNER, "decide_proposal", json!({ "proposal_id": id, "decision": "approve", "rationale": "Mine", "digest": digest })).await?;
+    let record = make_record(&w, &slug, "Pressed by A").await?;
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/records/{record}/buttons/go"), OWNER, None).await, StatusCode::OK, "press")?;
+    let seen = read_record(&w, &slug, &record).await?.ok_or("B does not find the record")?;
+    ensure(seen["data"]["status"] == "Pressed", format!("B shows what the press changed: {seen}"))
 }
 
 async fn record_delete(w: World) -> Outcome {

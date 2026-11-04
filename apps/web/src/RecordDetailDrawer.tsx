@@ -9,6 +9,7 @@ import { LinkedRecords } from "./LinkedRecords";
 import { apiClient, type DisclosureEntry } from "./api";
 import { RecordHistory } from "./RecordHistory";
 import { RecordComments } from "./RecordComments";
+import { RecordButtons } from "./RecordButtons";
 import { Tabs, EmptyState, ErrorState, Skeleton } from "./ui";
 
 export interface RecordDetailDrawerProps {
@@ -181,6 +182,7 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
           {viewer && appSlug && tab === "disclosures" && <RecordDisclosures appSlug={appSlug} recordId={activeDetailRecord.id} />}
           {tab === "details" && (
           <>
+          {appSlug && activeTable.fields.some((f) => f.field_type === "Button") && <RecordButtons appSlug={appSlug} recordId={activeDetailRecord.id} />}
           {/* FIELDS SECTION */}
           <div className="space-y-4">
             <h4 className="text-xs font-bold font-mono text-slate-400 uppercase tracking-wider">
@@ -188,8 +190,8 @@ export const RecordDetailDrawer: React.FC<RecordDetailDrawerProps> = ({
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {activeTable.fields.map((field) => {
-                // A link field is shown in the linked records section below.
-                if (field.field_type === "Link") return null;
+                // A link field is shown in the linked records section below. A button stores nothing and is shown above.
+                if (field.field_type === "Link" || field.field_type === "Button") return null;
                 // An attachment field draws its own frame, so a field the person may not read leaves no trace.
                 if (field.field_type === "Attachment") {
                   return appSlug ? (

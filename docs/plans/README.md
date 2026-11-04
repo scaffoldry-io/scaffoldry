@@ -264,7 +264,7 @@ People are told, see each other work, and run real committee processes.
 | 150 | [workflows.md](workflows.md) | 2 | A flow touching several workspaces needs approval from each. Moving sensitive data is flagged | **COMPLETED** |
 | 151 | [process-v2.md](process-v2.md) | 2 | Branches, cross-table effects, manual and date triggers | **COMPLETED** |
 | 152 | [workflows.md](workflows.md) | 3 | Schedules, called flows, chaining, and a circuit breaker | **COMPLETED** |
-| 153 | [field-types.md](field-types.md) | 5 | A button field that starts a process |
+| 153 | [field-types.md](field-types.md) | 5 | A button field that starts a process | **COMPLETED** |
 | 154 | [process-v2.md](process-v2.md) | 3 | Timers and escalation. No timer ever decides |
 | 155 | [process-v2.md](process-v2.md) | 4 | Committee votes |
 | 156 | [workflows.md](workflows.md) | 4 | Fill-in tasks, with a task grant on one record while the step is open |

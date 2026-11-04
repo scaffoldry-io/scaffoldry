@@ -351,6 +351,11 @@ fn operator_words(op: &ConditionOperator) -> &'static str {
     }
 }
 
+/// Conditions in words, joined by "and": `status is Submitted and amount is greater than 10`.
+pub fn conditions_words(when: &[FieldPredicate]) -> String {
+    when.iter().map(predicate_words).collect::<Vec<_>>().join(" and ")
+}
+
 fn predicate_words(p: &FieldPredicate) -> String {
     format!("{} {} {}", p.field_name, operator_words(&p.operator), p.expected_value)
 }

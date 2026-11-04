@@ -1008,6 +1008,7 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
 
     let mut rules_json: Option<Value> = None;
     let mut flow_plan: Option<crate::service::flow_parties::Plan> = None;
+    let mut proposed_rules: Vec<AutomationRule> = Vec::new();
     if !input.rules.is_empty() {
         let effective = effective.as_ref().ok_or_else(|| ServiceError::NotFound(format!("App '{slug}' not found")))?;
         let part = check_rules_part(caller, input.rules, &slug, effective, reviewed.as_ref().map_or(&[][..], |r| &r.rules), state)?;
@@ -1017,6 +1018,7 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
         checks.extend(part.checks);
         // Workflows phase 2: what the flows touch, and which workspaces must approve.
         let rules: Vec<AutomationRule> = part.rules.iter().map(|(r, _)| r.clone()).collect();
+        proposed_rules = rules.clone();
         if let Some(plan) = crate::service::flow_parties::plan(state, &ws.id, effective, &rules)? {
             checks.extend(plan.checks.clone());
             flow_plan = Some(plan);
@@ -1024,6 +1026,13 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
         rules_json = Some(Value::Array(
             part.rules.iter().map(|(r, base)| json!({ "rule": r, "base_version": base })).collect(),
         ));
+    }
+    // Field types phase 5: a button names a rule of its own app with a Manual trigger, proposed here or live.
+    if let Some(m) = effective.as_ref() {
+        let problems = button_problems(m, &proposed_rules, state);
+        if !problems.is_empty() {
+            return Err(ServiceError::BadRequest(format!("button_rule: {}", problems.join("; "))));
+        }
     }
     checks.push(check("stale", vec![]));
     changes.extend(input.notes);
@@ -1072,6 +1081,27 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
     }
     let stored = repo.get_proposal(row.id).map_err(internal)?.ok_or_else(|| ServiceError::Internal("The proposal was not stored".to_string()))?;
     view(&stored, state)
+}
+
+/// What is wrong with the buttons of an app: a button that names no rule, a rule the app does not have, or a rule that
+/// does not start by hand.
+fn button_problems(m: &AppManifest, proposed: &[AutomationRule], state: &SharedState) -> Vec<String> {
+    let live = state.automations.read().map(|a| a.get(&m.slug).cloned().unwrap_or_default()).unwrap_or_default();
+    let mut problems = Vec::new();
+    for f in m.tables.iter().flat_map(|t| t.fields.iter()).filter(|f| f.field_type == scaffoldry_engine::FieldType::Button) {
+        let Some(id) = f.button_rule.as_deref() else {
+            problems.push(format!("the button '{}' names no rule", f.name));
+            continue;
+        };
+        match proposed.iter().chain(live.iter()).find(|r| r.id == id) {
+            None => problems.push(format!("the button '{}' names the rule '{id}', which this app does not have", f.name)),
+            Some(r) if r.trigger != scaffoldry_core::TriggerEvent::Manual => {
+                problems.push(format!("the button '{}' names the rule '{id}', which does not have a Manual trigger. A button starts a rule that starts by hand", f.name))
+            }
+            Some(_) => {}
+        }
+    }
+    problems
 }
 
 /// The proposal as a caller sees it. `stale` is worked out now, against the live app and rules.

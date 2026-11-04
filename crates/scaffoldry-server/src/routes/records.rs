@@ -58,6 +58,27 @@ pub fn router() -> Router<SharedState> {
             "/apps/{slug}/records/{id}",
             get(get_record).patch(update_record).delete(delete_record),
         )
+        // Field types phase 5: a record's buttons, and pressing one.
+        .route("/apps/{slug}/records/{id}/buttons", get(record_buttons))
+        .route("/apps/{slug}/records/{id}/buttons/{field}", axum::routing::post(press_button))
+}
+
+async fn record_buttons(State(state): State<SharedState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::buttons::list(&user, &slug, &id, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The read stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
+}
+
+async fn press_button(State(state): State<SharedState>, headers: HeaderMap, Path((slug, id, field)): Path<(String, String, String)>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::buttons::press(&user, &slug, &id, &field, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The write stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
 }
 
 // ---------------------------------------------------------------------------
