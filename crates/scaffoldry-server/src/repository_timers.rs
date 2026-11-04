@@ -37,6 +37,8 @@ pub struct TimerOutcome {
     pub timers: Vec<NewTimer>,
     /// The event's detail: what fired.
     pub detail: Value,
+    /// Workflows phase 4: an escalation moves the step's task grants to these.
+    pub grants: Option<Vec<crate::repository_task_grants::NewGrant>>,
 }
 
 /// Writes `timers` for `instance_id`.
@@ -95,8 +97,12 @@ impl PostgresRepository {
             process_event_in_tx(&mut tx, next, Some(&step), "timer_fired", None, &outcome.detail)?;
             if next.status == ProcessStatus::Waiting {
                 insert_timers_in_tx(&mut tx, &next.id, &outcome.timers)?;
+                if let Some(grants) = &outcome.grants {
+                    crate::repository_task_grants::replace_task_grants_in_tx(&mut tx, &next.id, &step, grants)?;
+                }
             } else {
                 cancel_timers_in_tx(&mut tx, &next.id)?;
+                crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &next.id)?;
                 process_event_in_tx(&mut tx, next, Some(&step), "step_left", None, &serde_json::json!({}))?;
                 process_event_in_tx(&mut tx, next, None, "completed", None, &serde_json::json!({ "status": status_name(&next.status) }))?;
             }

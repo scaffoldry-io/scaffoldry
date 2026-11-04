@@ -155,6 +155,8 @@ fn structure_problems(manifest: &AppManifest, rule: &AutomationRule, state: &Sha
     problems.extend(crate::service::process_timers::problems(&rule.steps));
     // Process v2 phase 4: a committee step needs at least one approval.
     problems.extend(crate::service::process_votes::problems(&rule.steps));
+    // Workflows phase 4: a task's fields exist, its fill fields can be written, and its kind fits its decision.
+    problems.extend(crate::service::task_grants::problems(manifest, rule));
     // Branches nest at most two levels. The step that goes deeper is named.
     fn deep(steps: &[scaffoldry_core::ProcessStep], level: usize, out: &mut Vec<String>) {
         for s in steps {
@@ -308,11 +310,20 @@ pub fn decide_process(
     comment: Option<&str>,
     state: &SharedState,
 ) -> Result<ProcessInstance, ServiceError> {
-    authorize_app(caller, slug, AppAction::Read, state)?;
+    // Workflows phase 4: a person without rights to the app may still act on the one step they hold a task grant for.
+    let by_grant = match authorize_app(caller, slug, AppAction::Read, state) {
+        Ok(()) => false,
+        Err(e) => {
+            if !state.repository.holds_task_grant(&caller.eppn, instance_id).unwrap_or(false) {
+                return Err(e);
+            }
+            true
+        }
+    };
 
     let decision = decision.to_lowercase();
-    if decision != "approve" && decision != "reject" {
-        return Err(ServiceError::BadRequest("Decision must be 'approve' or 'reject'".to_string()));
+    if !["approve", "reject", "done", "decline"].contains(&decision.as_str()) {
+        return Err(ServiceError::BadRequest("Decision must be 'approve' or 'reject', or for a task to complete 'done' or 'decline'".to_string()));
     }
     // Unknown affiliation is 403.
     EduPersonAffiliation::from_str(&caller.affiliation).map_err(|_| ServiceError::forbidden("Unknown affiliation"))?;
@@ -327,7 +338,7 @@ pub fn decide_process(
         return Err(ServiceError::NotFound("Process instance not found in this app".to_string()));
     }
     // A record outside the caller's scope is not theirs to decide on, and is not said to exist.
-    if !crate::service::scope::readable_ids(caller, slug, std::slice::from_ref(&instance.record_id), state).contains(&instance.record_id) {
+    if !by_grant && !crate::service::scope::readable_ids(caller, slug, std::slice::from_ref(&instance.record_id), state).contains(&instance.record_id) {
         return Err(ServiceError::NotFound("Process instance not found".to_string()));
     }
     if instance.status != ProcessStatus::Waiting {
@@ -339,14 +350,33 @@ pub fn decide_process(
     let mut field_effects = Vec::new();
     if let Some(rule) = rule_for(state, &instance) {
         if let Some(step) = scaffoldry_core::workflow::find_step(&rule.steps, &waiting_step_id) {
-            if let StepKind::UserTask { approve, reject, decision: rule_decision, reject_rule, .. } = &step.kind {
+            if let StepKind::UserTask { approve, reject, decision: rule_decision, reject_rule, kind, require, decline_reason, .. } = &step.kind {
+                // Workflows phase 4: each kind of task ends with its own two outcomes.
+                if !kind.outcomes().contains(&decision.as_str()) {
+                    let [yes, no] = kind.outcomes();
+                    return Err(ServiceError::BadRequest(format!("This step ends with '{yes}' or '{no}', not '{decision}'.")));
+                }
+                let reason = comment.map(str::trim).filter(|c| !c.is_empty());
+                if decision == "done" {
+                    let data = state.find_record(slug, &instance.record_id).map_err(ServiceError::Internal)?.map(|r| r.data).unwrap_or(Value::Null);
+                    let blank: Vec<&str> = require.iter().filter(|f| !crate::service::task_grants::filled(data.get(f.as_str()))).map(String::as_str).collect();
+                    if !blank.is_empty() {
+                        return Err(ServiceError::BadRequest(format!("Fill {} before you finish this task.", blank.join(", "))));
+                    }
+                }
+                if decision == "decline" && *decline_reason && reason.is_none() {
+                    return Err(ServiceError::BadRequest("Say why you decline this task.".to_string()));
+                }
+                if let Some(r) = reason {
+                    instance.log.push(format!("{decision} by {}: {r}", caller.eppn));
+                }
                 // Process v2 phase 4: a committee step counts votes instead of taking one decision.
                 if !rule_decision.is_single() {
                     let committee = crate::service::process_votes::Committee { decision: *rule_decision, reject_rule: *reject_rule, approve, reject };
                     return crate::service::process_votes::vote(caller, slug, instance, &waiting_step_id, &decision, comment, &committee, state);
                 }
                 found_step = true;
-                let actions = if decision == "approve" { approve } else { reject };
+                let actions = if decision == "approve" || decision == "done" { approve } else { reject };
                 field_effects = step_effects(actions, &mut instance.log);
             }
         }
@@ -383,7 +413,7 @@ pub fn decide_process(
         payload: decision_payload,
     };
     let was_waiting_at = waiting_step_id.clone();
-    instance.status = if decision == "approve" { ProcessStatus::Completed } else { ProcessStatus::Rejected };
+    instance.status = if decision == "approve" || decision == "done" { ProcessStatus::Completed } else { ProcessStatus::Rejected };
     instance.waiting_step_id = None;
     // One transaction: lock the instance, check it is still waiting at this step, then write the record, the new
     // state, and the ledger entry. A second decision on the same step finds it decided and writes nothing.
@@ -413,7 +443,7 @@ pub(crate) fn tell_decision(state: &SharedState, slug: &str, instance: &ProcessI
         app: crate::notifications::AppRef(slug.to_string()),
         table: crate::notifications::TableRef(table),
         step: crate::notifications::StepRef(instance.id.clone()),
-        approved: crate::notifications::Flag(decision == "approve"),
+        approved: crate::notifications::Flag(decision == "approve" || decision == "done"),
     };
     let _ = crate::notifications::notify(state, &crate::notifications::Recipients::People(people), Some(by), &notice);
 }

@@ -85,7 +85,7 @@ fn three_steps(slug: &str) -> AutomationRule {
                     prompt: "Dean review".into(),
                     approve: vec![ActionType::UpdateRecordStatus { new_status: "Admitted".into() }],
                     reject: vec![],
-                    approver: Some(scaffoldry_core::approver::ApproverSpec::Person { eppn: OWNER.to_string() }), due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
+                    approver: Some(scaffoldry_core::approver::ApproverSpec::Person { eppn: OWNER.to_string() }), due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(), kind: Default::default(), show: vec![], fill: vec![], require: vec![], decline_reason: false,
                 },
             },
             ProcessStep { id: "notify".into(), when: vec![], kind: StepKind::Service { action: ActionType::UpdateRecordStatus { new_status: "Done".into() } } },

@@ -82,6 +82,9 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "vote_closing",
     "committee_votes",
     "tell_decision",
+    // Workflows phase 4: a step's task grants read its record for the table id only. The grant itself is checked where
+    // a record is read or written through it.
+    "task_grants_for",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
 ];

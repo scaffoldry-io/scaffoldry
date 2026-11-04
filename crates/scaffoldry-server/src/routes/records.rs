@@ -400,9 +400,7 @@ async fn get_record(
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
-    authorize_app(&user, &slug, AppAction::Read, &state)
-        .map_err(ServiceError::into_pair)?;
-
+    // The service checks the app read, and, without it, a task grant on this one record (workflows phase 4).
     let record = crate::service::records::get_record(&user, &slug, &id, &state).map_err(ServiceError::into_pair)?;
     Ok(Json(record))
 }
@@ -416,9 +414,7 @@ async fn update_record(
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
-    authorize_app(&user, &slug, AppAction::WriteRecords, &state)
-        .map_err(ServiceError::into_pair)?;
-
+    // The service checks the app write, and, without it, a task grant on this one record (workflows phase 4).
     let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
     crate::service::records::update_record(&user, &origin, &slug, &id, &payload, &state)
         .map(Json)

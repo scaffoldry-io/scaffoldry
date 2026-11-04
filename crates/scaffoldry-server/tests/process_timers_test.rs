@@ -122,7 +122,7 @@ impl World {
                     on_due,
                     on_fail,
                     decision: Default::default(),
-                    reject_rule: Default::default(),
+                    reject_rule: Default::default(), kind: Default::default(), show: vec![], fill: vec![], require: vec![], decline_reason: false,
                 },
             }],
         }

@@ -100,6 +100,7 @@ const SCHEMA_0092: &str = include_str!("../../scaffoldry-core/migrations/0092_fl
 const SCHEMA_0093: &str = include_str!("../../scaffoldry-core/migrations/0093_flow_state.sql");
 const SCHEMA_0094: &str = include_str!("../../scaffoldry-core/migrations/0094_process_timers.sql");
 const SCHEMA_0095: &str = include_str!("../../scaffoldry-core/migrations/0095_process_votes.sql");
+const SCHEMA_0096: &str = include_str!("../../scaffoldry-core/migrations/0096_task_grants.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1193,6 +1194,7 @@ impl PostgresRepository {
                             ("0093_flow_state.sql", SCHEMA_0093),
                             ("0094_process_timers.sql", SCHEMA_0094),
                             ("0095_process_votes.sql", SCHEMA_0095),
+                            ("0096_task_grants.sql", SCHEMA_0096),
                         ];
 
                         let mut fresh_install = false;
@@ -2900,7 +2902,8 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let inst_json = serde_json::to_value(&inst)?;
             let status_str = status_name(&inst.status);
-            client.execute(
+            let mut tx = client.transaction()?;
+            tx.execute(
                 "INSERT INTO process_instances (id, app_slug, rule_id, status, instance_json, updated_at)                  VALUES ($1, $2, $3, $4, $5, NOW())                  ON CONFLICT (id) DO UPDATE SET                     app_slug = EXCLUDED.app_slug,                     rule_id = EXCLUDED.rule_id,                     status = EXCLUDED.status,                     instance_json = EXCLUDED.instance_json,                     updated_at = NOW()",
                 &[
                     &inst.id,
@@ -2910,6 +2913,11 @@ impl PostgresRepository {
                     &inst_json,
                 ],
             )?;
+            // Workflows phase 4: an instance that is no longer waiting holds no task grants.
+            if inst.status != ProcessStatus::Waiting {
+                crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &inst.id)?;
+            }
+            tx.commit()?;
             Ok(())
         })
     }
@@ -2919,8 +2927,15 @@ impl PostgresRepository {
     /// Starts an instance waiting at its step, and writes its `started`, `step_entered` and `waiting` events in the same
     /// transaction (process v2, phase 1). `approvers` is how many people may decide the step now.
     /// Process v2 phase 3: the step's `timers` are written in the same transaction, after any left from an earlier run.
-    pub fn start_process_instance(&self, inst: &ProcessInstance, approvers: usize, timers: &[crate::repository_timers::NewTimer]) -> Result<bool, RepositoryError> {
-        let (inst, timers) = (inst.clone(), timers.to_vec());
+    /// Workflows phase 4: the step's task `grants` open in the same transaction, after closing any left from before.
+    pub fn start_process_instance(
+        &self,
+        inst: &ProcessInstance,
+        approvers: usize,
+        timers: &[crate::repository_timers::NewTimer],
+        grants: &[crate::repository_task_grants::NewGrant],
+    ) -> Result<bool, RepositoryError> {
+        let (inst, timers, grants) = (inst.clone(), timers.to_vec(), grants.to_vec());
         self.with_client(move |client| {
             let json = serde_json::to_value(&inst)?;
             let mut tx = client.transaction()?;
@@ -2944,6 +2959,10 @@ impl PostgresRepository {
                 crate::repository_timers::cancel_timers_in_tx(&mut tx, &inst.id)?;
                 crate::repository_timers::insert_timers_in_tx(&mut tx, &inst.id, &timers)?;
                 crate::repository_votes::clear_votes_in_tx(&mut tx, &inst.id)?;
+                crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &inst.id)?;
+                if let Some(step) = inst.waiting_step_id.as_deref() {
+                    crate::repository_task_grants::open_task_grants_in_tx(&mut tx, &inst.id, step, &grants)?;
+                }
             }
             tx.commit()?;
             Ok(n > 0)
@@ -3008,6 +3027,8 @@ impl PostgresRepository {
             process_event_in_tx(&mut tx, &next, None, "completed", Some(&actor), &serde_json::json!({ "status": status }))?;
             // Process v2 phase 3: a decided step never escalates.
             crate::repository_timers::cancel_timers_in_tx(&mut tx, &next.id)?;
+            // Workflows phase 4: nor does anyone keep a task grant on it.
+            crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &next.id)?;
             append_ledger_in_tx(&mut tx, ledger)?;
             tx.commit()?;
             Ok(Decided::Done)
