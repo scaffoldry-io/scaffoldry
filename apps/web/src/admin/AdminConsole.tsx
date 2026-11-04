@@ -1,3 +1,4 @@
+import { ProcessInsightsPanel } from "../ProcessInsights";
 import React, { useState, useEffect } from "react";
 import { Overview } from "./Overview";
 import { Jobs } from "./Jobs";
@@ -22,8 +23,8 @@ export interface AdminConsoleProps {
   navigateTo?: (path: string) => void;
   /** The path the console is showing, for sections with views of their own. */
   currentPath?: string;
-  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -61,7 +62,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -136,6 +137,8 @@ export function AdminConsole({
         <OutsideApps />
       ) : currentTab === "holds" ? (
         <LegalHolds />
+      ) : currentTab === "processes" ? (
+        <ProcessInsightsPanel />
       ) : currentTab === "secrets" ? (
         <Secrets />
       ) : currentTab === "library" ? (

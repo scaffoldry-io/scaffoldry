@@ -95,6 +95,7 @@ const SCHEMA_0087: &str = include_str!("../../scaffoldry-core/migrations/0087_em
 const SCHEMA_0088: &str = include_str!("../../scaffoldry-core/migrations/0088_me_events.sql");
 const SCHEMA_0089: &str = include_str!("../../scaffoldry-core/migrations/0089_delegations.sql");
 const SCHEMA_0090: &str = include_str!("../../scaffoldry-core/migrations/0090_notification_prefs.sql");
+const SCHEMA_0091: &str = include_str!("../../scaffoldry-core/migrations/0091_process_v2.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1166,6 +1167,7 @@ impl PostgresRepository {
                             ("0088_me_events.sql", SCHEMA_0088),
                             ("0089_delegations.sql", SCHEMA_0089),
                             ("0090_notification_prefs.sql", SCHEMA_0090),
+                            ("0091_process_v2.sql", SCHEMA_0091),
                         ];
 
                         let mut fresh_install = false;
@@ -2882,17 +2884,32 @@ impl PostgresRepository {
 
     /// Stores an instance a rule has just started. An instance that is already waiting is left as it is, so a second
     /// start for the same record does not reset a step someone may be deciding. Returns whether it was stored.
-    pub fn start_process_instance(&self, inst: &ProcessInstance) -> Result<bool, RepositoryError> {
+    /// Starts an instance waiting at its step, and writes its `started`, `step_entered` and `waiting` events in the same
+    /// transaction (process v2, phase 1). `approvers` is how many people may decide the step now.
+    pub fn start_process_instance(&self, inst: &ProcessInstance, approvers: usize) -> Result<bool, RepositoryError> {
         let inst = inst.clone();
         self.with_client(move |client| {
             let json = serde_json::to_value(&inst)?;
-            let n = client.execute(
+            let mut tx = client.transaction()?;
+            let n = tx.execute(
                 "INSERT INTO process_instances (id, app_slug, rule_id, status, instance_json, updated_at) VALUES ($1, $2, $3, $4, $5, NOW()) \
                  ON CONFLICT (id) DO UPDATE SET app_slug = EXCLUDED.app_slug, rule_id = EXCLUDED.rule_id, status = EXCLUDED.status, \
                      instance_json = EXCLUDED.instance_json, updated_at = NOW() \
                  WHERE process_instances.status <> 'Waiting'",
                 &[&inst.id, &inst.app_slug, &inst.rule_id, &status_name(&inst.status), &json],
             )?;
+            if n > 0 {
+                let step = inst.waiting_step_id.clone();
+                let actor = inst.started_by.clone();
+                for (kind, step, detail) in [
+                    ("started", None, serde_json::json!({})),
+                    ("step_entered", step.clone(), serde_json::json!({})),
+                    ("waiting", step.clone(), serde_json::json!({ "approvers": approvers })),
+                ] {
+                    process_event_in_tx(&mut tx, &inst, step.as_deref(), kind, actor.as_deref(), &detail)?;
+                }
+            }
+            tx.commit()?;
             Ok(n > 0)
         })
     }
@@ -2946,6 +2963,13 @@ impl PostgresRepository {
                 "UPDATE process_instances SET status = $2, instance_json = $3, updated_at = NOW() WHERE id = $1",
                 &[&next.id, &status_name(&next.status), &json],
             )?;
+            // Process v2, phase 1: the decision, the step left, and how the instance ended.
+            let actor = ledger.principal.clone();
+            let decision = if next.status == ProcessStatus::Completed { "approve" } else { "reject" };
+            let status = status_name(&next.status);
+            process_event_in_tx(&mut tx, &next, Some(&step), "decided", Some(&actor), &serde_json::json!({ "decision": decision }))?;
+            process_event_in_tx(&mut tx, &next, Some(&step), "step_left", Some(&actor), &serde_json::json!({}))?;
+            process_event_in_tx(&mut tx, &next, None, "completed", Some(&actor), &serde_json::json!({ "status": status }))?;
             append_ledger_in_tx(&mut tx, ledger)?;
             tx.commit()?;
             Ok(Decided::Done)
@@ -4135,5 +4159,14 @@ fn guard_last_owner(
             "{name} would be left with no owner. Make someone else an owner first, or use Ownership in the console to hand it over."
         )));
     }
+    Ok(())
+}
+
+/// One process event, in the caller's transaction. It names the instance, the rule and the step, never a value.
+fn process_event_in_tx(tx: &mut postgres::Transaction<'_>, inst: &ProcessInstance, step: Option<&str>, kind: &str, actor: Option<&str>, detail: &Value) -> Result<(), RepositoryError> {
+    tx.execute(
+        "INSERT INTO process_events (instance_id, app_slug, rule_id, rule_version, step_id, kind, actor, detail) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        &[&inst.id, &inst.app_slug, &inst.rule_id, &(inst.rule_version as i32), &step, &kind, &actor, detail],
+    )?;
     Ok(())
 }
