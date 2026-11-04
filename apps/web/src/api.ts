@@ -1625,6 +1625,23 @@ export const apiClient = {
     return request<import("./flows/TestRun").TestRunResult>(`/flows/${encodeURIComponent(flowId)}/test-run`, { method: "POST", body: JSON.stringify(body) });
   },
 
+  /** Workflows phase 10: a flow's runs, newest first, with its failure rate and breaker. */
+  flowRuns: async (flowId: string, status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request<any>(`/flows/${encodeURIComponent(flowId)}/runs${qs}`);
+  },
+
+  /** One run's timeline. No field values. */
+  flowRun: async (instanceId: string) => request<any>(`/flows/runs/${encodeURIComponent(instanceId)}`),
+
+  /** Retries a failed run, with a reason. Owners and administrators only. */
+  retryFlowRun: async (instanceId: string, reason: string) =>
+    request<any>(`/flows/runs/${encodeURIComponent(instanceId)}/retry`, { method: "POST", body: JSON.stringify({ reason }) }),
+
+  /** A flow's stored versions, and a comparison of two. */
+  flowVersions: async (flowId: string) => request<any>(`/flows/${encodeURIComponent(flowId)}/versions`),
+  compareFlowVersions: async (flowId: string, from: number, to: number) => request<any>(`/flows/${encodeURIComponent(flowId)}/versions/compare?from=${from}&to=${to}`),
+
   /** Saves a rule. A 202 means a person must approve it first, and nothing is live. */
   submitRule: async (appSlug: string, rule: unknown): Promise<SaveOutcome> => {
     const res = await requestFull<{ proposal_id?: string }>(`/apps/${appSlug}/automations`, {

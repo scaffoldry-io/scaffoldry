@@ -118,14 +118,22 @@ interface CanvasProps {
   width?: number;
   /** Workflows phase 9: the last test run's trace, to mark the path it took. */
   trace?: TraceEntry[] | null;
+  /** Workflows phase 10: a comparison's mark for each step id, against the other version. */
+  marks?: Record<string, { change: "added" | "changed" | "removed" | "same"; against: number }>;
+  /** Draws the flow without editing: no `+`, no inspector, no drag and no editing keys. */
+  readOnly?: boolean;
+  /** The canvas's accessible name. */
+  label?: string;
 }
+
+const MARK_WORD: Record<string, string> = { added: "Added", changed: "Changed", removed: "Removed" };
 
 const OP_WORDS: Record<string, string> = { Equals: "is", NotEquals: "is not", GreaterThan: "is greater than", LessThan: "is less than", Contains: "contains" };
 
 const ZOOM = 1.25;
 const PAN = 40;
 
-export function Canvas({ state, dispatch, fields, appSlug, problems, width, trace }: CanvasProps) {
+export function Canvas({ state, dispatch, fields, appSlug, problems, width, trace, marks, readOnly, label }: CanvasProps) {
   const flow = state.flow;
   const L = useMemo(() => layout(flow), [flow]);
   const [zoom, setZoom] = useState(1);
@@ -211,7 +219,7 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width, trac
   };
 
   return (
-    <div role="group" aria-label="Flow canvas" tabIndex={0} onKeyDown={onCanvasKey} className="relative space-y-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-lg" style={width ? { width } : undefined}>
+    <div role="group" aria-label={label ?? "Flow canvas"} tabIndex={0} onKeyDown={onCanvasKey} className="relative space-y-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-lg" style={width ? { width } : undefined}>
       <div className="flex flex-wrap items-center gap-1">
         <button type="button" className={small} aria-label="Zoom in" onClick={() => setZoom((z) => z * ZOOM)}>
           +
@@ -285,6 +293,9 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width, trac
             const name = b.path
               ? `step ${numberOf(b.path)}: ${KIND_WORD[b.kind]}. ${words}${mine.length ? `. Problem: ${mine.map((p) => p.message).join(" ")}` : ""}${ran ? `. ${traceName(ran)}` : ""}`
               : `${KIND_WORD.trigger}. ${words}`;
+            const mark = step ? marks?.[step.id] : undefined;
+            const marked = mark && mark.change !== "same" ? mark : undefined;
+            const fullName = marked ? `${name}. Compared with version ${marked.against}: ${marked.change}` : name;
             const skipped = ran?.outcome === SKIPPED;
             const failed = ran?.outcome === "failed";
             const runWord = !ran ? null : skipped ? "Skipped" : failed ? "Failed" : "On the path";
@@ -294,15 +305,15 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width, trac
               <g
                 key={b.key}
                 role={interactive ? "button" : "img"}
-                aria-label={name}
+                aria-label={fullName}
                 aria-pressed={interactive ? isSel : undefined}
                 tabIndex={interactive ? 0 : undefined}
                 className={interactive ? "cursor-pointer focus:outline-none" : undefined}
-                onKeyDown={interactive ? (e) => onNodeKey(e, b) : undefined}
-                onClick={interactive ? () => setSelected(b.key) : undefined}
-                onMouseDown={interactive ? () => (dragging.current = b.path) : undefined}
+                onKeyDown={interactive && !readOnly ? (e) => onNodeKey(e, b) : undefined}
+                onClick={interactive && !readOnly ? () => setSelected(b.key) : undefined}
+                onMouseDown={interactive && !readOnly ? () => (dragging.current = b.path) : undefined}
                 onMouseUp={
-                  interactive
+                  interactive && !readOnly
                     ? (e) => {
                         // Dropped on a step: it goes before that step.
                         if (dragging.current && dragging.current.join() !== b.path!.join()) {
@@ -319,10 +330,16 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width, trac
                   width={b.w}
                   height={b.h}
                   rx={b.kind === "decision" ? 18 : 8}
-                  strokeWidth={isSel || (ran && !skipped) ? 3 : 1.5}
+                  strokeWidth={isSel || (ran && !skipped) || marked ? 3 : 1.5}
+                  strokeDasharray={marked?.change === "removed" ? "6 4" : undefined}
                   opacity={skipped ? 0.45 : 1}
                   className={`${KIND_FILL[b.kind]} ${mine.length || failed ? "!stroke-rose-600" : ran && !skipped ? "!stroke-emerald-600" : ""}`}
                 />
+                {marked && (
+                  <text x={b.x + b.w - 8} y={b.y + 15} textAnchor="end" className={`text-[10px] font-bold ${marked.change === "removed" ? "fill-rose-600" : marked.change === "added" ? "fill-emerald-700 dark:fill-emerald-300" : "fill-amber-700 dark:fill-amber-300"}`}>
+                    {MARK_WORD[marked.change]}
+                  </text>
+                )}
                 {runWord && (
                   <text x={b.x + b.w - 8} y={b.y + b.h - 6} textAnchor="end" className={`text-[10px] font-semibold ${skipped ? "fill-slate-400" : failed ? "fill-rose-600" : "fill-emerald-700 dark:fill-emerald-300"}`}>
                     {runWord}
@@ -345,7 +362,7 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width, trac
             );
           })}
 
-          {L.inserts.map((ins) => {
+          {!readOnly && L.inserts.map((ins) => {
             const label = insertLabel(flow, ins.path);
             return (
               <g
@@ -389,7 +406,7 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width, trac
           })}
         </svg>
 
-        {selectedStep && selectedBox?.path && (
+        {!readOnly && selectedStep && selectedBox?.path && (
           <section role="region" aria-label="Inspector" className="lg:w-80 shrink-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-2">
             <div className="flex items-center justify-between">
               <h5 className="font-bold text-slate-900 dark:text-white">Step {numberOf(selectedBox.path)}</h5>

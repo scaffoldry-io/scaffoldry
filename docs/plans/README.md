@@ -274,7 +274,7 @@ People are told, see each other work, and run real committee processes.
 | 160 | [workflows.md](workflows.md) | 7 | Flow editor: one command model, the outline, and server validation | **COMPLETED** |
 | 161 | [workflows.md](workflows.md) | 8 | Flow editor: the block-structured canvas | **COMPLETED** |
 | 162 | [workflows.md](workflows.md) | 9 | Test run with a trace on the canvas | **COMPLETED** |
-| 163 | [workflows.md](workflows.md) | 10 | Run history, safe retry, and version comparison |
+| 163 | [workflows.md](workflows.md) | 10 | Run history, safe retry, and version comparison | **COMPLETED** |
 
 ### Wave 4 — ecosystem and reach
 

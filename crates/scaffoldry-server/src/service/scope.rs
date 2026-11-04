@@ -65,6 +65,9 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "find_records",
     "load",
     "run_automations_in",
+    // Workflows phase 10: a retry reads the run's trigger record again to run the flow under its grants. The timeline
+    // it leaves names records by id; it returns no value to the caller.
+    "retry_run",
     // Process v2 phase 2: the hourly date scan reads a due record to start its rule, as its creator, through
     // `run_automations`. It returns nothing to a caller.
     "start_dated",
