@@ -88,6 +88,7 @@ fn fast() -> JobConfig {
         scheduler_secs: 1,
         backoff_secs: [1, 2, 4],
         on_finish: None,
+        state: None,
     }
 }
 

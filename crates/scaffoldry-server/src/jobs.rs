@@ -212,6 +212,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::mail::send_digests_job,
     },
     JobKind {
+        name: "scan_date_triggers",
+        title: "Starting processes on their dates",
+        description: "Starts each process whose date trigger came due since the last scan, once for each record and date, reading the date field's index.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::date_triggers::scan_job,
+    },
+    JobKind {
         name: "library_fetch",
         title: "Checking policy sources",
         description: "Fetches the web sources of the policy library that are due, at most once a day each, and marks the rules whose cited passages left them.",
@@ -357,6 +365,18 @@ pub struct JobConfig {
     pub backoff_secs: [i64; 3],
     pub scheduler_secs: u64,
     pub on_finish: Option<OnFinish>,
+    /// The server's state, for the jobs that start processes: they need the live rules and apps, as a request does.
+    pub state: Option<JobState>,
+}
+
+/// The server's state, handed to jobs through `JobCtx::state`.
+#[derive(Clone)]
+pub struct JobState(pub crate::state::SharedState);
+
+impl std::fmt::Debug for JobState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("JobState")
+    }
 }
 
 impl Default for JobConfig {
@@ -374,6 +394,7 @@ impl Default for JobConfig {
             backoff_secs: [30, 300, 1800],
             scheduler_secs: 15,
             on_finish: None,
+            state: None,
         }
     }
 }
@@ -947,9 +968,15 @@ pub struct JobCtx {
     lock_secs: f64,
     heartbeat: Duration,
     last_beat: Cell<Instant>,
+    state: Option<crate::state::SharedState>,
 }
 
 impl JobCtx {
+    /// The server's state, when the runner was given it.
+    pub fn state(&self) -> Option<&crate::state::SharedState> {
+        self.state.as_ref()
+    }
+
     /// The id of the job this context runs.
     pub fn job_id(&self) -> Uuid {
         self.id
@@ -1168,6 +1195,7 @@ fn run_job(
         lock_secs: cfg.lock_secs as f64,
         heartbeat: Duration::from_secs(cfg.heartbeat_secs),
         last_beat: Cell::new(Instant::now()),
+        state: cfg.state.as_ref().map(|s| s.0.clone()),
     };
     let outcome = match catch_unwind(AssertUnwindSafe(|| (kind.run)(&ctx, job.payload.clone()))) {
         Ok(result) => result,

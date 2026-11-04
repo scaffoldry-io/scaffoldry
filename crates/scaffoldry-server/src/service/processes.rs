@@ -42,13 +42,14 @@ fn computed_names(m: &AppManifest) -> BTreeSet<String> {
 /// Every action a rule holds, wherever it sits.
 pub fn all_actions(rule: &AutomationRule) -> Vec<&ActionType> {
     let mut out: Vec<&ActionType> = rule.actions.iter().collect();
-    for step in &rule.steps {
+    for step in scaffoldry_core::workflow::all_steps(&rule.steps) {
         match &step.kind {
             StepKind::Service { action } => out.push(action),
             StepKind::UserTask { approve, reject, .. } => {
                 out.extend(approve.iter());
                 out.extend(reject.iter());
             }
+            StepKind::Branch { .. } => {}
         }
     }
     out
@@ -66,8 +67,14 @@ pub fn fields_set(rule: &AutomationRule) -> BTreeSet<String> {
 /// The fields a rule reads in a condition.
 pub fn fields_read(rule: &AutomationRule) -> BTreeSet<String> {
     let mut out: BTreeSet<String> = rule.predicates.iter().map(|p| p.field_name.clone()).collect();
-    for step in &rule.steps {
+    for step in scaffoldry_core::workflow::all_steps(&rule.steps) {
         out.extend(step.when.iter().map(|p: &FieldPredicate| p.field_name.clone()));
+        // A branch's conditions read the record too.
+        if let StepKind::Branch { branches, .. } = &step.kind {
+            for b in branches {
+                out.extend(b.when.iter().map(|p| p.field_name.clone()));
+            }
+        }
     }
     if let TriggerEvent::FieldChanged { field_name } = &rule.trigger {
         out.insert(field_name.clone());
@@ -83,7 +90,7 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
     let computed = computed_names(manifest);
 
     let mut seen = HashSet::new();
-    for step in &rule.steps {
+    for step in scaffoldry_core::workflow::all_steps(&rule.steps) {
         if !seen.insert(step.id.as_str()) {
             problems.push(format!("step id '{}' is used twice", step.id));
         }
@@ -93,10 +100,11 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
             }
         }
     }
-    for step in &rule.steps {
+    for step in scaffoldry_core::workflow::all_steps(&rule.steps) {
         let actions: Vec<&ActionType> = match &step.kind {
             StepKind::Service { action } => vec![action],
             StepKind::UserTask { approve, reject, .. } => approve.iter().chain(reject.iter()).collect(),
+            StepKind::Branch { .. } => vec![],
         };
         if actions.iter().any(|a| matches!(a, ActionType::WebhookDispatch { .. })) {
             problems.push(format!("step '{}' is a webhook, which a rule may not hold", step.id));
@@ -105,6 +113,7 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
     if rule.actions.iter().any(|a| matches!(a, ActionType::WebhookDispatch { .. })) {
         problems.push("a rule may not hold a webhook".to_string());
     }
+    problems.extend(structure_problems(manifest, rule, state));
     if crate::service::flows::is_flow(rule) {
         let limit = crate::service::flows::max_steps(state);
         if rule.steps.len() as i64 > limit {
@@ -122,6 +131,80 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
     for name in fields_set(rule) {
         if computed.contains(&name) {
             problems.push(format!("the rule sets the computed field '{name}'"));
+        }
+    }
+    problems
+}
+
+/// Process v2 phase 2: branches, triggers, and records a rule creates.
+fn structure_problems(manifest: &AppManifest, rule: &AutomationRule, state: &SharedState) -> Vec<String> {
+    use scaffoldry_core::workflow::{all_steps, MAX_BRANCH_DEPTH, MAX_BRANCH_STEPS, MAX_RULE_STEPS};
+    use scaffoldry_engine::FieldType;
+    let mut problems = Vec::new();
+    // Branches nest at most two levels. The step that goes deeper is named.
+    fn deep(steps: &[scaffoldry_core::ProcessStep], level: usize, out: &mut Vec<String>) {
+        for s in steps {
+            if let StepKind::Branch { branches, otherwise } = &s.kind {
+                if level > MAX_BRANCH_DEPTH {
+                    out.push(format!("step '{}': branches nest {level} levels deep here, and the most is two levels", s.id));
+                    continue;
+                }
+                for b in branches {
+                    deep(&b.steps, level + 1, out);
+                }
+                deep(otherwise, level + 1, out);
+            }
+        }
+    }
+    deep(&rule.steps, 1, &mut problems);
+    let count = all_steps(&rule.steps).len();
+    if count > MAX_RULE_STEPS {
+        problems.push(format!("the rule has {count} steps, and the most is {MAX_RULE_STEPS}"));
+    }
+    for s in all_steps(&rule.steps) {
+        if let StepKind::Branch { branches, otherwise } = &s.kind {
+            for steps in branches.iter().map(|b| &b.steps).chain(std::iter::once(otherwise)) {
+                let n = all_steps(steps).len();
+                if n > MAX_BRANCH_STEPS {
+                    problems.push(format!("step '{}': one branch has {n} steps, and the most is {MAX_BRANCH_STEPS}", s.id));
+                }
+            }
+        }
+    }
+    let field_in = |m: &AppManifest, name: &str| m.tables.iter().flat_map(|t| t.fields.iter()).find(|f| f.name == name).cloned();
+    match &rule.trigger {
+        TriggerEvent::Manual => {
+            let pressed = manifest.tables.iter().flat_map(|t| t.fields.iter()).any(|f| f.field_type == FieldType::Button && f.button_rule.as_deref() == Some(rule.id.as_str()));
+            if !pressed {
+                problems.push(format!("the rule '{}' starts by hand, and no button field in the app names it. Add a Button field whose rule is '{}'", rule.id, rule.id));
+            }
+        }
+        TriggerEvent::DateField { field, .. } => match field_in(manifest, field) {
+            None => problems.push(format!("the date trigger names the field '{field}', which the app does not have")),
+            Some(f) if !matches!(f.field_type, FieldType::Date | FieldType::DateTime) => {
+                problems.push(format!("the date trigger names the field '{field}', which is not a date field"))
+            }
+            Some(f) if !f.indexed => problems.push(format!("the date field '{field}' is not indexed. Mark it indexed, so the hourly scan reads the index and not the table")),
+            Some(_) => {}
+        },
+        _ => {}
+    }
+    // A record a rule creates must have every required field. One created in the table that starts the rule would start
+    // it again.
+    let manifests = crate::service::flows::manifests_with(state, manifest, rule);
+    let trigger_table = scaffoldry_engine::flow::trigger_table(rule, &manifests);
+    for step in all_steps(&rule.steps) {
+        let StepKind::Service { action: ActionType::CreateRecord { app, table, fields, .. } } = &step.kind else { continue };
+        if let Some(t) = manifests.iter().find(|m| &m.slug == app).and_then(|m| m.tables.iter().find(|t| &t.id == table)) {
+            for f in t.fields.iter().filter(|f| f.required && !f.field_type.is_computed()) {
+                if !fields.iter().any(|(n, _)| n == &f.name) {
+                    problems.push(format!("step '{}': a record created in '{table}' needs its required field '{}'", step.id, f.name));
+                }
+            }
+        }
+        let starts_itself = app == &rule.app_slug && trigger_table.as_deref() == Some(table.as_str()) && matches!(rule.trigger, TriggerEvent::RecordCreated);
+        if starts_itself {
+            problems.push(format!("step '{}' creates a record in '{table}', the table whose new records start this rule, so the rule would start itself", step.id));
         }
     }
     problems
@@ -215,7 +298,7 @@ pub fn decide_process(
     let mut found_step = false;
     let mut field_effects = Vec::new();
     if let Some(rule) = rule_for(state, &instance) {
-        if let Some(step) = rule.steps.iter().find(|s| s.id == waiting_step_id) {
+        if let Some(step) = scaffoldry_core::workflow::find_step(&rule.steps, &waiting_step_id) {
             if let StepKind::UserTask { approve, reject, .. } = &step.kind {
                 found_step = true;
                 let actions = if decision == "approve" { approve } else { reject };

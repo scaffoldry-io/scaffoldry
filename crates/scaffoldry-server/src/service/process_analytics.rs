@@ -86,7 +86,7 @@ pub fn analytics(caller: &AuthUser, app_slug: &str, q: &HashMap<String, String>,
         rules
             .iter()
             .find(|r| r.id == rule_id)
-            .and_then(|r| r.steps.iter().find(|s| s.id == step_id))
+            .and_then(|r| scaffoldry_core::workflow::find_step(&r.steps, step_id))
             .map(|s| match &s.kind {
                 StepKind::UserTask { prompt, .. } if !prompt.trim().is_empty() => prompt.clone(),
                 _ => s.id.clone(),

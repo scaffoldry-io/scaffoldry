@@ -65,6 +65,9 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "find_records",
     "load",
     "run_automations_in",
+    // Process v2 phase 2: the hourly date scan reads a due record to start its rule, as its creator, through
+    // `run_automations`. It returns nothing to a caller.
+    "start_dated",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
 ];

@@ -272,7 +272,7 @@ fn step_prompt(state: &SharedState, instance: &str) -> Option<(String, String)> 
     let inst = state.repository.get_process_instance(instance).ok().flatten()?;
     let rule = crate::service::processes::rule_for(state, &inst)?;
     let step_id = inst.waiting_step_id.clone().or_else(|| rule.steps.first().map(|s| s.id.clone()))?;
-    let step = rule.steps.iter().find(|s| s.id == step_id)?;
+    let step = scaffoldry_core::workflow::find_step(&rule.steps, &step_id)?;
     match &step.kind {
         scaffoldry_core::workflow::StepKind::UserTask { prompt, .. } => Some((prompt.clone(), inst.record_id.clone())),
         _ => None,

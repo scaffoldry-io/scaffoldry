@@ -46,6 +46,7 @@ impl AutomationEngine {
                 effects: vec![],
                 waiting_instance: None,
                 execution_timestamp: timestamp,
+                branches: vec![],
             };
         }
 
@@ -61,6 +62,8 @@ impl AutomationEngine {
                 TriggerEvent::StatusChanged { to_status: s1 },
                 TriggerEvent::StatusChanged { to_status: s2 },
             ) => s1.eq_ignore_ascii_case(s2),
+            (TriggerEvent::Manual, TriggerEvent::Manual) => true,
+            (a @ TriggerEvent::DateField { .. }, b @ TriggerEvent::DateField { .. }) => a == b,
             _ => false,
         };
 
@@ -75,6 +78,7 @@ impl AutomationEngine {
                 effects: vec![],
                 waiting_instance: None,
                 execution_timestamp: timestamp,
+                branches: vec![],
             };
         }
 
@@ -94,6 +98,7 @@ impl AutomationEngine {
                 effects: vec![],
                 waiting_instance: None,
                 execution_timestamp: timestamp,
+                branches: vec![],
             };
         }
 
@@ -112,6 +117,7 @@ impl AutomationEngine {
                 effects: vec![],
                 waiting_instance: None,
                 execution_timestamp: timestamp,
+                branches: vec![],
             };
         }
 
@@ -127,6 +133,7 @@ impl AutomationEngine {
                 effects: vec![],
                 waiting_instance: None,
                 execution_timestamp: timestamp,
+                branches: vec![],
             };
         }
 
@@ -135,51 +142,9 @@ impl AutomationEngine {
         let mut effects = Vec::new();
         let mut waiting_instance = None;
 
+        let mut branches = Vec::new();
         if !rule.steps.is_empty() {
-            for step in &rule.steps {
-                let when_matches = step.when.is_empty()
-                    || step.when.iter().all(|pred| Self::evaluate_predicate(pred, record));
-                if !when_matches {
-                    continue;
-                }
-                match &step.kind {
-                    StepKind::Service { action } => {
-                        Self::dispatch_action(action, &mut executed, &mut effects);
-                    }
-                    StepKind::UserTask { role, prompt, .. } => {
-                        let record_id_opt = match record.get("id") {
-                            Some(Value::String(s)) => Some(s.clone()),
-                            Some(Value::Number(n)) => Some(n.to_string()),
-                            _ => None,
-                        };
-                        match record_id_opt {
-                            None => {
-                                executed.push("stopped: record has no id".to_string());
-                                break;
-                            }
-                            Some(rec_id) => {
-                                waiting_instance = Some(scaffoldry_core::ProcessInstance {
-                                    rule_version: rule.version,
-                                    id: format!("{}:{}", rule.id, rec_id),
-                                    rule_id: rule.id.clone(),
-                                    app_slug: rule.app_slug.clone(),
-                                    record_id: rec_id,
-                                    status: scaffoldry_core::ProcessStatus::Waiting,
-                                    waiting_step_id: Some(step.id.clone()),
-                                    role: Some(role.clone()),
-                                    prompt: Some(prompt.clone()),
-                                    log: vec![],
-                                    started_by: None,
-                                    started_at: String::new(),
-                                    assigned_to: None,
-                                    no_approver: None,
-                                });
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            Self::run_steps(rule, &rule.steps, record, &mut executed, &mut effects, &mut waiting_instance, &mut branches);
         } else {
             for action in &rule.actions {
                 Self::dispatch_action(action, &mut executed, &mut effects);
@@ -196,7 +161,70 @@ impl AutomationEngine {
             effects,
             waiting_instance,
             execution_timestamp: timestamp,
+            branches,
         }
+    }
+
+    /// Runs steps in order. A branch runs the steps of its first arm whose conditions hold, or its `otherwise`, and the
+    /// choice is kept. Returns true when a step stopped the run: a decision waits, or the record has no id.
+    fn run_steps(
+        rule: &AutomationRule,
+        steps: &[scaffoldry_core::ProcessStep],
+        record: &Value,
+        executed: &mut Vec<String>,
+        effects: &mut Vec<ActionEffect>,
+        waiting_instance: &mut Option<scaffoldry_core::ProcessInstance>,
+        branches: &mut Vec<(String, String)>,
+    ) -> bool {
+        for step in steps {
+            let when_matches = step.when.is_empty() || step.when.iter().all(|pred| Self::evaluate_predicate(pred, record));
+            if !when_matches {
+                continue;
+            }
+            match &step.kind {
+                StepKind::Service { action } => {
+                    Self::dispatch_action(action, executed, effects);
+                }
+                StepKind::Branch { branches: arms, otherwise } => {
+                    let taken = arms.iter().position(|b| b.when.iter().all(|pred| Self::evaluate_predicate(pred, record)));
+                    branches.push((step.id.clone(), taken.map_or_else(|| "otherwise".to_string(), |i| (i + 1).to_string())));
+                    let chosen = taken.map_or(otherwise.as_slice(), |i| arms[i].steps.as_slice());
+                    if Self::run_steps(rule, chosen, record, executed, effects, waiting_instance, branches) {
+                        return true;
+                    }
+                }
+                StepKind::UserTask { role, prompt, .. } => {
+                    let record_id_opt = match record.get("id") {
+                        Some(Value::String(s)) => Some(s.clone()),
+                        Some(Value::Number(n)) => Some(n.to_string()),
+                        _ => None,
+                    };
+                    match record_id_opt {
+                        None => executed.push("stopped: record has no id".to_string()),
+                        Some(rec_id) => {
+                            *waiting_instance = Some(scaffoldry_core::ProcessInstance {
+                                rule_version: rule.version,
+                                id: format!("{}:{}", rule.id, rec_id),
+                                rule_id: rule.id.clone(),
+                                app_slug: rule.app_slug.clone(),
+                                record_id: rec_id,
+                                status: scaffoldry_core::ProcessStatus::Waiting,
+                                waiting_step_id: Some(step.id.clone()),
+                                role: Some(role.clone()),
+                                prompt: Some(prompt.clone()),
+                                log: vec![],
+                                started_by: None,
+                                started_at: String::new(),
+                                assigned_to: None,
+                                no_approver: None,
+                            });
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        false
     }
 
 

@@ -332,6 +332,45 @@ fn link_target(state: &SharedState, app: &str, table: &str, field: &str) -> Opti
     Some((f.link_cardinality, f.link_target_table?))
 }
 
+/// Runs steps in order. Every condition reads the trigger record inside the grants, like any other read. A branch runs
+/// its first arm whose conditions hold, or `otherwise`. Returns true when a decision step stopped the run: it waits in
+/// its own instance, and this phase runs the record steps before it.
+fn run_steps(run: &mut Run<'_>, inst: &mut ProcessInstance, steps: &[scaffoldry_core::ProcessStep]) -> Result<bool, Stop> {
+    let holds = |run: &Run<'_>, when: &[scaffoldry_core::FieldPredicate]| -> Result<bool, Stop> {
+        for p in when {
+            run.may_read(&run.trigger.app_slug, &run.trigger_table, &p.field_name)?;
+        }
+        Ok(when.iter().all(|p| scaffoldry_engine::AutomationEngine::evaluate_predicate(p, &run.trigger.data)))
+    };
+    for s in steps {
+        if !holds(run, &s.when)? {
+            continue;
+        }
+        match &s.kind {
+            StepKind::Service { action } => {
+                run.step(&s.id, action)?;
+                inst.log.push(format!("Step '{}' done", s.id));
+            }
+            StepKind::Branch { branches, otherwise } => {
+                let mut chosen: Option<(usize, &[scaffoldry_core::ProcessStep])> = None;
+                for (i, b) in branches.iter().enumerate() {
+                    if holds(run, &b.when)? {
+                        chosen = Some((i + 1, &b.steps));
+                        break;
+                    }
+                }
+                let (arm, next) = chosen.map_or(("otherwise".to_string(), otherwise.as_slice()), |(i, st)| (i.to_string(), st));
+                inst.log.push(format!("Branch '{}' took {arm}", s.id));
+                if run_steps(run, inst, next)? {
+                    return Ok(true);
+                }
+            }
+            StepKind::UserTask { .. } => return Ok(true),
+        }
+    }
+    Ok(false)
+}
+
 /// Runs a flow for one trigger record, as one run with the id `run_id`. A run with an id that already ran is a retry:
 /// effects it made before are skipped by their dedupe keys. The instance is stored `Completed`, or `Failed` with the
 /// reason in its log, and returned.
@@ -370,27 +409,11 @@ pub fn run_flow(state: &SharedState, rule: &AutomationRule, trigger: &DatasetRec
     };
     let outcome = (|| {
         let limit = max_steps(state);
-        if rule.steps.len() as i64 > limit {
-            return Err(Stop(format!("the flow has {} steps, and the limit is {limit}", rule.steps.len())));
+        let count = scaffoldry_core::workflow::all_steps(&rule.steps).len();
+        if count as i64 > limit {
+            return Err(Stop(format!("the flow has {count} steps, and the limit is {limit}")));
         }
-        for s in &rule.steps {
-            // A step's condition reads the trigger record, inside the grants like any other read.
-            for p in &s.when {
-                run.may_read(&run.trigger.app_slug, &run.trigger_table, &p.field_name)?;
-            }
-            if !s.when.iter().all(|p| scaffoldry_engine::AutomationEngine::evaluate_predicate(p, &run.trigger.data)) {
-                continue;
-            }
-            match &s.kind {
-                StepKind::Service { action } => {
-                    run.step(&s.id, action)?;
-                    inst.log.push(format!("Step '{}' done", s.id));
-                }
-                // A decision step waits in its own instance. This phase runs the record steps before it.
-                StepKind::UserTask { .. } => break,
-            }
-        }
-        Ok(())
+        run_steps(&mut run, &mut inst, &rule.steps).map(|_| ())
     })();
     if let Err(Stop(reason)) = outcome {
         inst.status = ProcessStatus::Failed;

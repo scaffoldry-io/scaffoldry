@@ -184,7 +184,37 @@ pub(crate) fn sync_index(
 pub const FIND_SQL: &str = "SELECT record_id FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = $3 \
      AND (txt = $4::text OR num = $5::float8) ORDER BY record_id LIMIT $6";
 
+/// The records of a table whose indexed date field falls in `(from, to]`, by the index alone, with the date. Parameters:
+/// app, table, field, from, to, and the limit.
+pub const DUE_SQL: &str = "SELECT record_id, to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM record_index \
+     WHERE app_slug = $1 AND table_id = $2 AND field = $3 AND ts > $4 AND ts <= $5 ORDER BY ts, record_id LIMIT $6";
+
 impl PostgresRepository {
+    /// `(record id, date)` of up to `limit` records whose indexed date field falls in `(from, to]`.
+    pub fn records_due(&self, app_slug: &str, table_id: &str, field: &str, from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>, limit: i64) -> Result<Vec<(String, String)>, RepositoryError> {
+        let (slug, table, field) = (app_slug.to_string(), table_id.to_string(), field.to_string());
+        self.with_client(move |client| Ok(client.query(DUE_SQL, &[&slug, &table, &field, &from, &to, &limit])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
+    }
+
+    /// Records a key once. False when it was recorded already, so what it stands for has been done.
+    pub fn claim_once(&self, key: &str, instance_id: &str) -> Result<bool, RepositoryError> {
+        let (key, instance) = (key.to_string(), instance_id.to_string());
+        self.with_client(move |client| Ok(client.execute("INSERT INTO flow_effects (dedupe_key, instance_id) VALUES ($1, $2) ON CONFLICT (dedupe_key) DO NOTHING", &[&key, &instance])? == 1))
+    }
+
+    /// One process event outside an instance transition, such as the arm a branch took. It holds ids and the arm only.
+    pub fn record_process_event(&self, instance_id: &str, rule: &scaffoldry_core::AutomationRule, step_id: &str, kind: &str, detail: serde_json::Value) -> Result<(), RepositoryError> {
+        let (i, a, r, s, k) = (instance_id.to_string(), rule.app_slug.clone(), rule.id.clone(), step_id.to_string(), kind.to_string());
+        let rule_version = rule.version as i32;
+        self.with_client(move |client| {
+            client.execute(
+                "INSERT INTO process_events (instance_id, app_slug, rule_id, rule_version, step_id, kind, detail) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                &[&i, &a, &r, &rule_version, &s, &k, &detail],
+            )?;
+            Ok(())
+        })
+    }
+
     /// The ids of up to `limit` records of a table whose indexed field matches, as the index stores it.
     pub fn find_by_index(&self, app_slug: &str, table_id: &str, field: &str, txt: Option<String>, num: Option<f64>, limit: i64) -> Result<Vec<String>, RepositoryError> {
         let (slug, table, field) = (app_slug.to_string(), table_id.to_string(), field.to_string());

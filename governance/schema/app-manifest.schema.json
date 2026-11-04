@@ -133,7 +133,8 @@
             "LongText",
             "Duration",
             "DateTime",
-            "Attachment"
+            "Attachment",
+            "Button"
           ]
         },
         {
@@ -339,6 +340,13 @@
             "null"
           ],
           "description": "Sends the person a notification when added to a record."
+        },
+        "button_rule": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Button field: the id of the rule with a Manual trigger that pressing it starts."
         },
         "duration_format": {
           "type": [

@@ -2022,6 +2022,14 @@ fn run_automations_in(
         }
 
         let res = auto_engine.evaluate_rule(rule, &event, &modified, actor.identity, actor.department, depth);
+        if res.trigger_matched && res.conditions_met && res.cedar_authorized && !res.branches.is_empty() {
+            // Process v2 phase 2: the arm each branch took is a process event. It holds the step and the arm only.
+            let record_id = record.get("id").and_then(Value::as_str).unwrap_or("");
+            let instance = res.waiting_instance.as_ref().map(|i| i.id.clone()).unwrap_or_else(|| format!("{}:{record_id}", rule.id));
+            for (step, taken) in &res.branches {
+                let _ = state.repository.record_process_event(&instance, rule, step, "branch", serde_json::json!({ "taken": taken }));
+            }
+        }
         if res.trigger_matched && res.conditions_met && res.cedar_authorized {
             let ws_id = {
                 let eng = state.engine.read().ok();

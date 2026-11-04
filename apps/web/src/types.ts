@@ -88,6 +88,8 @@ export type FieldType =
   | "Duration"
   | "DateTime"
   | "Attachment"
+  /** A button that starts a rule with a manual trigger. It stores nothing. */
+  | "Button"
   /** A link by record id. The record holds the ids; the server keeps the mirror and the index. */
   | "Link";
 
