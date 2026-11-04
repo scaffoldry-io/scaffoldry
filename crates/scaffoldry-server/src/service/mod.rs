@@ -37,6 +37,7 @@ pub mod positions;
 pub mod processes;
 pub mod flows;
 pub mod flow_parties;
+pub mod flow_validate;
 pub mod date_triggers;
 pub mod flow_chains;
 pub mod buttons;

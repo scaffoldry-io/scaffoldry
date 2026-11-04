@@ -688,12 +688,12 @@ fn check_manifest_part(
 }
 
 /// The checks on a rules part. A rule that fails `rule_schema` stores no proposal.
-struct RulesPart {
-    rules: Vec<(AutomationRule, u32)>,
-    checks: Vec<Value>,
+pub(crate) struct RulesPart {
+    pub(crate) rules: Vec<(AutomationRule, u32)>,
+    pub(crate) checks: Vec<Value>,
 }
 
-fn check_rules_part(
+pub(crate) fn check_rules_part(
     caller: &AuthUser,
     raw: Vec<Value>,
     slug: &str,
