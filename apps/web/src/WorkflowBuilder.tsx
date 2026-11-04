@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { FieldSpec, WorkflowAutomationRule, WorkflowTriggerEvent, WorkflowActionItem, type ApproverSpec } from "./types";
 import { WhoDecides } from "./WhoDecides";
+import { RuleSteps } from "./RuleSteps";
+import { stepPreview, type DecisionChoice, type LateChoice } from "./processWords";
 import { Banner } from "./ui";
 import type { SaveOutcome } from "./api";
 
@@ -45,6 +47,19 @@ export const WorkflowBuilder: React.FC<Props> = ({
   const [addApproval, setAddApproval] = useState(false);
   const [approver, setApprover] = useState<ApproverSpec | null>(null);
   const [approvalPrompt, setApprovalPrompt] = useState("Review and decide");
+  // Process v2 phase 5: how many must agree, when the step is due, and what happens if it is late.
+  const [agree, setAgree] = useState<"Single" | "AllOf" | "AtLeast">("Single");
+  const [atLeast, setAtLeast] = useState(2);
+  const [dueDays, setDueDays] = useState(0);
+  const [late, setLate] = useState<LateChoice>("");
+  // A branch: one condition with the status it sets, and the status otherwise.
+  const [addBranch, setAddBranch] = useState(false);
+  const [branchField, setBranchField] = useState(fields[0]?.name || "");
+  const [branchOp, setBranchOp] = useState<"Equals" | "NotEquals" | "GreaterThan" | "LessThan" | "Contains">("Equals");
+  const [branchValue, setBranchValue] = useState("");
+  const [branchThen, setBranchThen] = useState("");
+  const [branchOtherwise, setBranchOtherwise] = useState("");
+  const decisionChoice: DecisionChoice = agree === "AtLeast" ? { AtLeast: Math.max(1, atLeast) } : agree;
   const [simulationResult, setSimulationResult] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -195,6 +210,35 @@ export const WorkflowBuilder: React.FC<Props> = ({
               approve: [{ UpdateRecordStatus: { new_status: "Approved" } }],
               reject: [{ UpdateRecordStatus: { new_status: "Rejected" } }],
               approver,
+              ...(decisionChoice === "Single" ? {} : { decision: decisionChoice }),
+              ...(dueDays > 0 && late
+                ? {
+                    due: { days: dueDays },
+                    on_due: [late === "Fail" ? { Fail: { reason: `Nobody decided within ${dueDays} days.` } } : late],
+                  }
+                : {}),
+            },
+          },
+        },
+      ];
+    }
+
+    if (addBranch && branchField) {
+      const setStatus = (status: string, id: string) => ({ id, when: [], kind: { Service: { action: { UpdateRecordStatus: { new_status: status } } } } });
+      newRule.steps = [
+        ...(newRule.steps ?? []),
+        {
+          id: `step-branch-${Date.now()}`,
+          when: [],
+          kind: {
+            Branch: {
+              branches: [
+                {
+                  when: [{ field_name: branchField, operator: branchOp, expected_value: branchValue }],
+                  steps: branchThen.trim() ? [setStatus(branchThen.trim(), `step-then-${Date.now()}`)] : [],
+                },
+              ],
+              otherwise: branchOtherwise.trim() ? [setStatus(branchOtherwise.trim(), `step-otherwise-${Date.now()}`)] : [],
             },
           },
         },
@@ -479,6 +523,72 @@ export const WorkflowBuilder: React.FC<Props> = ({
                   />
                 </label>
                 <WhoDecides appSlug={appSlug} onChange={setApprover} />
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-xs">
+                    <span className="block text-[11px] text-slate-500 mb-1">How many must agree</span>
+                    <select aria-label="How many must agree" value={agree} onChange={(e) => setAgree(e.target.value as typeof agree)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
+                      <option value="Single">One person</option>
+                      <option value="AllOf">All of them</option>
+                      <option value="AtLeast">At least</option>
+                    </select>
+                  </label>
+                  {agree === "AtLeast" && (
+                    <label className="block text-xs">
+                      <span className="block text-[11px] text-slate-500 mb-1">How many</span>
+                      <input aria-label="How many" type="number" min={1} value={atLeast} onChange={(e) => setAtLeast(Number(e.target.value) || 1)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                    </label>
+                  )}
+                  <label className="block text-xs">
+                    <span className="block text-[11px] text-slate-500 mb-1">Due after (days)</span>
+                    <input aria-label="Due after (days)" type="number" min={0} max={365} value={dueDays} onChange={(e) => setDueDays(Math.max(0, Number(e.target.value) || 0))} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="block text-[11px] text-slate-500 mb-1">If it is late</span>
+                    <select aria-label="If it is late" value={late} onChange={(e) => setLate(e.target.value as LateChoice)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
+                      <option value="">Nothing happens</option>
+                      <option value="Remind">Remind them</option>
+                      <option value="EscalateUp">Ask the next level</option>
+                      <option value="Fail">Fail the request</option>
+                    </select>
+                  </label>
+                </div>
+                {approver && (
+                  <p data-testid="step-preview" className="text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 rounded px-2 py-1.5">
+                    {stepPreview(approver, decisionChoice, dueDays, late)}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="pt-1 space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={addBranch} onChange={(e) => setAddBranch(e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500" />
+              <span>Add a branch</span>
+            </label>
+            {addBranch && (
+              <div className="pl-5 grid grid-cols-3 gap-2">
+                <select aria-label="Branch field" value={branchField} onChange={(e) => setBranchField(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
+                  {fields.map((f) => (
+                    <option key={f.name} value={f.name}>{f.label || f.name}</option>
+                  ))}
+                </select>
+                <select aria-label="Branch test" value={branchOp} onChange={(e) => setBranchOp(e.target.value as typeof branchOp)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
+                  <option value="Equals">is</option>
+                  <option value="NotEquals">is not</option>
+                  <option value="GreaterThan">is greater than</option>
+                  <option value="LessThan">is less than</option>
+                  <option value="Contains">contains</option>
+                </select>
+                <input aria-label="Branch value" value={branchValue} onChange={(e) => setBranchValue(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                <label className="col-span-3 block text-xs">
+                  <span className="block text-[11px] text-slate-500 mb-1">Then set status to</span>
+                  <input aria-label="Then set status to" value={branchThen} onChange={(e) => setBranchThen(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                </label>
+                <label className="col-span-3 block text-xs">
+                  <span className="block text-[11px] text-slate-500 mb-1">Otherwise set status to</span>
+                  <input aria-label="Otherwise set status to" value={branchOtherwise} onChange={(e) => setBranchOtherwise(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                </label>
               </div>
             )}
           </div>
@@ -558,6 +668,11 @@ export const WorkflowBuilder: React.FC<Props> = ({
             </div>
 
             <p className="text-slate-600 dark:text-slate-400 mb-3">{rule.description}</p>
+            {rule.steps && rule.steps.length > 0 && (
+              <div className="mb-3">
+                <RuleSteps steps={rule.steps} />
+              </div>
+            )}
 
             {/* Trigger -> Predicate -> Action Pipeline Display */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 font-mono text-[11px] bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800">

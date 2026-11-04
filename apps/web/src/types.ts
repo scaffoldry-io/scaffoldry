@@ -450,6 +450,18 @@ export type ProcessStepKind =
         approve: any[];
         reject: any[];
         approver?: ApproverSpec;
+        /** Process v2 phase 4: one person decides, or a committee votes. Left out means one person. */
+        decision?: "Single" | "AllOf" | { AtLeast: number };
+        /** Process v2 phase 3: when the step is due, and what happens then. No action approves or rejects. */
+        due?: { days: number };
+        on_due?: ("Remind" | "EscalateUp" | { Fail: { reason: string } } | { Escalate: { approver: ApproverSpec } })[];
+      };
+    }
+  | {
+      /** Process v2 phase 2: the steps of the first arm whose conditions hold run, or else `otherwise`. */
+      Branch: {
+        branches: { when: WorkflowPredicate[]; steps: ProcessStepItem[] }[];
+        otherwise: ProcessStepItem[];
       };
     };
 
