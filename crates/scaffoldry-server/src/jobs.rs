@@ -325,6 +325,27 @@ pub static JOB_KINDS: &[JobKind] = &[
     },
 ];
 
+/// A job that reached its end, for `JobConfig::on_finish`.
+#[derive(Debug, Clone)]
+pub struct FinishedJob {
+    pub id: Uuid,
+    pub kind: String,
+    pub created_by: String,
+    pub failed: bool,
+    pub payload: Value,
+    pub result: Option<Value>,
+}
+
+/// Called once for each job that ends done or failed (notifications phase 4). The server tells the owner from here.
+#[derive(Clone)]
+pub struct OnFinish(pub std::sync::Arc<dyn Fn(&FinishedJob) + Send + Sync>);
+
+impl std::fmt::Debug for OnFinish {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OnFinish")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct JobConfig {
     pub workers: usize,
@@ -335,6 +356,7 @@ pub struct JobConfig {
     /// Delay before the first, second, and third retry.
     pub backoff_secs: [i64; 3],
     pub scheduler_secs: u64,
+    pub on_finish: Option<OnFinish>,
 }
 
 impl Default for JobConfig {
@@ -351,6 +373,7 @@ impl Default for JobConfig {
             poll_ms: 500,
             backoff_secs: [30, 300, 1800],
             scheduler_secs: 15,
+            on_finish: None,
         }
     }
 }
@@ -1114,6 +1137,14 @@ fn finish(client: &mut Client, job: &ClaimedJob, worker: &str, outcome: Result<V
     };
     if let Err(e) = done {
         eprintln!("Warning: could not record the outcome of job {}: {e}", job.id);
+        return;
+    }
+    // A job that ended, done or failed, is told to the hook once. One still to retry is not.
+    if let Some(hook) = &cfg.on_finish {
+        if let Ok(Some(row)) = client.query_opt("SELECT state, created_by, result FROM jobs WHERE id = $1 AND state IN ('done', 'failed')", &[&job.id]) {
+            let state: String = row.get(0);
+            (hook.0)(&FinishedJob { id: job.id, kind: job.kind.clone(), created_by: row.get(1), failed: state == "failed", payload: job.payload.clone(), result: row.get(2) });
+        }
     }
 }
 

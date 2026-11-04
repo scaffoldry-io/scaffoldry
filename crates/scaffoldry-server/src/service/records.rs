@@ -337,6 +337,39 @@ fn validate_select_options(
 }
 
 
+/// The people a record's collaborator fields name.
+fn collaborators_in(app_slug: &str, table_id: &str, data: &Value, state: &SharedState) -> Vec<String> {
+    let manifest = state.get_app_manifest(app_slug).or_else(|| state.engine.read().ok().and_then(|e| e.resolve_by_slug(app_slug).cloned()));
+    let Some(table) = manifest.as_ref().and_then(|m| m.tables.iter().find(|t| t.id == table_id || t.slug == table_id).cloned()) else { return Vec::new() };
+    let mut out = Vec::new();
+    for field in &table.fields {
+        if matches!(field.field_type, FieldType::Collaborator { .. }) {
+            match data.get(&field.name) {
+                Some(Value::String(s)) if !s.trim().is_empty() => out.push(s.clone()),
+                Some(Value::Array(a)) => out.extend(a.iter().filter_map(Value::as_str).map(str::to_string)),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Notifications phase 4: a collaborator field that adds someone tells that person. Names only.
+fn tell_assigned(caller: &AuthUser, app_slug: &str, table: &str, record_id: &str, before: Option<&Value>, after: &Value, state: &SharedState) {
+    let had = before.map(|b| collaborators_in(app_slug, table, b, state)).unwrap_or_default();
+    let added: Vec<String> = collaborators_in(app_slug, table, after, state).into_iter().filter(|p| !had.iter().any(|h| h.eq_ignore_ascii_case(p))).collect();
+    if added.is_empty() {
+        return;
+    }
+    let notice = crate::notifications::Notice::Assigned {
+        by: crate::notifications::PersonRef(caller.eppn.clone()),
+        app: crate::notifications::AppRef(app_slug.to_string()),
+        table: crate::notifications::TableRef(table.to_string()),
+        record: crate::notifications::RecordRef(record_id.to_string()),
+    };
+    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::People(added), Some(&caller.eppn), &notice);
+}
+
 fn validate_collaborators(
     app_slug: &str,
     table_id: &str,
@@ -775,6 +808,7 @@ pub fn create_record(
 
     // Reload the record in case automations updated it
     let final_record = fetch_record(caller, app_slug, &record.id, state).unwrap_or(record);
+    tell_assigned(caller, app_slug, &table, &final_record.id, None, &final_record.data, state);
 
     crate::service::clients::note_usage(caller, state, 0, 0, 1);
     Ok(final_record)
@@ -1022,6 +1056,7 @@ pub fn update_record(
     );
 
     let final_rec = fetch_record(caller, app_slug, id, state).unwrap_or(updated_rec);
+    tell_assigned(caller, app_slug, &table, id, Some(&current.data), &final_rec.data, state);
     crate::service::clients::note_usage(caller, state, 0, 0, 1);
     Ok(final_rec)
 }
@@ -2020,6 +2055,13 @@ fn run_automations_in(
                 continue;
             }
             applied_rule_ids.push(rule.id.clone());
+            // Notifications phase 4: a Notify effect tells the people its role names, with names only.
+            for effect in &res.effects {
+                if let scaffoldry_core::workflow::ActionEffect::Notify { role, .. } = effect {
+                    let table = record.get("_table_id").and_then(Value::as_str).unwrap_or("");
+                    crate::notifications::notify_role(state, app_slug, table, role, &actor.identity.eppn);
+                }
+            }
             if !res.effects.is_empty() {
                 scaffoldry_core::workflow::apply_field_effects(&mut modified, &res.effects);
                 all_effects.extend(res.effects);
@@ -2030,7 +2072,17 @@ fn run_automations_in(
                 inst.started_by = Some(actor.identity.eppn.clone());
                 inst.started_at = Utc::now().to_rfc3339();
                 crate::service::approvers::refresh_no_approver(state, &mut inst);
-                let _ = state.repository.start_process_instance(&inst);
+                // Notifications phase 4: a step that starts waiting tells its approvers, delegates included.
+                if state.repository.start_process_instance(&inst).unwrap_or(false) {
+                    let table = record.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string();
+                    let notice = crate::notifications::Notice::DecisionWaiting {
+                        app: crate::notifications::AppRef(app_slug.to_string()),
+                        table: crate::notifications::TableRef(table),
+                        step: crate::notifications::StepRef(inst.id.clone()),
+                        waiting: crate::notifications::Count(1),
+                    };
+                    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::Approvers(inst.id.clone()), Some(&actor.identity.eppn), &notice);
+                }
             }
         }
     }

@@ -144,6 +144,9 @@ pub fn create(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<Va
             })
             .map_err(storage)
     })?;
+    // Notifications phase 4: the delegate is told who asked them to decide.
+    let notice = crate::notifications::Notice::DelegationReceived { by: crate::notifications::PersonRef(caller.eppn.clone()) };
+    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::Person(delegate), Some(&caller.eppn), &notice);
     Ok(row)
 }
 

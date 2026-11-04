@@ -87,6 +87,7 @@ fn fast() -> JobConfig {
         poll_ms: 10,
         scheduler_secs: 1,
         backoff_secs: [1, 2, 4],
+        on_finish: None,
     }
 }
 

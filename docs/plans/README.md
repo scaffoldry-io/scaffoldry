@@ -258,7 +258,7 @@ People are told, see each other work, and run real committee processes.
 | 144 | [approvers.md](approvers.md) | 4 | Delegation by date | **COMPLETED** |
 | 145 | [approvers.md](approvers.md) | 5 | The workflow builder picks who decides and previews it | **COMPLETED** |
 | 146 | [notifications.md](notifications.md) | 3 | Preferences and digests | **COMPLETED** |
-| 147 | [notifications.md](notifications.md) | 4 | Every producer is wired. No notice carries a record value |
+| 147 | [notifications.md](notifications.md) | 4 | Every producer is wired. No notice carries a record value | **COMPLETED** |
 | 148 | [process-v2.md](process-v2.md) | 1 | Process events and analytics: where time goes |
 | 149 | [workflows.md](workflows.md) | 1 | Flows run with approved grants and reach records by address. They can span apps |
 | 150 | [workflows.md](workflows.md) | 2 | A flow touching several workspaces needs approval from each. Moving sensitive data is flagged |
