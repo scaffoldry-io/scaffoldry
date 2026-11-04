@@ -173,13 +173,15 @@ pub enum FieldType {
     /// A unit of the hierarchy the field's `hierarchy` names. The value is a unit id, validated against that
     /// hierarchy and indexed as text. A table may use it to place its rows (`AppTable::row_place`).
     Unit,
+    /// A button that starts the rule `FieldSpec::button_rule` names (`field-types.md` phase 5). It stores nothing.
+    Button,
 }
 
 impl FieldType {
     /// True when the value follows from other values, so nobody writes it.
     pub fn is_computed(self) -> bool {
         use FieldType::*;
-        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime | CreatedBy | LastModifiedBy)
+        matches!(self, Lookup | Count | Rollup | Formula | Autonumber | CreatedTime | LastModifiedTime | CreatedBy | LastModifiedBy | Button)
     }
 }
 
@@ -238,6 +240,7 @@ impl serde::Serialize for FieldType {
             FieldType::DateTime => serializer.serialize_str("DateTime"),
             FieldType::Attachment { .. } => serializer.serialize_str("Attachment"),
             FieldType::Unit => serializer.serialize_str("Unit"),
+            FieldType::Button => serializer.serialize_str("Button"),
         }
     }
 }
@@ -280,6 +283,7 @@ impl<'de> serde::Deserialize<'de> for FieldType {
                 "DateTime" => Ok(FieldType::DateTime),
                 "Attachment" => Ok(FieldType::Attachment { allow_multiple: true }),
                 "Unit" => Ok(FieldType::Unit),
+                "Button" => Ok(FieldType::Button),
                 other => Err(serde::de::Error::custom(format!("unknown field type: {other}"))),
             },
             serde_json::Value::Object(map) => {
@@ -505,6 +509,9 @@ pub struct FieldSpec {
     pub constraints: Option<FieldConstraints>,
     #[serde(default)]
     pub notify_on_assign: bool,
+    /// A `Button` field: the id of the rule with a `Manual` trigger that pressing it starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button_rule: Option<String>,
     /// The field's own sensitivity, a level on the ladder. It may be higher than its table's and never lower. A field
     /// keeps its `categories` as well.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -642,6 +649,7 @@ impl FieldSpec {
             set_on: None,
             constraints: None,
             notify_on_assign: false,
+            button_rule: None,
             sensitivity: None,
             hierarchy: None,
             mask: None,

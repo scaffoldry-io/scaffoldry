@@ -11,6 +11,16 @@ pub enum TriggerEvent {
     RecordUpdated,
     FieldChanged { field_name: String },
     StatusChanged { to_status: String },
+    /// A person pressed a button field that names the rule (`field-types.md` phase 5).
+    Manual,
+    /// The date in `field`, moved by `offset_days` (negative is before), at `at` (`HH:MM`, UTC) or midnight. The hourly
+    /// `scan_date_triggers` job starts each record once for each date.
+    DateField {
+        field: String,
+        offset_days: i32,
+        #[serde(default)]
+        at: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,6 +82,54 @@ pub struct ProcessStep {
     pub kind: StepKind,
 }
 
+/// One arm of a branch: its steps run when every condition holds.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Branch {
+    #[serde(default)]
+    pub when: Vec<FieldPredicate>,
+    #[serde(default)]
+    pub steps: Vec<ProcessStep>,
+}
+
+/// The most levels branches may nest, the most steps a rule may hold, and the most steps one branch may hold.
+pub const MAX_BRANCH_DEPTH: usize = 2;
+pub const MAX_RULE_STEPS: usize = 50;
+pub const MAX_BRANCH_STEPS: usize = 20;
+
+/// Every step, depth first, including the steps inside branches.
+pub fn all_steps(steps: &[ProcessStep]) -> Vec<&ProcessStep> {
+    let mut out = Vec::new();
+    for s in steps {
+        out.push(s);
+        if let StepKind::Branch { branches, otherwise } = &s.kind {
+            for b in branches {
+                out.extend(all_steps(&b.steps));
+            }
+            out.extend(all_steps(otherwise));
+        }
+    }
+    out
+}
+
+/// The step with this id, wherever it sits.
+pub fn find_step<'a>(steps: &'a [ProcessStep], id: &str) -> Option<&'a ProcessStep> {
+    all_steps(steps).into_iter().find(|s| s.id == id)
+}
+
+/// How many levels of branches nest in these steps. Steps with no branch are 0.
+pub fn branch_depth(steps: &[ProcessStep]) -> usize {
+    steps
+        .iter()
+        .map(|s| match &s.kind {
+            StepKind::Branch { branches, otherwise } => {
+                1 + branches.iter().map(|b| branch_depth(&b.steps)).chain(std::iter::once(branch_depth(otherwise))).max().unwrap_or(0)
+            }
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StepKind {
     Service { action: ActionType },
@@ -83,6 +141,12 @@ pub enum StepKind {
         /// Who decides. When absent, the step uses `Role { name: role }`.
         #[serde(default)]
         approver: Option<crate::approver::ApproverSpec>,
+    },
+    /// The steps of the first arm whose conditions hold run, or else `otherwise`. The choice is a process event.
+    Branch {
+        branches: Vec<Branch>,
+        #[serde(default)]
+        otherwise: Vec<ProcessStep>,
     },
 }
 
@@ -229,6 +293,9 @@ pub struct WorkflowExecutionResult {
     #[serde(default)]
     pub waiting_instance: Option<ProcessInstance>,
     pub execution_timestamp: String,
+    /// Each branch the run passed, as `(step id, arm)`: the arm's number from 1, or `otherwise`.
+    #[serde(default)]
+    pub branches: Vec<(String, String)>,
 }
 
 fn operator_words(op: &ConditionOperator) -> &'static str {
@@ -307,13 +374,18 @@ fn approver_words(spec: &crate::approver::ApproverSpec) -> String {
 
 /// A rule in plain sentences, so a reviewer approves what it does and not its JSON.
 pub fn describe_rule(rule: &AutomationRule) -> Vec<String> {
-    use crate::approver::{effective_approver, ApproverSpec};
     let mut out = Vec::new();
     out.push(match &rule.trigger {
         TriggerEvent::RecordCreated => "When a record is created in this app.".to_string(),
         TriggerEvent::RecordUpdated => "When a record is updated in this app.".to_string(),
         TriggerEvent::FieldChanged { field_name } => format!("When the field {field_name} changes."),
         TriggerEvent::StatusChanged { to_status } => format!("When the status changes to {to_status}."),
+        TriggerEvent::Manual => "When a person presses its button.".to_string(),
+        TriggerEvent::DateField { field, offset_days, .. } => match offset_days {
+            0 => format!("On the date in {field}."),
+            d if *d < 0 => format!("{} days before the date in {field}.", -d),
+            d => format!("{d} days after the date in {field}."),
+        },
     });
     for (i, p) in rule.predicates.iter().enumerate() {
         out.push(format!("{} {}.", if i == 0 { "If" } else { "And if" }, predicate_words(p)));
@@ -321,7 +393,13 @@ pub fn describe_rule(rule: &AutomationRule) -> Vec<String> {
     for action in rule.actions.iter().filter_map(action_words) {
         out.push(format!("Then {action}."));
     }
-    for step in &rule.steps {
+    describe_steps(&rule.steps, &mut out);
+    out
+}
+
+fn describe_steps(steps: &[ProcessStep], out: &mut Vec<String>) {
+    use crate::approver::{effective_approver, ApproverSpec};
+    for step in steps {
         let lead = condition_words(&step.when);
         match &step.kind {
             StepKind::Service { action } => {
@@ -348,7 +426,20 @@ pub fn describe_rule(rule: &AutomationRule) -> Vec<String> {
                 }
                 out.push(sentence);
             }
+            StepKind::Branch { branches, otherwise } => {
+                if let Some(c) = lead {
+                    out.push(format!("If {c}:"));
+                }
+                for (i, b) in branches.iter().enumerate() {
+                    let cond = condition_words(&b.when).unwrap_or_else(|| "always".to_string());
+                    out.push(format!("{} {cond}:", if i == 0 { "If" } else { "Otherwise, if" }));
+                    describe_steps(&b.steps, out);
+                }
+                if !otherwise.is_empty() {
+                    out.push("Otherwise:".to_string());
+                    describe_steps(otherwise, out);
+                }
+            }
         }
     }
-    out
 }

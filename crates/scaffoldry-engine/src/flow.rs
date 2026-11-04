@@ -32,11 +32,11 @@ fn table<'a>(manifests: &'a [AppManifest], slug: &str, table_id: &str) -> Option
 
 /// Every action a flow runs, in order, with the id of the step that holds it.
 fn flow_steps(flow: &AutomationRule) -> Vec<(&str, &ActionType)> {
-    flow.steps
-        .iter()
+    scaffoldry_core::workflow::all_steps(&flow.steps)
+        .into_iter()
         .filter_map(|s| match &s.kind {
             StepKind::Service { action } => Some((s.id.as_str(), action)),
-            StepKind::UserTask { .. } => None,
+            StepKind::UserTask { .. } | StepKind::Branch { .. } => None,
         })
         .collect()
 }
@@ -57,7 +57,7 @@ pub fn trigger_table(flow: &AutomationRule, manifests: &[AppManifest]) -> Option
         return Some(m.tables[0].id.clone());
     }
     let mut names: Vec<String> = flow.predicates.iter().map(|p| p.field_name.clone()).collect();
-    for s in &flow.steps {
+    for s in scaffoldry_core::workflow::all_steps(&flow.steps) {
         names.extend(s.when.iter().map(|p| p.field_name.clone()));
     }
     for (_, action) in flow_steps(flow) {
@@ -163,7 +163,7 @@ pub fn derive_grants(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<Fl
             g.read(&trigger, link_field);
         }
     };
-    for s in &flow.steps {
+    for s in scaffoldry_core::workflow::all_steps(&flow.steps) {
         for p in &s.when {
             g.read(&trigger, &p.field_name);
         }
@@ -253,7 +253,7 @@ pub fn validate_flow(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<St
     let mut problems = Vec::new();
     let places = Places::new(flow, manifests);
     let ids: Vec<&str> = flow_steps(flow).into_iter().filter_map(|(_, a)| produces(a).map(|p| p.0)).collect();
-    for s in &flow.steps {
+    for s in scaffoldry_core::workflow::all_steps(&flow.steps) {
         if let StepKind::UserTask { approve, reject, .. } = &s.kind {
             if approve.iter().chain(reject.iter()).any(ActionType::is_flow) {
                 problems.push(format!("step '{}': a flow action must be a step of its own, not the result of a decision", s.id));
@@ -294,7 +294,7 @@ pub fn validate_flow(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<St
         places.target(t)
     };
     let mut produced = 0usize;
-    for s in &flow.steps {
+    for s in scaffoldry_core::workflow::all_steps(&flow.steps) {
         let StepKind::Service { action } = &s.kind else { continue };
         let step = s.id.as_str();
         // References: qualified, known, and earlier.

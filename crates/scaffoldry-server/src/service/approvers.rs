@@ -249,10 +249,10 @@ fn named_in(spec: &ApproverSpec, inst: &ProcessInstance) -> Vec<String> {
 pub fn spec_of(state: &SharedState, inst: &ProcessInstance) -> Option<ApproverSpec> {
     let step_id = inst.waiting_step_id.as_deref()?;
     let rule = crate::service::processes::rule_for(state, inst)?;
-    let step = rule.steps.iter().find(|s| s.id == step_id)?;
+    let step = scaffoldry_core::workflow::find_step(&rule.steps, step_id)?;
     match &step.kind {
         StepKind::UserTask { role, approver, .. } => Some(effective_approver(role, approver)),
-        StepKind::Service { .. } => None,
+        StepKind::Service { .. } | StepKind::Branch { .. } => None,
     }
 }
 
@@ -370,15 +370,14 @@ pub fn known_sets(state: &SharedState, rule: &AutomationRule) -> KnownSets {
         .position_types
         .read()
         .unwrap_or_else(|p| p.into_inner());
-    let named: Vec<String> = rule
-        .steps
-        .iter()
+    let named: Vec<String> = scaffoldry_core::workflow::all_steps(&rule.steps)
+        .into_iter()
         .filter_map(|step| match &step.kind {
             StepKind::UserTask { role, approver, .. } => match effective_approver(role, approver) {
                 ApproverSpec::Person { eppn } => Some(eppn),
                 _ => None,
             },
-            StepKind::Service { .. } => None,
+            StepKind::Service { .. } | StepKind::Branch { .. } => None,
         })
         .collect();
     KnownSets {

@@ -245,6 +245,7 @@ async fn a_finished_job_tells_its_owner() {
         workers: 1,
         poll_ms: 20,
         on_finish: Some(scaffoldry_server::notifications::job_hook(w.state.clone())),
+        state: None,
         ..scaffoldry_server::jobs::JobConfig::default()
     };
     let _runner = scaffoldry_server::jobs::JobRunner::start(&w.state.repository, scaffoldry_server::jobs::JOB_KINDS, cfg).expect("runner");

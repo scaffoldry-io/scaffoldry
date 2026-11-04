@@ -40,6 +40,8 @@ fn field_schema(f: &FieldSpec) -> Value {
             s.insert("format".into(), json!("uri"));
         }
         FieldType::Phone => kind(&mut s, "string"),
+        // A button stores nothing: it is never in a record.
+        FieldType::Button => kind(&mut s, "null"),
         FieldType::Number | FieldType::Currency | FieldType::Percent | FieldType::Rating | FieldType::Duration { .. } | FieldType::Count => kind(&mut s, "number"),
         FieldType::Autonumber => kind(&mut s, "integer"),
         FieldType::Boolean | FieldType::Checkbox => kind(&mut s, "boolean"),

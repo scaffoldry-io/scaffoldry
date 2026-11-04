@@ -120,6 +120,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     scaffoldry_server::mail::register_digest_schedule(repo)?;
     // The policy library's web sources are checked every hour. Each one is fetched at most once a day.
     jobs::register_schedule(repo, "library_fetch", 60 * 60)?;
+    // Processes with a date trigger are started every hour, for the dates that came due (process v2 phase 2).
+    jobs::register_schedule(repo, "scan_date_triggers", 60 * 60)?;
     // Access receipts are sealed into a hash-chained batch every minute.
     jobs::register_schedule(repo, "seal_receipts", 60)?;
     // Retention destroys what its policies no longer keep, nightly at 02:00 in the institution's zone.
@@ -128,7 +130,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Files no record holds any more are removed, once their 24 hours of grace are over.
     jobs::register_daily_schedule(repo, "purge_orphan_blobs", &zone, "03:00:00")?;
     // A job that ends tells its owner (notifications phase 4).
-    let job_config = jobs::JobConfig { on_finish: Some(scaffoldry_server::notifications::job_hook(state.clone())), ..jobs::JobConfig::default() };
+    let job_config = jobs::JobConfig {
+        on_finish: Some(scaffoldry_server::notifications::job_hook(state.clone())),
+        state: Some(jobs::JobState(state.clone())),
+        ..jobs::JobConfig::default()
+    };
     let job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, job_config)?;
 
     let app = build_app_with_state(state)?;
