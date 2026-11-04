@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Persona, RegisteredApp } from "./types";
 import { getAuthToken } from "./api";
+import { dueWords, tallyWords } from "./processWords";
 
 /** The signed-in person's token, as the header every API request carries. */
 const authHeaders = (): Record<string, string> => {
@@ -22,7 +23,87 @@ export interface ProcessInstance {
   no_approver?: string | null;
   /** Who may decide it now. */
   approvers?: { eppn: string; display_name: string; via: unknown }[];
+  /** Process v2 phase 4: the voters of a committee step, and the counts so far. */
+  voters?: string[];
+  tally?: { approve: number; reject: number; voters: number };
+  /** Process v2 phase 3: the step's next timer. The first one is when the step is due. */
+  next_timer?: { fire_at: string; action: unknown; sentence: string };
 }
+
+const authJson = (): Record<string, string> => ({ "Content-Type": "application/json", ...authHeaders() });
+
+/** A committee step: the tally in words, the person's own vote, and a way to cast or change it. Names nobody else. */
+const CommitteeVote: React.FC<{ inst: ProcessInstance; me: string }> = ({ inst, me }) => {
+  const [mine, setMine] = useState<"approve" | "reject" | null>(null);
+  const [tally, setTally] = useState(inst.tally);
+  const [changing, setChanging] = useState(false);
+  const [comment, setComment] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/v1/apps/${inst.app_slug}/processes/${inst.id}/votes`, { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!live || !body) return;
+        const own = (body.votes ?? []).find((v: { voter: string }) => v.voter.toLowerCase() === me.toLowerCase());
+        setMine(own ? own.vote : null);
+        if (body.tally) setTally(body.tally);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [inst.app_slug, inst.id, me]);
+
+  const vote = async (decision: "approve" | "reject") => {
+    setError(null);
+    const body = decision === "reject" ? { decision, comment: comment.trim() } : { decision };
+    const res = await fetch(`/api/v1/apps/${inst.app_slug}/processes/${inst.id}/decide`, { method: "POST", headers: authJson(), body: JSON.stringify(body) });
+    if (!res.ok) {
+      setError(`Your vote was not counted (HTTP ${res.status}).`);
+      return;
+    }
+    setMine(decision);
+    setChanging(false);
+    setComment("");
+  };
+
+  const other = mine === "approve" ? "reject" : "approve";
+  const choosing = mine === null || changing;
+  return (
+    <div className="space-y-1.5 text-[11px]">
+      {tally && <div className="font-medium text-slate-700 dark:text-slate-300">{tallyWords(tally)}</div>}
+      {mine && <div>You voted to {mine}.</div>}
+      {mine && !changing && (
+        <button type="button" onClick={() => setChanging(true)} className="underline cursor-pointer">
+          Change my vote
+        </button>
+      )}
+      {choosing && (
+        <div className="flex flex-wrap items-end gap-2">
+          {(mine === null || other === "approve") && (
+            <button type="button" onClick={() => vote("approve")} className="px-2.5 py-1 rounded bg-emerald-600 text-white font-semibold cursor-pointer">
+              Vote to approve
+            </button>
+          )}
+          {(mine === null || other === "reject") && (
+            <>
+              <label className="flex flex-col">
+                <span className="text-slate-500">Why you reject</span>
+                <input aria-label="Why you reject" value={comment} onChange={(e) => setComment(e.target.value)} className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800" />
+              </label>
+              <button type="button" onClick={() => vote("reject")} className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 font-semibold cursor-pointer">
+                Vote to reject
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {error && <div className="font-semibold text-rose-600 dark:text-rose-400">{error}</div>}
+    </div>
+  );
+};
 
 export interface ProcessDeskProps {
   apps: { slug: string; title?: string }[] | RegisteredApp[];
@@ -30,7 +111,7 @@ export interface ProcessDeskProps {
   callerWorkspaceRole?: string | null;
 }
 
-export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps }) => {
+export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps, callerPersona }) => {
   const [instances, setInstances] = useState<ProcessInstance[]>([]);
   const [, setLoading] = useState<boolean>(true);
   const [errorMap, setErrorMap] = useState<Record<string, string>>({});
@@ -146,6 +227,12 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps }) => {
                     Rule: <code className="font-mono text-slate-700 dark:text-slate-300">{inst.rule_id}</code>
                   </span>
                 </div>
+                {inst.next_timer && (
+                  <div data-testid={`process-due-${inst.id}`} className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                    {dueWords(inst.next_timer.fire_at)}
+                  </div>
+                )}
+                {inst.voters && inst.voters.length > 0 && <CommitteeVote inst={inst} me={callerPersona.eppn} />}
                 {errorMap[inst.id] && (
                   <div className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
                     {errorMap[inst.id]}
@@ -153,7 +240,7 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps }) => {
                 )}
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              {!(inst.voters && inst.voters.length > 0) && <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   data-testid={`process-approve-${inst.id}`}
@@ -170,7 +257,7 @@ export const ProcessDesk: React.FC<ProcessDeskProps> = ({ apps }) => {
                 >
                   Reject
                 </button>
-              </div>
+              </div>}
             </div>
           ))}
         </div>
