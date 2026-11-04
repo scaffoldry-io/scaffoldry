@@ -212,6 +212,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::mail::send_digests_job,
     },
     JobKind {
+        name: "fire_schedules",
+        title: "Starting scheduled flows",
+        description: "Starts each flow whose daily, weekly or monthly time came, once for each time, in the institution's zone.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::flow_chains::fire_schedules_job,
+    },
+    JobKind {
         name: "scan_date_triggers",
         title: "Starting processes on their dates",
         description: "Starts each process whose date trigger came due since the last scan, once for each record and date, reading the date field's index.",

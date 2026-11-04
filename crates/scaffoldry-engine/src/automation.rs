@@ -64,6 +64,10 @@ impl AutomationEngine {
             ) => s1.eq_ignore_ascii_case(s2),
             (TriggerEvent::Manual, TriggerEvent::Manual) => true,
             (a @ TriggerEvent::DateField { .. }, b @ TriggerEvent::DateField { .. }) => a == b,
+            (a @ TriggerEvent::Schedule { .. }, b @ TriggerEvent::Schedule { .. }) => a == b,
+            (TriggerEvent::Called { .. }, TriggerEvent::Called { .. }) => true,
+            (a @ TriggerEvent::FlowCompleted { .. }, b @ TriggerEvent::FlowCompleted { .. }) => a == b,
+            (a @ TriggerEvent::ProcessDecided { .. }, b @ TriggerEvent::ProcessDecided { .. }) => a == b,
             _ => false,
         };
 
@@ -262,7 +266,7 @@ impl AutomationEngine {
             }
             // A flow step finds, creates, updates or links records by address. The server's flow runner does it,
             // inside the flow's grants, so the engine records nothing for it here.
-            ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } => {}
+            ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } | ActionType::StartFlow { .. } => {}
         }
     }
 

@@ -38,6 +38,7 @@ pub mod processes;
 pub mod flows;
 pub mod flow_parties;
 pub mod date_triggers;
+pub mod flow_chains;
 pub mod pages;
 pub mod proposals;
 pub mod hints;

@@ -26,7 +26,7 @@ fn table_of(state: &SharedState, app_slug: &str, field: &str) -> Option<String> 
 }
 
 /// Runs one rule for one stored record, as the record's creator, and no other rule.
-fn start_dated(state: &SharedState, rule: &AutomationRule, others: &[String], record_id: &str) -> Result<bool, String> {
+pub(crate) fn start_dated(state: &SharedState, rule: &AutomationRule, others: &[String], record_id: &str) -> Result<bool, String> {
     let Some(rec) = state.find_record(&rule.app_slug, record_id)? else { return Ok(false) };
     let by = rec.created_by.clone().unwrap_or_default();
     let person = crate::service::identity::resolve_user(&by, state);
