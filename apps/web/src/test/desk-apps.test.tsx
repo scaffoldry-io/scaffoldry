@@ -41,8 +41,9 @@ describe("the desk's apps come from the server", () => {
       "/apps/alpha": MANIFEST,
     });
     openDesk();
-    await waitFor(() => expect(urls.some((u) => u.startsWith("/apps/alpha/processes"))).toBe(true));
-    expect(urls.filter((u) => /^\/apps\/(?!alpha)[^/]+\/processes/.test(u))).toEqual([]);
+    // Workflows phase 6: the desk's decisions are in My Work, so the desk reads the server's app and no sample app.
+    await waitFor(() => expect(urls.some((u) => u.startsWith("/apps/alpha"))).toBe(true));
+    expect(urls.filter((u) => /^\/apps\/(?!alpha)[^/?]+/.test(u))).toEqual([]);
     expect(screen.queryByTestId("offline-sample-banner")).not.toBeInTheDocument();
   });
 

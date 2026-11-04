@@ -263,9 +263,9 @@ pub fn get(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, Se
     let Some(inst) = state.repository.get_process_instance(inst_id).map_err(|e| ServiceError::StorageUnavailable(e.to_string()))? else { return Ok(out) };
     let rule = crate::service::processes::rule_for(state, &inst);
     let step = rule.as_ref().zip(w.step_id.as_deref()).and_then(|(r, s)| find_step(&r.steps, s).cloned());
-    let (show, fill) = match step.as_ref().map(|s| &s.kind) {
-        Some(StepKind::UserTask { show, fill, .. }) => (show.clone(), fill.clone()),
-        _ => (vec![], vec![]),
+    let (show, fill, require) = match step.as_ref().map(|s| &s.kind) {
+        Some(StepKind::UserTask { show, fill, require, .. }) => (show.clone(), fill.clone(), require.clone()),
+        _ => (vec![], vec![], vec![]),
     };
     // The record as this person may see it: through their own rights, or through the task's grant.
     let values = crate::service::records::fetch_record(caller, &inst.app_slug, &inst.record_id, state).ok().map(|r| {
@@ -292,6 +292,9 @@ pub fn get(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, Se
         map.insert("prompt".to_string(), json!(inst.prompt));
         map.insert("show".to_string(), values.unwrap_or(Value::Null));
         map.insert("fill".to_string(), json!(fill));
+        // Workflows phase 6: the drawer marks the fields that must be filled, and whether a reject needs a comment.
+        map.insert("require".to_string(), json!(require));
+        map.insert("reject_comment_required".to_string(), json!(crate::service::process_votes::reject_needs_comment(state)));
         map.insert("history".to_string(), json!(history));
         if let Some(t) = crate::service::process_votes::tally_view(state, &inst) {
             map.insert("tally".to_string(), t);
