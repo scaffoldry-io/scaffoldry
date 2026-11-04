@@ -313,7 +313,8 @@ pub fn render(state: &SharedState, notice: &Notice) -> (String, String, Value) {
             (
                 format!("Decision needed: {}", app(a)),
                 format!("{prompt} {} waiting.", if waiting.0 == 1 { "1 is".to_string() } else { format!("{} are", waiting.0) }),
-                link(format!("{}?instance={}", app_path(a), urlencode(&s.0)), json!({ "app": a.0, "instance": s.0 })),
+                // Workflows phase 6: the notice opens the decision in My Work's review drawer.
+                link(format!("/work?instance={}", urlencode(&s.0)), json!({ "app": a.0, "instance": s.0 })),
             )
         }
         Notice::DecisionMade { by, app: a, table: t, step: s, approved } => (

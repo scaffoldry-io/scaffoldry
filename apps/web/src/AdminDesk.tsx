@@ -17,7 +17,10 @@ const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.A
 const PublishedAppView = lazy(() => import("./PublishedAppView").then((m) => ({ default: m.PublishedAppView })));
 const StandaloneIntakeForm = lazy(() => import("./StandaloneIntakeForm").then((m) => ({ default: m.StandaloneIntakeForm })));
 import { AdminConsole } from "./admin/AdminConsole";
-import { ProcessDesk } from "./ProcessDesk";
+import { MyWork, MyWorkNav } from "./MyWork";
+
+/** `/work`, with or without a query. Not `/workspace/...`, which starts with the same letters. */
+const isWorkPath = (p: string) => p === "/work" || p.startsWith("/work?") || p.startsWith("/work/");
 
 const PERSONAS: Persona[] = [
   {
@@ -1162,7 +1165,10 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   const [activeWorkspaceApp, setActiveWorkspaceApp] = useState<RegisteredApp | null>(null);
 
   // Navigation View State ("workspaces" | "datasets")
-  const [mainView, setMainView] = useState<"workspaces" | "datasets" | "myapps" | "policies">(() => {
+  const [mainView, setMainView] = useState<"workspaces" | "datasets" | "myapps" | "policies" | "work">(() => {
+    if (typeof window !== "undefined" && isWorkPath(window.location.pathname)) {
+      return "work";
+    }
     if (typeof window !== "undefined" && window.location.pathname.startsWith("/datasets")) {
       return "datasets";
     }
@@ -1189,6 +1195,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         setMainView("datasets");
       } else if (path.startsWith("/my-apps")) {
         setMainView("myapps");
+      } else if (isWorkPath(path)) {
+        setMainView("work");
       } else if (path.startsWith("/policies")) {
         setMainView("policies");
       } else if (path === "/" || path.startsWith("/workspace")) {
@@ -1212,6 +1220,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         setMainView("datasets");
       } else if (p.startsWith("/my-apps")) {
         setMainView("myapps");
+      } else if (isWorkPath(p)) {
+        setMainView("work");
       } else if (p.startsWith("/policies")) {
         setMainView("policies");
       } else if (p === "/" || p.startsWith("/workspace")) {
@@ -2829,6 +2839,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                     </div>
                   )}
                   <nav className="space-y-1">
+                    <MyWorkNav active={mainView === "work"} expanded={navRailExpanded} onOpen={() => navigateTo("/work")} />
                     <button
                       type="button"
                       aria-label="My apps"
@@ -2966,6 +2977,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
               />
           ) : mainView === "policies" ? (
             <Policies path={currentPath} navigate={navigateTo} />
+          ) : mainView === "work" ? (
+            <MyWork query={typeof window !== "undefined" ? window.location.search : ""} navigate={navigateTo} />
           ) : mainView === "myapps" ? (
             <MyApps apps={myApps} pinned={pinnedAppSlugs} onTogglePin={handleTogglePinApp} onOpen={(slug) => navigateTo(`/app/${slug}`)} />
           ) : mainView === "datasets" ? (
@@ -3106,12 +3119,12 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 </div>
               </div>
 
-              {/* Process Desk Decisions Queue Panel */}
-              <ProcessDesk
-                apps={appsStatus === "loading" ? [] : workspaceApps}
-                callerPersona={activePersona}
-                callerWorkspaceRole={userRoleInCurrentWs}
-              />
+              {/* Workflows phase 6: the decisions of this workspace are in My Work. */}
+              <div data-testid="workspace-decisions-link" className="text-xs">
+                <button type="button" onClick={() => navigateTo(`/work?workspace=${encodeURIComponent(activeWorkspaceId)}`)} className="underline font-medium text-blue-700 dark:text-blue-300 cursor-pointer">
+                  Open the decisions for this workspace in My Work
+                </button>
+              </div>
 
               {/* Status Filter Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
