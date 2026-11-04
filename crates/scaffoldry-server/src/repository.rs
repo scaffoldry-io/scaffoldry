@@ -101,6 +101,7 @@ const SCHEMA_0093: &str = include_str!("../../scaffoldry-core/migrations/0093_fl
 const SCHEMA_0094: &str = include_str!("../../scaffoldry-core/migrations/0094_process_timers.sql");
 const SCHEMA_0095: &str = include_str!("../../scaffoldry-core/migrations/0095_process_votes.sql");
 const SCHEMA_0096: &str = include_str!("../../scaffoldry-core/migrations/0096_task_grants.sql");
+const SCHEMA_0097: &str = include_str!("../../scaffoldry-core/migrations/0097_work_items.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1195,6 +1196,7 @@ impl PostgresRepository {
                             ("0094_process_timers.sql", SCHEMA_0094),
                             ("0095_process_votes.sql", SCHEMA_0095),
                             ("0096_task_grants.sql", SCHEMA_0096),
+                            ("0097_work_items.sql", SCHEMA_0097),
                         ];
 
                         let mut fresh_install = false;
@@ -2916,6 +2918,7 @@ impl PostgresRepository {
             // Workflows phase 4: an instance that is no longer waiting holds no task grants.
             if inst.status != ProcessStatus::Waiting {
                 crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &inst.id)?;
+                crate::repository_work::close_work_in_tx(&mut tx, &inst.id, "ended")?;
             }
             tx.commit()?;
             Ok(())
@@ -2934,8 +2937,9 @@ impl PostgresRepository {
         approvers: usize,
         timers: &[crate::repository_timers::NewTimer],
         grants: &[crate::repository_task_grants::NewGrant],
+        work: &[crate::repository_work::NewWork],
     ) -> Result<bool, RepositoryError> {
-        let (inst, timers, grants) = (inst.clone(), timers.to_vec(), grants.to_vec());
+        let (inst, timers, grants, work) = (inst.clone(), timers.to_vec(), grants.to_vec(), work.to_vec());
         self.with_client(move |client| {
             let json = serde_json::to_value(&inst)?;
             let mut tx = client.transaction()?;
@@ -2963,6 +2967,9 @@ impl PostgresRepository {
                 if let Some(step) = inst.waiting_step_id.as_deref() {
                     crate::repository_task_grants::open_task_grants_in_tx(&mut tx, &inst.id, step, &grants)?;
                 }
+                // Workflows phase 5: the step's work items, for who acts and who waits.
+                crate::repository_work::close_work_in_tx(&mut tx, &inst.id, "restarted")?;
+                crate::repository_work::open_work_in_tx(&mut tx, &work)?;
             }
             tx.commit()?;
             Ok(n > 0)
@@ -3029,6 +3036,7 @@ impl PostgresRepository {
             crate::repository_timers::cancel_timers_in_tx(&mut tx, &next.id)?;
             // Workflows phase 4: nor does anyone keep a task grant on it.
             crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &next.id)?;
+            crate::repository_work::close_work_in_tx(&mut tx, &next.id, "decided")?;
             append_ledger_in_tx(&mut tx, ledger)?;
             tx.commit()?;
             Ok(Decided::Done)

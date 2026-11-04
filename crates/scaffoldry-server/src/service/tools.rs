@@ -42,7 +42,7 @@ pub struct Tool {
 pub static TOOLS: &[Tool] = &[
     Tool {
         name: "list_workspaces",
-        description: "List all sovereign workspaces accessible to the authenticated principal under Cedar ABAC policies.",
+        description: "List the workspaces you can see.",
         input_schema: schema_list_workspaces,
         scope: Scope::SignedIn,
         read_only: true,
@@ -50,7 +50,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "get_workspace",
-        description: "Retrieve workspace configuration and collaborator access list by ID (Cedar ABAC enforced).",
+        description: "Get a workspace's settings and its collaborators.",
         input_schema: schema_get_workspace,
         scope: Scope::Workspace("access_workspace"),
         read_only: true,
@@ -58,7 +58,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "update_workspace",
-        description: "Update workspace metadata, visibility, classification, and policies (Owner/Admin Cedar ABAC enforced).",
+        description: "Update a workspace's details, visibility, classification and policies. Owner or admin.",
         input_schema: schema_update_workspace,
         scope: Scope::Workspace("manage_workspace"),
         read_only: false,
@@ -66,7 +66,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "manage_workspace_member",
-        description: "Add, update role, or remove workspace collaborators with audit logging (Owner/Admin Cedar ABAC enforced).",
+        description: "Add, change or remove a workspace collaborator. Owner or admin. Logged.",
         input_schema: schema_manage_workspace_member,
         scope: Scope::Workspace("manage_workspace"),
         read_only: false,
@@ -74,7 +74,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "create_record",
-        description: "Submit a new tabular record into an application (departmental membership & Cedar ABAC enforced).",
+        description: "Create a record in an app table.",
         input_schema: schema_create_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
@@ -82,7 +82,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_datasets",
-        description: "List published datasets with field schemas, owners, and FERPA classifications.",
+        description: "List published datasets with their fields, owners and FERPA classes.",
         input_schema: schema_list_datasets,
         scope: Scope::SignedIn,
         read_only: true,
@@ -90,7 +90,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "governance_report",
-        description: "Show a governance report. ledger: verify the decision hash chain. oscal: the OSCAL 1.1.2 component-definition with audit proofs. framework: the component catalog's schema, theme tokens and classification boundaries.",
+        description: "Show a governance report. ledger: verify the hash chain. oscal: the OSCAL 1.1.2 component-definition with proofs. framework: the component catalog's schema, tokens and boundaries.",
         input_schema: schema_governance_report,
         scope: Scope::SignedIn,
         read_only: true,
@@ -98,7 +98,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "simulate_cedar_policy",
-        description: "Ask the Cedar policy engine for its decision on an action over a record. Platform Admin only. Changes nothing.",
+        description: "Ask Cedar for its decision on an action over a record. Platform Admin only. Changes nothing.",
         input_schema: schema_simulate_cedar_policy,
         scope: Scope::PlatformAdmin,
         read_only: true,
@@ -106,7 +106,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "record_governance_decision",
-        description: "Append a governance decision to the ledger, mapped to an OSCAL control, in the signed-in caller's name.",
+        description: "Append a decision to the ledger, mapped to an OSCAL control, in your name.",
         input_schema: schema_record_governance_decision,
         scope: Scope::SignedIn,
         read_only: false,
@@ -146,7 +146,7 @@ pub static TOOLS: &[Tool] = &[
     },
         Tool {
         name: "get_view_data",
-        description: "Return grouped records for a kanban or group-by view with option labels and colors.",
+        description: "Get a kanban or group-by view's grouped records with option labels and colors.",
         input_schema: schema_get_view_data,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -162,7 +162,7 @@ Tool {
     },
     Tool {
         name: "get_page",
-        description: "Get a custom page as one HTML document for a sandboxed frame; it holds no data and uses page_call. Without page_id, list the app's pages: id, title, kind, and for a custom page its grants, format and libraries.",
+        description: "Get a custom page as one HTML document for a sandboxed frame; it holds no data and uses page_call. Without page_id, list the app's pages with their grants, format and libraries.",
         input_schema: schema_get_page,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -170,7 +170,7 @@ Tool {
     },
     Tool {
         name: "page_call",
-        description: "Read or change data as a custom page. The page's grants bound it, and the caller's own rights still apply.",
+        description: "Read or change data as a custom page, bounded by the page's grants and your own rights.",
         input_schema: schema_page_call,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -194,7 +194,7 @@ Tool {
     },
     Tool {
         name: "propose_app_change",
-        description: "Propose a new app or a change to one. Send the whole manifest and each custom page's source. Nothing changes until a person approves. Returns the id, checks, changes, and who must approve.",
+        description: "Propose a new app or a change to one: the whole manifest and each custom page's source. Nothing changes until a person approves. Returns the id, checks, changes and approvers.",
         input_schema: schema_propose_app_change,
         scope: Scope::Workspace("access_workspace"),
         read_only: false,
@@ -210,7 +210,7 @@ Tool {
     },
     Tool {
         name: "access_suggestions",
-        description: "List what could be simpler in who has access: covered memberships, a grant for a position, ended or unused grants, unmasked fields.",
+        description: "List ways to simplify who has access: covered memberships, position grants, ended or unused grants, unmasked fields.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
@@ -266,23 +266,31 @@ Tool {
     },
     Tool {
         name: "explain_access",
-        description: "Show why you have your role on a workspace, app or table: the grants that reached it and those that did not.",
+        description: "Show why you have your role on a workspace, app or table: the grants that did and did not reach it.",
         input_schema: schema_explain_access,
         scope: Scope::SignedIn,
         read_only: true,
         run: run_explain_access,
     },
     Tool {
-        name: "list_waiting_decisions",
-        description: "List the process steps waiting for you to decide, in apps you can read. Up to 200.",
-        input_schema: schema_empty,
+        name: "list_my_work",
+        description: "List your open work items, due first.",
+        input_schema: schema_list_my_work,
         scope: Scope::SignedIn,
         read_only: true,
-        run: run_list_waiting_decisions,
+        run: run_list_my_work,
+    },
+    Tool {
+        name: "complete_task",
+        description: "Submit a task: done with field values, or decline with a reason.",
+        input_schema: schema_complete_task,
+        scope: Scope::SignedIn,
+        read_only: false,
+        run: run_complete_task,
     },
     Tool {
         name: "decide_process",
-        description: "Approve or reject a waiting step, or vote on a committee's (a reject vote needs a comment). Never the submitter.",
+        description: "Approve, reject or vote on a waiting step (a reject vote needs a comment). Never the submitter.",
         input_schema: schema_decide_process,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -290,7 +298,7 @@ Tool {
     },
     Tool {
         name: "list_views",
-        description: "List the views of an app: your personal views and every collaborative and locked one.",
+        description: "List an app's views: your personal ones and every collaborative and locked one.",
         input_schema: schema_list_views,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -298,7 +306,7 @@ Tool {
     },
     Tool {
         name: "save_view",
-        description: "Create a view, or change one by view_id and version. Personal views are yours; collaborative ones need an editor, locked ones an admin.",
+        description: "Create a view, or change one by view_id and version. Personal views are yours; collaborative need an editor, locked an admin.",
         input_schema: schema_save_view,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -314,7 +322,7 @@ Tool {
     },
     Tool {
         name: "get_job",
-        description: "Get status, progress, result, error, and logs of a job (only creator or Platform Admin).",
+        description: "Get a job's status, progress, result, error and logs. Creator or Platform Admin only.",
         input_schema: schema_get_job,
         scope: Scope::SignedIn,
         read_only: true,
@@ -338,7 +346,7 @@ Tool {
     },
     Tool {
         name: "export_records",
-        description: "Enqueue an export of an app table or view. Returns a job ID and download URL, not the records.",
+        description: "Export a table or view as a job. Returns its id and download URL, not the records.",
         input_schema: schema_export_records,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -1415,8 +1423,56 @@ struct DecideProcessArgs {
     comment: Option<String>,
 }
 
-fn run_list_waiting_decisions(caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    Ok(Value::Array(crate::service::processes::list_waiting_decisions(caller, state)?))
+fn schema_list_my_work() -> Value {
+    json!({ "type": "object", "properties": { "kind": { "type": "string" } } })
+}
+
+fn schema_complete_task() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "work_id": { "type": "string" },
+            "decision": { "type": "string" },
+            "fields": { "type": "object" },
+            "reason": { "type": "string" }
+        },
+        "required": ["work_id", "decision"]
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListMyWorkArgs {
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// Workflows phase 5: the same list as `GET /me/work`, with the person's own rights.
+fn run_list_my_work(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: ListMyWorkArgs = parse(args)?;
+    let filter = crate::repository_work::WorkFilter { kind: a.kind, ..Default::default() };
+    crate::service::work::list(caller, &filter, None, crate::service::work::MAX_PAGE, state)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompleteTaskArgs {
+    work_id: String,
+    decision: String,
+    #[serde(default)]
+    fields: Option<Value>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Workflows phase 5: finishes a task through the same path as `POST /me/work/{id}/act`.
+fn run_complete_task(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let a: CompleteTaskArgs = parse(args)?;
+    if a.decision != "done" && a.decision != "decline" {
+        return Err(ServiceError::bad_request("A task is done or declined. Use decide_process for a decision."));
+    }
+    let body = json!({ "decision": a.decision, "fields": a.fields, "reason": a.reason });
+    crate::service::work::act_on_work(caller, origin, &a.work_id, &body, state)
 }
 
 fn run_decide_process(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {

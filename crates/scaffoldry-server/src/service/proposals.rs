@@ -1084,7 +1084,13 @@ fn propose_with(caller: &AuthUser, input: ProposeInput, dry_run: bool, reviewed:
         digest,
         parties: flow_plan.as_ref().filter(|p| p.parties.len() > 1).map(|p| p.to_json()),
     };
-    repo.insert_proposal(&row, &sources).map_err(internal)?;
+    // Workflows phase 5: each party's owners and admins review it, and the proposer waits, as work items.
+    let mut parties = crate::service::flow_parties::parties_of(&row.parties);
+    if parties.is_empty() {
+        parties.push(ws.id.clone());
+    }
+    let work = crate::service::work::proposal_items(state, &parties, &slug, &caller.eppn, row.id);
+    repo.insert_proposal(&row, &sources, &work).map_err(internal)?;
     // Each other party's owners and admins are told that a proposal needs them.
     for party in crate::service::flow_parties::parties_of(&row.parties).iter().filter(|w| **w != ws.id) {
         let notice = crate::notifications::Notice::ProposalPending { by: crate::notifications::PersonRef(caller.eppn.clone()), app: crate::notifications::AppRef(slug.clone()) };

@@ -115,7 +115,7 @@ async fn me_events(State(state): State<SharedState>, headers: HeaderMap) -> Resu
                         o.remove("to");
                         o.remove("type");
                         match kind.as_str() {
-                            "notification" | "job" | "proposal" => named(&kind, &e),
+                            "notification" | "job" | "proposal" | "work" => named(&kind, &e),
                             _ => continue,
                         }
                     }

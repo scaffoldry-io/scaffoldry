@@ -93,7 +93,14 @@ fn time(body: &Value, key: &str) -> Result<DateTime<Utc>, ServiceError> {
 }
 
 /// `POST /me/delegations`.
+/// Workflows phase 5: a change to who holds what asks for a re-resolve of open work items.
 pub fn create(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let done = create_now(caller, body, state)?;
+    crate::service::work::enqueue_reresolve(state, &caller.eppn);
+    Ok(done)
+}
+
+fn create_now(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
     let delegate = body.get("delegate").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| ServiceError::bad_request("Name the person who will decide for you"))?.to_string();
     let position = body.get("position_key").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let reason = body.get("reason").and_then(Value::as_str).unwrap_or("").trim().to_string();
@@ -167,7 +174,14 @@ fn parse_id(id: &str) -> Result<Uuid, ServiceError> {
 }
 
 /// `DELETE /me/delegations/{id}`: the delegator revokes their own. A Platform Admin may revoke any.
+/// Workflows phase 5: a change to who holds what asks for a re-resolve of open work items.
 pub fn revoke_mine(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let done = revoke_mine_now(caller, id, body, state)?;
+    crate::service::work::enqueue_reresolve(state, &caller.eppn);
+    Ok(done)
+}
+
+fn revoke_mine_now(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
     let id = parse_id(id)?;
     let row = find(state, id)?.ok_or_else(|| ServiceError::NotFound("No such delegation".to_string()))?;
     let mine = row["delegator"].as_str().is_some_and(|d| d.eq_ignore_ascii_case(&caller.eppn));
@@ -181,7 +195,14 @@ pub fn revoke_mine(caller: &AuthUser, id: &str, body: &Value, state: &SharedStat
 }
 
 /// `DELETE /admin/delegations/{id}`: a Platform Admin, with a reason.
+/// Workflows phase 5: a change to who holds what asks for a re-resolve of open work items.
 pub fn revoke_admin(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
+    let done = revoke_admin_now(caller, id, body, state)?;
+    crate::service::work::enqueue_reresolve(state, &caller.eppn);
+    Ok(done)
+}
+
+fn revoke_admin_now(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
     require_platform_admin(caller, state)?;
     let id = parse_id(id)?;
     let row = find(state, id)?.ok_or_else(|| ServiceError::NotFound("No such delegation".to_string()))?;

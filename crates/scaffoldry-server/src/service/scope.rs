@@ -85,6 +85,10 @@ pub const RECORD_INTERNALS: &[&str] = &[
     // Workflows phase 4: a step's task grants read its record for the table id only. The grant itself is checked where
     // a record is read or written through it.
     "task_grants_for",
+    // Workflows phase 5: My Work reads a step's record for its creator, who waits on it, and to name the version a task's
+    // fields are written at. The write itself goes through update_record, which checks the person's rights or task grant.
+    "work_items_for",
+    "act_on_work",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
 ];

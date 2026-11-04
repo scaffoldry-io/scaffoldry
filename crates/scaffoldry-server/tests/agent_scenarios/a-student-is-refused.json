@@ -163,10 +163,10 @@
       }
     },
     {
-      "tool": "list_waiting_decisions",
+      "tool": "list_my_work",
       "args": {},
       "expect": {
-        "": {
+        "items": {
           "len": 0
         }
       }

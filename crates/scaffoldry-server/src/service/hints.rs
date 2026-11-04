@@ -26,7 +26,7 @@ pub fn hint_for(err: &ServiceError) -> String {
             } else if has("View") {
                 "Call list_views to see the view ids, then retry."
             } else if has("Process") {
-                "Call list_waiting_decisions to see the steps waiting for you, then retry."
+                "Call list_my_work to see the steps waiting for you, then retry."
             } else {
                 "Call list_workspaces to find the right id, then retry."
             }

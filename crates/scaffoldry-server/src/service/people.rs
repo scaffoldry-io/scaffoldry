@@ -161,6 +161,8 @@ fn set_hold(state: &SharedState, id: &str, hold: bool) -> Result<ScimUser, Servi
         .ok_or_else(|| ServiceError::NotFound(format!("User '{id}' not found")))?;
     user.admin_hold = hold;
     persist(state, &user)?;
+    // Workflows phase 5: a person on hold acts on nothing, so their open work items are re-resolved.
+    crate::service::work::enqueue_reresolve(state, "system");
     Ok(user)
 }
 

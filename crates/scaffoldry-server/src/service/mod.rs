@@ -71,6 +71,7 @@ pub mod process_analytics;
 pub mod process_timers;
 pub mod process_votes;
 pub mod task_grants;
+pub mod work;
 pub mod holds;
 pub mod link_options;
 pub mod grants;

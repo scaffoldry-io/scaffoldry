@@ -180,7 +180,12 @@ fn apply_timer(state: &SharedState, t: &Timer) -> Result<bool, String> {
         Some((_, added)) if !added.is_empty() => Some(crate::service::task_grants::task_grants_for(state, &rule, &t.step_id, &next, added)),
         _ => None,
     };
-    if !state.repository.apply_timer(&t.step_id, TimerOutcome { next: next.clone(), record, timers, detail, grants }).map_err(|e| e.to_string())? {
+    // Workflows phase 5: and its work items to them, keeping who waits.
+    let work = grants.as_ref().map(|_| {
+        let due = timers.first().map(|t| t.fire_at);
+        crate::service::work::work_items_for(state, &rule, &next, due).into_iter().filter(|w| w.kind != crate::repository_work::WorkKind::Waiting).collect()
+    });
+    if !state.repository.apply_timer(&t.step_id, TimerOutcome { next: next.clone(), record, timers, detail, grants, work }).map_err(|e| e.to_string())? {
         return Ok(false);
     }
 

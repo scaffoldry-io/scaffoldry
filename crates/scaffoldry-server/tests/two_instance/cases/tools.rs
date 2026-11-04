@@ -1,7 +1,7 @@
 //! The write tools in `TOOLS`. Each is called through A's `/api/mcp` and read through B.
 
 use super::platform::{library_fixture, LIBRARY_PASSAGE};
-use super::apps::{enqueue_job, job_state, read_record, waiting_instance};
+use super::apps::{enqueue_job, job_state, read_record, waiting_instance, work_item_for};
 use super::*;
 
 pub fn add(m: &mut Entries) {
@@ -16,6 +16,7 @@ pub fn add(m: &mut Entries) {
     m.insert("tool:decide_proposal".into(), case!(decide_proposal));
     m.insert("tool:preview_proposal".into(), case!(preview_proposal));
     m.insert("tool:decide_process".into(), case!(decide_process));
+    m.insert("tool:complete_task".into(), case!(complete_task));
     m.insert("tool:save_view".into(), case!(save_view));
     m.insert("tool:delete_view".into(), case!(delete_view));
     m.insert("tool:cancel_job".into(), case!(cancel_job));
@@ -200,4 +201,26 @@ async fn draft_access_change(w: World) -> Outcome {
     let id = drafted["change_id"].as_str().ok_or("a change id")?.to_string();
     let seen = status(w.rb("GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
     ensure(has(&seen["changes"], &id) && has(&seen["changes"], "agent"), format!("B shows the draft A stored, marked as a tool's: {seen}"))
+}
+
+/// Workflows phase 5: a fill-in task completed through A, with its field, is read completed through B.
+async fn complete_task(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let rule_id = unique("p6task");
+    let rule = json!({
+        "id": rule_id, "name": "Fill in", "enabled": true, "trigger": "RecordCreated",
+        "steps": [{ "id": "fill", "when": [], "kind": { "UserTask": {
+            "role": "owner", "prompt": "Fill in the name", "approve": [{ "UpdateRecordStatus": { "new_status": "Filled" } }], "reject": [],
+            "approver": { "Role": { "name": "owner" } }, "kind": "Complete", "fill": ["name"], "require": ["name"]
+        }}}]
+    });
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/automations"), OWNER, Some(rule)).await, StatusCode::CREATED, "create the rule")?;
+    let made = status(w.wa("POST", &format!("/api/v1/apps/{slug}/records"), EDITOR, Some(json!({ "data": { "_table_id": "apps" } }))).await, StatusCode::CREATED, "the editor submits")?;
+    let instance = format!("{rule_id}:{}", made["id"].as_str().ok_or("a record id")?);
+    let id = work_item_for(&w, OWNER, &instance).await?;
+    w.tool_a(OWNER, "complete_task", json!({ "work_id": id, "decision": "done", "fields": { "name": "Filled in" } })).await?;
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/processes"), OWNER, None).await, StatusCode::OK, "B lists instances")?;
+    ensure(has(&seen, "Completed"), format!("B shows the task completed: {seen}"))?;
+    let rec = status(w.rb("GET", &format!("/api/v1/apps/{slug}/records/{}", made["id"].as_str().unwrap_or_default()), OWNER, None).await, StatusCode::OK, "B reads the record")?;
+    ensure(has(&rec, "Filled in"), format!("B reads the filled field: {rec}"))
 }
