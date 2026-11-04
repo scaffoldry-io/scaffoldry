@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { FieldSpec, WorkflowAutomationRule, WorkflowActionItem } from "./types";
 import { RuleSteps } from "./RuleSteps";
 import { Outline, useFlowEditor } from "./flows/Outline";
+import { Canvas } from "./flows/Canvas";
 import { Banner } from "./ui";
 import type { SaveOutcome } from "./api";
 
@@ -371,6 +372,8 @@ function RuleForm({ appSlug, fields, onSubmit, onCancel }: { appSlug: string; fi
   const [actionType, setActionType] = useState<"NotifyCollaborator" | "CreateLedgerAuditEntry" | "UpdateRecordStatus">("NotifyCollaborator");
   const [actionParam, setActionParam] = useState("Candidate approved with honors fellowship eligibility");
   const [id] = useState(() => `rule-${Date.now()}`);
+  // Workflows phase 8: the outline and the canvas are two views of the one editor state.
+  const [view, setView] = useState<"outline" | "canvas">("outline");
   const editor = useFlowEditor({
     id,
     app_slug: appSlug,
@@ -459,8 +462,32 @@ function RuleForm({ appSlug, fields, onSubmit, onCancel }: { appSlug: string; fi
 
       {/* Workflows phase 7: the trigger and the steps, in the outline. */}
       <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2">
-        <span className="font-semibold text-slate-700 dark:text-slate-300">Trigger and steps</span>
-        <Outline state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} check={editor.check} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold text-slate-700 dark:text-slate-300">Trigger and steps</span>
+          <div role="tablist" aria-label="Editor view" className="flex gap-1">
+            {(["outline", "canvas"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                id={`flow-tab-${v}`}
+                aria-selected={view === v}
+                aria-controls="flow-view"
+                onClick={() => setView(v)}
+                className={`px-2.5 py-1 rounded text-[11px] font-semibold cursor-pointer ${view === v ? "bg-blue-600 text-white" : "border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300"}`}
+              >
+                {v === "outline" ? "Outline" : "Canvas"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div role="tabpanel" id="flow-view" aria-labelledby={`flow-tab-${view}`}>
+          {view === "outline" ? (
+            <Outline state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} check={editor.check} />
+          ) : (
+            <Canvas state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} />
+          )}
+        </div>
       </div>
 
       <div className="flex justify-end gap-2 pt-2">

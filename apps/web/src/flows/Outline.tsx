@@ -12,7 +12,7 @@ import { apiClient, type FlowCheck } from "../api";
 import type { ApproverSpec, FieldSpec, ProcessStepItem, WorkflowAutomationRule, WorkflowPredicate, WorkflowTriggerEvent } from "../types";
 import { WhoDecides } from "../WhoDecides";
 import { stepPreview, type DecisionChoice, type LateChoice } from "../processWords";
-import { flowReducer, initialEditor, newStep, toServerFlow, type Command, type EditorState, type Path, type StepKindName } from "./reducer";
+import { flowReducer, initialEditor, newStep, stepAt, toServerFlow, type Command, type EditorState, type Path, type StepKindName } from "./reducer";
 
 export type Problem = FlowCheck["problems"][number];
 
@@ -36,6 +36,7 @@ const ADD_KINDS: { kind: StepKindName; label: string }[] = [
   { kind: "create", label: "Add a create-record step" },
   { kind: "update", label: "Add an update-record step" },
   { kind: "find", label: "Add a find-records step" },
+  { kind: "start", label: "Add a step that starts another flow" },
 ];
 
 const KIND_NAMES: { kind: StepKindName; label: string }[] = [
@@ -46,6 +47,7 @@ const KIND_NAMES: { kind: StepKindName; label: string }[] = [
   { kind: "create", label: "Create a record" },
   { kind: "update", label: "Update a record" },
   { kind: "find", label: "Find records" },
+  { kind: "start", label: "Start another flow" },
 ];
 
 const OPERATORS: { value: WorkflowPredicate["operator"]; label: string }[] = [
@@ -59,7 +61,7 @@ const OPERATORS: { value: WorkflowPredicate["operator"]; label: string }[] = [
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
 /** The kind name of a step, as the add buttons and the kind choice name it. */
-function kindName(s: ProcessStepItem): StepKindName | "branch" | "other" {
+export function kindName(s: ProcessStepItem): StepKindName | "branch" | "other" {
   const k = s.kind as any;
   if (k.Branch) return "branch";
   if (k.UserTask) return "task";
@@ -70,11 +72,21 @@ function kindName(s: ProcessStepItem): StepKindName | "branch" | "other" {
   if (a.CreateRecord) return "create";
   if (a.UpdateRecord) return "update";
   if (a.FindRecord) return "find";
+  if (a.StartFlow) return "start";
   return "other";
 }
 
 /** Where a step sits, so its status field is named as the old builder named it. */
-type Place = { arm: "top" } | { arm: "condition"; index: number } | { arm: "otherwise" };
+export type Place = { arm: "top" } | { arm: "condition"; index: number } | { arm: "otherwise" };
+
+/** Where the step at `path` sits: at the top, in a condition's arm, or in `otherwise`. */
+export function placeOf(flow: WorkflowAutomationRule, path: Path): Place {
+  if (path.length < 3) return { arm: "top" };
+  const parent = stepAt(flow, path.slice(0, -2));
+  const b = (parent?.kind as any)?.Branch;
+  const arm = path[path.length - 2];
+  return b && arm === b.branches.length ? { arm: "otherwise" } : { arm: "condition", index: arm };
+}
 
 function statusLabel(place: Place): string {
   if (place.arm === "condition") return place.index === 0 ? "Then set status to" : `Then set status to, condition ${place.index + 1}`;
@@ -209,7 +221,7 @@ function Trigger({ trigger, fields, dispatch }: { trigger: WorkflowTriggerEvent;
   );
 }
 
-interface Ctx {
+export interface Ctx {
   dispatch: (c: Command) => void;
   fields: FieldSpec[];
   appSlug: string;
@@ -311,7 +323,7 @@ function StepItem({ step, path, index, siblings, place, ctx }: { step: ProcessSt
 }
 
 /** What a step does, in a few words, for its line in the outline. */
-function sentenceOf(s: ProcessStepItem): string {
+export function sentenceOf(s: ProcessStepItem): string {
   const k = s.kind as any;
   const a = k.Service?.action ?? {};
   switch (kindName(s)) {
@@ -331,12 +343,14 @@ function sentenceOf(s: ProcessStepItem): string {
       return "Update a record";
     case "find":
       return a.FindRecord.table ? `Find records in ${a.FindRecord.table}` : "Find records";
+    case "start":
+      return a.StartFlow.flow_id ? `Start the flow ${a.StartFlow.flow_id}` : "Start another flow";
     default:
       return `A step that ${Object.keys(a)[0] ?? "does something"}`;
   }
 }
 
-function StepForm({ step, path, place, ctx }: { step: ProcessStepItem; path: Path; place: Place; ctx: Ctx }) {
+export function StepForm({ step, path, place, ctx }: { step: ProcessStepItem; path: Path; place: Place; ctx: Ctx }) {
   const { dispatch } = ctx;
   const k = step.kind as any;
   const update = (kind: unknown) => dispatch({ type: "UpdateStep", path, patch: { kind: kind as any } });
@@ -409,6 +423,9 @@ function StepForm({ step, path, place, ctx }: { step: ProcessStepItem; path: Pat
         <Pairs pairs={v.fields} onChange={(fields) => setAction("UpdateRecord", { ...v, fields })} />
       </div>
     );
+  } else if (name === "start") {
+    const v = a.StartFlow;
+    body = <Text label="Flow to start" value={v.flow_id} onChange={(flow_id) => setAction("StartFlow", { ...v, flow_id })} />;
   } else if (name === "find") {
     const v = a.FindRecord;
     body = (

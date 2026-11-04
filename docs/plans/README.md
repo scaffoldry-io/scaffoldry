@@ -272,7 +272,7 @@ People are told, see each other work, and run real committee processes.
 | 158 | [workflows.md](workflows.md) | 5 | My Work: one list of decisions, tasks, and reviews across the institution, kept in step by jobs | **COMPLETED** |
 | 159 | [workflows.md](workflows.md) | 6 | The My Work page and a review queue | **COMPLETED** |
 | 160 | [workflows.md](workflows.md) | 7 | Flow editor: one command model, the outline, and server validation | **COMPLETED** |
-| 161 | [workflows.md](workflows.md) | 8 | Flow editor: the block-structured canvas |
+| 161 | [workflows.md](workflows.md) | 8 | Flow editor: the block-structured canvas | **COMPLETED** |
 | 162 | [workflows.md](workflows.md) | 9 | Test run with a trace on the canvas |
 | 163 | [workflows.md](workflows.md) | 10 | Run history, safe retry, and version comparison |
 
