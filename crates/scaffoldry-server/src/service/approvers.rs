@@ -245,6 +245,20 @@ fn named_in(spec: &ApproverSpec, inst: &ProcessInstance) -> Vec<String> {
     named
 }
 
+/// How the user task an instance waits on is decided.
+pub fn decision_of(state: &SharedState, inst: &ProcessInstance) -> scaffoldry_core::workflow::DecisionRule {
+    let rule = inst.waiting_step_id.as_deref().and_then(|step| crate::service::processes::rule_for(state, inst).map(|r| (step.to_string(), r)));
+    match rule.as_ref().and_then(|(step, r)| scaffoldry_core::workflow::find_step(&r.steps, step).map(|s| s.kind.clone())) {
+        Some(StepKind::UserTask { decision, .. }) => decision,
+        _ => scaffoldry_core::workflow::DecisionRule::Single,
+    }
+}
+
+/// Whether the step an instance waits on is a committee's vote (process v2 phase 4).
+pub fn is_committee(state: &SharedState, inst: &ProcessInstance) -> bool {
+    !decision_of(state, inst).is_single()
+}
+
 /// The approver spec of the user task an instance waits on.
 pub fn spec_of(state: &SharedState, inst: &ProcessInstance) -> Option<ApproverSpec> {
     let step_id = inst.waiting_step_id.as_deref()?;
@@ -280,6 +294,10 @@ pub fn caller_can_decide(state: &SharedState, caller: &AuthUser, inst: &ProcessI
     let Some(spec) = spec_of(state, inst) else {
         return false;
     };
+    // Process v2 phase 4: a committee step is voted on by the voters fixed when it started, and nobody else.
+    if !inst.voters.is_empty() || is_committee(state, inst) {
+        return inst.voters.iter().any(|v| v.eq_ignore_ascii_case(&caller.eppn));
+    }
     // Process v2 phase 3: a timer escalated the step to these people. The resolver chose them, so it already left out
     // the submitter and the starter.
     if inst.escalated_to.iter().any(|e| e.eq_ignore_ascii_case(&caller.eppn)) {
@@ -337,7 +355,11 @@ pub fn refresh_no_approver(state: &SharedState, inst: &mut ProcessInstance) -> b
         return false;
     };
     // An assignment overrides the position, so a reassigned step has an approver.
-    let problem = if inst.assigned_to.is_some() {
+    let needed = decision_of(state, inst).voters_needed();
+    let problem = if needed > 0 {
+        // Process v2 phase 4: a committee needs enough voters, counted when the step was entered.
+        (inst.voters.len() < needed).then(|| "too_few_voters".to_string())
+    } else if inst.assigned_to.is_some() {
         None
     } else {
         resolution.problem.map(problem_code)
@@ -389,6 +411,10 @@ pub fn instance_view(state: &SharedState, inst: &ProcessInstance) -> Value {
     }
     if let Some(map) = v.as_object_mut() {
         map.insert("approvers".to_string(), Value::Array(approvers));
+        // Process v2 phase 4: how far a committee's vote has got, as counts.
+        if let Some(tally) = crate::service::process_votes::tally_view(state, inst) {
+            map.insert("tally".to_string(), tally);
+        }
         // Process v2 phase 3: what the step's next timer will do, in words.
         if inst.status == ProcessStatus::Waiting {
             if let Some(next) = crate::service::process_timers::next_timer_view(state, inst) {

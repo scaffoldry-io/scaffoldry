@@ -108,7 +108,7 @@ impl World {
                     prompt: "Decide".to_string(),
                     approve: vec![scaffoldry_core::ActionType::UpdateRecordStatus { new_status: "Approved".into() }],
                     reject: vec![],
-                    approver: spec, due: None, remind_every: None, on_due: vec![], on_fail: vec![],
+                    approver: spec, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
                 },
             }],
         }
@@ -142,7 +142,7 @@ impl World {
             started_by: started_by.map(str::to_string),
             started_at: String::new(),
             assigned_to: assigned_to.map(str::to_string),
-            no_approver: None, escalated_to: vec![], escalated_unit: None,
+            no_approver: None, escalated_to: vec![], escalated_unit: None, voters: vec![],
         }).unwrap();
         id
     }

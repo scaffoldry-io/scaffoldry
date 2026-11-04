@@ -153,6 +153,8 @@ fn structure_problems(manifest: &AppManifest, rule: &AutomationRule, state: &Sha
     let mut problems = Vec::new();
     // Process v2 phase 3: a step's timers say when it is due, within bounds.
     problems.extend(crate::service::process_timers::problems(&rule.steps));
+    // Process v2 phase 4: a committee step needs at least one approval.
+    problems.extend(crate::service::process_votes::problems(&rule.steps));
     // Branches nest at most two levels. The step that goes deeper is named.
     fn deep(steps: &[scaffoldry_core::ProcessStep], level: usize, out: &mut Vec<String>) {
         for s in steps {
@@ -303,6 +305,7 @@ pub fn decide_process(
     slug: &str,
     instance_id: &str,
     decision: &str,
+    comment: Option<&str>,
     state: &SharedState,
 ) -> Result<ProcessInstance, ServiceError> {
     authorize_app(caller, slug, AppAction::Read, state)?;
@@ -336,7 +339,12 @@ pub fn decide_process(
     let mut field_effects = Vec::new();
     if let Some(rule) = rule_for(state, &instance) {
         if let Some(step) = scaffoldry_core::workflow::find_step(&rule.steps, &waiting_step_id) {
-            if let StepKind::UserTask { approve, reject, .. } = &step.kind {
+            if let StepKind::UserTask { approve, reject, decision: rule_decision, reject_rule, .. } = &step.kind {
+                // Process v2 phase 4: a committee step counts votes instead of taking one decision.
+                if !rule_decision.is_single() {
+                    let committee = crate::service::process_votes::Committee { decision: *rule_decision, reject_rule: *reject_rule, approve, reject };
+                    return crate::service::process_votes::vote(caller, slug, instance, &waiting_step_id, &decision, comment, &committee, state);
+                }
                 found_step = true;
                 let actions = if decision == "approve" { approve } else { reject };
                 field_effects = step_effects(actions, &mut instance.log);
@@ -390,20 +398,24 @@ pub fn decide_process(
         }
         crate::repository::Decided::Stale => return Err(ServiceError::conflict("Process instance is not in Waiting status")),
     }
-    // Notifications phase 4: the record's creator and the person who started the process are told the decision.
+    tell_decision(state, slug, &instance, &decision, &caller.eppn);
+    Ok(instance)
+}
+
+/// Notifications phase 4: the record's creator and the person who started the process are told the decision.
+pub(crate) fn tell_decision(state: &SharedState, slug: &str, instance: &ProcessInstance, decision: &str, by: &str) {
     let record = state.find_record(slug, &instance.record_id).ok().flatten();
     let creator = record.as_ref().and_then(|r| r.created_by.clone());
     let table = record.as_ref().and_then(|r| r.data.get("_table_id").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
     let people: Vec<String> = creator.into_iter().chain(instance.started_by.clone()).collect();
     let notice = crate::notifications::Notice::DecisionMade {
-        by: crate::notifications::PersonRef(caller.eppn.clone()),
+        by: crate::notifications::PersonRef(by.to_string()),
         app: crate::notifications::AppRef(slug.to_string()),
         table: crate::notifications::TableRef(table),
         step: crate::notifications::StepRef(instance.id.clone()),
         approved: crate::notifications::Flag(decision == "approve"),
     };
-    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::People(people), Some(&caller.eppn), &notice);
-    Ok(instance)
+    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::People(people), Some(by), &notice);
 }
 
 /// The most waiting decisions one call returns.

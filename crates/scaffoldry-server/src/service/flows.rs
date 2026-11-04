@@ -444,7 +444,7 @@ pub fn start_flow(state: &SharedState, rule: &AutomationRule, trigger: Option<&D
         started_at: started_at.clone(),
         assigned_to: None,
         no_approver: None,
-        rule_version: rule.version, escalated_to: vec![], escalated_unit: None,
+        rule_version: rule.version, escalated_to: vec![], escalated_unit: None, voters: vec![],
     };
     let mut names: Vec<String> = chain.to_vec();
     names.push(rule.name.clone());

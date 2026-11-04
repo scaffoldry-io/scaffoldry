@@ -76,6 +76,12 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "apply_timer",
     "escalate_up_target",
     "timer_notice_parts",
+    // Process v2 phase 4: a closing vote reads the record to write the decision's changes, the votes route reads it for
+    // its submitter only to refuse them (after checking the caller's scope), and a decision's notice reads it for its
+    // creator and table. None returns the record.
+    "vote_closing",
+    "committee_votes",
+    "tell_decision",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
 ];

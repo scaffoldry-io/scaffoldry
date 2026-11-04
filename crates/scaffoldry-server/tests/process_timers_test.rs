@@ -121,6 +121,8 @@ impl World {
                     remind_every: remind_every.map(|days| DurationSpec { days }),
                     on_due,
                     on_fail,
+                    decision: Default::default(),
+                    reject_rule: Default::default(),
                 },
             }],
         }

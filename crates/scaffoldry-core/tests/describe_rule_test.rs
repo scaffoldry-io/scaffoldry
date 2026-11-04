@@ -31,7 +31,7 @@ fn rule() -> AutomationRule {
                     prompt: "Check it".into(),
                     approve: vec![ActionType::UpdateRecordStatus { new_status: "Admitted".into() }],
                     reject: vec![ActionType::UpdateRecordStatus { new_status: "Denied".into() }],
-                    approver: Some(ApproverSpec::Position { key: "chair".into(), from: Origin::Submitter, walk_up: true }), due: None, remind_every: None, on_due: vec![], on_fail: vec![],
+                    approver: Some(ApproverSpec::Position { key: "chair".into(), from: Origin::Submitter, walk_up: true }), due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
                 },
             },
         ],
@@ -78,7 +78,7 @@ fn a_step_condition_and_other_approvers_are_in_words() {
         prompt: String::new(),
         approve: vec![],
         reject: vec![],
-        approver: Some(ApproverSpec::Person { eppn: "dean@example.edu".into() }), due: None, remind_every: None, on_due: vec![], on_fail: vec![],
+        approver: Some(ApproverSpec::Person { eppn: "dean@example.edu".into() }), due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
     };
     let s = describe_rule(&r);
     assert_eq!(s[1], "If level is grad.");
@@ -86,6 +86,6 @@ fn a_step_condition_and_other_approvers_are_in_words() {
     assert_eq!(s[3], "If name contains Lee, then set status to Approved.");
     assert_eq!(s[4], "Then wait for a decision by dean@example.edu.");
 
-    r.steps[1].kind = StepKind::UserTask { role: "registrar".into(), prompt: String::new(), approve: vec![], reject: vec![], approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![] };
+    r.steps[1].kind = StepKind::UserTask { role: "registrar".into(), prompt: String::new(), approve: vec![], reject: vec![], approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default() };
     assert_eq!(describe_rule(&r)[4], "Then wait for a decision by anyone with the role registrar.");
 }

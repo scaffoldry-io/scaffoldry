@@ -32,6 +32,7 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/process-analytics", get(process_analytics))
         .route("/apps/{slug}/processes", get(list_app_processes))
         .route("/apps/{slug}/processes/{id}/decide", post(decide_app_process))
+        .route("/apps/{slug}/processes/{id}/votes", get(process_votes))
         .route("/apps/{slug}/access/preview", post(preview_app_access))
         .route("/apps/{slug}/collaborators", get(list_app_collaborators))
 }
@@ -416,6 +417,9 @@ pub struct ProcessListQuery {
 #[derive(Debug, Deserialize)]
 pub struct ProcessDecisionPayload {
     pub decision: String,
+    /// Process v2 phase 4: why. A committee vote to reject needs one while `process.require_reject_comment` is on.
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 async fn list_app_processes(
@@ -472,6 +476,20 @@ async fn list_app_processes(
     Ok(Json(filtered))
 }
 
+/// Process v2 phase 4: a committee's votes, for its voters and the app's owners and admins.
+async fn process_votes(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((slug, id)): Path<(String, String)>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::process_votes::committee_votes(&user, &slug, &id, &state))
+        .await
+        .map_err(|e| ServiceError::Internal(e.to_string()).into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
+}
+
 async fn decide_app_process(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -483,7 +501,7 @@ async fn decide_app_process(
     let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
 
     let (user, state) = (user, state.clone());
-    tokio::task::spawn_blocking(move || crate::service::processes::decide_process(&user, &origin, &slug, &id, &payload.decision, &state))
+    tokio::task::spawn_blocking(move || crate::service::processes::decide_process(&user, &origin, &slug, &id, &payload.decision, payload.comment.as_deref(), &state))
         .await
         .map_err(|_| ServiceError::internal("The decision stopped before it finished").into_pair())?
         .map(Json)
