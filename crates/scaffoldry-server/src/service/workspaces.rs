@@ -703,8 +703,15 @@ pub fn add_collaborator(
     }
 
     super::reload_after_write(state)?;
+    tell_access(caller, workspace_id, &new_member.eppn, state);
 
     Ok(new_member)
+}
+
+/// Notifications phase 4: a person whose access to a workspace was granted or removed is told.
+fn tell_access(caller: &AuthUser, workspace_id: &str, who: &str, state: &SharedState) {
+    let notice = crate::notifications::Notice::AccessChanged { by: crate::notifications::PersonRef(caller.eppn.clone()), workspace: crate::notifications::WorkspaceRef(workspace_id.to_string()) };
+    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::Person(who.to_string()), Some(&caller.eppn), &notice);
 }
 
 pub fn update_collaborator_role(
@@ -862,6 +869,7 @@ pub fn remove_collaborator(
     }
 
     super::reload_after_write(state)?;
+    tell_access(caller, workspace_id, target_eppn, state);
 
     Ok(())
 }

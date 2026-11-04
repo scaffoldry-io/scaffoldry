@@ -274,6 +274,19 @@ pub fn decide_process(
         crate::repository::Decided::Done => {}
         crate::repository::Decided::Stale => return Err(ServiceError::conflict("Process instance is not in Waiting status")),
     }
+    // Notifications phase 4: the record's creator and the person who started the process are told the decision.
+    let record = state.find_record(slug, &instance.record_id).ok().flatten();
+    let creator = record.as_ref().and_then(|r| r.created_by.clone());
+    let table = record.as_ref().and_then(|r| r.data.get("_table_id").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+    let people: Vec<String> = creator.into_iter().chain(instance.started_by.clone()).collect();
+    let notice = crate::notifications::Notice::DecisionMade {
+        by: crate::notifications::PersonRef(caller.eppn.clone()),
+        app: crate::notifications::AppRef(slug.to_string()),
+        table: crate::notifications::TableRef(table),
+        step: crate::notifications::StepRef(instance.id.clone()),
+        approved: crate::notifications::Flag(decision == "approve"),
+    };
+    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::People(people), Some(&caller.eppn), &notice);
     Ok(instance)
 }
 

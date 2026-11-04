@@ -127,7 +127,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_daily_schedule(repo, "purge_expired", &zone, "02:00:00")?;
     // Files no record holds any more are removed, once their 24 hours of grace are over.
     jobs::register_daily_schedule(repo, "purge_orphan_blobs", &zone, "03:00:00")?;
-    let job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, jobs::JobConfig::default())?;
+    // A job that ends tells its owner (notifications phase 4).
+    let job_config = jobs::JobConfig { on_finish: Some(scaffoldry_server::notifications::job_hook(state.clone())), ..jobs::JobConfig::default() };
+    let job_runner = jobs::JobRunner::start(repo, jobs::JOB_KINDS, job_config)?;
 
     let app = build_app_with_state(state)?;
 

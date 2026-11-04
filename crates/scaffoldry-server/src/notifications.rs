@@ -38,6 +38,9 @@ pub struct Count(pub u32);
 /// A yes or no.
 #[derive(Debug, Clone, Copy)]
 pub struct Flag(pub bool);
+/// A workspace, by id. Rendered as its name, or "a workspace".
+#[derive(Debug, Clone)]
+pub struct WorkspaceRef(pub String);
 
 /// Defines the closed list of kinds, each with its typed arguments, and the list of those arguments that a test reads.
 macro_rules! notices {
@@ -73,16 +76,20 @@ notices! {
     SyncFailed => "sync_failed" { app: AppRef, table: TableRef },
     WebhookDisabled => "webhook_disabled" { app: AppRef },
     FileInfected => "file_infected" { app: AppRef, table: TableRef, record: RecordRef },
-    Assigned => "assigned" { by: PersonRef, app: AppRef, table: TableRef, step: StepRef },
+    Assigned => "assigned" { by: PersonRef, app: AppRef, table: TableRef, record: RecordRef },
     DelegationReceived => "delegation_received" { by: PersonRef },
-    AccessChanged => "access_changed" { by: PersonRef, app: AppRef },
+    AccessChanged => "access_changed" { by: PersonRef, workspace: WorkspaceRef },
     ViewShared => "view_shared" { by: PersonRef, app: AppRef, table: TableRef },
+    // A rule's Notify effect (notifications phase 4). The rule's message text is not shown: a notice holds names only.
+    ProcessNotice => "process_notice" { app: AppRef, table: TableRef },
 }
 
 /// Who is told.
 #[derive(Debug, Clone)]
 pub enum Recipients {
     Person(String),
+    /// Named people, such as a record's creator and the person who started its process.
+    People(Vec<String>),
     /// The approvers of the step a process instance waits on, by instance id.
     Approvers(String),
     Position { key: String, unit: uuid::Uuid },
@@ -105,9 +112,9 @@ impl Notice {
             | Notice::WebhookDisabled { app }
             | Notice::FileInfected { app, .. }
             | Notice::Assigned { app, .. }
-            | Notice::AccessChanged { app, .. }
-            | Notice::ViewShared { app, .. } => Some(app.0.as_str()),
-            Notice::JobFinished { .. } | Notice::DelegationReceived { .. } => None,
+            | Notice::ViewShared { app, .. }
+            | Notice::ProcessNotice { app, .. } => Some(app.0.as_str()),
+            Notice::JobFinished { .. } | Notice::DelegationReceived { .. } | Notice::AccessChanged { .. } => None,
         }
     }
 }
@@ -149,6 +156,7 @@ pub fn label(kind: &str) -> &'static str {
         "delegation_received" => "Someone asks you to decide for them",
         "access_changed" => "Your access changes",
         "view_shared" => "Someone shares a view with you",
+        "process_notice" => "A rule notifies you",
         _ => "Other notices",
     }
 }
@@ -358,19 +366,27 @@ pub fn render(state: &SharedState, notice: &Notice) -> (String, String, Value) {
             format!("A file attached to a record in {} failed the virus scan and cannot be opened.", table(a, t)),
             link(format!("{}?record={}", app_path(a), urlencode(&record.0)), json!({ "app": a.0, "record": record.0 })),
         ),
-        Notice::Assigned { by, app: a, table: t, step: s } => (
+        Notice::Assigned { by, app: a, table: t, record: r } => (
             format!("Assigned to you: {}", app(a)),
-            format!("{} assigned you a step in {}.", who(by), table(a, t)),
-            link(format!("{}?instance={}", app_path(a), urlencode(&s.0)), json!({ "app": a.0, "instance": s.0 })),
+            format!("{} added you to a record in {}.", who(by), table(a, t)),
+            link(format!("{}?record={}", app_path(a), urlencode(&r.0)), json!({ "app": a.0, "record": r.0 })),
         ),
         Notice::DelegationReceived { by } => (
             format!("{} delegated to you", who(by)),
             format!("{} asked you to decide in their place for a while. Their decisions now come to you too.", who(by)),
             link("/settings".to_string(), json!({})),
         ),
-        Notice::AccessChanged { by, app: a } => (
-            format!("Your access changed: {}", app(a)),
-            format!("{} changed what you may do in {}.", who(by), app(a)),
+        Notice::AccessChanged { by, workspace } => {
+            let name = state.workspaces.read().ok().and_then(|w| w.get(&workspace.0).map(|x| x.name.clone())).unwrap_or_else(|| "a workspace".to_string());
+            (
+                format!("Your access changed: {name}"),
+                format!("{} changed what you may do in {name}.", who(by)),
+                link(format!("/workspace/{}", urlencode(&workspace.0)), json!({ "workspace": workspace.0 })),
+            )
+        }
+        Notice::ProcessNotice { app: a, table: t } => (
+            format!("A rule in {} notified you", app(a)),
+            format!("A rule in {} asked that you be told about a change in {}.", app(a), table(a, t)),
             link(app_path(a), json!({ "app": a.0 })),
         ),
         Notice::ViewShared { by, app: a, table: t } => (
@@ -395,6 +411,7 @@ fn urlencode(s: &str) -> String {
 fn resolve(state: &SharedState, to: &Recipients) -> (Vec<String>, Option<String>) {
     match to {
         Recipients::Person(e) => (vec![e.clone()], None),
+        Recipients::People(list) => (list.clone(), None),
         Recipients::Approvers(instance) => {
             let Some(inst) = state.repository.get_process_instance(instance).ok().flatten() else { return (Vec::new(), None) };
             match crate::service::approvers::resolution_for(state, &inst) {
@@ -495,4 +512,66 @@ pub fn purge(repo: &PostgresRepository) -> Result<u64, RepositoryError> {
 pub fn purge_job(ctx: &crate::jobs::JobCtx, _payload: Value) -> Result<Value, crate::jobs::JobError> {
     let n = purge(ctx.repository()).map_err(|e| crate::jobs::JobError::Retry(e.to_string()))?;
     Ok(json!({ "removed": n }))
+}
+
+/// Notifications phase 4: who a rule's Notify effect names. A position key reaches its holders from the workspace's
+/// unit up, and their delegates. Anything else is a workspace role, as before.
+pub fn notify_role(state: &SharedState, app: &str, table: &str, role: &str, actor: &str) {
+    let is_position = state.position_types.read().map(|p| p.contains_key(role)).unwrap_or(false);
+    let to = if is_position {
+        let spec = scaffoldry_core::approver::ApproverSpec::Position { key: role.to_string(), from: scaffoldry_core::approver::Origin::Workspace, walk_up: true };
+        let ctx = crate::service::approvers::context_for(state, app, None, None, &[]);
+        Recipients::People(scaffoldry_core::approver::resolve_approvers(&spec, &ctx).approvers.into_iter().map(|a| a.eppn).collect())
+    } else {
+        use scaffoldry_engine::HostRouter;
+        let ws = state.engine.read().ok().and_then(|e| e.resolve_by_slug(app).and_then(|m| m.workspace_id.clone()));
+        match ws {
+            Some(workspace) => Recipients::Workspace { workspace, roles: vec![role.to_string()] },
+            None => return,
+        }
+    };
+    let _ = notify(state, &to, Some(actor), &Notice::ProcessNotice { app: AppRef(app.to_string()), table: TableRef(table.to_string()) });
+}
+
+/// What a finished job tells its owner (notifications phase 4): `job_finished`, or `import_finished` for an import,
+/// or `file_infected` to the uploader and the workspace's admins when a scan finds a virus.
+pub fn on_job_finished(state: &SharedState, job: &crate::jobs::FinishedJob) {
+    if job.kind == "scan_file" {
+        if job.result.as_ref().and_then(|r| r.get("scan_state")).and_then(Value::as_str) == Some("infected") {
+            let file = job.payload.get("ref_id").and_then(Value::as_str).and_then(|r| uuid::Uuid::parse_str(r).ok()).and_then(|id| state.repository.file_ref_any(id).ok().flatten());
+            if let Some(f) = file {
+                let notice = Notice::FileInfected { app: AppRef(f.app_slug.clone()), table: TableRef(f.table_id.clone().unwrap_or_default()), record: RecordRef(f.record_id.clone().unwrap_or_default()) };
+                let _ = notify(state, &Recipients::Person(f.uploaded_by.clone()), None, &notice);
+                use scaffoldry_engine::HostRouter;
+                let ws = state.engine.read().ok().and_then(|e| e.resolve_by_slug(&f.app_slug).and_then(|m| m.workspace_id.clone()));
+                if let Some(workspace) = ws {
+                    let _ = notify(state, &Recipients::Workspace { workspace, roles: vec!["owner".into(), "admin".into()] }, Some(&f.uploaded_by), &notice);
+                }
+            }
+        }
+        return;
+    }
+    // Work the platform started for itself has nobody to tell.
+    if !job.created_by.contains('@') {
+        return;
+    }
+    let to = Recipients::Person(job.created_by.clone());
+    let notice = match (job.kind.as_str(), &job.result) {
+        ("import_run", Some(r)) if !job.failed => {
+            let n = |k: &str| r.get(k).and_then(Value::as_u64).unwrap_or(0) as u32;
+            Notice::ImportFinished {
+                app: AppRef(job.payload.get("app_slug").and_then(Value::as_str).unwrap_or_default().to_string()),
+                table: TableRef(job.payload.get("table_id").and_then(Value::as_str).unwrap_or_default().to_string()),
+                rows: Count(n("created_count") + n("updated_count")),
+                refused: Count(n("rejected_count")),
+            }
+        }
+        _ => Notice::JobFinished { job: JobRef(job.id), failed: Flag(job.failed) },
+    };
+    let _ = notify(state, &to, None, &notice);
+}
+
+/// The job runner's hook, for `JobConfig::on_finish`.
+pub fn job_hook(state: SharedState) -> crate::jobs::OnFinish {
+    crate::jobs::OnFinish(std::sync::Arc::new(move |job: &crate::jobs::FinishedJob| on_job_finished(&state, job)))
 }

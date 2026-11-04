@@ -118,8 +118,9 @@ async fn a_person_who_cannot_read_the_app_gets_no_notice_about_it() {
 // or no. The list below is generated from the same macro that defines the kinds, so it cannot drift from them.
 #[test]
 fn no_kind_takes_free_text() {
-    let allowed = ["AppRef", "TableRef", "PersonRef", "RecordRef", "StepRef", "JobRef", "Count", "Flag"];
-    assert_eq!(notifications::FIELDS.len(), 16, "one entry per kind");
+    let allowed = ["AppRef", "TableRef", "PersonRef", "RecordRef", "StepRef", "JobRef", "WorkspaceRef", "Count", "Flag"];
+    // The brief's sixteen kinds, and `process_notice` for a rule's Notify effect (notifications phase 4).
+    assert_eq!(notifications::FIELDS.len(), 17, "one entry per kind");
     for (kind, fields) in notifications::FIELDS {
         assert!(notifications::KINDS.contains(kind), "{kind}");
         for (name, ty) in fields.iter() {

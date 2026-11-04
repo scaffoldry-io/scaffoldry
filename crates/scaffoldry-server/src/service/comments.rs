@@ -72,6 +72,17 @@ fn reader(address: &str, app_slug: &str, state: &SharedState) -> Option<AuthUser
     authorize_app(&user, app_slug, AppAction::Read, state).ok().map(|_| user)
 }
 
+/// Notifications phase 4: each person newly mentioned is told, with names only, never the comment's words.
+fn tell_mentioned(caller: &AuthUser, app_slug: &str, table: &str, record: &str, now: &[String], before: &[String], state: &SharedState) {
+    use crate::notifications::{notify, AppRef, Notice, PersonRef, RecordRef, Recipients, TableRef};
+    let new: Vec<String> = now.iter().filter(|m| !before.iter().any(|b| b.eq_ignore_ascii_case(m))).cloned().collect();
+    if new.is_empty() {
+        return;
+    }
+    let notice = Notice::Mention { by: PersonRef(caller.eppn.clone()), app: AppRef(app_slug.to_string()), table: TableRef(table.to_string()), record: RecordRef(record.to_string()) };
+    let _ = notify(state, &Recipients::People(new), Some(&caller.eppn), &notice);
+}
+
 /// The mentions that stay: those of people who can read the app.
 fn kept_mentions(body: &str, app_slug: &str, state: &SharedState) -> Vec<String> {
     mentions_in(body).iter().filter_map(|a| reader(a, app_slug, state)).map(|u| u.eppn).collect()
@@ -138,6 +149,7 @@ pub fn post_comment(caller: &AuthUser, origin: &Origin, app_slug: &str, record_i
     let mentions = kept_mentions(&body, app_slug, state);
     let new = crate::repository_comments::NewComment { table_id: table, record_id: record_id.to_string(), parent_id, body, mentions };
     let row = repo.insert_comment(app_slug, new, &ctx).map_err(internal)?;
+    tell_mentioned(caller, app_slug, &row.table_id, record_id, &row.mentions, &[], state);
     Ok(shown(&row, state))
 }
 
@@ -177,6 +189,8 @@ pub fn edit_comment(caller: &AuthUser, origin: &Origin, app_slug: &str, id: &str
         .edit_comment(app_slug, row.id, &body, &mentions, &ctx)
         .map_err(internal)?
         .ok_or_else(|| ServiceError::NotFound("Comment not found".to_string()))?;
+    // An edit tells only the people it newly mentions.
+    tell_mentioned(caller, app_slug, &saved.table_id, &saved.record_id, &saved.mentions, &row.mentions, state);
     Ok(shown(&saved, state))
 }
 

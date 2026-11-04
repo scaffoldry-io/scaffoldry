@@ -894,12 +894,32 @@ pub(crate) fn digest_of(p: &ProposalRow, state: &SharedState) -> Result<String, 
 }
 
 pub fn propose(caller: &AuthUser, input: ProposeInput, state: &SharedState) -> Result<Value, ServiceError> {
-    propose_with(caller, input, false, None, state)
+    let (ws, app) = (input.workspace_id.clone(), proposal_app(&input));
+    let made = propose_with(caller, input, false, None, state)?;
+    tell_pending(caller, &ws, app, &made, state);
+    Ok(made)
+}
+
+/// The app a proposal is about: the one it names, or the one its manifest describes.
+fn proposal_app(input: &ProposeInput) -> Option<String> {
+    input.app_slug.clone().or_else(|| input.manifest.as_ref().and_then(|m| m.get("slug")).and_then(Value::as_str).map(str::to_string))
+}
+
+/// Notifications phase 4: a proposal that waits tells the workspace's owners and admins other than the proposer.
+fn tell_pending(caller: &AuthUser, workspace: &str, app: Option<String>, made: &Value, state: &SharedState) {
+    let pending = made["status"].as_str().map(|s| s.eq_ignore_ascii_case("pending")).unwrap_or(false);
+    let (Some(app), true) = (app, pending) else { return };
+    let notice = crate::notifications::Notice::ProposalPending { by: crate::notifications::PersonRef(caller.eppn.clone()), app: crate::notifications::AppRef(app) };
+    let to = crate::notifications::Recipients::Workspace { workspace: workspace.to_string(), roles: vec!["owner".into(), "admin".into()] };
+    let _ = crate::notifications::notify(state, &to, Some(&caller.eppn), &notice);
 }
 
 /// A proposal made from content that was reviewed already. What matches it is not raised again. What differs is.
 pub fn propose_reviewed(caller: &AuthUser, input: ProposeInput, reviewed: Reviewed, state: &SharedState) -> Result<Value, ServiceError> {
-    propose_with(caller, input, false, Some(reviewed), state)
+    let (ws, app) = (input.workspace_id.clone(), proposal_app(&input));
+    let made = propose_with(caller, input, false, Some(reviewed), state)?;
+    tell_pending(caller, &ws, app, &made, state);
+    Ok(made)
 }
 
 /// Runs every check `propose` runs and says what the change would need, without storing anything.
@@ -1201,6 +1221,13 @@ pub fn decide(caller: &AuthUser, proposal_id: &str, decision: &str, rationale: &
     }
     // A trial copy lasts while its proposal waits.
     crate::service::trials::destroy_for_proposal(state, id);
+    // Notifications phase 4: the proposer is told the decision. A proposer who withdrew is not told of their own act.
+    let notice = crate::notifications::Notice::ProposalDecided {
+        by: crate::notifications::PersonRef(caller.eppn.clone()),
+        app: crate::notifications::AppRef(row.app_slug.clone()),
+        approved: crate::notifications::Flag(decision == "approve"),
+    };
+    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::Person(row.proposed_by.clone()), Some(&caller.eppn), &notice);
     get(proposal_id, state)
 }
 
