@@ -2091,6 +2091,10 @@ fn run_automations_in(
                 let mut inst = inst;
                 inst.started_by = Some(actor.identity.eppn.clone());
                 inst.started_at = Utc::now().to_rfc3339();
+                // Process v2 phase 4: a committee's voters are fixed now. Someone appointed later does not vote.
+                if crate::service::approvers::is_committee(state, &inst) {
+                    inst.voters = crate::service::process_votes::voters_for(state, &inst);
+                }
                 crate::service::approvers::refresh_no_approver(state, &mut inst);
                 // Notifications phase 4: a step that starts waiting tells its approvers, delegates included.
                 let approvers = crate::service::approvers::approver_count(state, &inst);

@@ -194,6 +194,12 @@ pub enum StepKind {
         /// What a `Fail` runs as it ends the instance.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         on_fail: Vec<ActionType>,
+        /// Process v2 phase 4: one person decides, or a committee votes.
+        #[serde(default, skip_serializing_if = "DecisionRule::is_single")]
+        decision: DecisionRule,
+        /// When a committee's rejections close the step. Named `reject_rule` because `reject` holds the actions.
+        #[serde(default, skip_serializing_if = "RejectRule::is_first")]
+        reject_rule: RejectRule,
     },
     /// The steps of the first arm whose conditions hold run, or else `otherwise`. The choice is a process event.
     Branch {
@@ -201,6 +207,79 @@ pub enum StepKind {
         #[serde(default)]
         otherwise: Vec<ProcessStep>,
     },
+}
+
+/// How a user task is decided. `Single` is one person's decision. The others are a committee's vote among the voters
+/// fixed when the step is entered.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DecisionRule {
+    #[default]
+    Single,
+    /// Every voter approves.
+    AllOf,
+    /// At least this many voters approve.
+    AtLeast(u32),
+}
+
+impl DecisionRule {
+    pub fn is_single(&self) -> bool {
+        matches!(self, DecisionRule::Single)
+    }
+
+    /// How many voters a committee step needs to be decidable at all. `Single` needs no committee.
+    pub fn voters_needed(&self) -> usize {
+        match self {
+            DecisionRule::Single => 0,
+            DecisionRule::AllOf => 1,
+            DecisionRule::AtLeast(n) => (*n).max(1) as usize,
+        }
+    }
+}
+
+/// When a committee's rejections close the step rejected.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RejectRule {
+    /// Under `AllOf`, the first rejection. Under `AtLeast(n)`, once so many reject that `n` approvals cannot be reached.
+    #[default]
+    FirstReject,
+    /// When more than half of the voters reject.
+    MajorityReject,
+}
+
+impl RejectRule {
+    pub fn is_first(&self) -> bool {
+        matches!(self, RejectRule::FirstReject)
+    }
+}
+
+/// How a committee's vote stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tally {
+    pub approve: usize,
+    pub reject: usize,
+    pub voters: usize,
+}
+
+/// Whether the votes close the step: `Some(true)` approved, `Some(false)` rejected, `None` still open.
+pub fn vote_outcome(decision: DecisionRule, reject_rule: RejectRule, t: Tally) -> Option<bool> {
+    let approved = match decision {
+        DecisionRule::Single => t.approve >= 1,
+        DecisionRule::AllOf => t.voters > 0 && t.approve >= t.voters,
+        DecisionRule::AtLeast(n) => t.approve >= n as usize,
+    };
+    if approved {
+        return Some(true);
+    }
+    let rejected = match (reject_rule, decision) {
+        (RejectRule::MajorityReject, _) => 2 * t.reject > t.voters,
+        (RejectRule::FirstReject, DecisionRule::AtLeast(n)) => t.voters - t.reject.min(t.voters) < n as usize,
+        (RejectRule::FirstReject, _) => t.reject >= 1,
+    };
+    if rejected {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 /// A length of time in whole days.
@@ -274,6 +353,9 @@ pub struct ProcessInstance {
     /// The unit an `EscalateUp` last found the position at, so the next one starts above it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalated_unit: Option<String>,
+    /// Process v2 phase 4: the people who vote on a committee step, fixed when it is entered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub voters: Vec<String>,
 }
 
 pub fn effects_retrigger(effects: &[ActionEffect]) -> Option<TriggerEvent> {

@@ -99,6 +99,7 @@ const SCHEMA_0091: &str = include_str!("../../scaffoldry-core/migrations/0091_pr
 const SCHEMA_0092: &str = include_str!("../../scaffoldry-core/migrations/0092_flows.sql");
 const SCHEMA_0093: &str = include_str!("../../scaffoldry-core/migrations/0093_flow_state.sql");
 const SCHEMA_0094: &str = include_str!("../../scaffoldry-core/migrations/0094_process_timers.sql");
+const SCHEMA_0095: &str = include_str!("../../scaffoldry-core/migrations/0095_process_votes.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1191,6 +1192,7 @@ impl PostgresRepository {
                             ("0092_flows.sql", SCHEMA_0092),
                             ("0093_flow_state.sql", SCHEMA_0093),
                             ("0094_process_timers.sql", SCHEMA_0094),
+                            ("0095_process_votes.sql", SCHEMA_0095),
                         ];
 
                         let mut fresh_install = false;
@@ -2941,6 +2943,7 @@ impl PostgresRepository {
                 }
                 crate::repository_timers::cancel_timers_in_tx(&mut tx, &inst.id)?;
                 crate::repository_timers::insert_timers_in_tx(&mut tx, &inst.id, &timers)?;
+                crate::repository_votes::clear_votes_in_tx(&mut tx, &inst.id)?;
             }
             tx.commit()?;
             Ok(n > 0)

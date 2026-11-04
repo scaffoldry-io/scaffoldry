@@ -282,7 +282,7 @@ Tool {
     },
     Tool {
         name: "decide_process",
-        description: "Approve or reject a waiting process step. Only the person it names may decide, never the submitter.",
+        description: "Approve or reject a waiting step, or vote on a committee's (a reject vote needs a comment). Never the submitter.",
         input_schema: schema_decide_process,
         scope: Scope::App(AppAction::Read),
         read_only: false,
@@ -1397,8 +1397,9 @@ fn schema_decide_process() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "instance_id": { "type": "string", "description": "The waiting instance" },
-            "decision": { "type": "string", "description": "approve or reject" }
+            "instance_id": { "type": "string" },
+            "decision": { "type": "string", "description": "approve or reject" },
+            "comment": { "type": "string" }
         },
         "required": ["app_slug", "instance_id", "decision"]
     })
@@ -1410,6 +1411,8 @@ struct DecideProcessArgs {
     app_slug: String,
     instance_id: String,
     decision: String,
+    #[serde(default)]
+    comment: Option<String>,
 }
 
 fn run_list_waiting_decisions(caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1418,7 +1421,7 @@ fn run_list_waiting_decisions(caller: &AuthUser, _origin: &Origin, _args: Value,
 
 fn run_decide_process(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: DecideProcessArgs = parse(args)?;
-    to_value(&crate::service::processes::decide_process(caller, origin, &a.app_slug, &a.instance_id, &a.decision, state)?)
+    to_value(&crate::service::processes::decide_process(caller, origin, &a.app_slug, &a.instance_id, &a.decision, a.comment.as_deref(), state)?)
 }
 
 

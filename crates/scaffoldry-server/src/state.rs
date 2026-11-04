@@ -488,6 +488,7 @@ impl ServerState {
         settings_map.insert("tokens.max_days".to_string(), serde_json::json!(90));
         settings_map.insert("tokens.agent_enabled".to_string(), serde_json::json!(true));
         settings_map.insert("process.stale_days".to_string(), serde_json::json!(14));
+        settings_map.insert("process.require_reject_comment".to_string(), serde_json::json!(true));
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
         settings_map.insert("oauth.allow_localhost".to_string(), serde_json::json!(false));
