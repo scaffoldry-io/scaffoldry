@@ -51,6 +51,10 @@ pub const AGENT_RELEASE_EXEMPT: &[(&str, &str)] = &[
     ("routes/records.rs::get_record", "Returns one record. One record never passes the threshold, so a single read is not logged."),
     ("service/tools.rs::run_get_record", "Returns one record. One record never passes the threshold, so a single read is not logged."),
     (
+        "service/buttons.rs::record",
+        "Loads one record to check a button's conditions. Neither button route returns the record's values, so nothing is released.",
+    ),
+    (
         "routes/files.rs::download",
         "Returns one file of one record, not a list. A download from a sensitive field is logged as `file_download` by this function.",
     ),
