@@ -45,6 +45,12 @@ fn step_of(problem: &str) -> Option<&str> {
 /// workspace alone.
 fn flow_and_manifest(body: Value, state: &SharedState) -> Result<(AutomationRule, AppManifest), ServiceError> {
     let rule: AutomationRule = serde_json::from_value(body).map_err(|e| ServiceError::BadRequest(format!("rule_schema: the body is not a flow: {e}")))?;
+    let manifest = manifest_of(&rule, state)?;
+    Ok((rule, manifest))
+}
+
+/// The app a flow belongs to. A flow with no app gets an empty app in its home workspace.
+pub(crate) fn manifest_of(rule: &AutomationRule, state: &SharedState) -> Result<AppManifest, ServiceError> {
     if !rule.app_slug.is_empty() {
         let manifest = state
             .engine
@@ -53,19 +59,18 @@ fn flow_and_manifest(body: Value, state: &SharedState) -> Result<(AutomationRule
             .resolve_by_slug(&rule.app_slug)
             .cloned()
             .ok_or_else(|| ServiceError::NotFound(format!("App '{}' not found", rule.app_slug)))?;
-        return Ok((rule, manifest));
+        return Ok(manifest);
     }
     let ws = rule.home_workspace.clone().ok_or_else(|| ServiceError::BadRequest("rule_schema: a flow names its app or its home workspace".into()))?;
-    let manifest: AppManifest = serde_json::from_value(json!({
+    serde_json::from_value(json!({
         "slug": "", "title": "", "description": "", "organization_code": "", "department": "", "workspace_id": ws, "views": [], "tables": [],
     }))
-    .map_err(|e| ServiceError::Internal(e.to_string()))?;
-    Ok((rule, manifest))
+    .map_err(|e| ServiceError::Internal(e.to_string()))
 }
 
 /// An app manager, the owner of its workspace, or an administrator may validate. A flow with no app needs its home
 /// workspace's owner or an administrator.
-fn authorize(caller: &AuthUser, rule: &AutomationRule, manifest: &AppManifest, state: &SharedState) -> Result<(), ServiceError> {
+pub(crate) fn authorize(caller: &AuthUser, rule: &AutomationRule, manifest: &AppManifest, state: &SharedState) -> Result<(), ServiceError> {
     if !rule.app_slug.is_empty() && authorize_app(caller, &rule.app_slug, AppAction::Manage, state).is_ok() {
         return Ok(());
     }

@@ -17,6 +17,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/admin/mail/test".into(), case!(mail_test, "/api/v1"));
     exempt(m, "POST /api/v1/apps/{slug}/automations/preview-approvers", "says who a step would go to today and stores nothing");
     exempt(m, "POST /api/v1/flows/validate", "checks a flow the editor holds and stores nothing: flow_validate_test counts the rule versions and proposals before and after");
+    exempt(m, "POST /api/v1/flows/{id}/test-run", "runs a flow in dry mode and stores nothing: flow_test_run_test counts every table a run touches before and after");
     exempt(m, "POST /api/v1/apps/{slug}/presence", "stores nothing: it tells every server a stream is still open, and realtime_phase3_test proves two servers see each other");
     m.insert("POST /api/v1/admin/ownership/transfer".into(), case!(ownership_transfer));
     exempt(m, "POST /api/v1/admin/ownership/transfer/preview", "reports what a transfer would do and stores nothing");

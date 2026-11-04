@@ -1620,6 +1620,11 @@ export const apiClient = {
     return request<FlowCheck>("/flows/validate", { method: "POST", body: JSON.stringify(flow) });
   },
 
+  /** Workflows phase 9: runs a flow in dry mode and returns its trace. Nothing is written, sent or stored. */
+  testRunFlow: async (flowId: string, body: { flow?: unknown; record_id?: string; values?: Record<string, unknown>; outcomes?: Record<string, string> }) => {
+    return request<import("./flows/TestRun").TestRunResult>(`/flows/${encodeURIComponent(flowId)}/test-run`, { method: "POST", body: JSON.stringify(body) });
+  },
+
   /** Saves a rule. A 202 means a person must approve it first, and nothing is live. */
   submitRule: async (appSlug: string, rule: unknown): Promise<SaveOutcome> => {
     const res = await requestFull<{ proposal_id?: string }>(`/apps/${appSlug}/automations`, {

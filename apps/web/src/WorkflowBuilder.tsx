@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { FieldSpec, WorkflowAutomationRule, WorkflowActionItem } from "./types";
 import { RuleSteps } from "./RuleSteps";
 import { Outline, useFlowEditor } from "./flows/Outline";
 import { Canvas } from "./flows/Canvas";
+import { TestRunPanel, type TraceEntry } from "./flows/TestRun";
 import { Banner } from "./ui";
 import type { SaveOutcome } from "./api";
 
@@ -374,6 +375,8 @@ function RuleForm({ appSlug, fields, onSubmit, onCancel }: { appSlug: string; fi
   const [id] = useState(() => `rule-${Date.now()}`);
   // Workflows phase 8: the outline and the canvas are two views of the one editor state.
   const [view, setView] = useState<"outline" | "canvas">("outline");
+  // Workflows phase 9: the last test run's trace. An edit makes it stale, so it is cleared.
+  const [trace, setTrace] = useState<TraceEntry[] | null>(null);
   const editor = useFlowEditor({
     id,
     app_slug: appSlug,
@@ -385,6 +388,8 @@ function RuleForm({ appSlug, fields, onSubmit, onCancel }: { appSlug: string; fi
     actions: [],
     steps: [],
   });
+
+  useEffect(() => setTrace(null), [editor.state.flow]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -483,11 +488,12 @@ function RuleForm({ appSlug, fields, onSubmit, onCancel }: { appSlug: string; fi
         </div>
         <div role="tabpanel" id="flow-view" aria-labelledby={`flow-tab-${view}`}>
           {view === "outline" ? (
-            <Outline state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} check={editor.check} />
+            <Outline state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} check={editor.check} trace={trace} />
           ) : (
-            <Canvas state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} />
+            <Canvas state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} trace={trace} />
           )}
         </div>
+        <TestRunPanel flow={{ ...editor.state.flow, name: ruleName || editor.state.flow.name }} onTrace={setTrace} />
       </div>
 
       <div className="flex justify-end gap-2 pt-2">

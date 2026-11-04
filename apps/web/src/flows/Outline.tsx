@@ -13,6 +13,7 @@ import type { ApproverSpec, FieldSpec, ProcessStepItem, WorkflowAutomationRule, 
 import { WhoDecides } from "../WhoDecides";
 import { stepPreview, type DecisionChoice, type LateChoice } from "../processWords";
 import { flowReducer, initialEditor, newStep, stepAt, toServerFlow, type Command, type EditorState, type Path, type StepKindName } from "./reducer";
+import { SKIPPED, traceAt, traceWords, type TraceEntry } from "./TestRun";
 
 export type Problem = FlowCheck["problems"][number];
 
@@ -102,9 +103,11 @@ interface OutlineProps {
   problems: Problem[];
   /** The server's answer, when there is one: what the flow may touch, who approves it, and the flow in sentences. */
   check?: FlowCheck | null;
+  /** Workflows phase 9: the last test run's trace. Each step says what it did. */
+  trace?: TraceEntry[] | null;
 }
 
-export function Outline({ state, dispatch, fields, appSlug, problems, check }: OutlineProps) {
+export function Outline({ state, dispatch, fields, appSlug, problems, check, trace }: OutlineProps) {
   const steps = state.flow.steps ?? [];
   const onKeys = (e: React.KeyboardEvent) => {
     const t = e.target as HTMLElement;
@@ -157,7 +160,7 @@ export function Outline({ state, dispatch, fields, appSlug, problems, check }: O
       {steps.length === 0 ? (
         <p className="text-slate-500">This flow has no steps yet.</p>
       ) : (
-        <StepList list={steps} parent={[]} place={{ arm: "top" }} ctx={{ dispatch, fields, appSlug, problems: located, flow: state.flow }} />
+        <StepList list={steps} parent={[]} place={{ arm: "top" }} ctx={{ dispatch, fields, appSlug, problems: located, flow: state.flow, trace: trace ?? undefined }} />
       )}
 
       <div className="flex flex-wrap gap-1.5 pt-1">
@@ -222,6 +225,8 @@ function Trigger({ trigger, fields, dispatch }: { trigger: WorkflowTriggerEvent;
 }
 
 export interface Ctx {
+  /** The last test run's trace, when the outline shows one. */
+  trace?: TraceEntry[];
   dispatch: (c: Command) => void;
   fields: FieldSpec[];
   appSlug: string;
@@ -312,6 +317,10 @@ function StepItem({ step, path, index, siblings, place, ctx }: { step: ProcessSt
 
       <StepForm step={step} path={path} place={place} ctx={ctx} />
 
+      {(() => {
+        const ran = traceAt(ctx.trace, path);
+        return ran ? <p className={ran.outcome === SKIPPED ? "text-slate-400" : ran.outcome === "failed" ? "text-rose-700 dark:text-rose-300" : "text-emerald-800 dark:text-emerald-300"}>Test run: {traceWords(ran)}.</p> : null;
+      })()}
       {mine.map((p, i) => (
         <p key={i} className="text-rose-700 dark:text-rose-300">
           <span aria-hidden="true">⚠ </span>
