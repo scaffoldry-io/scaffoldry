@@ -105,17 +105,19 @@ async fn world() -> (World, String, String) {
 }
 
 #[tokio::test]
-async fn list_waiting_decisions_shows_what_the_caller_may_decide_and_nothing_else() {
+async fn list_my_work_shows_what_the_caller_may_decide_and_nothing_else() {
     let _db = common::TestDb::new();
     let (w, instance, _) = world().await;
-    let (err, mine) = tool(&w.app, &w.owner, "list_waiting_decisions", json!({})).await;
+    // Workflows phase 5: `list_my_work` replaces `list_waiting_decisions`. A decision item names the instance it is for.
+    let decides = |v: &Value| v["items"].as_array().unwrap().iter().any(|i| i["instance_id"] == instance.as_str() && i["kind"] == "decision");
+    let (err, mine) = tool(&w.app, &w.owner, "list_my_work", json!({})).await;
     assert!(!err, "{mine}");
-    assert!(mine.as_array().unwrap().iter().any(|i| i["id"] == instance.as_str()), "the owner decides it: {mine}");
+    assert!(decides(&mine), "the owner decides it: {mine}");
 
-    let (_, submitter) = tool(&w.app, &w.editor, "list_waiting_decisions", json!({})).await;
-    assert!(!submitter.as_array().unwrap().iter().any(|i| i["id"] == instance.as_str()), "the submitter never decides their own");
-    let (_, outsider) = tool(&w.app, &w.outsider, "list_waiting_decisions", json!({})).await;
-    assert!(!outsider.as_array().unwrap().iter().any(|i| i["id"] == instance.as_str()), "a person who cannot read the app sees nothing of it");
+    let (_, submitter) = tool(&w.app, &w.editor, "list_my_work", json!({})).await;
+    assert!(!decides(&submitter), "the submitter never decides their own: {submitter}");
+    let (_, outsider) = tool(&w.app, &w.outsider, "list_my_work", json!({})).await;
+    assert!(!outsider["items"].as_array().unwrap().iter().any(|i| i["instance_id"] == instance.as_str()), "a person who cannot read the app sees nothing of it");
 }
 
 #[tokio::test]

@@ -148,13 +148,13 @@
       "as": "editor"
     },
     {
-      "tool": "list_waiting_decisions",
+      "tool": "list_my_work",
       "args": {},
       "expect": {
-        "": {
+        "items": {
           "has": {
             "app_slug": "$app",
-            "status": "Waiting"
+            "kind": "decision"
           }
         }
       }

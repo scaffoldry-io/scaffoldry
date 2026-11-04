@@ -62,7 +62,7 @@ Read the resource scaffoldry://guide/building-apps first. Then, in order:\n\
 1. Call describe_app to read the app, its fields, and any rules it already has.\n\
 2. Call propose_app_change with the app_slug and a rule that waits on the approver. Name who decides by position or by person. Do not use a webhook step.\n\
 3. Show the person the checks and who will decide. A change that affects who can see data needs a second person to approve it.\n\
-4. When it is live, call list_waiting_decisions to see the steps waiting, and call decide_process only for the person who decides.",
+4. When it is live, call list_my_work to see the steps waiting, and call decide_process only for the person who decides.",
     },
     Prompt {
         name: "set_up_this_project",

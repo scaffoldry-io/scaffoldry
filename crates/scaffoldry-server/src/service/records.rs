@@ -2145,7 +2145,9 @@ fn run_automations_in(
                 let timers = inst.waiting_step_id.as_deref().map(|step| crate::service::process_timers::timers_for_entry(state, rule, step, Utc::now())).unwrap_or_default();
                 // Workflows phase 4: each person who may act on the step holds a grant on this record while it is open.
                 let grants = crate::service::task_grants::grants_on_entry(state, rule, &inst);
-                if state.repository.start_process_instance(&inst, approvers, &timers, &grants).unwrap_or(false) {
+                // Workflows phase 5: who acts on the step and who waits on it, as work items, due when its first timer is.
+                let work = crate::service::work::work_items_for(state, rule, &inst, timers.first().map(|t| t.fire_at));
+                if state.repository.start_process_instance(&inst, approvers, &timers, &grants, &work).unwrap_or(false) {
                     let table = record.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string();
                     let notice = crate::notifications::Notice::DecisionWaiting {
                         app: crate::notifications::AppRef(app_slug.to_string()),

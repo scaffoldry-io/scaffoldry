@@ -52,6 +52,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/apps/{slug}/views/{id}/duplicate".into(), case!(view_duplicate));
 
     m.insert("POST /api/v1/apps/{slug}/processes/{id}/decide".into(), case!(process_decide));
+    m.insert("POST /api/v1/me/work/{id}/act".into(), case!(work_act));
     m.insert("POST /api/v1/apps/{slug}/view-as".into(), case!(view_as_start));
     m.insert("POST /api/v1/auth/stop-view-as".into(), case!(view_as_stop));
 
@@ -614,4 +615,23 @@ async fn page_call_route(w: World) -> Outcome {
     ensure(has(&seen, "By route"), format!("B shows the change: {seen}"))?;
     let setting = status(w.rb("POST", &format!("/api/v1/apps/{slug}/pages/board/call"), OWNER, Some(json!({ "op": "settings_get", "key": "k" }))).await, StatusCode::OK, "get")?;
     ensure(has(&setting, "route-kept"), format!("B reads the setting: {setting}"))
+}
+
+/// The id of `who`'s open item for `instance`, read through A.
+pub(super) async fn work_item_for(w: &World, who: &str, instance: &str) -> Result<String, String> {
+    let mine = status(w.wa("GET", "/api/v1/me/work", who, None).await, StatusCode::OK, "A lists my work")?;
+    let items = mine["items"].as_array().ok_or("the items")?;
+    let item = items.iter().find(|i| i["instance_id"] == instance && i["kind"] != "waiting").ok_or_else(|| format!("an item for the instance: {mine}"))?;
+    Ok(item["id"].as_str().ok_or("an item id")?.to_string())
+}
+
+/// Workflows phase 5: acting on a work item through A decides the step, and B reads it decided.
+async fn work_act(w: World) -> Outcome {
+    let (slug, instance) = waiting_instance(&w).await?;
+    let id = work_item_for(&w, OWNER, &instance).await?;
+    status(w.wa("POST", &format!("/api/v1/me/work/{id}/act"), OWNER, Some(json!({ "decision": "reject", "comment": "Not now" }))).await, StatusCode::OK, "A acts on the item")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/processes"), OWNER, None).await, StatusCode::OK, "B lists instances")?;
+    ensure(has(&seen, "Rejected") && !has(&seen, "Waiting"), format!("B shows the instance rejected: {seen}"))?;
+    let after = status(w.rb("GET", "/api/v1/me/work", OWNER, None).await, StatusCode::OK, "B lists my work")?;
+    ensure(!has(&after, &instance), format!("B no longer lists the item: {after}"))
 }

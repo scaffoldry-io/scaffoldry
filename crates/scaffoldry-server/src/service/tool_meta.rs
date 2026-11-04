@@ -19,8 +19,9 @@ pub fn hints(name: &str) -> (bool, bool) {
 /// One valid call, as the arguments object.
 pub fn example(name: &str) -> Value {
     match name {
-        "list_workspaces" | "list_library_policies" | "list_library_questions" | "list_waiting_decisions" => json!({}),
+        "list_workspaces" | "list_library_policies" | "list_library_questions" | "list_my_work" => json!({}),
         "get_workspace" => json!({ "workspace_id": "ws-physics-optics" }),
+        "complete_task" => json!({ "work_id": "3f2b8f0e-6a41-4c58-9d0b-1f6b0c7e2a11", "decision": "done" }),
         "update_workspace" => json!({ "workspace_id": "ws-physics-optics", "description": "Laser logs" }),
         "manage_workspace_member" => json!({ "workspace_id": "ws-physics-optics", "action": "add", "eppn": "ada@example.edu", "role": "editor" }),
         "create_record" => json!({ "app_slug": "scholarships", "data": { "applicant": "Ada Lovelace", "amount": 4000 } }),

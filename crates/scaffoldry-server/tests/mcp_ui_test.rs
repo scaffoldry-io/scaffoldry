@@ -197,7 +197,7 @@ async fn two_tools_link_to_their_screens_in_the_way_the_specification_states() {
     let tools = listed["result"]["tools"].as_array().unwrap();
     let link = |name: &str| tools.iter().find(|t| t["name"] == name).map(|t| t["_meta"].clone()).unwrap_or(Value::Null);
     assert_eq!(link("get_proposal")["ui"]["resourceUri"], REVIEW_URI);
-    assert_eq!(link("list_waiting_decisions")["ui"]["resourceUri"], DECISION_URI);
+    assert_eq!(link("list_my_work")["ui"]["resourceUri"], DECISION_URI);
     assert!(link("get_proposal").get("ui/resourceUri").is_none(), "the flat key is deprecated, and is not used");
     // Both screens call tools, so those tools must stay visible to an app (the default is model and app).
     for name in ["decide_proposal", "decide_process", "get_record"] {

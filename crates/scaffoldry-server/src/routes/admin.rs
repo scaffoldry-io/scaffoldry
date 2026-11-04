@@ -87,6 +87,14 @@ async fn get_overview(State(state): State<SharedState>, headers: HeaderMap) -> i
 
     // 5. Processes
     let waiting_instance_count = state.repository.count_process_instances(ProcessStatus::Waiting).unwrap_or(0);
+    // Workflows phase 5: how many work items the last nightly check repaired.
+    let work_repairs: Option<i64> = state
+        .repository
+        .with_client(|c| {
+            Ok(c.query_opt("SELECT (result->>'repairs')::bigint FROM jobs WHERE kind = 'reconcile_work' AND state = 'done' ORDER BY finished_at DESC NULLS LAST LIMIT 1", &[])?
+                .and_then(|r| r.get::<_, Option<i64>>(0)))
+        })
+        .unwrap_or(None);
 
     // 6. Ledger
     let (ledger_count, head_hash) = {
@@ -132,6 +140,7 @@ async fn get_overview(State(state): State<SharedState>, headers: HeaderMap) -> i
             "processes": {
                 "waiting_instance_count": waiting_instance_count,
                 "waiting": waiting_instance_count,
+                "work_repairs": work_repairs,
             },
             "proposals": {
                 "pending": state.repository.count_pending_proposals().unwrap_or(0),

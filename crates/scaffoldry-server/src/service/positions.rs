@@ -369,7 +369,14 @@ pub fn unit_positions(
     )
 }
 
-pub fn assign_holder(
+/// Workflows phase 5: a change to who holds what asks for a re-resolve of open work items.
+pub fn assign_holder(state: &SharedState, caller: &AuthUser, unit: Uuid, key: &str, eppn: &str, replace: bool, reason: &str) -> Result<Value, ServiceError> {
+    let done = assign_holder_now(state, caller, unit, key, eppn, replace, reason)?;
+    crate::service::work::enqueue_reresolve(state, &caller.eppn);
+    Ok(done)
+}
+
+fn assign_holder_now(
     state: &SharedState,
     caller: &AuthUser,
     unit: Uuid,
@@ -497,7 +504,14 @@ pub fn assign_holder(
     Ok(json!({ "holder": { "eppn": holding.eppn, "position": key, "organization_id": unit } }))
 }
 
-pub fn vacate_holder(
+/// Workflows phase 5: a change to who holds what asks for a re-resolve of open work items.
+pub fn vacate_holder(state: &SharedState, caller: &AuthUser, unit: Uuid, key: &str, eppn: &str, reason: &str) -> Result<(), ServiceError> {
+    vacate_holder_now(state, caller, unit, key, eppn, reason)?;
+    crate::service::work::enqueue_reresolve(state, &caller.eppn);
+    Ok(())
+}
+
+fn vacate_holder_now(
     state: &SharedState,
     caller: &AuthUser,
     unit: Uuid,

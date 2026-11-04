@@ -35,7 +35,7 @@ fn parse_page_uri(uri: &str) -> Option<(&str, &str)> {
 pub fn tool_screen(tool: &str) -> Option<&'static str> {
     match tool {
         "get_proposal" => Some(REVIEW_URI),
-        "list_waiting_decisions" => Some(DECISION_URI),
+        "list_my_work" => Some(DECISION_URI),
         _ => None,
     }
 }

@@ -206,8 +206,9 @@ impl PostgresRepository {
         })
     }
 
-    pub fn insert_proposal(&self, p: &ProposalRow, sources: &[(String, String)]) -> Result<(), RepositoryError> {
-        let (p, sources) = (p.clone(), sources.to_vec());
+    /// Workflows phase 5: the proposal's `work` items open in the same transaction.
+    pub fn insert_proposal(&self, p: &ProposalRow, sources: &[(String, String)], work: &[crate::repository_work::NewWork]) -> Result<(), RepositoryError> {
+        let (p, sources, work) = (p.clone(), sources.to_vec(), work.to_vec());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             for (sha, source) in &sources {
@@ -221,6 +222,7 @@ impl PostgresRepository {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 &[&p.id, &p.workspace_id, &p.app_slug, &p.base_version, &p.manifest, &p.checks, &p.summary, &p.proposed_by, &p.rules, &p.digest, &p.parties],
             )?;
+            crate::repository_work::open_work_in_tx(&mut tx, &work)?;
             tx.commit()?;
             Ok(())
         })

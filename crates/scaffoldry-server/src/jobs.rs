@@ -228,6 +228,22 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::service::process_timers::fire_timers_job,
     },
     JobKind {
+        name: "reresolve_work",
+        title: "Updating My Work",
+        description: "Resolves who acts on each waiting step again after a change to who holds what, and opens or closes their work items.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::work::reresolve_job,
+    },
+    JobKind {
+        name: "reconcile_work",
+        title: "Checking My Work",
+        description: "Resolves every waiting step live each night and repairs any work item that differs, counting the repairs.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::work::reconcile_job,
+    },
+    JobKind {
         name: "scan_date_triggers",
         title: "Starting processes on their dates",
         description: "Starts each process whose date trigger came due since the last scan, once for each record and date, reading the date field's index.",
