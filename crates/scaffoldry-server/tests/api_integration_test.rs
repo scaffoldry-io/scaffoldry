@@ -1864,7 +1864,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
                     reject: vec![scaffoldry_core::ActionType::UpdateRecordStatus {
                         new_status: "Rejected".to_string(),
                     }],
-                    approver: None,
+                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![],
                 },
             },
         ],
@@ -1900,7 +1900,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         started_by: None,
         started_at: String::new(),
         assigned_to: None,
-        no_approver: None,
+        no_approver: None, escalated_to: vec![], escalated_unit: None,
     };
     state.repository.upsert_process_instance(&initial_instance).unwrap();
 
@@ -1991,7 +1991,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
                     prompt: "Sign off".to_string(),
                     approve: vec![],
                     reject: vec![],
-                    approver: None,
+                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![],
                 },
             },
         ],

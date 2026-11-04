@@ -45,9 +45,10 @@ pub fn all_actions(rule: &AutomationRule) -> Vec<&ActionType> {
     for step in scaffoldry_core::workflow::all_steps(&rule.steps) {
         match &step.kind {
             StepKind::Service { action } => out.push(action),
-            StepKind::UserTask { approve, reject, .. } => {
+            StepKind::UserTask { approve, reject, on_fail, .. } => {
                 out.extend(approve.iter());
                 out.extend(reject.iter());
+                out.extend(on_fail.iter());
             }
             StepKind::Branch { .. } => {}
         }
@@ -94,16 +95,24 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
         if !seen.insert(step.id.as_str()) {
             problems.push(format!("step id '{}' is used twice", step.id));
         }
-        if let StepKind::UserTask { role, approver, .. } = &step.kind {
+        if let StepKind::UserTask { role, approver, on_due, .. } = &step.kind {
             if let Err(e) = validate_approver(&effective_approver(role, approver), &known) {
                 problems.push(format!("step '{}': {e}", step.id));
+            }
+            // Process v2 phase 3: an escalation names someone the platform can resolve, as the step's approver does.
+            for due in on_due {
+                if let scaffoldry_core::workflow::DueAction::Escalate { approver } = due {
+                    if let Err(e) = validate_approver(approver, &known) {
+                        problems.push(format!("step '{}' escalates to someone it cannot find: {e}", step.id));
+                    }
+                }
             }
         }
     }
     for step in scaffoldry_core::workflow::all_steps(&rule.steps) {
         let actions: Vec<&ActionType> = match &step.kind {
             StepKind::Service { action } => vec![action],
-            StepKind::UserTask { approve, reject, .. } => approve.iter().chain(reject.iter()).collect(),
+            StepKind::UserTask { approve, reject, on_fail, .. } => approve.iter().chain(reject.iter()).chain(on_fail.iter()).collect(),
             StepKind::Branch { .. } => vec![],
         };
         if actions.iter().any(|a| matches!(a, ActionType::WebhookDispatch { .. })) {
@@ -142,6 +151,8 @@ fn structure_problems(manifest: &AppManifest, rule: &AutomationRule, state: &Sha
     use scaffoldry_core::workflow::{all_steps, MAX_BRANCH_DEPTH, MAX_BRANCH_STEPS, MAX_RULE_STEPS};
     use scaffoldry_engine::FieldType;
     let mut problems = Vec::new();
+    // Process v2 phase 3: a step's timers say when it is due, within bounds.
+    problems.extend(crate::service::process_timers::problems(&rule.steps));
     // Branches nest at most two levels. The step that goes deeper is named.
     fn deep(steps: &[scaffoldry_core::ProcessStep], level: usize, out: &mut Vec<String>) {
         for s in steps {
@@ -261,6 +272,31 @@ pub fn save_rule(
 ///
 /// The resolver says who may act. The submitter and the starter never may, and a Platform Admin
 /// does not bypass it. The step is read from the version of the rule the instance started under.
+/// The record changes a decision's actions make, or a timer's `Fail` with its `on_fail` actions. The other actions add a
+/// line to the instance's log.
+pub fn step_effects(actions: &[ActionType], log: &mut Vec<String>) -> Vec<ActionEffect> {
+    let mut effects = Vec::new();
+    for act in actions {
+        match act {
+            ActionType::UpdateRecordStatus { new_status } => {
+                effects.push(ActionEffect::SetFields { fields: vec![("status".into(), new_status.clone())] });
+            }
+            ActionType::NotifyCollaborator { role, message_template } => {
+                log.push(format!("Notified role '{role}': {message_template}"));
+            }
+            ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
+                log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
+            }
+            ActionType::WebhookDispatch { target_url } => {
+                log.push(format!("Webhook not sent: {target_url}"));
+            }
+            // A flow action is never the result of a decision: saving refuses it there.
+            ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } | ActionType::StartFlow { .. } => {}
+        }
+    }
+    effects
+}
+
 pub fn decide_process(
     caller: &AuthUser,
     _origin: &Origin,
@@ -303,24 +339,7 @@ pub fn decide_process(
             if let StepKind::UserTask { approve, reject, .. } = &step.kind {
                 found_step = true;
                 let actions = if decision == "approve" { approve } else { reject };
-                for act in actions {
-                    match act {
-                        ActionType::UpdateRecordStatus { new_status } => {
-                            field_effects.push(ActionEffect::SetFields { fields: vec![("status".into(), new_status.clone())] });
-                        }
-                        ActionType::NotifyCollaborator { role, message_template } => {
-                            instance.log.push(format!("Notified role '{role}': {message_template}"));
-                        }
-                        ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
-                            instance.log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
-                        }
-                        ActionType::WebhookDispatch { target_url } => {
-                            instance.log.push(format!("Webhook not sent: {target_url}"));
-                        }
-                        // A flow action is never the result of a decision: saving refuses it there.
-                        ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } | ActionType::StartFlow { .. } => {}
-                    }
-                }
+                field_effects = step_effects(actions, &mut instance.log);
             }
         }
     }

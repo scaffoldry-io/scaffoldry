@@ -2094,7 +2094,9 @@ fn run_automations_in(
                 crate::service::approvers::refresh_no_approver(state, &mut inst);
                 // Notifications phase 4: a step that starts waiting tells its approvers, delegates included.
                 let approvers = crate::service::approvers::approver_count(state, &inst);
-                if state.repository.start_process_instance(&inst, approvers).unwrap_or(false) {
+                // Process v2 phase 3: entering the step writes its timers with the instance.
+                let timers = inst.waiting_step_id.as_deref().map(|step| crate::service::process_timers::timers_for_entry(state, rule, step, Utc::now())).unwrap_or_default();
+                if state.repository.start_process_instance(&inst, approvers, &timers).unwrap_or(false) {
                     let table = record.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string();
                     let notice = crate::notifications::Notice::DecisionWaiting {
                         app: crate::notifications::AppRef(app_slug.to_string()),

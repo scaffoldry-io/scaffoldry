@@ -445,7 +445,7 @@ async fn the_process_queue_leaves_out_a_record_the_person_cannot_read() {
         started_at: "2026-01-01T00:00:00Z".into(),
         assigned_to: Some(ann.clone()),
         no_approver: None,
-        rule_version: 0,
+        rule_version: 0, escalated_to: vec![], escalated_unit: None,
     };
     let (hidden_id, mine_id) = (format!("{slug}{:08}", 1), format!("{slug}{:08}", 333));
     for r in [&hidden_id, &mine_id] {

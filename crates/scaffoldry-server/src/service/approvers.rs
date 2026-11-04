@@ -280,6 +280,11 @@ pub fn caller_can_decide(state: &SharedState, caller: &AuthUser, inst: &ProcessI
     let Some(spec) = spec_of(state, inst) else {
         return false;
     };
+    // Process v2 phase 3: a timer escalated the step to these people. The resolver chose them, so it already left out
+    // the submitter and the starter.
+    if inst.escalated_to.iter().any(|e| e.eq_ignore_ascii_case(&caller.eppn)) {
+        return true;
+    }
     let ctx = context(
         state,
         &inst.app_slug,
@@ -300,10 +305,28 @@ pub fn caller_can_decide(state: &SharedState, caller: &AuthUser, inst: &ProcessI
 /// time it is set, a line goes in the instance log.
 /// How many people may decide the step an instance waits at now (process v2, phase 1). An assignee counts as one.
 pub fn approver_count(state: &SharedState, inst: &ProcessInstance) -> usize {
+    let escalated = inst.escalated_to.len();
     if inst.assigned_to.is_some() {
-        return 1;
+        return 1 + escalated;
     }
-    resolution_for(state, inst).map(|(_, _, r)| r.approvers.len()).unwrap_or(0)
+    resolution_for(state, inst).map(|(_, _, r)| r.approvers.len()).unwrap_or(0) + escalated
+}
+
+/// Everyone who may decide the step an instance waits at now: the assignee or the resolved approvers, and the people a
+/// timer escalated it to. Also the submitter, whom a notice leaves out.
+pub fn current_approvers(state: &SharedState, inst: &ProcessInstance) -> (Vec<String>, Option<String>) {
+    let (mut people, submitter) = match (&inst.assigned_to, resolution_for(state, inst)) {
+        (Some(who), Some((_, ctx, _))) => (vec![who.clone()], ctx.submitter.clone()),
+        (None, Some((_, ctx, r))) => (r.approvers.into_iter().map(|a| a.eppn).collect(), ctx.submitter.clone()),
+        (Some(who), None) => (vec![who.clone()], None),
+        (None, None) => (vec![], None),
+    };
+    for e in &inst.escalated_to {
+        if !people.iter().any(|p| p.eq_ignore_ascii_case(e)) {
+            people.push(e.clone());
+        }
+    }
+    (people, submitter)
 }
 
 pub fn refresh_no_approver(state: &SharedState, inst: &mut ProcessInstance) -> bool {
@@ -358,8 +381,20 @@ pub fn instance_view(state: &SharedState, inst: &ProcessInstance) -> Value {
     } else {
         vec![]
     };
+    let mut approvers = approvers;
+    if inst.status == ProcessStatus::Waiting {
+        for e in &inst.escalated_to {
+            approvers.push(json!({ "eppn": e, "display_name": crate::service::process_timers::display_name(state, e), "via": "Escalated" }));
+        }
+    }
     if let Some(map) = v.as_object_mut() {
         map.insert("approvers".to_string(), Value::Array(approvers));
+        // Process v2 phase 3: what the step's next timer will do, in words.
+        if inst.status == ProcessStatus::Waiting {
+            if let Some(next) = crate::service::process_timers::next_timer_view(state, inst) {
+                map.insert("next_timer".to_string(), next);
+            }
+        }
     }
     v
 }
@@ -372,12 +407,19 @@ pub fn known_sets(state: &SharedState, rule: &AutomationRule) -> KnownSets {
         .unwrap_or_else(|p| p.into_inner());
     let named: Vec<String> = scaffoldry_core::workflow::all_steps(&rule.steps)
         .into_iter()
-        .filter_map(|step| match &step.kind {
-            StepKind::UserTask { role, approver, .. } => match effective_approver(role, approver) {
-                ApproverSpec::Person { eppn } => Some(eppn),
-                _ => None,
-            },
-            StepKind::Service { .. } | StepKind::Branch { .. } => None,
+        .flat_map(|step| match &step.kind {
+            // The step's approver, and the people its timers escalate to (process v2 phase 3).
+            StepKind::UserTask { role, approver, on_due, .. } => std::iter::once(effective_approver(role, approver))
+                .chain(on_due.iter().filter_map(|d| match d {
+                    scaffoldry_core::workflow::DueAction::Escalate { approver } => Some(approver.clone()),
+                    _ => None,
+                }))
+                .filter_map(|spec| match spec {
+                    ApproverSpec::Person { eppn } => Some(eppn),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            StepKind::Service { .. } | StepKind::Branch { .. } => vec![],
         })
         .collect();
     KnownSets {

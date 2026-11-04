@@ -98,6 +98,7 @@ const SCHEMA_0090: &str = include_str!("../../scaffoldry-core/migrations/0090_no
 const SCHEMA_0091: &str = include_str!("../../scaffoldry-core/migrations/0091_process_v2.sql");
 const SCHEMA_0092: &str = include_str!("../../scaffoldry-core/migrations/0092_flows.sql");
 const SCHEMA_0093: &str = include_str!("../../scaffoldry-core/migrations/0093_flow_state.sql");
+const SCHEMA_0094: &str = include_str!("../../scaffoldry-core/migrations/0094_process_timers.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1189,6 +1190,7 @@ impl PostgresRepository {
                             ("0091_process_v2.sql", SCHEMA_0091),
                             ("0092_flows.sql", SCHEMA_0092),
                             ("0093_flow_state.sql", SCHEMA_0093),
+                            ("0094_process_timers.sql", SCHEMA_0094),
                         ];
 
                         let mut fresh_install = false;
@@ -2914,8 +2916,9 @@ impl PostgresRepository {
     /// start for the same record does not reset a step someone may be deciding. Returns whether it was stored.
     /// Starts an instance waiting at its step, and writes its `started`, `step_entered` and `waiting` events in the same
     /// transaction (process v2, phase 1). `approvers` is how many people may decide the step now.
-    pub fn start_process_instance(&self, inst: &ProcessInstance, approvers: usize) -> Result<bool, RepositoryError> {
-        let inst = inst.clone();
+    /// Process v2 phase 3: the step's `timers` are written in the same transaction, after any left from an earlier run.
+    pub fn start_process_instance(&self, inst: &ProcessInstance, approvers: usize, timers: &[crate::repository_timers::NewTimer]) -> Result<bool, RepositoryError> {
+        let (inst, timers) = (inst.clone(), timers.to_vec());
         self.with_client(move |client| {
             let json = serde_json::to_value(&inst)?;
             let mut tx = client.transaction()?;
@@ -2936,6 +2939,8 @@ impl PostgresRepository {
                 ] {
                     process_event_in_tx(&mut tx, &inst, step.as_deref(), kind, actor.as_deref(), &detail)?;
                 }
+                crate::repository_timers::cancel_timers_in_tx(&mut tx, &inst.id)?;
+                crate::repository_timers::insert_timers_in_tx(&mut tx, &inst.id, &timers)?;
             }
             tx.commit()?;
             Ok(n > 0)
@@ -2998,6 +3003,8 @@ impl PostgresRepository {
             process_event_in_tx(&mut tx, &next, Some(&step), "decided", Some(&actor), &serde_json::json!({ "decision": decision }))?;
             process_event_in_tx(&mut tx, &next, Some(&step), "step_left", Some(&actor), &serde_json::json!({}))?;
             process_event_in_tx(&mut tx, &next, None, "completed", Some(&actor), &serde_json::json!({ "status": status }))?;
+            // Process v2 phase 3: a decided step never escalates.
+            crate::repository_timers::cancel_timers_in_tx(&mut tx, &next.id)?;
             append_ledger_in_tx(&mut tx, ledger)?;
             tx.commit()?;
             Ok(Decided::Done)
@@ -3631,7 +3638,7 @@ fn write_workspace_coordinates(tx: &mut postgres::Transaction<'_>, workspace_id:
     Ok(())
 }
 
-fn status_name(status: &ProcessStatus) -> &'static str {
+pub(crate) fn status_name(status: &ProcessStatus) -> &'static str {
     match status {
         ProcessStatus::Waiting => "Waiting",
         ProcessStatus::Completed => "Completed",
@@ -4191,7 +4198,7 @@ fn guard_last_owner(
 }
 
 /// One process event, in the caller's transaction. It names the instance, the rule and the step, never a value.
-fn process_event_in_tx(tx: &mut postgres::Transaction<'_>, inst: &ProcessInstance, step: Option<&str>, kind: &str, actor: Option<&str>, detail: &Value) -> Result<(), RepositoryError> {
+pub(crate) fn process_event_in_tx(tx: &mut postgres::Transaction<'_>, inst: &ProcessInstance, step: Option<&str>, kind: &str, actor: Option<&str>, detail: &Value) -> Result<(), RepositoryError> {
     tx.execute(
         "INSERT INTO process_events (instance_id, app_slug, rule_id, rule_version, step_id, kind, actor, detail) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         &[&inst.id, &inst.app_slug, &inst.rule_id, &(inst.rule_version as i32), &step, &kind, &actor, detail],

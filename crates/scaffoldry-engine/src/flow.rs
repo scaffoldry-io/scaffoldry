@@ -387,6 +387,26 @@ pub fn validate_flow(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<St
     problems
 }
 
+/// Process v2 phase 3: when something `days` whole days after `from` is due, in the zone `tz`. It is the start of the
+/// day that many days after `from`'s own day there. A zone the platform does not know counts as UTC.
+pub fn due_at(from: chrono::DateTime<chrono::Utc>, days: u32, tz: &str) -> chrono::DateTime<chrono::Utc> {
+    use chrono::TimeZone;
+    let zone: chrono_tz::Tz = tz.parse().unwrap_or(chrono_tz::UTC);
+    let day = from.with_timezone(&zone).date_naive() + chrono::Duration::days(days as i64);
+    let midnight = day.and_hms_opt(0, 0, 0).expect("midnight exists");
+    match zone.from_local_datetime(&midnight) {
+        chrono::LocalResult::Single(t) | chrono::LocalResult::Ambiguous(t, _) => t.with_timezone(&chrono::Utc),
+        // A day that starts in a gap starts an hour later.
+        chrono::LocalResult::None => zone.from_local_datetime(&(midnight + chrono::Duration::hours(1))).earliest().map(|t| t.with_timezone(&chrono::Utc)).unwrap_or(from),
+    }
+}
+
+/// `at` written with `fmt` in the zone `tz`. A zone the platform does not know counts as UTC.
+pub fn local_format(at: chrono::DateTime<chrono::Utc>, tz: &str, fmt: &str) -> String {
+    let zone: chrono_tz::Tz = tz.parse().unwrap_or(chrono_tz::UTC);
+    at.with_timezone(&zone).format(fmt).to_string()
+}
+
 /// The latest time at or before `now` that a schedule falls on, in the zone `tz`. `None` when `at` or the zone is not
 /// valid, or a day is out of range.
 pub fn last_occurrence(every: &scaffoldry_core::workflow::ScheduleEvery, at: &str, tz: &str, now: chrono::DateTime<chrono::Utc>) -> Option<chrono::DateTime<chrono::Utc>> {
