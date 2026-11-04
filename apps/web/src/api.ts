@@ -1651,6 +1651,15 @@ export const apiClient = {
   setNotificationPref: async (kind: string, channel: string): Promise<{ kind: string; channel: string }> =>
     request<{ kind: string; channel: string }>("/me/notification-prefs", { method: "PUT", body: JSON.stringify({ kind, channel }) }),
 
+  /** Process v2 phase 1: where time goes, by rule and step. It needs manage on the app. */
+  getProcessAnalytics: async (appSlug: string, range: { from?: string; to?: string }): Promise<ProcessAnalytics> => {
+    const q = new URLSearchParams();
+    if (range.from) q.set("from", range.from);
+    if (range.to) q.set("to", range.to);
+    const qs = q.toString();
+    return request<ProcessAnalytics>(`/apps/${encodeURIComponent(appSlug)}/process-analytics${qs ? `?${qs}` : ""}`);
+  },
+
   /** Approvers phase 5: who a step would go to today. It creates nothing. */
   previewApprovers: async (appSlug: string, body: { approver: unknown; created_by?: string }): Promise<ApproverPreview> =>
     request<ApproverPreview>(`/apps/${encodeURIComponent(appSlug)}/automations/preview-approvers`, { method: "POST", body: JSON.stringify(body) }),
@@ -2206,6 +2215,30 @@ export interface MyDelegations {
 }
 
 /** Who a step would go to today (approvers phase 5). `via` is `Holder`, `Named`, `Role` or `{ DelegateOf: holder }`. */
+/** Process v2 phase 1: one step of one rule, from the process event log. Times are in seconds. */
+export interface ProcessStepAnalytics {
+  step_id: string;
+  name: string;
+  entered: number;
+  median_seconds: number | null;
+  p90_seconds: number | null;
+  waiting: number;
+  waiting_by_age: Record<string, number>;
+}
+
+export interface ProcessRuleAnalytics {
+  rule_id: string;
+  name: string;
+  finished: number;
+  outcomes: Record<string, number>;
+  steps: ProcessStepAnalytics[];
+}
+
+export interface ProcessAnalytics {
+  rules: ProcessRuleAnalytics[];
+  slowest: string | null;
+}
+
 export interface ApproverPreview {
   approvers: { eppn: string; display_name: string; via: string | { DelegateOf: string } }[];
   unit_id: string | null;

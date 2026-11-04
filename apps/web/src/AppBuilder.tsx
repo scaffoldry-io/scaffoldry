@@ -20,6 +20,7 @@ import {
 } from "./types";
 import { ComponentInspectorFlyout } from "./ComponentInspectorFlyout";
 import { WorkflowBuilder } from "./WorkflowBuilder";
+import { ProcessInsights } from "./ProcessInsights";
 import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
 import { DataShapingToolbar } from "./DataShapingToolbar";
 import { RecordDetailDrawer } from "./RecordDetailDrawer";
@@ -54,7 +55,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   onOpenIntakeForm,
   onSaveApp,
 }) => {
-  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "settings" | "access">("pages");
+  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "insights" | "settings" | "access">("pages");
   // The Studio is for the app's owners and admins, so its record drawer shows them every tab. The server checks again.
   const [studioViewer, setStudioViewer] = useState<{ eppn: string; role: "admin"; compliance: boolean } | undefined>(undefined);
   useEffect(() => {
@@ -1172,6 +1173,18 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
             }`}
           >
             4. Governed Automations
+          </button>
+          <button
+            type="button"
+            data-testid="tab-btn-insights"
+            onClick={() => setActiveTab("insights")}
+            className={`py-3 border-b-2 cursor-pointer transition-colors ${
+              activeTab === "insights"
+                ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold"
+                : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            }`}
+          >
+            Process insights
           </button>
           <button
             type="button"
@@ -2687,6 +2700,14 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                 onDeleteRule={(id) => setAutomationRules((prev) => prev.filter((r) => r.id !== id))}
                 onToggleRule={(id) => setAutomationRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)))}
               />
+            </div>
+          </div>
+        )}
+
+        {activeTab === "insights" && (
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="max-w-5xl mx-auto">
+              <ProcessInsights appSlug={app.slug} />
             </div>
           </div>
         )}

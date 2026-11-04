@@ -29,6 +29,7 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/automations/simulate", post(simulate_app_automation))
         .route("/apps/{slug}/automations/preview-approvers", post(preview_approvers))
         .route("/apps/{slug}/automations/approver-options", get(approver_options))
+        .route("/apps/{slug}/process-analytics", get(process_analytics))
         .route("/apps/{slug}/processes", get(list_app_processes))
         .route("/apps/{slug}/processes/{id}/decide", post(decide_app_process))
         .route("/apps/{slug}/access/preview", post(preview_app_access))
@@ -299,6 +300,21 @@ async fn list_app_automations(
 async fn preview_approvers(State(state): State<SharedState>, headers: HeaderMap, Path(slug): Path<String>, Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
     tokio::task::spawn_blocking(move || crate::service::approvers::preview(&user, &slug, &payload, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The request stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
+}
+
+/// Process v2, phase 1: how the app's processes perform. Owners and admins, and Platform Admins.
+async fn process_analytics(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::process_analytics::analytics(&user, &slug, &q, &state))
         .await
         .map_err(|_| ServiceError::internal("The request stopped").into_pair())?
         .map(Json)

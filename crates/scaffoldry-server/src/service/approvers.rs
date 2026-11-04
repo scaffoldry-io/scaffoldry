@@ -298,6 +298,14 @@ pub fn caller_can_decide(state: &SharedState, caller: &AuthUser, inst: &ProcessI
 
 /// Sets `no_approver` from the resolver. Returns true when the stored value changed. The first
 /// time it is set, a line goes in the instance log.
+/// How many people may decide the step an instance waits at now (process v2, phase 1). An assignee counts as one.
+pub fn approver_count(state: &SharedState, inst: &ProcessInstance) -> usize {
+    if inst.assigned_to.is_some() {
+        return 1;
+    }
+    resolution_for(state, inst).map(|(_, _, r)| r.approvers.len()).unwrap_or(0)
+}
+
 pub fn refresh_no_approver(state: &SharedState, inst: &mut ProcessInstance) -> bool {
     if inst.status != ProcessStatus::Waiting {
         return false;
