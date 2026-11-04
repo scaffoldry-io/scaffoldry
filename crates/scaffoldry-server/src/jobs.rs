@@ -222,7 +222,7 @@ pub static JOB_KINDS: &[JobKind] = &[
     JobKind {
         name: "fire_timers",
         title: "Applying process timers",
-        description: "Reminds, escalates or fails the waiting steps whose timers came due, once each. A timer never decides a step.",
+        description: "Reminds, escalates or fails each waiting step whose timer came due, once, and never decides one.",
         max_attempts: 3,
         max_concurrent: 1,
         run: crate::service::process_timers::fire_timers_job,
