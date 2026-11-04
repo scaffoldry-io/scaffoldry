@@ -148,8 +148,8 @@ pub struct DryNote {
     pub sentence: String,
     /// True for a step that only reads.
     pub read_only: bool,
-    /// The app the records belong to, and the records.
-    pub records: Option<(String, Vec<DatasetRecord>)>,
+    /// The app and table the records belong to, and the records.
+    pub records: Option<(String, String, Vec<DatasetRecord>)>,
 }
 
 impl Run<'_> {
@@ -243,11 +243,13 @@ impl Run<'_> {
         hex(&h.finalize())
     }
 
+    /// Counts one more write. A write past the limit is refused and not counted, so `writes` is what the run made.
     fn count_write(&mut self) -> Result<(), Stop> {
-        self.writes += 1;
-        if self.writes > self.max_writes {
-            return Err(Stop(format!("the run would make {} writes, and the limit is {} writes per run", self.writes, self.max_writes)));
+        let next = self.writes + 1;
+        if next > self.max_writes {
+            return Err(Stop(format!("the run would make {next} writes, and the limit is {} writes per run", self.max_writes)));
         }
+        self.writes = next;
         Ok(())
     }
 
@@ -265,10 +267,8 @@ impl Run<'_> {
                 self.may_read(app, table, field)?;
                 let value = self.eval(equals)?;
                 let found = find_records(self.state, app, table, field, &value, *limit as usize).map_err(Stop)?;
-                if self.dry {
-                    let n = found.len();
-                    self.note(format!("found {n} {} in {}", plural(n, "record"), place(self.state, app, table)), true, Some((app.clone(), found.clone())));
-                }
+                let n = found.len();
+                self.note(format!("found {n} {} in {}", plural(n, "record"), place(self.state, app, table)), true, Some((app.clone(), table.clone(), found.clone())));
                 self.produced.insert(id.clone(), (app.clone(), table.clone(), found));
             }
             ActionType::CreateRecord { id, app, table, fields } => {
@@ -289,7 +289,7 @@ impl Run<'_> {
                 let data = Value::Object(data);
                 if self.dry {
                     let rec = DatasetRecord { id: record_id, app_slug: app.clone(), data, ceds_mapping: Value::Object(Map::new()), is_ferpa_sensitive: false, created_at: chrono::Utc::now().to_rfc3339(), created_by: Some(actor_of(&self.rule.id)), version: 0 };
-                    self.note(format!("would create 1 record in {} and set {}", place(self.state, app, table), labels(self.state, app, table, &names)), false, Some((app.clone(), vec![rec.clone()])));
+                    self.note(format!("would create 1 record in {} and set {}", place(self.state, app, table), labels(self.state, app, table, &names)), false, Some((app.clone(), table.clone(), vec![rec.clone()])));
                     self.produced.insert(id.clone(), (app.clone(), table.clone(), vec![rec]));
                     return Ok(());
                 }
@@ -303,9 +303,11 @@ impl Run<'_> {
                     created_by: Some(actor_of(&self.rule.id)),
                     version: 1,
                 };
+                let again = self.done_before(&key);
                 let ctx = self.ctx(app, &data, key);
                 self.state.insert_record(&rec, &ctx).map_err(|e| Stop(e.to_string()))?;
                 let stored = load(self.state, app, &record_id)?.unwrap_or(rec);
+                self.note(format!("{again}created 1 record in {} and set {}", place(self.state, app, table), labels(self.state, app, table, &names)), false, Some((app.clone(), table.clone(), vec![stored.clone()])));
                 self.produced.insert(id.clone(), (app.clone(), table.clone(), vec![stored]));
             }
             ActionType::UpdateRecord { target, fields } => {
@@ -334,8 +336,11 @@ impl Run<'_> {
                         }
                     }
                     self.count_write()?;
-                    let ctx = self.ctx(&app, &data, self.key(step, &rec.id, &names));
+                    let key = self.key(step, &rec.id, &names);
+                    let again = self.done_before(&key);
+                    let ctx = self.ctx(&app, &data, key);
                     self.state.overwrite_record_data(&app, &rec.id, &data, &ctx).map_err(Stop)?;
+                    self.note(format!("{again}set {} on 1 record in {}", labels(self.state, &app, &table, &names), place(self.state, &app, &table)), false, Some((app.clone(), table.clone(), vec![rec.clone()])));
                 }
             }
             ActionType::SetLink { target, link_field, to } => {
@@ -361,8 +366,11 @@ impl Run<'_> {
                         map.insert(link_field.clone(), value.clone());
                     }
                     self.count_write()?;
-                    let ctx = self.ctx(&app, &data, self.key(step, &rec.id, &[link_field.as_str()]));
+                    let key = self.key(step, &rec.id, &[link_field.as_str()]);
+                    let again = self.done_before(&key);
+                    let ctx = self.ctx(&app, &data, key);
                     self.state.overwrite_record_data(&app, &rec.id, &data, &ctx).map_err(Stop)?;
+                    self.note(format!("{again}linked 1 record in {} through {}", place(self.state, &app, &table), labels(self.state, &app, &table, &[link_field.as_str()])), false, Some((app.clone(), table.clone(), vec![rec.clone()])));
                 }
             }
             // Workflows phase 3: a new run of a called flow, one level deeper in the chain. It is not waited on: its outcome
@@ -379,6 +387,7 @@ impl Run<'_> {
                 }
                 // The called flow's outcome, failed or not, is in its own instance. This run goes on.
                 start_flow(self.state, &target, None, values, self.started_by, &uuid::Uuid::new_v4().to_string(), &self.chain);
+                self.note(format!("started the flow \"{}\"", target.name), false, None);
             }
             // Notices, status updates and ledger notes run through the rule engine as before. A test run says what they
             // would do.
@@ -391,7 +400,13 @@ impl Run<'_> {
         Ok(())
     }
 
-    fn note(&mut self, sentence: String, read_only: bool, records: Option<(String, Vec<DatasetRecord>)>) {
+    /// "already done in an earlier attempt: " when an effect's dedupe key is recorded, so the timeline of a retry says
+    /// which effects the retry skipped.
+    fn done_before(&self, key: &str) -> &'static str {
+        if self.state.repository.effect_recorded(key).unwrap_or(false) { "already done in an earlier attempt: " } else { "" }
+    }
+
+    fn note(&mut self, sentence: String, read_only: bool, records: Option<(String, String, Vec<DatasetRecord>)>) {
         self.notes.push(DryNote { sentence, read_only, records });
     }
 }
@@ -446,33 +461,61 @@ fn run_steps(run: &mut Run<'_>, inst: &mut ProcessInstance, steps: &[scaffoldry_
         }
         Ok(when.iter().all(|p| scaffoldry_engine::AutomationEngine::evaluate_predicate(p, &run.trigger.data)))
     };
+    // Workflows phase 10: each step leaves an event for the run's timeline. It names records by id, never a value.
+    let event = |run: &Run<'_>, step: &str, detail: Value| {
+        let _ = run.state.repository.record_process_event(&run.instance_id, run.rule, step, "flow_step", detail);
+    };
+    let failed = |run: &Run<'_>, step: &str, e: Stop| -> Stop {
+        event(run, step, serde_json::json!({ "outcome": "failed", "error": e.0 }));
+        e
+    };
     for s in steps {
-        if !holds(run, &s.when)? {
+        if !holds(run, &s.when).map_err(|e| failed(run, &s.id, e))? {
+            event(run, &s.id, serde_json::json!({ "outcome": "skipped" }));
             continue;
         }
         match &s.kind {
             StepKind::Service { action } => {
-                run.step(&s.id, action)?;
+                run.notes.clear();
+                run.step(&s.id, action).map_err(|e| failed(run, &s.id, e))?;
+                let effects = effects_of(std::mem::take(&mut run.notes));
+                event(run, &s.id, serde_json::json!({ "outcome": "done", "effects": effects }));
                 inst.log.push(format!("Step '{}' done", s.id));
             }
             StepKind::Branch { branches, otherwise } => {
                 let mut chosen: Option<(usize, &[scaffoldry_core::ProcessStep])> = None;
                 for (i, b) in branches.iter().enumerate() {
-                    if holds(run, &b.when)? {
+                    if holds(run, &b.when).map_err(|e| failed(run, &s.id, e))? {
                         chosen = Some((i + 1, &b.steps));
                         break;
                     }
                 }
                 let (arm, next) = chosen.map_or(("otherwise".to_string(), otherwise.as_slice()), |(i, st)| (i.to_string(), st));
                 inst.log.push(format!("Branch '{}' took {arm}", s.id));
+                let took = if arm == "otherwise" { "took otherwise".to_string() } else { format!("took condition {arm}") };
+                event(run, &s.id, serde_json::json!({ "outcome": "done", "effects": [{ "sentence": took }] }));
                 if run_steps(run, inst, next)? {
                     return Ok(true);
                 }
             }
-            StepKind::UserTask { .. } => return Ok(true),
+            StepKind::UserTask { .. } => {
+                event(run, &s.id, serde_json::json!({ "outcome": "waiting" }));
+                return Ok(true);
+            }
         }
     }
     Ok(false)
+}
+
+/// A step's effects for its event: each sentence, and the records by app, table and id. Never a value.
+fn effects_of(notes: Vec<DryNote>) -> Vec<Value> {
+    notes
+        .into_iter()
+        .map(|n| {
+            let records: Vec<Value> = n.records.map(|(app, table, recs)| recs.iter().map(|r| serde_json::json!({ "app": app, "table": table, "id": r.id })).collect()).unwrap_or_default();
+            serde_json::json!({ "sentence": n.sentence, "records": records })
+        })
+        .collect()
 }
 
 /// Runs a flow for one trigger record, as one run with the id `run_id`. A run with an id that already ran is a retry:
@@ -503,7 +546,13 @@ pub fn breaker(state: &SharedState, flow_id: &str) -> (i32, bool) {
 /// failed run counts toward the breaker and a completed one clears it. When the run ends, the flows that wait for it
 /// start.
 pub fn start_flow(state: &SharedState, rule: &AutomationRule, trigger: Option<&DatasetRecord>, inputs: Map<String, Value>, started_by: &str, run_id: &str, chain: &[String]) -> ProcessInstance {
-    let started_at = chrono::Utc::now().to_rfc3339();
+    start_flow_at(state, rule, trigger, inputs, started_by, run_id, chain, None)
+}
+
+/// Starts or, with `started_at` from an earlier attempt, resumes a run. A retry keeps the run's id and its start.
+#[allow(clippy::too_many_arguments)]
+fn start_flow_at(state: &SharedState, rule: &AutomationRule, trigger: Option<&DatasetRecord>, inputs: Map<String, Value>, started_by: &str, run_id: &str, chain: &[String], started_at: Option<String>) -> ProcessInstance {
+    let started_at = started_at.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let none = DatasetRecord {
         id: String::new(),
         app_slug: rule.app_slug.clone(),
@@ -589,6 +638,8 @@ pub fn start_flow(state: &SharedState, rule: &AutomationRule, trigger: Option<&D
         inst.log.push(reason);
     }
     inst.log.push(format!("{} writes", run.writes));
+    let error = (inst.status == ProcessStatus::Failed).then(|| inst.log.iter().rev().nth(1).cloned()).flatten();
+    let _ = state.repository.record_process_event(&inst.id, rule, "", "flow_end", serde_json::json!({ "status": format!("{:?}", inst.status), "writes": run.writes, "error": error }));
     if let Err(e) = state.repository.upsert_process_instance(&inst) {
         eprintln!("the flow run {} was not stored: {e}", inst.id);
     }
@@ -737,7 +788,7 @@ fn dry_steps(
                 let notes = std::mem::take(&mut run.notes);
                 let read_only = notes.iter().all(|n| n.read_only);
                 let sentence = notes.iter().map(|n| n.sentence.clone()).collect::<Vec<_>>().join(". ");
-                let records = notes.into_iter().find_map(|n| n.records);
+                let records = notes.into_iter().find_map(|n| n.records).map(|(app, _, recs)| (app, recs));
                 trace.push(TraceStep { step: s.id.clone(), path: path.clone(), outcome: if read_only { "ran" } else { "would write" }, sentence, approvers: None, records });
             }
             StepKind::Branch { branches, otherwise } => {
@@ -783,4 +834,15 @@ fn dry_steps(
 
 fn prefix_of(path: &[usize]) -> &[usize] {
     &path[..path.len() - 1]
+}
+
+/// Workflows phase 10: runs a failed run again under its own id, from its first step, with the flow's live version.
+/// Each effect the earlier attempt made is skipped by its dedupe key, so nothing is written twice and the run goes on
+/// from the step that failed. The retry is an event on the run's timeline.
+pub fn retry_run(state: &SharedState, inst: &ProcessInstance, rule: &AutomationRule, by: &str, reason: &str) -> ProcessInstance {
+    let _ = state.repository.record_process_event(&inst.id, rule, "", "flow_retry", serde_json::json!({ "by": by, "reason": reason }));
+    let run_id = inst.id.strip_prefix(&format!("{}:", rule.id)).unwrap_or(&inst.id).to_string();
+    let trigger = if inst.record_id.is_empty() { None } else { state.find_record(&inst.app_slug, &inst.record_id).ok().flatten() };
+    let started_by = inst.started_by.clone().unwrap_or_else(|| by.to_string());
+    start_flow_at(state, rule, trigger.as_ref(), Map::new(), &started_by, &run_id, &[], Some(inst.started_at.clone()))
 }

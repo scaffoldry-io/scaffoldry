@@ -8,6 +8,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/apps/{slug}/publish".into(), case!(app_publish));
     m.insert("POST /api/v1/apps/{slug}/pages/{id}/call".into(), case!(page_call_route));
     m.insert("POST /api/v1/apps/{slug}/automations".into(), case!(automation_create));
+    m.insert("POST /api/v1/flows/runs/{instance_id}/retry".into(), case!(flow_retry));
     exempt(m, "POST /api/v1/apps/{slug}/automations/simulate", "runs a rule against a sample and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/access/preview", "asks what a person could see and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/fields/convert-preview", "reports what a field conversion would do and stores nothing");
@@ -124,6 +125,39 @@ async fn automation_create(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/apps/{slug}/automations"), OWNER, Some(app_rule(&id, "Approved"))).await, StatusCode::CREATED, "create the rule")?;
     let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/automations"), OWNER, None).await, StatusCode::OK, "B lists rules")?;
     ensure(has(&seen, &id), format!("B lists the rule A made: {seen}"))
+}
+
+/// Workflows phase 10: a run fails on A at the write limit, the limit is raised, A retries it, and B reads the
+/// completed timeline with the retry on it. The limit is put back.
+async fn flow_retry(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let id = unique("p10flow");
+    let set = |f: &str, v: &str| json!({ "UpdateRecord": { "target": "Trigger", "fields": [[f, v]] } });
+    let rule = json!({
+        "id": id, "name": format!("Retry {id}"), "enabled": true, "trigger": "RecordCreated",
+        "steps": [
+            { "id": "one", "when": [], "kind": { "Service": { "action": set("status", "\"one\"") } } },
+            { "id": "two", "when": [], "kind": { "Service": { "action": set("name", "\"two\"") } } }
+        ]
+    });
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/automations"), OWNER, Some(rule)).await, StatusCode::CREATED, "create the flow")?;
+    status(w.wa("PUT", "/api/v1/settings/flows.max_writes_per_run", ADMIN, Some(json!(1))).await, StatusCode::OK, "lower the write limit")?;
+    let made = make_record(&w, &slug, "Ada").await;
+    let runs = w.wa("GET", &format!("/api/v1/flows/{id}/runs"), OWNER, None).await;
+    let outcome = async {
+        made?;
+        let runs = status(runs, StatusCode::OK, "A lists the runs")?;
+        let inst = runs["runs"][0]["instance_id"].as_str().ok_or(format!("a run: {runs}"))?.to_string();
+        ensure(runs["runs"][0]["status"] == "Failed", format!("the run failed at the limit: {runs}"))?;
+        status(w.wa("PUT", "/api/v1/settings/flows.max_writes_per_run", ADMIN, Some(json!(1000))).await, StatusCode::OK, "raise the write limit")?;
+        status(w.wa("POST", &format!("/api/v1/flows/runs/{inst}/retry"), OWNER, Some(json!({ "reason": "The limit was raised" }))).await, StatusCode::OK, "A retries")?;
+        let tl = status(w.rb("GET", &format!("/api/v1/flows/runs/{inst}"), OWNER, None).await, StatusCode::OK, "B reads the timeline")?;
+        ensure(tl["status"] == "Completed" && tl["retries"].as_array().is_some_and(|r| r.len() == 1), format!("B sees the retried run completed: {tl}"))
+    }
+    .await;
+    // The limit goes back to its default whatever happened, so later cases are not affected.
+    let _ = w.wa("PUT", "/api/v1/settings/flows.max_writes_per_run", ADMIN, Some(json!(1000))).await;
+    outcome
 }
 
 async fn proposal_decide(w: World) -> Outcome {

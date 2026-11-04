@@ -4,6 +4,7 @@ import { RuleSteps } from "./RuleSteps";
 import { Outline, useFlowEditor } from "./flows/Outline";
 import { Canvas } from "./flows/Canvas";
 import { TestRunPanel, type TraceEntry } from "./flows/TestRun";
+import { FlowHistory } from "./flows/FlowHistory";
 import { Banner } from "./ui";
 import type { SaveOutcome } from "./api";
 
@@ -35,6 +36,8 @@ export const WorkflowBuilder: React.FC<Props> = ({
   onViewProposal,
 }) => {
   const [isCreating, setIsCreating] = useState(false);
+  // Workflows phase 10: the rule whose runs and versions are open.
+  const [historyOf, setHistoryOf] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -273,6 +276,14 @@ export const WorkflowBuilder: React.FC<Props> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  aria-expanded={historyOf === rule.id}
+                  onClick={() => setHistoryOf(historyOf === rule.id ? null : rule.id)}
+                  className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[11px] cursor-pointer"
+                >
+                  Runs and versions
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSimulateRule(rule)}
                   className="px-2.5 py-1 rounded bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-semibold text-[11px] cursor-pointer"
                 >
@@ -290,6 +301,11 @@ export const WorkflowBuilder: React.FC<Props> = ({
             </div>
 
             <p className="text-slate-600 dark:text-slate-400 mb-3">{rule.description}</p>
+            {historyOf === rule.id && (
+              <div className="mb-3">
+                <FlowHistory flowId={rule.id} appTitle={appTitle} />
+              </div>
+            )}
             {rule.steps && rule.steps.length > 0 && (
               <div className="mb-3">
                 <RuleSteps steps={rule.steps} />

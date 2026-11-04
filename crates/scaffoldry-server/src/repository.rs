@@ -102,6 +102,7 @@ const SCHEMA_0094: &str = include_str!("../../scaffoldry-core/migrations/0094_pr
 const SCHEMA_0095: &str = include_str!("../../scaffoldry-core/migrations/0095_process_votes.sql");
 const SCHEMA_0096: &str = include_str!("../../scaffoldry-core/migrations/0096_task_grants.sql");
 const SCHEMA_0097: &str = include_str!("../../scaffoldry-core/migrations/0097_work_items.sql");
+const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -1197,6 +1198,7 @@ impl PostgresRepository {
                             ("0095_process_votes.sql", SCHEMA_0095),
                             ("0096_task_grants.sql", SCHEMA_0096),
                             ("0097_work_items.sql", SCHEMA_0097),
+                            ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
                         let mut fresh_install = false;

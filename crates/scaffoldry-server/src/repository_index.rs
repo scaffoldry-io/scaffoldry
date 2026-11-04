@@ -196,6 +196,61 @@ impl PostgresRepository {
         self.with_client(move |client| Ok(client.query(DUE_SQL, &[&slug, &table, &field, &from, &to, &limit])?.iter().map(|r| (r.get(0), r.get(1))).collect()))
     }
 
+    /// Workflows phase 10: a flow's runs, newest first, with each run's last `flow_end` event. `cursor` is the
+    /// `(started_at, id)` of the last row of the page before.
+    pub fn flow_runs(&self, rule_id: &str, status: Option<String>, from: Option<String>, to: Option<String>, cursor: Option<(String, String)>, limit: i64) -> Result<Vec<FlowRunRow>, RepositoryError> {
+        let rule = rule_id.to_string();
+        let (after_at, after_id) = cursor.map_or((None, None), |(a, i)| (Some(a), Some(i)));
+        self.with_client(move |client| {
+            let rows = client.query(FLOW_RUNS_SQL, &[&rule, &status, &from, &to, &after_at, &after_id, &limit])?;
+            Ok(rows.iter().map(|r| FlowRunRow { instance: r.get(0), end: r.get(1), ended_at: r.get(2) }).collect())
+        })
+    }
+
+    /// How many of a flow's runs ended since `since`, and how many of those failed.
+    pub fn flow_run_counts(&self, rule_id: &str, since: chrono::DateTime<chrono::Utc>) -> Result<(i64, i64), RepositoryError> {
+        let rule = rule_id.to_string();
+        self.with_client(move |client| {
+            let r = client.query_one("SELECT COUNT(*), COUNT(*) FILTER (WHERE status = 'Failed') FROM process_instances WHERE rule_id = $1 AND updated_at >= $2", &[&rule, &since])?;
+            Ok((r.get(0), r.get(1)))
+        })
+    }
+
+    /// The events of one instance, oldest first: kind, step, detail and time.
+    pub fn instance_events(&self, instance_id: &str) -> Result<Vec<InstanceEvent>, RepositoryError> {
+        let id = instance_id.to_string();
+        self.with_client(move |client| {
+            let rows = client.query("SELECT kind, step_id, detail, at FROM process_events WHERE instance_id = $1 ORDER BY id", &[&id])?;
+            Ok(rows.iter().map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))).collect())
+        })
+    }
+
+    /// Every stored version of a rule, oldest first, with who saved it and who approved the proposal that published it.
+    pub fn rule_versions(&self, rule_id: &str) -> Result<Vec<RuleVersionRow>, RepositoryError> {
+        let id = rule_id.to_string();
+        self.with_client(move |client| {
+            let rows = client.query(RULE_VERSIONS_SQL, &[&id])?;
+            Ok(rows
+                .iter()
+                .map(|r| RuleVersionRow {
+                    version: r.get(0),
+                    author: r.get(1),
+                    summary: r.get(2),
+                    proposal_id: r.get::<_, Option<uuid::Uuid>>(3).map(|u| u.to_string()),
+                    at: r.get(4),
+                    rule: r.get(5),
+                    approvers: r.get::<_, Option<Vec<String>>>(6).unwrap_or_default(),
+                })
+                .collect())
+        })
+    }
+
+    /// True when an effect's dedupe key is recorded: an earlier attempt of the run made it.
+    pub fn effect_recorded(&self, key: &str) -> Result<bool, RepositoryError> {
+        let key = key.to_string();
+        self.with_client(move |client| Ok(client.query_one("SELECT EXISTS (SELECT 1 FROM flow_effects WHERE dedupe_key = $1)", &[&key])?.get(0)))
+    }
+
     /// Records a key once. False when it was recorded already, so what it stands for has been done.
     pub fn claim_once(&self, key: &str, instance_id: &str) -> Result<bool, RepositoryError> {
         let (key, instance) = (key.to_string(), instance_id.to_string());
@@ -1185,3 +1240,36 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
         (sql, params)
     }
 }
+
+/// One event of an instance: kind, step, detail and time.
+pub type InstanceEvent = (String, Option<String>, serde_json::Value, chrono::DateTime<chrono::Utc>);
+
+/// One row of a flow's run history.
+pub struct FlowRunRow {
+    pub instance: serde_json::Value,
+    pub end: Option<serde_json::Value>,
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// One stored version of a rule.
+pub struct RuleVersionRow {
+    pub version: i32,
+    pub author: String,
+    pub summary: String,
+    pub proposal_id: Option<String>,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub rule: serde_json::Value,
+    pub approvers: Vec<String>,
+}
+
+pub const FLOW_RUNS_SQL: &str = "SELECT p.instance_json, e.detail, e.at FROM process_instances p \
+    LEFT JOIN LATERAL (SELECT detail, at FROM process_events WHERE instance_id = p.id AND kind = 'flow_end' ORDER BY id DESC LIMIT 1) e ON TRUE \
+    WHERE p.rule_id = $1 AND ($2::text IS NULL OR p.status = $2) \
+      AND ($3::text IS NULL OR p.instance_json->>'started_at' >= $3) AND ($4::text IS NULL OR p.instance_json->>'started_at' < $4) \
+      AND ($5::text IS NULL OR (p.instance_json->>'started_at', p.id) < ($5, $6::text)) \
+    ORDER BY p.instance_json->>'started_at' DESC, p.id DESC LIMIT $7";
+
+const RULE_VERSIONS_SQL: &str = "SELECT v.version, v.changed_by, v.summary, v.proposal_id, v.changed_at, v.rule_json, \
+    (SELECT array_agg(DISTINCT who) FROM (SELECT p.decided_by AS who FROM app_proposals p WHERE p.id = v.proposal_id AND p.decided_by IS NOT NULL \
+        UNION SELECT a.decided_by FROM proposal_approvals a WHERE a.proposal_id = v.proposal_id AND a.decision = 'approve' AND a.decided_by IS NOT NULL) x) \
+    FROM workflow_rule_versions v WHERE v.rule_id = $1 ORDER BY v.version";

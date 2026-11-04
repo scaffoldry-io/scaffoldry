@@ -84,6 +84,8 @@ pub enum DecisionType {
     SecretChanged,
     /// One party of a flow that touches several workspaces approved it (workflows phase 2).
     FlowPartyApproved,
+    /// Workflows phase 10: an owner or administrator retried a failed flow run, with a reason.
+    FlowRunRetried,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -150,6 +152,7 @@ impl DecisionType {
         DecisionType::LegalHoldChanged,
         DecisionType::SecretChanged,
         DecisionType::FlowPartyApproved,
+        DecisionType::FlowRunRetried,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -215,6 +218,7 @@ impl DecisionType {
             DecisionType::LegalHoldChanged => "LegalHoldChanged",
             DecisionType::SecretChanged => "SecretChanged",
             DecisionType::FlowPartyApproved => "FlowPartyApproved",
+            DecisionType::FlowRunRetried => "FlowRunRetried",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",
