@@ -117,7 +117,7 @@ fn stored_rows(w: &World) -> (i64, i64) {
     })
 }
 
-fn problem_at<'a>(body: &'a Value, path: Value) -> Option<&'a Value> {
+fn problem_at(body: &Value, path: Value) -> Option<&Value> {
     body["problems"].as_array()?.iter().find(|p| p["path"] == path)
 }
 

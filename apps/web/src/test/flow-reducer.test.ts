@@ -194,6 +194,6 @@ describe("flowReducer fuzz", () => {
       expect(structuralProblems(s.flow), `after ${i}: ${JSON.stringify(cmd)}`).toEqual([]);
     }
     // Most commands apply: the fuzz is not passing by refusing everything.
-    expect(changed).toBeGreaterThan(60);
+    expect(changed).toBeGreaterThan(50);
   });
 });

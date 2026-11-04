@@ -213,7 +213,7 @@ function apply(flow: WorkflowAutomationRule, cmd: Exclude<Command, { type: "Undo
       const dst = locate(steps, to);
       if (!dst || dst.index < 0 || dst.index > dst.list.length) return "There is no place there to move the step to.";
       dst.list.splice(dst.index, 0, moving);
-      return JSON.stringify(next.steps) === JSON.stringify(flow.steps) ? flow : next;
+      return next;
     }
     case "UpdateStep": {
       const at = locate(steps, cmd.path);
@@ -263,7 +263,8 @@ export function flowReducer(state: EditorState, cmd: Command): EditorState {
   }
   const out = apply(state.flow, cmd);
   if (typeof out === "string") return { ...state, notice: out };
-  if (out === state.flow) return { ...state, notice: "" };
+  // A command that leaves the flow as it was is not a change, and Undo does not count it.
+  if (out === state.flow || JSON.stringify(out) === JSON.stringify(state.flow)) return { ...state, notice: "" };
   // A change may not break what held before.
   const before = new Set(structureProblems(state.flow));
   const broken = structureProblems(out).find((p) => !before.has(p));

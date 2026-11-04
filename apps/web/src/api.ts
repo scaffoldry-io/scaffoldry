@@ -481,6 +481,15 @@ const requestFull = async <T>(path: string, options: RequestInit = {}): Promise<
   return { status: response.status, data: await response.json() };
 };
 
+/** The answer of `POST /flows/validate`. A problem's path is the step's place in the flow (see `flows/reducer.ts`). */
+export interface FlowCheck {
+  problems: { message: string; step?: string | null; path?: number[] | null }[];
+  grants: string | null;
+  parties: string[];
+  checks: { name: string; outcome: string; messages: string[] }[];
+  description: string[];
+}
+
 const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => (await requestFull<T>(path, options)).data;
 
 /** Undoes a batch of record changes. The answer names the batch the undo wrote, which undoes the undo. */
@@ -1604,6 +1613,11 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify({ decision, rationale, digest }),
     });
+  },
+
+  /** Workflows phase 7: what the server says about a flow the editor holds. It stores nothing. */
+  validateFlow: async (flow: unknown) => {
+    return request<FlowCheck>("/flows/validate", { method: "POST", body: JSON.stringify(flow) });
   },
 
   /** Saves a rule. A 202 means a person must approve it first, and nothing is live. */

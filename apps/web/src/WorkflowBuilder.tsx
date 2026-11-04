@@ -1,8 +1,7 @@
 import React, { useState } from "react";
-import { FieldSpec, WorkflowAutomationRule, WorkflowTriggerEvent, WorkflowActionItem, type ApproverSpec } from "./types";
-import { WhoDecides } from "./WhoDecides";
+import { FieldSpec, WorkflowAutomationRule, WorkflowActionItem } from "./types";
 import { RuleSteps } from "./RuleSteps";
-import { stepPreview, type DecisionChoice, type LateChoice } from "./processWords";
+import { Outline, useFlowEditor } from "./flows/Outline";
 import { Banner } from "./ui";
 import type { SaveOutcome } from "./api";
 
@@ -34,32 +33,6 @@ export const WorkflowBuilder: React.FC<Props> = ({
   onViewProposal,
 }) => {
   const [isCreating, setIsCreating] = useState(false);
-  const [ruleName, setRuleName] = useState("");
-  const [ruleDesc, setRuleDesc] = useState("");
-  const [triggerType, setTriggerType] = useState<"RecordCreated" | "RecordUpdated" | "StatusChanged">("StatusChanged");
-  const [selectedField, setSelectedField] = useState(fields[0]?.name || "gpa");
-  const [operator, setOperator] = useState<"Equals" | "NotEquals" | "GreaterThan" | "LessThan" | "Contains">("GreaterThan");
-  const [expectedValue, setExpectedValue] = useState("3.85");
-  const [actionType, setActionType] = useState<"NotifyCollaborator" | "CreateLedgerAuditEntry" | "UpdateRecordStatus">("NotifyCollaborator");
-  const [actionParam, setActionParam] = useState("Candidate approved with honors fellowship eligibility");
-  const [addAsServiceStep, setAddAsServiceStep] = useState(false);
-  // Approvers phase 5: an approval step, and who decides it.
-  const [addApproval, setAddApproval] = useState(false);
-  const [approver, setApprover] = useState<ApproverSpec | null>(null);
-  const [approvalPrompt, setApprovalPrompt] = useState("Review and decide");
-  // Process v2 phase 5: how many must agree, when the step is due, and what happens if it is late.
-  const [agree, setAgree] = useState<"Single" | "AllOf" | "AtLeast">("Single");
-  const [atLeast, setAtLeast] = useState(2);
-  const [dueDays, setDueDays] = useState(0);
-  const [late, setLate] = useState<LateChoice>("");
-  // A branch: one condition with the status it sets, and the status otherwise.
-  const [addBranch, setAddBranch] = useState(false);
-  const [branchField, setBranchField] = useState(fields[0]?.name || "");
-  const [branchOp, setBranchOp] = useState<"Equals" | "NotEquals" | "GreaterThan" | "LessThan" | "Contains">("Equals");
-  const [branchValue, setBranchValue] = useState("");
-  const [branchThen, setBranchThen] = useState("");
-  const [branchOtherwise, setBranchOtherwise] = useState("");
-  const decisionChoice: DecisionChoice = agree === "AtLeast" ? { AtLeast: Math.max(1, atLeast) } : agree;
   const [simulationResult, setSimulationResult] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -130,126 +103,10 @@ export const WorkflowBuilder: React.FC<Props> = ({
     }
   };
 
-  const handleCreateRule = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ruleName.trim()) return;
-
-    let trigger: WorkflowTriggerEvent;
-    if (triggerType === "StatusChanged") {
-      trigger = { type: "StatusChanged", to_status: "Approved" };
-    } else if (triggerType === "RecordCreated") {
-      trigger = { type: "RecordCreated" };
-    } else {
-      trigger = { type: "RecordUpdated" };
-    }
-
-    let action: WorkflowActionItem;
-    if (actionType === "NotifyCollaborator") {
-      action = { type: "NotifyCollaborator", role: "chair", message_template: actionParam };
-    } else if (actionType === "CreateLedgerAuditEntry") {
-      action = { type: "CreateLedgerAuditEntry", summary: actionParam, oscal_control: "AC-03" };
-    } else {
-      action = { type: "UpdateRecordStatus", new_status: actionParam };
-    }
-
-    const newRule: WorkflowAutomationRule = {
-      id: `rule-${Date.now()}`,
-      app_slug: appSlug,
-      name: ruleName,
-      description: ruleDesc || "Custom institutional automation rule",
-      enabled: true,
-      trigger,
-      predicates: [
-        {
-          field_name: selectedField,
-          operator,
-          expected_value: expectedValue,
-        },
-      ],
-      actions: [action],
-    };
-
-    if (addAsServiceStep) {
-      let stepAction: any;
-      if (actionType === "NotifyCollaborator") {
-        stepAction = { NotifyCollaborator: { role: "chair", message_template: actionParam } };
-      } else if (actionType === "CreateLedgerAuditEntry") {
-        stepAction = { CreateLedgerAuditEntry: { summary: actionParam, oscal_control: "AC-03" } };
-      } else {
-        stepAction = { UpdateRecordStatus: { new_status: actionParam } };
-      }
-
-      newRule.steps = [
-        {
-          id: `step-${Date.now()}`,
-          when: [
-            {
-              field_name: selectedField,
-              operator,
-              expected_value: expectedValue,
-            },
-          ],
-          kind: {
-            Service: { action: stepAction },
-          },
-        },
-      ];
-    }
-
-    if (addApproval && approver) {
-      newRule.steps = [
-        ...(newRule.steps ?? []),
-        {
-          id: `step-approval-${Date.now()}`,
-          when: [],
-          kind: {
-            UserTask: {
-              // Who decides is the approver. A role is kept as text only for the workspace-role choice, as before.
-              role: "Role" in approver ? approver.Role.name : "",
-              prompt: approvalPrompt.trim() || "Review and decide",
-              approve: [{ UpdateRecordStatus: { new_status: "Approved" } }],
-              reject: [{ UpdateRecordStatus: { new_status: "Rejected" } }],
-              approver,
-              ...(decisionChoice === "Single" ? {} : { decision: decisionChoice }),
-              ...(dueDays > 0 && late
-                ? {
-                    due: { days: dueDays },
-                    on_due: [late === "Fail" ? { Fail: { reason: `Nobody decided within ${dueDays} days.` } } : late],
-                  }
-                : {}),
-            },
-          },
-        },
-      ];
-    }
-
-    if (addBranch && branchField) {
-      const setStatus = (status: string, id: string) => ({ id, when: [], kind: { Service: { action: { UpdateRecordStatus: { new_status: status } } } } });
-      newRule.steps = [
-        ...(newRule.steps ?? []),
-        {
-          id: `step-branch-${Date.now()}`,
-          when: [],
-          kind: {
-            Branch: {
-              branches: [
-                {
-                  when: [{ field_name: branchField, operator: branchOp, expected_value: branchValue }],
-                  steps: branchThen.trim() ? [setStatus(branchThen.trim(), `step-then-${Date.now()}`)] : [],
-                },
-              ],
-              otherwise: branchOtherwise.trim() ? [setStatus(branchOtherwise.trim(), `step-otherwise-${Date.now()}`)] : [],
-            },
-          },
-        },
-      ];
-    }
-
-    saveRule(newRule);
+  // Workflows phase 7: the form below builds the rule, with its steps from the outline.
+  const handleCreateRule = (rule: WorkflowAutomationRule) => {
+    saveRule(rule);
     setIsCreating(false);
-    setRuleName("");
-    setRuleDesc("");
-    setAddAsServiceStep(false);
   };
 
   const handleSimulateRule = async (rule: WorkflowAutomationRule) => {
@@ -266,7 +123,7 @@ export const WorkflowBuilder: React.FC<Props> = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           event: eventPayload,
-          record: { id: "rec-simulation-test", [selectedField]: expectedValue, status: "Submitted" },
+          record: { id: "rec-simulation-test", ...(rule.predicates[0] ? { [rule.predicates[0].field_name]: rule.predicates[0].expected_value } : {}), status: "Submitted" },
           principal: "dr.smith@university.edu",
           affiliation: "faculty",
         }),
@@ -371,245 +228,8 @@ export const WorkflowBuilder: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Create Rule Modal / Form */}
-      {isCreating && (
-        <form
-          onSubmit={handleCreateRule}
-          className="p-5 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20 space-y-4 animate-fade-in text-xs"
-        >
-          <div className="flex items-center justify-between">
-            <h4 className="font-bold text-sm text-slate-900 dark:text-white">
-              Configure New Automation Rule
-            </h4>
-            <button
-              type="button"
-              onClick={() => setIsCreating(false)}
-              className="text-slate-400 hover:text-slate-600 cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block font-semibold mb-1 text-slate-700 dark:text-slate-300">
-                Rule Name
-              </label>
-              <input
-                type="text"
-                required
-                value={ruleName}
-                onChange={(e) => setRuleName(e.target.value)}
-                placeholder="e.g. Dean Fellowship Escalation"
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block font-semibold mb-1 text-slate-700 dark:text-slate-300">
-                Trigger Event
-              </label>
-              <select
-                value={triggerType}
-                onChange={(e) => setTriggerType(e.target.value as any)}
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-              >
-                <option value="StatusChanged">Status Changed to Approved</option>
-                <option value="RecordCreated">Record Created (New Submission)</option>
-                <option value="RecordUpdated">Record Updated</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Condition Predicate */}
-          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2">
-            <span className="font-semibold text-slate-700 dark:text-slate-300">
-              Condition Gate (Field Predicate)
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-slate-400">When</span>
-              <select
-                value={selectedField}
-                onChange={(e) => setSelectedField(e.target.value)}
-                className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-              >
-                {fields.map((f) => (
-                  <option key={f.name} value={f.name}>
-                    {f.label} ({f.name})
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={operator}
-                onChange={(e) => setOperator(e.target.value as any)}
-                className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-              >
-                <option value="GreaterThan">&gt; Greater Than</option>
-                <option value="LessThan">&lt; Less Than</option>
-                <option value="Equals">== Equals</option>
-                <option value="NotEquals">!= Not Equals</option>
-                <option value="Contains">Contains Text</option>
-              </select>
-
-              <input
-                type="text"
-                value={expectedValue}
-                onChange={(e) => setExpectedValue(e.target.value)}
-                placeholder="Value..."
-                className="w-32 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-
-          {/* Action Configuration */}
-          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2">
-            <span className="font-semibold text-slate-700 dark:text-slate-300">
-              Automated Action Dispatch
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Action Type</label>
-                <select
-                  value={actionType}
-                  onChange={(e) => setActionType(e.target.value as any)}
-                  className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                >
-                  <option value="NotifyCollaborator">Notify Collaborators / Roles</option>
-                  <option value="CreateLedgerAuditEntry">Record Cryptographic Decision (AC-03)</option>
-                  <option value="UpdateRecordStatus">Update Linked Record Status</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Message or Value</label>
-                <input
-                  type="text"
-                  value={actionParam}
-                  onChange={(e) => setActionParam(e.target.value)}
-                  placeholder="Notification message or ledger note"
-                  className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300">
-              <input
-                type="checkbox"
-                checked={addAsServiceStep}
-                onChange={(e) => setAddAsServiceStep(e.target.checked)}
-                className="rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span>Add as multi-step pipeline service step (Phase 6)</span>
-            </label>
-          </div>
-
-          <div className="pt-1 space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300">
-              <input type="checkbox" checked={addApproval} onChange={(e) => setAddApproval(e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500" />
-              <span>Add an approval step</span>
-            </label>
-            {addApproval && (
-              <div className="pl-5 space-y-2">
-                <label className="block text-xs">
-                  <span className="block text-[11px] text-slate-500 mb-1">What to decide</span>
-                  <input
-                    type="text"
-                    value={approvalPrompt}
-                    onChange={(e) => setApprovalPrompt(e.target.value)}
-                    className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                  />
-                </label>
-                <WhoDecides appSlug={appSlug} onChange={setApprover} />
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block text-xs">
-                    <span className="block text-[11px] text-slate-500 mb-1">How many must agree</span>
-                    <select aria-label="How many must agree" value={agree} onChange={(e) => setAgree(e.target.value as typeof agree)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                      <option value="Single">One person</option>
-                      <option value="AllOf">All of them</option>
-                      <option value="AtLeast">At least</option>
-                    </select>
-                  </label>
-                  {agree === "AtLeast" && (
-                    <label className="block text-xs">
-                      <span className="block text-[11px] text-slate-500 mb-1">How many</span>
-                      <input aria-label="How many" type="number" min={1} value={atLeast} onChange={(e) => setAtLeast(Number(e.target.value) || 1)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
-                    </label>
-                  )}
-                  <label className="block text-xs">
-                    <span className="block text-[11px] text-slate-500 mb-1">Due after (days)</span>
-                    <input aria-label="Due after (days)" type="number" min={0} max={365} value={dueDays} onChange={(e) => setDueDays(Math.max(0, Number(e.target.value) || 0))} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
-                  </label>
-                  <label className="block text-xs">
-                    <span className="block text-[11px] text-slate-500 mb-1">If it is late</span>
-                    <select aria-label="If it is late" value={late} onChange={(e) => setLate(e.target.value as LateChoice)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                      <option value="">Nothing happens</option>
-                      <option value="Remind">Remind them</option>
-                      <option value="EscalateUp">Ask the next level</option>
-                      <option value="Fail">Fail the request</option>
-                    </select>
-                  </label>
-                </div>
-                {approver && (
-                  <p data-testid="step-preview" className="text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 rounded px-2 py-1.5">
-                    {stepPreview(approver, decisionChoice, dueDays, late)}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="pt-1 space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300">
-              <input type="checkbox" checked={addBranch} onChange={(e) => setAddBranch(e.target.checked)} className="rounded text-blue-600 focus:ring-blue-500" />
-              <span>Add a branch</span>
-            </label>
-            {addBranch && (
-              <div className="pl-5 grid grid-cols-3 gap-2">
-                <select aria-label="Branch field" value={branchField} onChange={(e) => setBranchField(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                  {fields.map((f) => (
-                    <option key={f.name} value={f.name}>{f.label || f.name}</option>
-                  ))}
-                </select>
-                <select aria-label="Branch test" value={branchOp} onChange={(e) => setBranchOp(e.target.value as typeof branchOp)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-                  <option value="Equals">is</option>
-                  <option value="NotEquals">is not</option>
-                  <option value="GreaterThan">is greater than</option>
-                  <option value="LessThan">is less than</option>
-                  <option value="Contains">contains</option>
-                </select>
-                <input aria-label="Branch value" value={branchValue} onChange={(e) => setBranchValue(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
-                <label className="col-span-3 block text-xs">
-                  <span className="block text-[11px] text-slate-500 mb-1">Then set status to</span>
-                  <input aria-label="Then set status to" value={branchThen} onChange={(e) => setBranchThen(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
-                </label>
-                <label className="col-span-3 block text-xs">
-                  <span className="block text-[11px] text-slate-500 mb-1">Otherwise set status to</span>
-                  <input aria-label="Otherwise set status to" value={branchOtherwise} onChange={(e) => setBranchOtherwise(e.target.value)} className="w-full px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
-                </label>
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setIsCreating(false)}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold cursor-pointer"
-            >
-              Save Rule
-            </button>
-          </div>
-        </form>
-      )}
+      {/* Create Rule Form */}
+      {isCreating && <RuleForm appSlug={appSlug} fields={fields} onSubmit={handleCreateRule} onCancel={() => setIsCreating(false)} />}
 
       {/* Active Rules List */}
       <div className="space-y-3">
@@ -735,3 +355,122 @@ export const WorkflowBuilder: React.FC<Props> = ({
     </div>
   );
 };
+
+const field = "w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white";
+const inline = "px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white";
+
+/**
+ * A new rule. Its name, its condition and its rule action are fields of the form. Its trigger and its steps are edited
+ * in the outline, which dispatches commands to the flow reducer and has the server check each edit.
+ */
+function RuleForm({ appSlug, fields, onSubmit, onCancel }: { appSlug: string; fields: FieldSpec[]; onSubmit: (rule: WorkflowAutomationRule) => void; onCancel: () => void }) {
+  const [ruleName, setRuleName] = useState("");
+  const [selectedField, setSelectedField] = useState(fields[0]?.name || "gpa");
+  const [operator, setOperator] = useState<"Equals" | "NotEquals" | "GreaterThan" | "LessThan" | "Contains">("GreaterThan");
+  const [expectedValue, setExpectedValue] = useState("3.85");
+  const [actionType, setActionType] = useState<"NotifyCollaborator" | "CreateLedgerAuditEntry" | "UpdateRecordStatus">("NotifyCollaborator");
+  const [actionParam, setActionParam] = useState("Candidate approved with honors fellowship eligibility");
+  const [id] = useState(() => `rule-${Date.now()}`);
+  const editor = useFlowEditor({
+    id,
+    app_slug: appSlug,
+    name: "",
+    description: "",
+    enabled: true,
+    trigger: { type: "StatusChanged", to_status: "Approved" },
+    predicates: [],
+    actions: [],
+    steps: [],
+  });
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ruleName.trim()) return;
+    let action: WorkflowActionItem;
+    if (actionType === "NotifyCollaborator") action = { type: "NotifyCollaborator", role: "chair", message_template: actionParam };
+    else if (actionType === "CreateLedgerAuditEntry") action = { type: "CreateLedgerAuditEntry", summary: actionParam, oscal_control: "AC-03" };
+    else action = { type: "UpdateRecordStatus", new_status: actionParam };
+    const flow = editor.state.flow;
+    onSubmit({
+      ...flow,
+      name: ruleName,
+      description: "Custom institutional automation rule",
+      predicates: [{ field_name: selectedField, operator, expected_value: expectedValue }],
+      actions: [action],
+      ...((flow.steps ?? []).length ? {} : { steps: undefined }),
+    });
+  };
+
+  return (
+    <form onSubmit={submit} className="p-5 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/20 space-y-4 animate-fade-in text-xs">
+      <div className="flex items-center justify-between">
+        <h4 className="font-bold text-sm text-slate-900 dark:text-white">Configure New Automation Rule</h4>
+        <button type="button" onClick={onCancel} aria-label="Close" className="text-slate-400 hover:text-slate-600 cursor-pointer">
+          ✕
+        </button>
+      </div>
+
+      <label className="block">
+        <span className="block font-semibold mb-1 text-slate-700 dark:text-slate-300">Rule Name</span>
+        <input type="text" required value={ruleName} onChange={(e) => setRuleName(e.target.value)} placeholder="e.g. Dean Fellowship Escalation" className={field} />
+      </label>
+
+      {/* Condition Predicate */}
+      <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2">
+        <span className="font-semibold text-slate-700 dark:text-slate-300">Condition Gate (Field Predicate)</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-slate-400">When</span>
+          <select aria-label="Condition field" value={selectedField} onChange={(e) => setSelectedField(e.target.value)} className={inline}>
+            {fields.map((f) => (
+              <option key={f.name} value={f.name}>
+                {f.label} ({f.name})
+              </option>
+            ))}
+          </select>
+          <select aria-label="Condition test" value={operator} onChange={(e) => setOperator(e.target.value as typeof operator)} className={inline}>
+            <option value="GreaterThan">&gt; Greater Than</option>
+            <option value="LessThan">&lt; Less Than</option>
+            <option value="Equals">== Equals</option>
+            <option value="NotEquals">!= Not Equals</option>
+            <option value="Contains">Contains Text</option>
+          </select>
+          <input aria-label="Condition value" type="text" value={expectedValue} onChange={(e) => setExpectedValue(e.target.value)} placeholder="Value..." className={`${inline} w-32`} />
+        </div>
+      </div>
+
+      {/* Action Configuration */}
+      <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2">
+        <span className="font-semibold text-slate-700 dark:text-slate-300">Automated Action Dispatch</span>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="block text-[11px] text-slate-400 mb-1">Action Type</span>
+            <select value={actionType} onChange={(e) => setActionType(e.target.value as typeof actionType)} className={`${inline} w-full`}>
+              <option value="NotifyCollaborator">Notify Collaborators / Roles</option>
+              <option value="CreateLedgerAuditEntry">Record Cryptographic Decision (AC-03)</option>
+              <option value="UpdateRecordStatus">Update Linked Record Status</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-[11px] text-slate-400 mb-1">Message or Value</span>
+            <input type="text" value={actionParam} onChange={(e) => setActionParam(e.target.value)} placeholder="Notification message or ledger note" className={`${inline} w-full`} />
+          </label>
+        </div>
+      </div>
+
+      {/* Workflows phase 7: the trigger and the steps, in the outline. */}
+      <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2">
+        <span className="font-semibold text-slate-700 dark:text-slate-300">Trigger and steps</span>
+        <Outline state={editor.state} dispatch={editor.dispatch} fields={fields} appSlug={appSlug} problems={editor.problems} check={editor.check} />
+      </div>
+
+      <div className="flex justify-end gap-2 pt-2">
+        <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer">
+          Cancel
+        </button>
+        <button type="submit" className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold cursor-pointer">
+          Save Rule
+        </button>
+      </div>
+    </form>
+  );
+}
