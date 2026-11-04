@@ -131,12 +131,61 @@ pub fn effects_retrigger(effects: &[ActionEffect]) -> Option<TriggerEvent> {
     }
 }
 
+/// An expression in the formula language. In a flow it may name `{trigger.field}`, `{step_id.field}`, `{run.id}` and
+/// `{run.started_at}`.
+pub type Expr = String;
+
+/// The most records one `FindRecord` returns, and so the most one step fans out to.
+pub const MAX_FIND: u8 = 100;
+
+/// Which records a flow step acts on. A flow names records by address and never by a query.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Target {
+    /// The record that started the run.
+    Trigger,
+    /// The records the trigger record links to through one of its link fields.
+    Linked { link_field: String },
+    /// The record an earlier `CreateRecord` step of this run created.
+    Created { step: String },
+    /// The records an earlier `FindRecord` step of this run found.
+    Found { step: String },
+}
+
+/// What a flow may touch in one table. Derived from the steps and stored with the flow version.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FlowGrant {
+    pub app_slug: String,
+    pub table_id: String,
+    #[serde(default)]
+    pub read: Vec<String>,
+    #[serde(default)]
+    pub write: Vec<String>,
+    #[serde(default)]
+    pub create: bool,
+    #[serde(default)]
+    pub link: Vec<String>,
+}
+
+/// An action. There is no variant that deletes a record, and none that queries a table.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ActionType {
     NotifyCollaborator { role: String, message_template: String },
     UpdateRecordStatus { new_status: String },
     CreateLedgerAuditEntry { summary: String, oscal_control: String },
     WebhookDispatch { target_url: String },
+    /// Matches one indexed field by exact value, case-insensitive. At most `limit` records, at most 100.
+    FindRecord { id: String, app: String, table: String, field: String, equals: Expr, limit: u8 },
+    CreateRecord { id: String, app: String, table: String, fields: Vec<(String, Expr)> },
+    /// On a `Found` target, applies to each record found.
+    UpdateRecord { target: Target, fields: Vec<(String, Expr)> },
+    SetLink { target: Target, link_field: String, to: Target },
+}
+
+impl ActionType {
+    /// True for the actions that find, create, update or link records: the steps of a flow.
+    pub fn is_flow(&self) -> bool {
+        matches!(self, Self::FindRecord { .. } | Self::CreateRecord { .. } | Self::UpdateRecord { .. } | Self::SetLink { .. })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,6 +207,13 @@ pub struct AutomationRule {
     /// Assigned by the server when a version is saved. 0 until then.
     #[serde(default)]
     pub version: u32,
+    /// Where the flow is owned and listed.
+    #[serde(default)]
+    pub home_workspace: Option<String>,
+    /// What the flow may read and write, derived from its steps when a version is saved. The run checks every read and
+    /// write against these.
+    #[serde(default)]
+    pub grants: Vec<FlowGrant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,6 +261,23 @@ fn action_words(action: &ActionType) -> Option<String> {
         ActionType::NotifyCollaborator { role, message_template } => Some(format!("notify {role}: {message_template}")),
         ActionType::CreateLedgerAuditEntry { summary, .. } => Some(format!("record in the audit ledger: {summary}")),
         ActionType::WebhookDispatch { .. } => None,
+        ActionType::FindRecord { table, field, .. } => Some(format!("find records in {table} by {field}")),
+        ActionType::CreateRecord { table, fields, .. } => Some(format!("create a record in {table} setting {}", names(fields))),
+        ActionType::UpdateRecord { target, fields } => Some(format!("set {} on {}", names(fields), target_words(target))),
+        ActionType::SetLink { target, link_field, to } => Some(format!("link {} to {} through {link_field}", target_words(target), target_words(to))),
+    }
+}
+
+fn names(fields: &[(String, Expr)]) -> String {
+    fields.iter().map(|(f, _)| f.as_str()).collect::<Vec<_>>().join(", ")
+}
+
+fn target_words(t: &Target) -> String {
+    match t {
+        Target::Trigger => "the record".to_string(),
+        Target::Linked { link_field } => format!("the records linked through {link_field}"),
+        Target::Created { step } => format!("the record step {step} created"),
+        Target::Found { step } => format!("the records step {step} found"),
     }
 }
 

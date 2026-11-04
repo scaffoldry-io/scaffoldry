@@ -333,6 +333,8 @@ The keys are a closed list. Reject any other key with 400. Validate the value's 
 | `egress.allow` | array of `{ "host", "ports" }` and `{ "cidr", "ports" }` | empty: nothing may leave | Where the server may connect. Added by `integrations.md` phase 1 |
 | `platform.contact_email` | string, an email address | none | The institution's contact address. The policy library sends it in a `From` header when it fetches a source. Added by `policy-library.md` phase 5 |
 | `platform.timezone` | string | UTC | An IANA zone name. Added by `calc-graph.md` phase 4 |
+| `flows.max_steps` | integer 1 to 200 | 50 | The most steps one flow may hold. Added by `workflows.md` phase 1 |
+| `flows.max_writes_per_run` | integer 1 to 10,000 | 1,000 | The most writes one flow run may make. A run that would make more fails with the count. Added by `workflows.md` phase 1 |
 
 Do not add a key that turns a check off. There is no `auth.disabled`, no `dev_mode`, and no `allow_insecure`.
 

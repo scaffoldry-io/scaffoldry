@@ -105,6 +105,13 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
     if rule.actions.iter().any(|a| matches!(a, ActionType::WebhookDispatch { .. })) {
         problems.push("a rule may not hold a webhook".to_string());
     }
+    if crate::service::flows::is_flow(rule) {
+        let limit = crate::service::flows::max_steps(state);
+        if rule.steps.len() as i64 > limit {
+            problems.push(format!("the flow has {} steps, and the limit is {limit}", rule.steps.len()));
+        }
+        problems.extend(scaffoldry_engine::flow::validate_flow(rule, &crate::service::flows::manifests_with(state, manifest, rule)));
+    }
     for name in fields_read(rule) {
         if !names.contains(&name) {
             problems.push(format!("the rule names the field '{name}', which the app does not have"));
@@ -157,6 +164,7 @@ pub fn save_rule(
     if !problems.is_empty() {
         return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
     }
+    crate::service::flows::derive(state, &manifest, &mut rule);
     let repo = &*state.repository;
     let (saved, _) = repo
         .save_rule(&rule, summary, proposal_id, changed_by, &manifest.organization_code)
@@ -225,6 +233,8 @@ pub fn decide_process(
                         ActionType::WebhookDispatch { target_url } => {
                             instance.log.push(format!("Webhook not sent: {target_url}"));
                         }
+                        // A flow action is never the result of a decision: saving refuses it there.
+                        ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } => {}
                     }
                 }
             }

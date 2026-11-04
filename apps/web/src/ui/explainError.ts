@@ -97,6 +97,8 @@ export function explainError(e: unknown): ExplainedError {
       return { message: "An outside app cannot be given a sensitive field.", next: "Remove the sensitive field from its list. Sensitive data stays inside Scaffoldry." };
     case "client_scope":
       return { message: "This outside app is not allowed to do that.", next: "The app's ceiling does not cover it. Ask its owners to widen the ceiling, or do it in Scaffoldry yourself." };
+    case "flow_grant_exceeded":
+      return { message: "The flow tried to read or change something its approved grants do not cover, so the run stopped.", next: "Propose a new version of the flow. Its grants are worked out again and shown to the reviewers." };
     case "last_owner":
       return { message: "A workspace keeps at least one owner, and this would leave it with none.", next: "Make someone else an owner first, or use Ownership in the console to hand the workspace over." };
     case "token_scope":

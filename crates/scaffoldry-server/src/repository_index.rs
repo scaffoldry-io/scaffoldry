@@ -179,7 +179,18 @@ pub(crate) fn sync_index(
     Ok(())
 }
 
+/// The ids of the records whose indexed field holds a value, by the index alone. Parameters: app, table, field, the
+/// text column value, the number column value, and the limit. It reads no record.
+pub const FIND_SQL: &str = "SELECT record_id FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = $3 \
+     AND (txt = $4::text OR num = $5::float8) ORDER BY record_id LIMIT $6";
+
 impl PostgresRepository {
+    /// The ids of up to `limit` records of a table whose indexed field matches, as the index stores it.
+    pub fn find_by_index(&self, app_slug: &str, table_id: &str, field: &str, txt: Option<String>, num: Option<f64>, limit: i64) -> Result<Vec<String>, RepositoryError> {
+        let (slug, table, field) = (app_slug.to_string(), table_id.to_string(), field.to_string());
+        self.with_client(move |client| Ok(client.query(FIND_SQL, &[&slug, &table, &field, &txt, &num, &limit])?.iter().map(|r| r.get(0)).collect()))
+    }
+
     /// Rebuilds a table's index from its records, from nothing, for the whole indexed set. Returns the
     /// number of rows written.
     pub fn rebuild_index(&self, app_slug: &str, table_id: &str, fields: &[FieldSpec]) -> Result<u64, RepositoryError> {

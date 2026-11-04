@@ -232,10 +232,13 @@ impl AutomationEngine {
                     reason: format!("webhook disabled: {target_url}"),
                 });
             }
+            // A flow step finds, creates, updates or links records by address. The server's flow runner does it,
+            // inside the flow's grants, so the engine records nothing for it here.
+            ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } => {}
         }
     }
 
-    fn evaluate_predicate(pred: &FieldPredicate, record: &Value) -> bool {
+    pub fn evaluate_predicate(pred: &FieldPredicate, record: &Value) -> bool {
         let field_val = record.get(&pred.field_name);
         match pred.operator {
             ConditionOperator::Equals => {

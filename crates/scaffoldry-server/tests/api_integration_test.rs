@@ -1733,7 +1733,7 @@ async fn test_automation_retrigger_loop_guard() {
     let _db = common::TestDb::new();
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("Failed to create ServerState"));
 
-    let loop_rule = scaffoldry_core::AutomationRule { version: 0,
+    let loop_rule = scaffoldry_core::AutomationRule { version: 0, home_workspace: None, grants: vec![],
         id: "rule-loop-guard".to_string(),
         app_slug: "test-slug".to_string(),
         name: "Loop Guard Rule".to_string(),
@@ -1842,7 +1842,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
     let rule_id = "rule-candidate-decision";
     let rec_id = "rec-cand-42";
 
-    let rule = scaffoldry_core::AutomationRule { version: 0,
+    let rule = scaffoldry_core::AutomationRule { version: 0, home_workspace: None, grants: vec![],
         id: rule_id.to_string(),
         app_slug: app_slug.to_string(),
         name: "Candidate Review Flow".to_string(),
@@ -1973,7 +1973,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
     let rule_id = "rule-dup-check";
     let rec_id = "rec-dup-99";
 
-    let rule = scaffoldry_core::AutomationRule { version: 0,
+    let rule = scaffoldry_core::AutomationRule { version: 0, home_workspace: None, grants: vec![],
         id: rule_id.to_string(),
         app_slug: app_slug.to_string(),
         name: "Dup Check Flow".to_string(),
