@@ -13,7 +13,7 @@ import type { ProcessStepItem, WorkflowAutomationRule, WorkflowTriggerEvent } fr
 
 export type Path = number[];
 
-export type StepKindName = "status" | "notify" | "audit" | "task" | "branch" | "create" | "update" | "find";
+export type StepKindName = "status" | "notify" | "audit" | "task" | "branch" | "create" | "update" | "find" | "start";
 
 export type Command =
   | { type: "AddStep"; path: Path; kind: StepKindName }
@@ -172,6 +172,8 @@ export function newStep(id: string, kind: StepKindName, nextIdAfter: () => strin
       return { id, when: [], kind: service({ UpdateRecord: { target: "Trigger", fields: [] } }) as any };
     case "find":
       return { id, when: [], kind: service({ FindRecord: { id, app: "", table: "", field: "", equals: "", limit: 1 } }) as any };
+    case "start":
+      return { id, when: [], kind: service({ StartFlow: { flow_id: "", inputs: [] } }) as any };
   }
 }
 
