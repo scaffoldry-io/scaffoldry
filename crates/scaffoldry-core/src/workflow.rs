@@ -182,6 +182,18 @@ pub enum StepKind {
         /// Who decides. When absent, the step uses `Role { name: role }`.
         #[serde(default)]
         approver: Option<crate::approver::ApproverSpec>,
+        /// Process v2 phase 3: when the step is due, counted from entering it, in whole days in `platform.timezone`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        due: Option<DurationSpec>,
+        /// How often a `Remind` repeats after it first fires. It sends at most `MAX_REMINDERS` in all.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remind_every: Option<DurationSpec>,
+        /// What happens when the step is due, in order: the first at `due`, each next one `due` after the one before.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        on_due: Vec<DueAction>,
+        /// What a `Fail` runs as it ends the instance.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        on_fail: Vec<ActionType>,
     },
     /// The steps of the first arm whose conditions hold run, or else `otherwise`. The choice is a process event.
     Branch {
@@ -189,6 +201,36 @@ pub enum StepKind {
         #[serde(default)]
         otherwise: Vec<ProcessStep>,
     },
+}
+
+/// A length of time in whole days.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DurationSpec {
+    pub days: u32,
+}
+
+/// The longest a step may be due in, or a reminder repeat after.
+pub const MAX_DUE_DAYS: u32 = 365;
+
+/// The most reminders one `Remind` sends.
+pub const MAX_REMINDERS: u32 = 5;
+
+/// What happens when a user task is due. No variant approves or rejects: a timer never decides.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DueAction {
+    /// Tell the people who may decide again, with `process_overdue`.
+    Remind,
+    /// Add the people `approver` resolves to to who may decide, and tell them, the old approvers and the record's owner.
+    Escalate { approver: crate::approver::ApproverSpec },
+    /// The same as `Escalate`, to the step's position one unit higher, as `walk_up` finds it.
+    EscalateUp,
+    /// End the instance as `Failed` with the reason, running the step's `on_fail` actions.
+    Fail { reason: String },
+}
+
+impl DueAction {
+    /// Every variant's name. A test checks the list against the enum.
+    pub const KINDS: [&'static str; 4] = ["Remind", "Escalate", "EscalateUp", "Fail"];
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -226,6 +268,12 @@ pub struct ProcessInstance {
     /// The version of the rule this instance started under. 0 means read the live rule.
     #[serde(default)]
     pub rule_version: u32,
+    /// Process v2 phase 3: the people a timer escalated the waiting step to. They may decide it too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub escalated_to: Vec<String>,
+    /// The unit an `EscalateUp` last found the position at, so the next one starts above it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalated_unit: Option<String>,
 }
 
 pub fn effects_retrigger(effects: &[ActionEffect]) -> Option<TriggerEvent> {

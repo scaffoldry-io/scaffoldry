@@ -220,7 +220,7 @@ impl AutomationEngine {
                                 started_by: None,
                                 started_at: String::new(),
                                 assigned_to: None,
-                                no_approver: None,
+                                no_approver: None, escalated_to: vec![], escalated_unit: None,
                             });
                         }
                     }

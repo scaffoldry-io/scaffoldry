@@ -220,6 +220,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::service::flow_chains::fire_schedules_job,
     },
     JobKind {
+        name: "fire_timers",
+        title: "Applying process timers",
+        description: "Reminds, escalates or fails the waiting steps whose timers came due, once each. A timer never decides a step.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::process_timers::fire_timers_job,
+    },
+    JobKind {
         name: "scan_date_triggers",
         title: "Starting processes on their dates",
         description: "Starts each process whose date trigger came due since the last scan, once for each record and date, reading the date field's index.",

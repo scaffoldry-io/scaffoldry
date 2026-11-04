@@ -414,10 +414,7 @@ fn resolve(state: &SharedState, to: &Recipients) -> (Vec<String>, Option<String>
         Recipients::People(list) => (list.clone(), None),
         Recipients::Approvers(instance) => {
             let Some(inst) = state.repository.get_process_instance(instance).ok().flatten() else { return (Vec::new(), None) };
-            match crate::service::approvers::resolution_for(state, &inst) {
-                Some((_, ctx, resolution)) => (resolution.approvers.into_iter().map(|a| a.eppn).collect(), ctx.submitter.clone()),
-                None => (Vec::new(), None),
-            }
+            crate::service::approvers::current_approvers(state, &inst)
         }
         Recipients::Position { key, unit } => {
             let spec = scaffoldry_core::approver::ApproverSpec::Position { key: key.clone(), from: scaffoldry_core::approver::Origin::Workspace, walk_up: false };

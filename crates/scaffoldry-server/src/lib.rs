@@ -10,6 +10,7 @@ pub mod jwt;
 pub mod repository;
 pub mod repository_clients;
 pub mod repository_ownership;
+pub mod repository_timers;
 pub mod holds;
 pub mod purge;
 pub mod library_fetch;

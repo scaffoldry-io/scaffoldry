@@ -273,7 +273,7 @@ async fn decisions_and_completions_start_the_flows_that_wait_for_them() {
         steps: vec![ProcessStep {
             id: "decide".into(),
             when: vec![],
-            kind: StepKind::UserTask { role: String::new(), prompt: "Decide the application".into(), approve: vec![], reject: vec![], approver: Some(ApproverSpec::Person { eppn: CO_OWNER.into() }) },
+            kind: StepKind::UserTask { role: String::new(), prompt: "Decide the application".into(), approve: vec![], reject: vec![], approver: Some(ApproverSpec::Person { eppn: CO_OWNER.into() }), due: None, remind_every: None, on_due: vec![], on_fail: vec![] },
         }],
         version: 1,
         home_workspace: None,

@@ -71,6 +71,11 @@ pub const RECORD_INTERNALS: &[&str] = &[
     // Workflows phase 3: a decision starts the flows waiting for it with the decided record, read by id. The decider was
     // checked by `decide_process`; the flows then act inside their own grants.
     "on_decided",
+    // Process v2 phase 3: a timer reads its instance's record for its creator, table and status, to escalate or fail the
+    // step and to address the notices. It runs as the system and returns nothing to a caller.
+    "apply_timer",
+    "escalate_up_target",
+    "timer_notice_parts",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
 ];

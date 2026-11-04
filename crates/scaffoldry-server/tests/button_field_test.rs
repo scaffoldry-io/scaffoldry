@@ -90,7 +90,7 @@ async fn world() -> World {
     }
     let w = World { db, state, app, slug };
     let rules = [
-        manual(&w, "start-review", vec![], StepKind::UserTask { role: String::new(), prompt: "Review the grant".into(), approve: vec![], reject: vec![], approver: Some(ApproverSpec::Person { eppn: DECIDER.into() }) }),
+        manual(&w, "start-review", vec![], StepKind::UserTask { role: String::new(), prompt: "Review the grant".into(), approve: vec![], reject: vec![], approver: Some(ApproverSpec::Person { eppn: DECIDER.into() }), due: None, remind_every: None, on_due: vec![], on_fail: vec![] }),
         manual(&w, "mark-reviewed", vec![], StepKind::Service { action: ActionType::UpdateRecordStatus { new_status: "Under review".into() } }),
         manual(&w, "submit-only", vec![FieldPredicate { field_name: "status".into(), operator: ConditionOperator::Equals, expected_value: "Submitted".into() }], StepKind::Service { action: ActionType::UpdateRecordStatus { new_status: "Sent".into() } }),
     ];
