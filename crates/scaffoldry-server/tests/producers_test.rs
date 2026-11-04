@@ -150,7 +150,7 @@ async fn a_waiting_step_tells_its_approvers_and_a_decision_tells_the_creator() {
         prompt: "Approve this booking".to_string(),
         approve: vec![ActionType::UpdateRecordStatus { new_status: "Approved".into() }],
         reject: vec![],
-        approver: Some(approver), due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
+        approver: Some(approver), due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(), kind: Default::default(), show: vec![], fill: vec![], require: vec![], decline_reason: false,
     });
     w.state.automations.write().unwrap().entry(w.slug.clone()).or_default().push(rule);
     let id = record(&w, ADMIN).await;

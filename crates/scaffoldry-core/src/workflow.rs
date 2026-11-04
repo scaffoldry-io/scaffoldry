@@ -200,6 +200,22 @@ pub enum StepKind {
         /// When a committee's rejections close the step. Named `reject_rule` because `reject` holds the actions.
         #[serde(default, skip_serializing_if = "RejectRule::is_first")]
         reject_rule: RejectRule,
+        /// Workflows phase 4: what the assignee does. `Complete` ends `done` (the `approve` actions) or `decline` (the
+        /// `reject` actions).
+        #[serde(default, skip_serializing_if = "TaskKind::is_approve")]
+        kind: TaskKind,
+        /// The fields the assignee may read while the step is open, on that one record.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        show: Vec<String>,
+        /// For `Complete`: the fields the assignee may write.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        fill: Vec<String>,
+        /// For `Complete`: the fields that must not be blank to finish.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        require: Vec<String>,
+        /// For `Complete`: a decline needs a reason.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        decline_reason: bool,
     },
     /// The steps of the first arm whose conditions hold run, or else `otherwise`. The choice is a process event.
     Branch {
@@ -207,6 +223,32 @@ pub enum StepKind {
         #[serde(default)]
         otherwise: Vec<ProcessStep>,
     },
+}
+
+/// What the assignee of a user task does (workflows phase 4).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TaskKind {
+    /// Decide on the record: `approve` or `reject`.
+    #[default]
+    Approve,
+    /// Fill the listed fields and press Done: `done` or `decline`.
+    Complete,
+    /// Vote and comment, as a committee (process v2 phase 4).
+    Review,
+}
+
+impl TaskKind {
+    pub fn is_approve(&self) -> bool {
+        matches!(self, TaskKind::Approve)
+    }
+
+    /// The decisions this kind of task ends with.
+    pub fn outcomes(&self) -> [&'static str; 2] {
+        match self {
+            TaskKind::Complete => ["done", "decline"],
+            TaskKind::Approve | TaskKind::Review => ["approve", "reject"],
+        }
+    }
 }
 
 /// How a user task is decided. `Single` is one person's decision. The others are a committee's vote among the voters
@@ -536,6 +578,15 @@ fn actions_words(actions: &[ActionType]) -> String {
     }
 }
 
+/// `a`, `a and b`, or `a, b and c`.
+fn and_words(items: &[String]) -> String {
+    match items {
+        [] => "nothing".to_string(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 fn approver_words(spec: &crate::approver::ApproverSpec) -> String {
     use crate::approver::{ApproverSpec, Origin};
     match spec {
@@ -596,6 +647,24 @@ fn describe_steps(steps: &[ProcessStep], out: &mut Vec<String>) {
                     Some(c) => format!("If {c}, then {words}."),
                     None => format!("Then {words}."),
                 });
+            }
+            StepKind::UserTask { role, approve, reject, approver, kind: TaskKind::Complete, show, fill, .. } => {
+                // Workflows phase 4: what the task asks, and what it shows, for the proposal's change list.
+                let spec = effective_approver(role, approver);
+                let mut sentence = format!("Asks {} to provide {} on the record.", approver_words(&spec), and_words(fill));
+                if !show.is_empty() {
+                    sentence.push_str(&format!(" They can see {} of that record only, for as long as the task is open.", and_words(show)));
+                }
+                if !approve.is_empty() {
+                    sentence.push_str(&format!(" When done: {}.", actions_words(approve)));
+                }
+                if !reject.is_empty() {
+                    sentence.push_str(&format!(" If declined: {}.", actions_words(reject)));
+                }
+                if let Some(c) = lead {
+                    out.push(format!("If {c}:"));
+                }
+                out.push(sentence);
             }
             StepKind::UserTask { role, approve, reject, approver, .. } => {
                 let spec = effective_approver(role, approver);

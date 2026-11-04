@@ -104,7 +104,7 @@ impl World {
                     prompt: "Decide".to_string(),
                     approve: vec![scaffoldry_core::ActionType::UpdateRecordStatus { new_status: "Approved".into() }],
                     reject: vec![],
-                    approver: spec, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
+                    approver: spec, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(), kind: Default::default(), show: vec![], fill: vec![], require: vec![], decline_reason: false,
                 },
             }],
         }

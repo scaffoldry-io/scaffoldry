@@ -12,6 +12,7 @@ pub mod repository_clients;
 pub mod repository_ownership;
 pub mod repository_timers;
 pub mod repository_votes;
+pub mod repository_task_grants;
 pub mod holds;
 pub mod purge;
 pub mod library_fetch;

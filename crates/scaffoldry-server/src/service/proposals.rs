@@ -731,6 +731,8 @@ fn check_rules_part(
     }
 
     let mut effects = Vec::new();
+
+    let mut task_problems = Vec::new();
     let mut loops = Vec::new();
     let mut approvers = Vec::new();
     // A rule equal to one that was reviewed has had its effects reviewed.
@@ -758,6 +760,16 @@ fn check_rules_part(
                 loops.push(format!("rule '{}' runs on every update and sets '{name}', which its own condition reads", rule.name));
             }
         }
+        // Workflows phase 4: a task that shows or asks for a sensitive field opens it to its assignee.
+        for step in scaffoldry_core::workflow::all_steps(&rule.steps).into_iter().filter(|_| !already) {
+            if let StepKind::UserTask { show, fill, .. } = &step.kind {
+                for name in show.iter().chain(fill.iter()) {
+                    if effective.tables.iter().any(|t| sensitive.contains(&(t.id.clone(), name.clone()))) {
+                        task_problems.push(format!("rule '{}', step '{}': the task shows the sensitive field '{name}' to its assignee", rule.name, step.id));
+                    }
+                }
+            }
+        }
         for step in &rule.steps {
             if let StepKind::UserTask { role, approver, .. } = &step.kind {
                 let spec = scaffoldry_core::approver::effective_approver(role, approver);
@@ -771,7 +783,7 @@ fn check_rules_part(
             }
         }
     }
-    let checks = vec![check("rule_schema", vec![]), check("rule_effects", effects), warn("rule_loop", loops), warn("rule_approver", approvers)];
+    let checks = vec![check("rule_schema", vec![]), check("rule_effects", effects), check("task_sensitivity", task_problems), warn("rule_loop", loops), warn("rule_approver", approvers)];
     Ok(RulesPart { rules, checks })
 }
 

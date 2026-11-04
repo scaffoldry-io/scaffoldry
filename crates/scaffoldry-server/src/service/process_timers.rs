@@ -175,7 +175,12 @@ fn apply_timer(state: &SharedState, t: &Timer) -> Result<bool, String> {
     }
     let timers = next_timers(state, &d, &t.step_id, index, &action, sent, t.fire_at);
     let detail = json!({ "action": action, "sent": sent });
-    if !state.repository.apply_timer(&t.step_id, TimerOutcome { next: next.clone(), record, timers, detail }).map_err(|e| e.to_string())? {
+    // Workflows phase 4: an escalation moves the step's task grants to the people it escalated to.
+    let grants = match &escalated {
+        Some((_, added)) if !added.is_empty() => Some(crate::service::task_grants::task_grants_for(state, &rule, &t.step_id, &next, added)),
+        _ => None,
+    };
+    if !state.repository.apply_timer(&t.step_id, TimerOutcome { next: next.clone(), record, timers, detail, grants }).map_err(|e| e.to_string())? {
         return Ok(false);
     }
 

@@ -901,13 +901,21 @@ pub fn fetch_record(
     id: &str,
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
-    authorize_app(caller, app_slug, AppAction::Read, state)?;
-    let record = state
-        .find_record(app_slug, id)
-        .map_err(ServiceError::Internal)?
-        .filter(|r| scope::allows(caller, app_slug, r, RowOp::Read, state))
-        .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
-    Ok(redact_records(caller, app_slug, vec![record], state).remove(0))
+    let allowed = authorize_app(caller, app_slug, AppAction::Read, state);
+    if allowed.is_ok() {
+        let record = state.find_record(app_slug, id).map_err(ServiceError::Internal)?.filter(|r| scope::allows(caller, app_slug, r, RowOp::Read, state));
+        if let Some(record) = record {
+            return Ok(redact_records(caller, app_slug, vec![record], state).remove(0));
+        }
+    }
+    // Workflows phase 4: an open task grant reaches this one record, and shows only the fields it lists.
+    if let Some(grant) = crate::service::task_grants::open_grant(caller, app_slug, id, state) {
+        if let Some(record) = state.find_record(app_slug, id).map_err(ServiceError::Internal)? {
+            return Ok(crate::service::task_grants::through_grant(record, &grant));
+        }
+    }
+    allowed?;
+    Err(ServiceError::NotFound(format!("Record '{id}' not found")))
 }
 
 pub fn update_record(
@@ -918,7 +926,15 @@ pub fn update_record(
     payload: &Value,
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
-    authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
+    // Workflows phase 4: a person without the right to write may still fill the fields an open task grant lists, on that
+    // one record.
+    let task = match authorize_app(caller, app_slug, AppAction::WriteRecords, state) {
+        Ok(()) => None,
+        Err(e) => match crate::service::task_grants::open_grant(caller, app_slug, id, state) {
+            Some(grant) if !grant.write_fields.is_empty() => Some(grant),
+            _ => return Err(e),
+        },
+    };
 
     // A save names the version it read. Without one there is nothing to check it against.
     let expected_version = match payload.get("version") {
@@ -932,7 +948,7 @@ pub fn update_record(
     let current = state
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
-        .filter(|r| scope::allows(caller, app_slug, r, RowOp::Update, state))
+        .filter(|r| task.is_some() || scope::allows(caller, app_slug, r, RowOp::Update, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
 
     let mut new_data = match payload.get("data") {
@@ -945,6 +961,24 @@ pub fn update_record(
             rest
         }
     };
+    // A write through a task grant names only the fields the grant lets the person fill. The rest of the record stays.
+    if let Some(grant) = &task {
+        let refused = crate::service::task_grants::unwritable(&new_data, grant);
+        if !refused.is_empty() {
+            return Err(ServiceError::forbidden(format!(
+                "This task lets you fill {}. It does not let you change {}.",
+                grant.write_fields.join(", "),
+                refused.join(", ")
+            )));
+        }
+        let mut merged = current.data.clone();
+        if let (Some(m), Some(fill)) = (merged.as_object_mut(), new_data.as_object()) {
+            for (k, v) in fill {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+        new_data = merged;
+    }
     if let (Some(tid), Some(map)) = (current.data.get("_table_id").cloned(), new_data.as_object_mut()) {
         map.entry("_table_id".to_string()).or_insert(tid);
     }
@@ -976,12 +1010,17 @@ pub fn update_record(
     validate_long_text(app_slug, &table, &new_data, state)?;
     validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut new_data, state)?;
     let attachments = validate_attachments(caller, app_slug, &table, Some(id), &mut new_data, state)?;
-    if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
-        return Err(outside_scope());
+    // The person's own row and column rules apply to their own writes. A task grant's write was held to its fields above.
+    if task.is_none() {
+        if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
+            return Err(outside_scope());
+        }
+        keep_what_the_caller_cannot_touch(caller, app_slug, &table, &current.data, &mut new_data, state);
     }
-    keep_what_the_caller_cannot_touch(caller, app_slug, &table, &current.data, &mut new_data, state);
     keep_retired_values(app_slug, &table, &current.data, &mut new_data, state);
-    check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
+    if task.is_none() {
+        check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
+    }
     validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
 
     let (fields, _) = table_fields_lenient(app_slug, &table, state);
@@ -1000,7 +1039,11 @@ pub fn update_record(
     }
     let new_data = final_new_data;
 
-    let ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
+    let mut ctx = write_ctx(&caller.eppn, origin, app_slug, &new_data, state);
+    if let Some(grant) = &task {
+        // The history of a write through a task names the flow and the step.
+        ctx.token_label = Some(crate::service::task_grants::label(state, grant));
+    }
     let (outcome, saved) = state
         .save_record_checked(app_slug, id, &new_data, expected_version, &ctx)
         .map_err(|e| match e {
@@ -2100,7 +2143,9 @@ fn run_automations_in(
                 let approvers = crate::service::approvers::approver_count(state, &inst);
                 // Process v2 phase 3: entering the step writes its timers with the instance.
                 let timers = inst.waiting_step_id.as_deref().map(|step| crate::service::process_timers::timers_for_entry(state, rule, step, Utc::now())).unwrap_or_default();
-                if state.repository.start_process_instance(&inst, approvers, &timers).unwrap_or(false) {
+                // Workflows phase 4: each person who may act on the step holds a grant on this record while it is open.
+                let grants = crate::service::task_grants::grants_on_entry(state, rule, &inst);
+                if state.repository.start_process_instance(&inst, approvers, &timers, &grants).unwrap_or(false) {
                     let table = record.get("_table_id").and_then(Value::as_str).unwrap_or("").to_string();
                     let notice = crate::notifications::Notice::DecisionWaiting {
                         app: crate::notifications::AppRef(app_slug.to_string()),

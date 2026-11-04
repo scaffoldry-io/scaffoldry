@@ -124,6 +124,7 @@ impl PostgresRepository {
             process_event_in_tx(&mut tx, next, Some(&ballot.step_id), "step_left", Some(&ballot.voter), &json!({}))?;
             process_event_in_tx(&mut tx, next, None, "completed", Some(&ballot.voter), &json!({ "status": status_name(&next.status) }))?;
             crate::repository_timers::cancel_timers_in_tx(&mut tx, &next.id)?;
+            crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &next.id)?;
             let mut ledger = ballot.ledger;
             ledger.payload = json!({ "instance_id": next.id, "decision": decision, "tally": tally, "votes": counted });
             ledger.rationale = format!("{decision} by committee vote, {} for and {} against of {}, on {}", tally.approve, tally.reject, tally.voters, next.id);

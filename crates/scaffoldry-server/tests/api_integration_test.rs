@@ -1864,7 +1864,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
                     reject: vec![scaffoldry_core::ActionType::UpdateRecordStatus {
                         new_status: "Rejected".to_string(),
                     }],
-                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
+                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(), kind: Default::default(), show: vec![], fill: vec![], require: vec![], decline_reason: false,
                 },
             },
         ],
@@ -1991,7 +1991,7 @@ async fn test_phase_4_duplicate_trigger_does_not_insert_second_row() {
                     prompt: "Sign off".to_string(),
                     approve: vec![],
                     reject: vec![],
-                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
+                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(), kind: Default::default(), show: vec![], fill: vec![], require: vec![], decline_reason: false,
                 },
             },
         ],

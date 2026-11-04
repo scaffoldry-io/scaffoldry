@@ -116,6 +116,11 @@ impl World {
                     on_fail: vec![],
                     decision,
                     reject_rule,
+                    kind: Default::default(),
+                    show: vec![],
+                    fill: vec![],
+                    require: vec![],
+                    decline_reason: false,
                 },
             }],
         }

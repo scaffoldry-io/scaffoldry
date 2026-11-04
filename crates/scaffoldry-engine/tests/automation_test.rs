@@ -388,7 +388,7 @@ fn test_user_task_stops_run_and_subsequent_steps_ignored() {
                     reject: vec![ActionType::UpdateRecordStatus {
                         new_status: "Rejected".to_string(),
                     }],
-                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(),
+                    approver: None, due: None, remind_every: None, on_due: vec![], on_fail: vec![], decision: Default::default(), reject_rule: Default::default(), kind: Default::default(), show: vec![], fill: vec![], require: vec![], decline_reason: false,
                 },
             },
             scaffoldry_core::ProcessStep {
