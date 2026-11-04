@@ -76,6 +76,7 @@ fn exprs(action: &ActionType) -> Vec<&Expr> {
     match action {
         ActionType::FindRecord { equals, .. } => vec![equals],
         ActionType::CreateRecord { fields, .. } | ActionType::UpdateRecord { fields, .. } => fields.iter().map(|(_, e)| e).collect(),
+        ActionType::StartFlow { inputs, .. } => inputs.iter().map(|(_, e)| e).collect(),
         _ => vec![],
     }
 }
@@ -149,7 +150,7 @@ pub fn derive_grants(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<Fl
     }
     let refs = |g: &mut Grants, e: &Expr| {
         for (scope, field) in expr_refs(e) {
-            if scope == "run" || field == "id" {
+            if scope == "run" || scope == "input" || field == "id" {
                 continue;
             }
             let at = if scope == "trigger" { Some(trigger.clone()) } else { places.step(&scope).cloned() };
@@ -202,6 +203,12 @@ pub fn derive_grants(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<Fl
                 }
             }
             ActionType::UpdateRecordStatus { .. } => g.write(&trigger, "status"),
+            // What a call passes on is read here, inside this flow's grants.
+            ActionType::StartFlow { inputs, .. } => {
+                for (_, e) in inputs {
+                    refs(&mut g, e);
+                }
+            }
             _ => {}
         }
     }
@@ -309,6 +316,12 @@ pub fn validate_flow(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<St
                     "" => problems.push(format!("step '{step}': write {{trigger.{field}}} or {{step_id.{field}}}, not {{{field}}}")),
                     "run" if !RUN_FIELDS.contains(&field.as_str()) => problems.push(format!("step '{step}': {reference} is not a field of the run")),
                     "run" => {}
+                    "input" => {
+                        let declared = matches!(&flow.trigger, TriggerEvent::Called { inputs } if inputs.iter().any(|i| i.name == field));
+                        if !declared {
+                            problems.push(format!("step '{step}': {reference} names an input this flow does not declare. Only a flow started by another declares inputs"));
+                        }
+                    }
                     "trigger" => {
                         if field != "id" && field_of(&places.trigger, &field).is_none() {
                             problems.push(format!("step '{step}': {reference} names a field the trigger's table does not have"));
@@ -372,4 +385,40 @@ pub fn validate_flow(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<St
         }
     }
     problems
+}
+
+/// The latest time at or before `now` that a schedule falls on, in the zone `tz`. `None` when `at` or the zone is not
+/// valid, or a day is out of range.
+pub fn last_occurrence(every: &scaffoldry_core::workflow::ScheduleEvery, at: &str, tz: &str, now: chrono::DateTime<chrono::Utc>) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::{Datelike, Duration, NaiveTime, TimeZone};
+    use scaffoldry_core::workflow::ScheduleEvery;
+    let zone: chrono_tz::Tz = tz.parse().ok()?;
+    let time = NaiveTime::parse_from_str(at, "%H:%M").ok()?;
+    let local = now.with_timezone(&zone).date_naive();
+    // The candidate days, newest first, far enough back to hold one occurrence of any schedule.
+    let days = (0..62).map(|back| local - Duration::days(back));
+    let falls = |d: &chrono::NaiveDate| match every {
+        ScheduleEvery::Daily => true,
+        ScheduleEvery::Weekly { day } => d.weekday().number_from_monday() == u32::from(*day),
+        ScheduleEvery::Monthly { day } => d.day() == u32::from(*day),
+    };
+    days.filter(falls)
+        .filter_map(|d| zone.from_local_datetime(&d.and_time(time)).earliest())
+        .map(|t| t.with_timezone(&chrono::Utc))
+        .find(|t| *t <= now)
+}
+
+/// What is wrong with a schedule, if anything.
+pub fn schedule_problems(every: &scaffoldry_core::workflow::ScheduleEvery, at: &str) -> Vec<String> {
+    use scaffoldry_core::workflow::ScheduleEvery;
+    let mut out = Vec::new();
+    if chrono::NaiveTime::parse_from_str(at, "%H:%M").is_err() {
+        out.push(format!("the schedule's time '{at}' is not a time like 07:00"));
+    }
+    match every {
+        ScheduleEvery::Weekly { day } if !(1..=7).contains(day) => out.push(format!("the weekday {day} is not 1 (Monday) to 7 (Sunday)")),
+        ScheduleEvery::Monthly { day } if !(1..=28).contains(day) => out.push(format!("the day of the month {day} is not 1 to 28, which every month has")),
+        _ => {}
+    }
+    out
 }

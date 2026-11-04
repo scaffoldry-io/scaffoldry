@@ -336,6 +336,7 @@ The keys are a closed list. Reject any other key with 400. Validate the value's 
 | `flows.max_steps` | integer 1 to 200 | 50 | The most steps one flow may hold. Added by `workflows.md` phase 1 |
 | `flows.cross_workspace_enabled` | boolean | true | When false, a proposal for a flow that touches more than one workspace fails the `cross_workspace` check. Added by `workflows.md` phase 2 |
 | `flows.disabled` | array of flow ids | empty | Flows that may not run. A flow on the list stops at once. Added by `workflows.md` phase 2 |
+| `flows.max_runs_per_minute` | integer 1 to 100,000 | 600 | The most runs one flow starts in a minute. A run past it starts nothing and records `rate_limited`. Added by `workflows.md` phase 3 |
 | `flows.max_writes_per_run` | integer 1 to 10,000 | 1,000 | The most writes one flow run may make. A run that would make more fails with the count. Added by `workflows.md` phase 1 |
 
 Do not add a key that turns a check off. There is no `auth.disabled`, no `dev_mode`, and no `allow_insecure`.

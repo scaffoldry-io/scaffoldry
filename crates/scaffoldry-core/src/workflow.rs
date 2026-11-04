@@ -21,7 +21,48 @@ pub enum TriggerEvent {
         #[serde(default)]
         at: Option<String>,
     },
+    /// A time each day, week or month, `at` (`HH:MM`) in `platform.timezone`. The `fire_schedules` job starts it.
+    Schedule { every: ScheduleEvery, at: String },
+    /// Another flow starts it with `StartFlow`, passing these inputs.
+    Called {
+        #[serde(default)]
+        inputs: Vec<FlowInput>,
+    },
+    /// A flow ends with this status: `Completed` or `Failed`.
+    FlowCompleted { flow_id: String, status: String },
+    /// A decision step of `rule` in `app` is decided: `approve` or `reject`.
+    ProcessDecided { app: String, rule: String, decision: String },
 }
+
+/// How often a scheduled flow runs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ScheduleEvery {
+    Daily,
+    /// On a weekday, 1 for Monday to 7 for Sunday.
+    Weekly { day: u8 },
+    /// On a day of the month, 1 to 28.
+    Monthly { day: u8 },
+}
+
+/// One input a `Called` flow declares.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FlowInput {
+    pub name: String,
+    pub kind: InputKind,
+}
+
+/// The type of a flow input. Inputs are values and ids, never records.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InputKind {
+    Text,
+    Number,
+    Boolean,
+    Date,
+    RecordId,
+}
+
+/// The most flows one chain may hold: a flow started at this depth fails.
+pub const MAX_CHAIN_DEPTH: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ConditionOperator {
@@ -243,12 +284,14 @@ pub enum ActionType {
     /// On a `Found` target, applies to each record found.
     UpdateRecord { target: Target, fields: Vec<(String, Expr)> },
     SetLink { target: Target, link_field: String, to: Target },
+    /// Starts a new run of a `Called` flow with these inputs, and does not wait for it.
+    StartFlow { flow_id: String, inputs: Vec<(String, Expr)> },
 }
 
 impl ActionType {
     /// True for the actions that find, create, update or link records: the steps of a flow.
     pub fn is_flow(&self) -> bool {
-        matches!(self, Self::FindRecord { .. } | Self::CreateRecord { .. } | Self::UpdateRecord { .. } | Self::SetLink { .. })
+        matches!(self, Self::FindRecord { .. } | Self::CreateRecord { .. } | Self::UpdateRecord { .. } | Self::SetLink { .. } | Self::StartFlow { .. })
     }
 }
 
@@ -332,6 +375,7 @@ fn action_words(action: &ActionType) -> Option<String> {
         ActionType::CreateRecord { table, fields, .. } => Some(format!("create a record in {table} setting {}", names(fields))),
         ActionType::UpdateRecord { target, fields } => Some(format!("set {} on {}", names(fields), target_words(target))),
         ActionType::SetLink { target, link_field, to } => Some(format!("link {} to {} through {link_field}", target_words(target), target_words(to))),
+        ActionType::StartFlow { flow_id, .. } => Some(format!("start the flow {flow_id}")),
     }
 }
 
@@ -381,6 +425,15 @@ pub fn describe_rule(rule: &AutomationRule) -> Vec<String> {
         TriggerEvent::FieldChanged { field_name } => format!("When the field {field_name} changes."),
         TriggerEvent::StatusChanged { to_status } => format!("When the status changes to {to_status}."),
         TriggerEvent::Manual => "When a person presses its button.".to_string(),
+        TriggerEvent::Schedule { every, at } => match every {
+            ScheduleEvery::Daily => format!("Every day at {at}."),
+            ScheduleEvery::Weekly { day } => format!("Every week on day {day} at {at}."),
+            ScheduleEvery::Monthly { day } => format!("Every month on day {day} at {at}."),
+        },
+        TriggerEvent::Called { inputs } if inputs.is_empty() => "When another flow starts it.".to_string(),
+        TriggerEvent::Called { inputs } => format!("When another flow starts it with {}.", inputs.iter().map(|i| format!("{} ({:?})", i.name, i.kind)).collect::<Vec<_>>().join(", ")),
+        TriggerEvent::FlowCompleted { flow_id, status } => format!("When the flow {flow_id} ends {}.", status.to_lowercase()),
+        TriggerEvent::ProcessDecided { rule, decision, .. } => format!("When a step of {rule} is decided: {decision}."),
         TriggerEvent::DateField { field, offset_days, .. } => match offset_days {
             0 => format!("On the date in {field}."),
             d if *d < 0 => format!("{} days before the date in {field}.", -d),

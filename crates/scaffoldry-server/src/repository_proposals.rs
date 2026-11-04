@@ -608,6 +608,8 @@ pub(crate) fn save_rule_in_tx(
             rule_json = EXCLUDED.rule_json, enabled = EXCLUDED.enabled, updated_at = NOW()",
         &[&rule.id, &rule.app_slug, &rule.name, &rule_json, &rule.enabled],
     )?;
+    // A new version is the fix an owner makes: a flow its breaker turned off runs again, from no failures.
+    tx.execute("DELETE FROM flow_state WHERE flow_id = $1", &[&rule.id])?;
     // Another instance holds the process definitions it read. It reads this one on its next request.
     crate::cache::bump(tx, "rules")?;
     Ok((rule, entry))

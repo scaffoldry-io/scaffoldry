@@ -122,6 +122,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "library_fetch", 60 * 60)?;
     // Processes with a date trigger are started every hour, for the dates that came due (process v2 phase 2).
     jobs::register_schedule(repo, "scan_date_triggers", 60 * 60)?;
+    // Scheduled flows are checked every five minutes (workflows phase 3).
+    jobs::register_schedule(repo, "fire_schedules", 5 * 60)?;
     // Access receipts are sealed into a hash-chained batch every minute.
     jobs::register_schedule(repo, "seal_receipts", 60)?;
     // Retention destroys what its policies no longer keep, nightly at 02:00 in the institution's zone.

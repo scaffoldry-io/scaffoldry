@@ -131,6 +131,12 @@ struct Run<'a> {
     produced: HashMap<String, (String, String, Vec<DatasetRecord>)>,
     writes: i64,
     max_writes: i64,
+    /// Whether the run has a trigger record. A scheduled or called flow has none.
+    has_trigger: bool,
+    /// The values a `Called` flow was started with, by input name.
+    inputs: Map<String, Value>,
+    /// The names of the flows in this chain, this one last.
+    chain: Vec<String>,
 }
 
 impl Run<'_> {
@@ -165,10 +171,12 @@ impl Run<'_> {
                     "started_at" => Value::String(self.started_at.clone()),
                     _ => Value::Null,
                 },
+                "trigger" if !self.has_trigger => return Err(Stop(format!("{{{key}}} names the trigger record, and this run has none"))),
                 "trigger" => {
                     self.may_read(&self.trigger.app_slug, &self.trigger_table, &field)?;
                     value_of(&self.trigger, &field)
                 }
+                "input" => self.inputs.get(&field).cloned().unwrap_or(Value::Null),
                 step => {
                     let Some((app, table, recs)) = self.produced.get(step) else { return Err(Stop(format!("{{{key}}} names a step that has not run"))) };
                     self.may_read(app, table, &field)?;
@@ -311,6 +319,17 @@ impl Run<'_> {
                     self.state.overwrite_record_data(&app, &rec.id, &data, &ctx).map_err(Stop)?;
                 }
             }
+            // Workflows phase 3: a new run of a called flow, one level deeper in the chain. It is not waited on: its outcome
+            // is its own.
+            ActionType::StartFlow { flow_id, inputs } => {
+                let target = find_flow(self.state, flow_id).ok_or_else(|| Stop(format!("step '{step}' starts the flow '{flow_id}', which is not live")))?;
+                let mut values = Map::new();
+                for (name, e) in inputs {
+                    values.insert(name.clone(), self.eval(e)?);
+                }
+                // The called flow's outcome, failed or not, is in its own instance. This run goes on.
+                start_flow(self.state, &target, None, values, self.started_by, &uuid::Uuid::new_v4().to_string(), &self.chain);
+            }
             // Notices, status updates and ledger notes run through the rule engine as before.
             _ => {}
         }
@@ -375,12 +394,47 @@ fn run_steps(run: &mut Run<'_>, inst: &mut ProcessInstance, steps: &[scaffoldry_
 /// effects it made before are skipped by their dedupe keys. The instance is stored `Completed`, or `Failed` with the
 /// reason in its log, and returned.
 pub fn run_flow(state: &SharedState, rule: &AutomationRule, trigger: &DatasetRecord, started_by: &str, run_id: &str) -> ProcessInstance {
+    start_flow(state, rule, Some(trigger), Map::new(), started_by, run_id, &[])
+}
+
+/// The live flow with this id, in any app.
+pub fn find_flow(state: &SharedState, flow_id: &str) -> Option<AutomationRule> {
+    state.automations.read().ok()?.values().flatten().find(|r| r.id == flow_id).cloned()
+}
+
+/// How many failures in a row turn a flow off.
+pub const BREAKER_FAILURES: i32 = 20;
+/// The most runs one flow starts in a minute, unless the setting `flows.max_runs_per_minute` says otherwise.
+pub const DEFAULT_MAX_RUNS_PER_MINUTE: i64 = 600;
+
+/// A flow's failures in a row, and whether its breaker has turned it off.
+pub fn breaker(state: &SharedState, flow_id: &str) -> (i32, bool) {
+    state.repository.flow_breaker(flow_id).unwrap_or((0, false))
+}
+
+/// Starts one run of a flow. `trigger` is the record that started it, or `None` for a scheduled or called flow; `inputs`
+/// are a called flow's values; `chain` names the flows that led here. The run is refused, and says why in its log, when
+/// the breaker has turned the flow off, when it is past `flows.max_runs_per_minute`, or when the chain is too deep. A
+/// failed run counts toward the breaker and a completed one clears it. When the run ends, the flows that wait for it
+/// start.
+pub fn start_flow(state: &SharedState, rule: &AutomationRule, trigger: Option<&DatasetRecord>, inputs: Map<String, Value>, started_by: &str, run_id: &str, chain: &[String]) -> ProcessInstance {
     let started_at = chrono::Utc::now().to_rfc3339();
+    let none = DatasetRecord {
+        id: String::new(),
+        app_slug: rule.app_slug.clone(),
+        data: Value::Object(Map::new()),
+        ceds_mapping: Value::Object(Map::new()),
+        is_ferpa_sensitive: false,
+        created_at: started_at.clone(),
+        created_by: None,
+        version: 0,
+    };
+    let trigger_rec = trigger.cloned().unwrap_or(none);
     let mut inst = ProcessInstance {
         id: format!("{}:{run_id}", rule.id),
         rule_id: rule.id.clone(),
         app_slug: rule.app_slug.clone(),
-        record_id: trigger.id.clone(),
+        record_id: trigger_rec.id.clone(),
         status: ProcessStatus::Completed,
         waiting_step_id: None,
         role: None,
@@ -392,8 +446,26 @@ pub fn run_flow(state: &SharedState, rule: &AutomationRule, trigger: &DatasetRec
         no_approver: None,
         rule_version: rule.version,
     };
+    let mut names: Vec<String> = chain.to_vec();
+    names.push(rule.name.clone());
+    // Refusals that are not the flow's failure: nothing ran, and the breaker does not count them.
+    let refused = if breaker(state, &rule.id).1 {
+        Some(format!("The flow is turned off after {BREAKER_FAILURES} failed runs in a row. Save a new version of it to turn it on again"))
+    } else if chain.len() >= scaffoldry_core::workflow::MAX_CHAIN_DEPTH {
+        None
+    } else if !state.repository.flow_rate_slot(&rule.id, max_runs_per_minute(state)).unwrap_or(true) {
+        Some(format!("rate_limited: the flow started {} runs in the last minute, the most it may", max_runs_per_minute(state)))
+    } else {
+        None
+    };
+    if let Some(reason) = refused {
+        inst.status = ProcessStatus::Failed;
+        inst.log.push(reason);
+        let _ = state.repository.upsert_process_instance(&inst);
+        return inst;
+    }
     let manifests = manifests_for(state, rule);
-    let table = trigger.data.get("_table_id").and_then(Value::as_str).map(str::to_string).or_else(|| trigger_table(rule, &manifests)).unwrap_or_default();
+    let table = trigger_rec.data.get("_table_id").and_then(Value::as_str).map(str::to_string).or_else(|| trigger_table(rule, &manifests)).unwrap_or_default();
     let mut run = Run {
         state,
         rule,
@@ -401,13 +473,23 @@ pub fn run_flow(state: &SharedState, rule: &AutomationRule, trigger: &DatasetRec
         instance_id: inst.id.clone(),
         started_by,
         started_at,
-        trigger: trigger.clone(),
+        trigger: trigger_rec.clone(),
         trigger_table: table,
         produced: HashMap::new(),
         writes: 0,
         max_writes: max_writes(state),
+        has_trigger: trigger.is_some(),
+        inputs,
+        chain: names.clone(),
     };
     let outcome = (|| {
+        if chain.len() >= scaffoldry_core::workflow::MAX_CHAIN_DEPTH {
+            return Err(Stop(format!(
+                "the chain is too long: {}. A flow may start another at most {} levels deep",
+                names.join(" > "),
+                scaffoldry_core::workflow::MAX_CHAIN_DEPTH
+            )));
+        }
         let limit = max_steps(state);
         let count = scaffoldry_core::workflow::all_steps(&rule.steps).len();
         if count as i64 > limit {
@@ -423,5 +505,31 @@ pub fn run_flow(state: &SharedState, rule: &AutomationRule, trigger: &DatasetRec
     if let Err(e) = state.repository.upsert_process_instance(&inst) {
         eprintln!("the flow run {} was not stored: {e}", inst.id);
     }
+    // The breaker counts failures in a row. The twentieth turns the flow off and tells its owners.
+    if inst.status == ProcessStatus::Failed {
+        if let Ok((_, true)) = state.repository.flow_failed(&rule.id, BREAKER_FAILURES) {
+            tell_tripped(state, rule, &run.trigger_table);
+        }
+    } else {
+        let _ = state.repository.flow_succeeded(&rule.id);
+    }
+    crate::service::flow_chains::on_completed(state, rule, &inst, trigger, &names);
     inst
+}
+
+/// The most runs one flow starts in a minute.
+pub fn max_runs_per_minute(state: &SharedState) -> i64 {
+    setting(state, "flows.max_runs_per_minute", DEFAULT_MAX_RUNS_PER_MINUTE)
+}
+
+/// The owners and admins of the flow's workspace are told it was turned off. The notice names the app and table only.
+fn tell_tripped(state: &SharedState, rule: &AutomationRule, table: &str) {
+    let workspace = rule.home_workspace.clone().or_else(|| {
+        let eng = state.engine.read().ok()?;
+        eng.resolve_by_slug(&rule.app_slug).and_then(|m| m.workspace_id.clone())
+    });
+    let Some(workspace) = workspace else { return };
+    let notice = crate::notifications::Notice::ProcessNotice { app: crate::notifications::AppRef(rule.app_slug.clone()), table: crate::notifications::TableRef(table.to_string()) };
+    let to = crate::notifications::Recipients::Workspace { workspace, roles: vec!["owner".into(), "admin".into()] };
+    let _ = crate::notifications::notify(state, &to, None, &notice);
 }

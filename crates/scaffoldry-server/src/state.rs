@@ -495,6 +495,7 @@ impl ServerState {
         settings_map.insert("flows.max_writes_per_run".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_WRITES));
         settings_map.insert("flows.cross_workspace_enabled".to_string(), serde_json::json!(true));
         settings_map.insert("flows.disabled".to_string(), serde_json::json!([]));
+        settings_map.insert("flows.max_runs_per_minute".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_RUNS_PER_MINUTE));
         settings_map.insert("access.agent_session_hours".to_string(), serde_json::json!(12));
         settings_map.insert("access.person_grant_max_days".to_string(), serde_json::json!(180));
         settings_map.insert("access.review_days".to_string(), serde_json::json!(365));

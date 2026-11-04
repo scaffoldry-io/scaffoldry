@@ -68,6 +68,9 @@ pub const RECORD_INTERNALS: &[&str] = &[
     // Process v2 phase 2: the hourly date scan reads a due record to start its rule, as its creator, through
     // `run_automations`. It returns nothing to a caller.
     "start_dated",
+    // Workflows phase 3: a decision starts the flows waiting for it with the decided record, read by id. The decider was
+    // checked by `decide_process`; the flows then act inside their own grants.
+    "on_decided",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
 ];

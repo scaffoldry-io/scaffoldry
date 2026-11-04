@@ -202,6 +202,62 @@ impl PostgresRepository {
         self.with_client(move |client| Ok(client.execute("INSERT INTO flow_effects (dedupe_key, instance_id) VALUES ($1, $2) ON CONFLICT (dedupe_key) DO NOTHING", &[&key, &instance])? == 1))
     }
 
+    /// Takes one run from a flow's window of a minute. False when the window already holds `cap` runs.
+    pub fn flow_rate_slot(&self, flow_id: &str, cap: i64) -> Result<bool, RepositoryError> {
+        let id = flow_id.to_string();
+        self.with_client(move |client| {
+            let runs: i32 = client
+                .query_one(
+                    "INSERT INTO flow_state (flow_id, window_start, window_runs) VALUES ($1, NOW(), 1) \
+                     ON CONFLICT (flow_id) DO UPDATE SET \
+                       window_runs = CASE WHEN flow_state.window_start IS NULL OR flow_state.window_start < NOW() - INTERVAL '1 minute' THEN 1 ELSE flow_state.window_runs + 1 END, \
+                       window_start = CASE WHEN flow_state.window_start IS NULL OR flow_state.window_start < NOW() - INTERVAL '1 minute' THEN NOW() ELSE flow_state.window_start END \
+                     RETURNING window_runs",
+                    &[&id],
+                )?
+                .get(0);
+            Ok(i64::from(runs) <= cap)
+        })
+    }
+
+    /// Counts a failed run. Returns the failures in a row, and true when this one turned the flow off at `trip`.
+    pub fn flow_failed(&self, flow_id: &str, trip: i32) -> Result<(i32, bool), RepositoryError> {
+        let id = flow_id.to_string();
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let failures: i32 = tx
+                .query_one(
+                    "INSERT INTO flow_state (flow_id, consecutive_failures) VALUES ($1, 1) \
+                     ON CONFLICT (flow_id) DO UPDATE SET consecutive_failures = flow_state.consecutive_failures + 1 RETURNING consecutive_failures",
+                    &[&id],
+                )?
+                .get(0);
+            let tripped = failures >= trip && tx.execute("UPDATE flow_state SET disabled_at = NOW() WHERE flow_id = $1 AND disabled_at IS NULL", &[&id])? == 1;
+            tx.commit()?;
+            Ok((failures, tripped))
+        })
+    }
+
+    /// A run that completed: the failures in a row start again from none.
+    pub fn flow_succeeded(&self, flow_id: &str) -> Result<(), RepositoryError> {
+        let id = flow_id.to_string();
+        self.with_client(move |client| {
+            client.execute("UPDATE flow_state SET consecutive_failures = 0 WHERE flow_id = $1", &[&id])?;
+            Ok(())
+        })
+    }
+
+    /// A flow's failures in a row, and whether its breaker has turned it off.
+    pub fn flow_breaker(&self, flow_id: &str) -> Result<(i32, bool), RepositoryError> {
+        let id = flow_id.to_string();
+        self.with_client(move |client| {
+            Ok(client
+                .query_opt("SELECT consecutive_failures, disabled_at IS NOT NULL FROM flow_state WHERE flow_id = $1", &[&id])?
+                .map(|r| (r.get(0), r.get(1)))
+                .unwrap_or((0, false)))
+        })
+    }
+
     /// One process event outside an instance transition, such as the arm a branch took. It holds ids and the arm only.
     pub fn record_process_event(&self, instance_id: &str, rule: &scaffoldry_core::AutomationRule, step_id: &str, kind: &str, detail: serde_json::Value) -> Result<(), RepositoryError> {
         let (i, a, r, s, k) = (instance_id.to_string(), rule.app_slug.clone(), rule.id.clone(), step_id.to_string(), kind.to_string());

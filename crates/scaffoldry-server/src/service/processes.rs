@@ -114,6 +114,7 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
         problems.push("a rule may not hold a webhook".to_string());
     }
     problems.extend(structure_problems(manifest, rule, state));
+    problems.extend(crate::service::flow_chains::validate(state, manifest, rule));
     if crate::service::flows::is_flow(rule) {
         let limit = crate::service::flows::max_steps(state);
         if rule.steps.len() as i64 > limit {
@@ -317,7 +318,7 @@ pub fn decide_process(
                             instance.log.push(format!("Webhook not sent: {target_url}"));
                         }
                         // A flow action is never the result of a decision: saving refuses it there.
-                        ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } => {}
+                        ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } | ActionType::StartFlow { .. } => {}
                     }
                 }
             }
@@ -364,7 +365,10 @@ pub fn decide_process(
         .decide_process_instance(&instance, &was_waiting_at, record_write, ledger)
         .map_err(|e| ServiceError::Internal(e.to_string()))?
     {
-        crate::repository::Decided::Done => {}
+        crate::repository::Decided::Done => {
+            // Workflows phase 3: the flows waiting for this decision start, with the decided record.
+            crate::service::flow_chains::on_decided(state, slug, &instance.rule_id, &decision, &instance.record_id, &caller.eppn);
+        }
         crate::repository::Decided::Stale => return Err(ServiceError::conflict("Process instance is not in Waiting status")),
     }
     // Notifications phase 4: the record's creator and the person who started the process are told the decision.
