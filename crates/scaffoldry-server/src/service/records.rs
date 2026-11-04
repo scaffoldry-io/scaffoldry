@@ -2055,6 +2055,17 @@ fn run_automations_in(
                 continue;
             }
             applied_rule_ids.push(rule.id.clone());
+            // Workflows phase 1: a flow finds, creates, updates and links records as `flow:{rule_id}`, on behalf of
+            // the person whose write started it, inside its stored grants. Its writes do not set off more rules.
+            if crate::service::flows::is_flow(rule) {
+                let trigger = record
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|id| state.find_record(app_slug, id).ok().flatten());
+                if let Some(trigger) = trigger {
+                    crate::service::flows::run_flow(state, rule, &trigger, &actor.identity.eppn, &uuid::Uuid::new_v4().to_string());
+                }
+            }
             // Notifications phase 4: a Notify effect tells the people its role names, with names only.
             for effect in &res.effects {
                 if let scaffoldry_core::workflow::ActionEffect::Notify { role, .. } = effect {

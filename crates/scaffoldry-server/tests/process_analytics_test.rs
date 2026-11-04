@@ -64,6 +64,8 @@ async fn world() -> World {
 /// A three-step rule: a service step, a decision by the owner, and a service step after it.
 fn three_steps(slug: &str) -> AutomationRule {
     AutomationRule {
+        home_workspace: None,
+        grants: vec![],
         version: 0,
         id: "rule-admit".to_string(),
         app_slug: slug.to_string(),

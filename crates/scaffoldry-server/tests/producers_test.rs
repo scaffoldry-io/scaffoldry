@@ -100,6 +100,8 @@ async fn collaborator(w: &World, who: &str, role: &str) {
 
 fn step_rule(slug: &str, kind: StepKind) -> AutomationRule {
     AutomationRule {
+        home_workspace: None,
+        grants: vec![],
         version: 0,
         id: format!("rule-{}", uuid::Uuid::new_v4().simple()),
         app_slug: slug.to_string(),

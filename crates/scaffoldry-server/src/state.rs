@@ -491,6 +491,8 @@ impl ServerState {
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
         settings_map.insert("oauth.allow_localhost".to_string(), serde_json::json!(false));
+        settings_map.insert("flows.max_steps".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_STEPS));
+        settings_map.insert("flows.max_writes_per_run".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_WRITES));
         settings_map.insert("access.agent_session_hours".to_string(), serde_json::json!(12));
         settings_map.insert("access.person_grant_max_days".to_string(), serde_json::json!(180));
         settings_map.insert("access.review_days".to_string(), serde_json::json!(365));
@@ -1477,6 +1479,8 @@ impl ServerState {
         automations.insert(
             "physics-admissions-review".to_string(),
             vec![AutomationRule {
+                home_workspace: None,
+                grants: vec![],
                 version: 0,
                 id: "rule-admissions-auto-approve".to_string(),
                 app_slug: "physics-admissions-review".to_string(),

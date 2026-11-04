@@ -35,6 +35,7 @@ pub mod approvers;
 pub mod people;
 pub mod positions;
 pub mod processes;
+pub mod flows;
 pub mod pages;
 pub mod proposals;
 pub mod hints;
@@ -123,6 +124,7 @@ pub const ERROR_CODES: &[&str] = &[
     "grant_conflict",
     "citation_not_found",
     "authority_loosens",
+    "flow_grant_exceeded",
 ];
 
 /// What a person who tried to act as a real person should do instead.
@@ -204,6 +206,8 @@ pub enum ServiceError {
     ClientScope(String),
     /// A change would leave a workspace with no owner.
     LastOwner(String),
+    /// A flow tried to read or write outside the grants approved with its version (workflows phase 1).
+    FlowGrantExceeded(String),
     /// A client's ceiling names a field that is sensitive. Sensitive data stays inside the platform.
     ClientSensitiveField(String),
     /// A filter, sort, or total names a field the person cannot see. It would let them read it by inference.
@@ -259,7 +263,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::FlowGrantExceeded(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) | Self::MasterKeyMissing(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -297,6 +301,7 @@ impl ServiceError {
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
             Self::LastOwner(_) => "last_owner",
+            Self::FlowGrantExceeded(_) => "flow_grant_exceeded",
             Self::ClientSensitiveField(_) => "client_sensitive_field",
             Self::FieldHidden { .. } => "field_hidden",
             Self::TooManyIndexes { .. } => "too_many_indexes",
@@ -336,6 +341,7 @@ impl ServiceError {
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)
             | Self::LastOwner(msg)
+            | Self::FlowGrantExceeded(msg)
             | Self::ClientSensitiveField(msg)
             | Self::ConstraintViolated(msg)
             | Self::GrantOutsideScope(msg)

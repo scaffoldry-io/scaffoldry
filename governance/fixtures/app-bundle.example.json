@@ -177,6 +177,32 @@
   "rules": [
     {
       "id": "flag-urgent",
+      "grants": [
+        {
+          "app_slug": "bundle-example",
+          "table_id": "cases",
+          "read": [
+            "title"
+          ],
+          "write": [
+            "status"
+          ],
+          "create": false,
+          "link": []
+        }
+      ],
+      "name": "Rule flag-urgent",
+      "description": "",
+      "enabled": true,
+      "trigger": "RecordCreated",
+      "predicates": [
+        {
+          "field_name": "title",
+          "operator": "Equals",
+          "expected_value": "urgent"
+        }
+      ],
+      "actions": [],
       "steps": [
         {
           "id": "s1",
@@ -192,18 +218,7 @@
           }
         }
       ],
-      "name": "Rule flag-urgent",
-      "description": "",
-      "enabled": true,
-      "trigger": "RecordCreated",
-      "predicates": [
-        {
-          "field_name": "title",
-          "operator": "Equals",
-          "expected_value": "urgent"
-        }
-      ],
-      "actions": []
+      "home_workspace": null
     }
   ],
   "page_sources": {
@@ -212,6 +227,7 @@
   "integrations": {
     "webhooks": []
   },
+  "sha256": "dbe169a7fb663d7e208d247efca080854df31018e11dc8c965338eb8e6ae49d7",
   "sample_data": {
     "cases": [
       {
@@ -227,6 +243,5 @@
         "title": "three"
       }
     ]
-  },
-  "sha256": "36e1986a6f02eb80738e688b49bea2dd4fd51ca3234760294cdeca466637d486"
+  }
 }

@@ -7,6 +7,8 @@ use scaffoldry_core::workflow::{
 
 fn rule() -> AutomationRule {
     AutomationRule {
+        home_workspace: None,
+        grants: vec![],
         id: "r1".into(),
         app_slug: "admissions".into(),
         name: "Fast track".into(),

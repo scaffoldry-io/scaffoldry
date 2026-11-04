@@ -147,7 +147,7 @@ impl PostgresRepository {
 
 const SELECT: &str = "SELECT id, app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, \
     batch_id::text, reverts_batch::text, proposal_id::text, \
-    to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), acted_by FROM record_history";
+    to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), acted_by, on_behalf_of FROM record_history";
 
 fn entries_of(client: &mut postgres::Client, slug: &str, batch: &str) -> Result<Vec<HistoryEntry>, RepositoryError> {
     Ok(client
@@ -174,5 +174,6 @@ fn entry_of(r: &postgres::Row) -> HistoryEntry {
         proposal_id: r.get(12),
         at: r.get(13),
         acted_by: r.get(14),
+        on_behalf_of: r.get(15),
     }
 }

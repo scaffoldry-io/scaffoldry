@@ -96,6 +96,7 @@ const SCHEMA_0088: &str = include_str!("../../scaffoldry-core/migrations/0088_me
 const SCHEMA_0089: &str = include_str!("../../scaffoldry-core/migrations/0089_delegations.sql");
 const SCHEMA_0090: &str = include_str!("../../scaffoldry-core/migrations/0090_notification_prefs.sql");
 const SCHEMA_0091: &str = include_str!("../../scaffoldry-core/migrations/0091_process_v2.sql");
+const SCHEMA_0092: &str = include_str!("../../scaffoldry-core/migrations/0092_flows.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
 const SCHEMA_0063: &str = include_str!("../../scaffoldry-core/migrations/0063_token_scope.sql");
@@ -223,6 +224,11 @@ pub struct WriteCtx {
     pub calc: std::sync::Arc<std::collections::HashMap<String, crate::repository_links::TableCalc>>,
     /// The action the history row names, when it is not the usual one. A restore says `restore`.
     pub action: Option<&'static str>,
+    /// The person whose action started the flow that makes this write (workflows phase 1). The actor is the flow.
+    pub on_behalf_of: Option<String>,
+    /// A flow effect: its dedupe key and the run's instance id. The key is recorded in `flow_effects` in the same
+    /// transaction as the write, and a write whose key is already there is skipped, so a retry never writes twice.
+    pub effect: Option<(String, String)>,
 }
 
 impl WriteCtx {
@@ -241,6 +247,8 @@ impl WriteCtx {
             formulas: Vec::new(),
             calc: Default::default(),
             action: None,
+            on_behalf_of: None,
+            effect: None,
         }
     }
 
@@ -268,6 +276,7 @@ pub struct HistoryEntry {
     pub reverts_batch: Option<String>,
     pub proposal_id: Option<String>,
     pub at: String,
+    pub on_behalf_of: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -554,6 +563,14 @@ pub(crate) fn restore_record_in_tx(
     Ok(true)
 }
 
+/// Records a flow effect's dedupe key, in the transaction of its write. False when the key is already there: the effect
+/// was made by an earlier attempt of the same run, so the write is skipped. A write that is not a flow effect claims
+/// nothing and goes ahead.
+fn claim_effect(tx: &mut postgres::Transaction<'_>, ctx: &WriteCtx) -> Result<bool, postgres::Error> {
+    let Some((key, instance)) = &ctx.effect else { return Ok(true) };
+    Ok(tx.execute("INSERT INTO flow_effects (dedupe_key, instance_id) VALUES ($1, $2) ON CONFLICT (dedupe_key) DO NOTHING", &[key, instance])? == 1)
+}
+
 pub(crate) fn write_history(
     tx: &mut postgres::Transaction<'_>,
     at: Touched<'_>,
@@ -561,8 +578,8 @@ pub(crate) fn write_history(
     ctx: &WriteCtx,
 ) -> Result<(), postgres::Error> {
     tx.execute(
-        "INSERT INTO record_history (app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, batch_id, reverts_batch, acted_by) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        "INSERT INTO record_history (app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, batch_id, reverts_batch, acted_by, on_behalf_of) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         &[
             &at.app_slug,
             &at.table_id,
@@ -576,6 +593,7 @@ pub(crate) fn write_history(
             &ctx.batch_id,
             &ctx.reverts_batch,
             &ctx.acted_by,
+            &ctx.on_behalf_of,
         ],
     )?;
     // Real-time phase 1: every open stream of the app hears of the change. NOTIFY is delivered only when this
@@ -1168,6 +1186,7 @@ impl PostgresRepository {
                             ("0089_delegations.sql", SCHEMA_0089),
                             ("0090_notification_prefs.sql", SCHEMA_0090),
                             ("0091_process_v2.sql", SCHEMA_0091),
+                            ("0092_flows.sql", SCHEMA_0092),
                         ];
 
                         let mut fresh_install = false;
@@ -2114,6 +2133,9 @@ impl PostgresRepository {
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
             let table = table_id_of(&rec.data);
+            if !claim_effect(&mut tx, &ctx)? {
+                return Ok(());
+            }
             Self::check_unique_constraints(
                 &mut tx,
                 &rec.app_slug,
@@ -2172,6 +2194,9 @@ impl PostgresRepository {
         );
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
+            if !claim_effect(&mut tx, &ctx)? {
+                return Ok(None);
+            }
             let outcome = update_record_in_tx(&mut tx, &slug, &id, &data, None, &ctx)?;
             tx.commit()?;
             Ok(match outcome {
@@ -2310,7 +2335,7 @@ impl PostgresRepository {
             let rows = client.query(
                 "SELECT id, app_slug, table_id, record_id, version, action, changes, actor, actor_kind, token_label, \
                         batch_id::text, reverts_batch::text, proposal_id::text, \
-                        to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), acted_by \
+                        to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), acted_by, on_behalf_of \
                  FROM record_history WHERE app_slug = $1 \
                    AND ($2::text IS NULL OR record_id = $2) \
                    AND ($3::text IS NULL OR table_id = $3) \
@@ -2340,6 +2365,7 @@ impl PostgresRepository {
                     proposal_id: r.get(12),
                     at: r.get(13),
                     acted_by: r.get(14),
+                    on_behalf_of: r.get(15),
                 })
                 .collect())
         })

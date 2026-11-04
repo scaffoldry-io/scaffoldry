@@ -87,7 +87,7 @@ impl World {
     }
 
     fn rule(&self, id: &str, spec: Option<ApproverSpec>, role: &str) -> AutomationRule {
-        AutomationRule { version: 0,
+        AutomationRule { version: 0, home_workspace: None, grants: vec![],
             id: id.to_string(),
             app_slug: APP.to_string(),
             name: id.to_string(),

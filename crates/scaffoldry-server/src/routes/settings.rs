@@ -49,6 +49,8 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "mail.smtp",
     "platform.base_url",
     "notifications.defaults",
+    "flows.max_steps",
+    "flows.max_writes_per_run",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -89,6 +91,8 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "snapshots.max_records" => value.as_i64().is_some_and(|n| (1..=1_000_000).contains(&n)),
         "realtime.max_streams_per_user" => value.as_i64().is_some_and(|n| (1..=1_000).contains(&n)),
         "realtime.max_streams" => value.as_i64().is_some_and(|n| (1..=1_000_000).contains(&n)),
+        "flows.max_steps" => value.as_i64().is_some_and(|n| (1..=200).contains(&n)),
+        "flows.max_writes_per_run" => value.as_i64().is_some_and(|n| (1..=10_000).contains(&n)),
         "egress.allow" => crate::net::egress::Allow::parse(value).is_ok(),
         "platform.contact_email" => value.as_str().is_some_and(|s| s.len() <= 255 && s.contains('@') && !s.contains(char::is_whitespace)),
         "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" => {

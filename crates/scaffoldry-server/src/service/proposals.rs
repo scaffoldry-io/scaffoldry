@@ -710,6 +710,8 @@ fn check_rules_part(
             .map_err(|e| ServiceError::BadRequest(format!("rule_schema: a rule is not a rule: {e}")))?;
         rule.app_slug = slug.to_string();
         rule.version = 0;
+        // The grants are derived here, so the proposal a reviewer approves holds them, and its digest covers them.
+        crate::service::flows::derive(state, effective, &mut rule);
         for p in crate::service::processes::validate_rule(state, effective, &rule) {
             schema_problems.push(format!("rule '{}': {p}", rule.id));
         }
@@ -773,6 +775,12 @@ fn check_rules_part(
     Ok(RulesPart { rules, checks })
 }
 
+/// What a flow may read and change, as the reviewer approves it (workflows phase 1). Nothing for a rule that is not a flow.
+fn grant_sentence(rule: &AutomationRule, state: &SharedState) -> Option<String> {
+    crate::service::flows::is_flow(rule)
+        .then(|| scaffoldry_engine::flow::grants_sentence(&rule.grants, &rule.app_slug, &crate::service::flows::manifests_for(state, rule)))
+}
+
 fn rule_sentences(proposed: &AutomationRule, state: &SharedState) -> Vec<String> {
     let live = state
         .automations
@@ -784,6 +792,7 @@ fn rule_sentences(proposed: &AutomationRule, state: &SharedState) -> Vec<String>
         None => {
             out.push(format!("Rule \"{}\" is added.", proposed.name));
             out.extend(describe_rule(proposed));
+            out.extend(grant_sentence(proposed, state));
         }
         Some(old) => {
             // Compare the rule without its version and its switch, which have their own sentences.
@@ -793,6 +802,7 @@ fn rule_sentences(proposed: &AutomationRule, state: &SharedState) -> Vec<String>
             if a != b {
                 out.push(format!("Rule \"{}\" is changed.", proposed.name));
                 out.extend(describe_rule(proposed));
+                out.extend(grant_sentence(proposed, state));
             }
             if old.enabled != proposed.enabled {
                 out.push(format!("Rule \"{}\" is {}.", proposed.name, if proposed.enabled { "enabled" } else { "disabled" }));

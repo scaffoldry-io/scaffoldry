@@ -195,12 +195,19 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
             }
             hide
         });
+        let person = |eppn: &str| crate::service::identity::resolve_user(eppn, state).map(|u| u.name).unwrap_or_else(|| eppn.to_string());
         let name = names
-            .entry(row.actor.clone())
-            .or_insert_with(|| {
-                crate::service::identity::resolve_user(&row.actor, state)
-                    .map(|u| u.name)
-                    .unwrap_or_else(|| row.actor.clone())
+            .entry(format!("{}\u{1f}{}", row.actor, row.on_behalf_of.as_deref().unwrap_or("")))
+            .or_insert_with(|| match row.actor.strip_prefix("flow:") {
+                // Workflows phase 1: a flow's write names the flow and the person whose action started it.
+                Some(rule_id) => {
+                    let flow = flow_name(rule_id, state);
+                    match row.on_behalf_of.as_deref() {
+                        Some(by) => format!("Flow \"{flow}\", started by {}", person(by)),
+                        None => format!("Flow \"{flow}\""),
+                    }
+                }
+                None => person(&row.actor),
             })
             .clone();
         entries.push(json!({
@@ -215,6 +222,7 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
             "actor_kind": row.actor_kind,
             "token_label": row.token_label,
             "acted_by": row.acted_by,
+            "on_behalf_of": row.on_behalf_of,
             "batch_id": row.batch_id,
             "reverts_batch": row.reverts_batch,
             "proposal_id": row.proposal_id,
@@ -222,6 +230,16 @@ fn page(caller: &AuthUser, app_slug: &str, mut query: HistoryQuery, state: &Shar
         }));
     }
     Ok(HistoryPage { entries, next_cursor })
+}
+
+/// A flow's name, from the live rules. A flow that is gone is named by its id.
+fn flow_name(rule_id: &str, state: &SharedState) -> String {
+    state
+        .automations
+        .read()
+        .ok()
+        .and_then(|a| a.values().flatten().find(|r| r.id == rule_id).map(|r| r.name.clone()))
+        .unwrap_or_else(|| rule_id.to_string())
 }
 
 /// The history of one record. A person who cannot read the record gets `NotFound`, so the
