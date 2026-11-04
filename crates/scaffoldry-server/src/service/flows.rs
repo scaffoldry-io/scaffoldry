@@ -111,6 +111,12 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Reads one record a flow addresses. The flow's grants and addressing are its limit, not the reader's row rules, so
+/// this reads by id with no scope; every field it then reads or writes is checked against the grants first.
+fn load(state: &SharedState, app_slug: &str, id: &str) -> Result<Option<DatasetRecord>, Stop> {
+    state.find_record(app_slug, id).map_err(Stop)
+}
+
 /// A run in progress: what it found and created, and how many writes it made.
 struct Run<'a> {
     state: &'a SharedState,
@@ -178,14 +184,14 @@ impl Run<'_> {
     fn records(&self, t: &Target) -> Result<(String, String, Vec<DatasetRecord>), Stop> {
         match t {
             Target::Trigger => {
-                let fresh = self.state.find_record(&self.trigger.app_slug, &self.trigger.id).map_err(Stop)?.unwrap_or_else(|| self.trigger.clone());
+                let fresh = load(self.state, &self.trigger.app_slug, &self.trigger.id)?.unwrap_or_else(|| self.trigger.clone());
                 Ok((self.trigger.app_slug.clone(), self.trigger_table.clone(), vec![fresh]))
             }
             Target::Created { step } | Target::Found { step } => {
                 let (app, table, recs) = self.produced.get(step).cloned().ok_or_else(|| Stop(format!("step '{step}' has not run")))?;
                 let mut fresh = Vec::with_capacity(recs.len());
                 for r in recs {
-                    if let Some(now) = self.state.find_record(&app, &r.id).map_err(Stop)? {
+                    if let Some(now) = load(self.state, &app, &r.id)? {
                         fresh.push(now);
                     }
                 }
@@ -196,7 +202,7 @@ impl Run<'_> {
                 let (_, target) = link_target(self.state, &self.trigger.app_slug, &self.trigger_table, link_field).ok_or_else(|| Stop(format!("'{link_field}' is not a link field")))?;
                 let mut out = Vec::new();
                 for id in crate::repository_links::linked_ids(self.trigger.data.get(link_field)) {
-                    if let Some(r) = self.state.find_record(&self.trigger.app_slug, &id).map_err(Stop)? {
+                    if let Some(r) = load(self.state, &self.trigger.app_slug, &id)? {
                         out.push(r);
                     }
                 }
@@ -264,7 +270,7 @@ impl Run<'_> {
                 };
                 let ctx = self.ctx(app, &data, key);
                 self.state.insert_record(&rec, &ctx).map_err(|e| Stop(e.to_string()))?;
-                let stored = self.state.find_record(app, &record_id).map_err(Stop)?.unwrap_or(rec);
+                let stored = load(self.state, app, &record_id)?.unwrap_or(rec);
                 self.produced.insert(id.clone(), (app.clone(), table.clone(), vec![stored]));
             }
             ActionType::UpdateRecord { target, fields } => {

@@ -59,6 +59,12 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "post_comment",
     "edit_comment",
     "remove_comment",
+    // Workflows phase 1: a flow reads the records it addresses inside its approved grants, not the caller's row
+    // rules. `find_records` matches through the index; `load` reads by id. The runner checks every field against the
+    // grants before it reads or writes it. `run_automations_in` reads the trigger record a write just saved.
+    "find_records",
+    "load",
+    "run_automations_in",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
 ];
