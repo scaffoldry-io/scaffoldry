@@ -137,6 +137,19 @@ struct Run<'a> {
     inputs: Map<String, Value>,
     /// The names of the flows in this chain, this one last.
     chain: Vec<String>,
+    /// Workflows phase 9: a test run. Reads and finds happen; nothing is written, started or sent. Each step says what
+    /// it did or would do in `notes` instead.
+    dry: bool,
+    notes: Vec<DryNote>,
+}
+
+/// What one step of a test run did or would do: a sentence, and the records it found or would create.
+pub struct DryNote {
+    pub sentence: String,
+    /// True for a step that only reads.
+    pub read_only: bool,
+    /// The app the records belong to, and the records.
+    pub records: Option<(String, Vec<DatasetRecord>)>,
 }
 
 impl Run<'_> {
@@ -197,6 +210,10 @@ impl Run<'_> {
             }
             Target::Created { step } | Target::Found { step } => {
                 let (app, table, recs) = self.produced.get(step).cloned().ok_or_else(|| Stop(format!("step '{step}' has not run")))?;
+                // A test run created nothing, so its records are the ones it would have created.
+                if self.dry {
+                    return Ok((app, table, recs));
+                }
                 let mut fresh = Vec::with_capacity(recs.len());
                 for r in recs {
                     if let Some(now) = load(self.state, &app, &r.id)? {
@@ -248,6 +265,10 @@ impl Run<'_> {
                 self.may_read(app, table, field)?;
                 let value = self.eval(equals)?;
                 let found = find_records(self.state, app, table, field, &value, *limit as usize).map_err(Stop)?;
+                if self.dry {
+                    let n = found.len();
+                    self.note(format!("found {n} {} in {}", plural(n, "record"), place(self.state, app, table)), true, Some((app.clone(), found.clone())));
+                }
                 self.produced.insert(id.clone(), (app.clone(), table.clone(), found));
             }
             ActionType::CreateRecord { id, app, table, fields } => {
@@ -266,6 +287,12 @@ impl Run<'_> {
                 let record_id = uuid::Uuid::from_bytes(Sha256::digest(key.as_bytes())[..16].try_into().unwrap_or([0; 16])).to_string();
                 self.count_write()?;
                 let data = Value::Object(data);
+                if self.dry {
+                    let rec = DatasetRecord { id: record_id, app_slug: app.clone(), data, ceds_mapping: Value::Object(Map::new()), is_ferpa_sensitive: false, created_at: chrono::Utc::now().to_rfc3339(), created_by: Some(actor_of(&self.rule.id)), version: 0 };
+                    self.note(format!("would create 1 record in {} and set {}", place(self.state, app, table), labels(self.state, app, table, &names)), false, Some((app.clone(), vec![rec.clone()])));
+                    self.produced.insert(id.clone(), (app.clone(), table.clone(), vec![rec]));
+                    return Ok(());
+                }
                 let rec = DatasetRecord {
                     id: record_id.clone(),
                     app_slug: app.clone(),
@@ -287,6 +314,17 @@ impl Run<'_> {
                     self.may_write(&app, &table, f)?;
                 }
                 let names: Vec<&str> = fields.iter().map(|(f, _)| f.as_str()).collect();
+                if self.dry {
+                    for (_, e) in fields {
+                        self.eval(e)?;
+                    }
+                    for _ in &recs {
+                        self.count_write()?;
+                    }
+                    let n = recs.len();
+                    self.note(format!("would set {} on {n} {} in {}", labels(self.state, &app, &table, &names), plural(n, "record"), place(self.state, &app, &table)), false, None);
+                    return Ok(());
+                }
                 for rec in recs {
                     let mut data = rec.data.clone();
                     for (f, e) in fields {
@@ -309,6 +347,14 @@ impl Run<'_> {
                 let ids: Vec<Value> = others.iter().map(|r| Value::String(r.id.clone())).collect();
                 let one = link_target(self.state, &app, &table, link_field).is_some_and(|(c, _)| c == LinkCardinality::One);
                 let value = if one { ids.first().cloned().unwrap_or(Value::Null) } else { Value::Array(ids) };
+                if self.dry {
+                    for _ in &recs {
+                        self.count_write()?;
+                    }
+                    let (n, m) = (recs.len(), others.len());
+                    self.note(format!("would link {n} {} in {} through {} to {m} {}", plural(n, "record"), place(self.state, &app, &table), labels(self.state, &app, &table, &[link_field.as_str()]), plural(m, "record")), false, None);
+                    return Ok(());
+                }
                 for rec in recs {
                     let mut data = rec.data.clone();
                     if let Some(map) = data.as_object_mut() {
@@ -327,13 +373,52 @@ impl Run<'_> {
                 for (name, e) in inputs {
                     values.insert(name.clone(), self.eval(e)?);
                 }
+                if self.dry {
+                    self.note(format!("would start the flow \"{}\"", target.name), false, None);
+                    return Ok(());
+                }
                 // The called flow's outcome, failed or not, is in its own instance. This run goes on.
                 start_flow(self.state, &target, None, values, self.started_by, &uuid::Uuid::new_v4().to_string(), &self.chain);
             }
-            // Notices, status updates and ledger notes run through the rule engine as before.
+            // Notices, status updates and ledger notes run through the rule engine as before. A test run says what they
+            // would do.
+            ActionType::UpdateRecordStatus { new_status } if self.dry => self.note(format!("would set the status to {new_status}"), false, None),
+            ActionType::NotifyCollaborator { role, .. } if self.dry => self.note(format!("would notify {role}"), false, None),
+            ActionType::CreateLedgerAuditEntry { summary, .. } if self.dry => self.note(format!("would add an audit entry: {summary}"), false, None),
+            ActionType::WebhookDispatch { target_url } if self.dry => self.note(format!("would not send the webhook to {target_url}: a rule may not hold a webhook"), false, None),
             _ => {}
         }
         Ok(())
+    }
+
+    fn note(&mut self, sentence: String, read_only: bool, records: Option<(String, Vec<DatasetRecord>)>) {
+        self.notes.push(DryNote { sentence, read_only, records });
+    }
+}
+
+fn plural(n: usize, word: &str) -> String {
+    if n == 1 { word.to_string() } else { format!("{word}s") }
+}
+
+/// `App / Table`, in the names people see.
+fn place(state: &SharedState, app: &str, table: &str) -> String {
+    let Ok(eng) = state.engine.read() else { return format!("{app} / {table}") };
+    let Some(m) = eng.resolve_by_slug(app) else { return format!("{app} / {table}") };
+    let t = m.tables.iter().find(|t| t.id == table).map(|t| t.name.clone()).unwrap_or_else(|| table.to_string());
+    format!("{} / {t}", m.title)
+}
+
+/// Field labels joined in words: `Amount and Student`.
+fn labels(state: &SharedState, app: &str, table: &str, fields: &[&str]) -> String {
+    let named: Vec<String> = {
+        let eng = state.engine.read().ok();
+        let t = eng.as_ref().and_then(|e| e.resolve_by_slug(app).and_then(|m| m.tables.iter().find(|t| t.id == table).cloned()));
+        fields.iter().map(|f| t.as_ref().and_then(|t| t.fields.iter().find(|x| x.name == *f)).map(|x| x.label.clone()).filter(|l| !l.is_empty()).unwrap_or_else(|| f.to_string())).collect()
+    };
+    match named.as_slice() {
+        [] => "nothing".to_string(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -481,6 +566,8 @@ pub fn start_flow(state: &SharedState, rule: &AutomationRule, trigger: Option<&D
         has_trigger: trigger.is_some(),
         inputs,
         chain: names.clone(),
+        dry: false,
+        notes: Vec::new(),
     };
     let outcome = (|| {
         if chain.len() >= scaffoldry_core::workflow::MAX_CHAIN_DEPTH {
@@ -532,4 +619,168 @@ fn tell_tripped(state: &SharedState, rule: &AutomationRule, table: &str) {
     let notice = crate::notifications::Notice::ProcessNotice { app: crate::notifications::AppRef(rule.app_slug.clone()), table: crate::notifications::TableRef(table.to_string()) };
     let to = crate::notifications::Recipients::Workspace { workspace, roles: vec!["owner".into(), "admin".into()] };
     let _ = crate::notifications::notify(state, &to, None, &notice);
+}
+
+/// Workflows phase 9: what a test run reports. Each trace entry has the step's id and path, its outcome (`ran`,
+/// `skipped (condition was false)`, `would write` or `failed`), a sentence, and for a decision the people it would go
+/// to. Records found or to be created are kept with their app, so the caller decides which values the tester may see.
+pub struct TestRun {
+    pub trace: Vec<TraceStep>,
+    pub first_failure: Option<(String, Vec<usize>, String)>,
+    pub writes: i64,
+}
+
+pub struct TraceStep {
+    pub step: String,
+    pub path: Vec<usize>,
+    pub outcome: &'static str,
+    pub sentence: String,
+    pub approvers: Option<Vec<String>>,
+    pub records: Option<(String, Vec<DatasetRecord>)>,
+}
+
+pub const SKIPPED: &str = "skipped (condition was false)";
+
+/// Runs a flow in dry mode. Conditions and expressions are evaluated and finds read real data, inside the flow's grants
+/// as in a real run. Nothing is written, started, sent or stored. A decision is taken as decided with the outcome
+/// `outcomes` names for its step, or else `approve`; `approvers` says who it would go to.
+pub fn test_run(
+    state: &SharedState,
+    rule: &AutomationRule,
+    trigger: Option<&DatasetRecord>,
+    started_by: &str,
+    outcomes: &Map<String, Value>,
+    approvers: &dyn Fn(&scaffoldry_core::ProcessStep) -> Vec<String>,
+) -> TestRun {
+    let started_at = chrono::Utc::now().to_rfc3339();
+    let trigger_rec = trigger.cloned().unwrap_or(DatasetRecord {
+        id: String::new(),
+        app_slug: rule.app_slug.clone(),
+        data: Value::Object(Map::new()),
+        ceds_mapping: Value::Object(Map::new()),
+        is_ferpa_sensitive: false,
+        created_at: started_at.clone(),
+        created_by: None,
+        version: 0,
+    });
+    let manifests = manifests_for(state, rule);
+    let table = trigger_rec.data.get("_table_id").and_then(Value::as_str).map(str::to_string).or_else(|| trigger_table(rule, &manifests)).unwrap_or_default();
+    let run_id = format!("test-{}", uuid::Uuid::new_v4());
+    let mut run = Run {
+        state,
+        rule,
+        run_id: &run_id,
+        instance_id: format!("{}:{run_id}", rule.id),
+        started_by,
+        started_at,
+        trigger: trigger_rec,
+        trigger_table: table,
+        produced: HashMap::new(),
+        writes: 0,
+        max_writes: max_writes(state),
+        has_trigger: trigger.is_some(),
+        inputs: Map::new(),
+        chain: vec![rule.name.clone()],
+        dry: true,
+        notes: Vec::new(),
+    };
+    let mut out = TestRun { trace: Vec::new(), first_failure: None, writes: 0 };
+    if let Err((step, path, reason)) = dry_steps(&mut run, &rule.steps, &[], outcomes, approvers, &mut out.trace) {
+        out.trace.push(TraceStep { step: step.clone(), path: path.clone(), outcome: "failed", sentence: reason.clone(), approvers: None, records: None });
+        out.first_failure = Some((step, path, reason));
+    }
+    out.writes = run.writes;
+    out
+}
+
+type DryFail = (String, Vec<usize>, String);
+
+/// Marks every step in `steps`, and every step inside them, as skipped.
+fn skip_all(steps: &[scaffoldry_core::ProcessStep], prefix: &[usize], trace: &mut Vec<TraceStep>) {
+    for (i, s) in steps.iter().enumerate() {
+        let path = [prefix, &[i]].concat();
+        trace.push(TraceStep { step: s.id.clone(), path: path.clone(), outcome: SKIPPED, sentence: "This step would not run: its condition was false.".into(), approvers: None, records: None });
+        if let StepKind::Branch { branches, otherwise } = &s.kind {
+            for (k, b) in branches.iter().enumerate() {
+                skip_all(&b.steps, &[path.as_slice(), &[k]].concat(), trace);
+            }
+            skip_all(otherwise, &[path.as_slice(), &[branches.len()]].concat(), trace);
+        }
+    }
+}
+
+fn dry_steps(
+    run: &mut Run<'_>,
+    steps: &[scaffoldry_core::ProcessStep],
+    prefix: &[usize],
+    outcomes: &Map<String, Value>,
+    approvers: &dyn Fn(&scaffoldry_core::ProcessStep) -> Vec<String>,
+    trace: &mut Vec<TraceStep>,
+) -> Result<(), DryFail> {
+    let holds = |run: &Run<'_>, when: &[scaffoldry_core::FieldPredicate]| -> Result<bool, Stop> {
+        for p in when {
+            run.may_read(&run.trigger.app_slug, &run.trigger_table, &p.field_name)?;
+        }
+        Ok(when.iter().all(|p| scaffoldry_engine::AutomationEngine::evaluate_predicate(p, &run.trigger.data)))
+    };
+    for (i, s) in steps.iter().enumerate() {
+        let path = [prefix, &[i]].concat();
+        let fail = |Stop(reason): Stop| (s.id.clone(), path.clone(), reason);
+        if !holds(run, &s.when).map_err(fail)? {
+            skip_all(std::slice::from_ref(s), prefix_of(&path), trace);
+            continue;
+        }
+        match &s.kind {
+            StepKind::Service { action } => {
+                run.notes.clear();
+                run.step(&s.id, action).map_err(fail)?;
+                let notes = std::mem::take(&mut run.notes);
+                let read_only = notes.iter().all(|n| n.read_only);
+                let sentence = notes.iter().map(|n| n.sentence.clone()).collect::<Vec<_>>().join(". ");
+                let records = notes.into_iter().find_map(|n| n.records);
+                trace.push(TraceStep { step: s.id.clone(), path: path.clone(), outcome: if read_only { "ran" } else { "would write" }, sentence, approvers: None, records });
+            }
+            StepKind::Branch { branches, otherwise } => {
+                let mut chosen = branches.len();
+                for (k, b) in branches.iter().enumerate() {
+                    if holds(run, &b.when).map_err(fail)? {
+                        chosen = k;
+                        break;
+                    }
+                }
+                let sentence = if chosen == branches.len() { "No condition held, so it took otherwise.".to_string() } else { format!("Condition {} held, so it took that branch.", chosen + 1) };
+                trace.push(TraceStep { step: s.id.clone(), path: path.clone(), outcome: "ran", sentence, approvers: None, records: None });
+                let arms: Vec<&[scaffoldry_core::ProcessStep]> = branches.iter().map(|b| b.steps.as_slice()).chain(std::iter::once(otherwise.as_slice())).collect();
+                for (k, arm) in arms.iter().enumerate() {
+                    let arm_path = [path.as_slice(), &[k]].concat();
+                    if k == chosen {
+                        dry_steps(run, arm, &arm_path, outcomes, approvers, trace)?;
+                    } else {
+                        skip_all(arm, &arm_path, trace);
+                    }
+                }
+            }
+            StepKind::UserTask { approve, reject, .. } => {
+                let who = approvers(s);
+                let outcome = outcomes.get(&s.id).and_then(Value::as_str).unwrap_or("approve");
+                let actions = if matches!(outcome, "reject" | "decline") { reject } else { approve };
+                run.notes.clear();
+                for a in actions {
+                    run.step(&s.id, a).map_err(fail)?;
+                }
+                let then: Vec<String> = std::mem::take(&mut run.notes).into_iter().map(|n| n.sentence).collect();
+                let to = if who.is_empty() { "nobody can decide it today".to_string() } else { format!("it would go to {}", who.join(", ")) };
+                let mut sentence = format!("A decision: {to}. Taken as {outcome}");
+                if !then.is_empty() {
+                    sentence.push_str(&format!(": {}", then.join(". ")));
+                }
+                trace.push(TraceStep { step: s.id.clone(), path: path.clone(), outcome: "ran", sentence, approvers: Some(who), records: None });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prefix_of(path: &[usize]) -> &[usize] {
+    &path[..path.len() - 1]
 }

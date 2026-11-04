@@ -630,6 +630,15 @@ impl PostgresRepository {
     }
 
     /// A saved version of a rule, as it was.
+    /// Who saved the newest version of a rule. `None` for a rule with no stored version.
+    pub fn rule_author(&self, rule_id: &str) -> Result<Option<String>, RepositoryError> {
+        let id = rule_id.to_string();
+        self.with_client(move |c| {
+            let row = c.query_opt("SELECT changed_by FROM workflow_rule_versions WHERE rule_id = $1 ORDER BY version DESC LIMIT 1", &[&id])?;
+            Ok(row.map(|r| r.get::<_, String>(0)))
+        })
+    }
+
     pub fn get_rule_version(&self, rule_id: &str, version: u32) -> Result<Option<AutomationRule>, RepositoryError> {
         let (id, version) = (rule_id.to_string(), version as i32);
         self.with_client(move |client| {

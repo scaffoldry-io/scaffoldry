@@ -11,6 +11,7 @@ import { approverWords } from "../processWords";
 import { layout, JOIN, type Box, type Insert } from "./layout";
 import { numberOf, placeOf, sentenceOf, StepForm, type Problem } from "./Outline";
 import { stepAt, type Command, type EditorState, type Path, type StepKindName } from "./reducer";
+import { SKIPPED, traceAt, traceName, traceSummary, type TraceEntry } from "./TestRun";
 
 const small = "px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer";
 
@@ -115,6 +116,8 @@ interface CanvasProps {
   problems: Problem[];
   /** The width to draw at, in pixels. The canvas fills its container when left out. */
   width?: number;
+  /** Workflows phase 9: the last test run's trace, to mark the path it took. */
+  trace?: TraceEntry[] | null;
 }
 
 const OP_WORDS: Record<string, string> = { Equals: "is", NotEquals: "is not", GreaterThan: "is greater than", LessThan: "is less than", Contains: "contains" };
@@ -122,7 +125,7 @@ const OP_WORDS: Record<string, string> = { Equals: "is", NotEquals: "is not", Gr
 const ZOOM = 1.25;
 const PAN = 40;
 
-export function Canvas({ state, dispatch, fields, appSlug, problems, width }: CanvasProps) {
+export function Canvas({ state, dispatch, fields, appSlug, problems, width, trace }: CanvasProps) {
   const flow = state.flow;
   const L = useMemo(() => layout(flow), [flow]);
   const [zoom, setZoom] = useState(1);
@@ -228,6 +231,11 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width }: Ca
         </button>
         <span className="text-slate-500 ml-2">{Math.round(zoom * 100)}%</span>
       </div>
+      {trace && trace.length > 0 && (
+        <p role="status" aria-label="Test run summary" className="text-emerald-800 dark:text-emerald-300">
+          {traceSummary(trace)}
+        </p>
+      )}
       <p role="status" aria-label="Canvas check" className={first ? "text-rose-700 dark:text-rose-300" : "sr-only"}>
         {first ? `${problems.length === 1 ? "1 problem" : `${problems.length} problems`}. First: ${first.path?.length ? `step ${numberOf(first.path)}: ` : ""}${first.message}` : ""}
       </p>
@@ -273,7 +281,13 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width }: Ca
             const step = b.path ? stepAt(flow, b.path) : undefined;
             const words = b.kind === "trigger" ? triggerWords(flow) : step ? nodeWords(step) : "";
             const mine = problemsAt(b.path);
-            const name = b.path ? `step ${numberOf(b.path)}: ${KIND_WORD[b.kind]}. ${words}${mine.length ? `. Problem: ${mine.map((p) => p.message).join(" ")}` : ""}` : `${KIND_WORD.trigger}. ${words}`;
+            const ran = b.path ? traceAt(trace ?? undefined, b.path) : undefined;
+            const name = b.path
+              ? `step ${numberOf(b.path)}: ${KIND_WORD[b.kind]}. ${words}${mine.length ? `. Problem: ${mine.map((p) => p.message).join(" ")}` : ""}${ran ? `. ${traceName(ran)}` : ""}`
+              : `${KIND_WORD.trigger}. ${words}`;
+            const skipped = ran?.outcome === SKIPPED;
+            const failed = ran?.outcome === "failed";
+            const runWord = !ran ? null : skipped ? "Skipped" : failed ? "Failed" : "On the path";
             const isSel = selected === b.key;
             const interactive = !!b.path;
             return (
@@ -299,7 +313,21 @@ export function Canvas({ state, dispatch, fields, appSlug, problems, width }: Ca
                     : undefined
                 }
               >
-                <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={b.kind === "decision" ? 18 : 8} strokeWidth={isSel ? 3 : 1.5} className={`${KIND_FILL[b.kind]} ${mine.length ? "!stroke-rose-600" : ""}`} />
+                <rect
+                  x={b.x}
+                  y={b.y}
+                  width={b.w}
+                  height={b.h}
+                  rx={b.kind === "decision" ? 18 : 8}
+                  strokeWidth={isSel || (ran && !skipped) ? 3 : 1.5}
+                  opacity={skipped ? 0.45 : 1}
+                  className={`${KIND_FILL[b.kind]} ${mine.length || failed ? "!stroke-rose-600" : ran && !skipped ? "!stroke-emerald-600" : ""}`}
+                />
+                {runWord && (
+                  <text x={b.x + b.w - 8} y={b.y + b.h - 6} textAnchor="end" className={`text-[10px] font-semibold ${skipped ? "fill-slate-400" : failed ? "fill-rose-600" : "fill-emerald-700 dark:fill-emerald-300"}`}>
+                    {runWord}
+                  </text>
+                )}
                 <text x={b.x + 10} y={b.y + 15} className="fill-slate-500 dark:fill-slate-400 text-[10px] uppercase tracking-wide">
                   {b.path ? `${numberOf(b.path)} · ${KIND_WORD[b.kind]}` : KIND_WORD.trigger}
                 </text>

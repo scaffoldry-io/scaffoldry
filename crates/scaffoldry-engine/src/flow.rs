@@ -168,6 +168,12 @@ pub fn derive_grants(flow: &AutomationRule, manifests: &[AppManifest]) -> Vec<Fl
         for p in &s.when {
             g.read(&trigger, &p.field_name);
         }
+        // A branch reads the fields its conditions name.
+        if let StepKind::Branch { branches, .. } = &s.kind {
+            for p in branches.iter().flat_map(|b| b.when.iter()) {
+                g.read(&trigger, &p.field_name);
+            }
+        }
         let StepKind::Service { action } = &s.kind else { continue };
         match action {
             ActionType::FindRecord { app, table, field, equals, .. } => {
@@ -441,4 +447,32 @@ pub fn schedule_problems(every: &scaffoldry_core::workflow::ScheduleEvery, at: &
         _ => {}
     }
     out
+}
+
+#[cfg(test)]
+mod branch_grant_tests {
+    use super::*;
+    use scaffoldry_core::workflow::{Branch, ConditionOperator, FieldPredicate, ProcessStep};
+
+    // Workflows phase 9 found this through a test run: a branch reads the fields its conditions name, so the grants
+    // must hold them, or a real run fails with `flow_grant_exceeded` at the branch.
+    #[test]
+    fn a_branch_condition_is_a_read() {
+        let manifest: AppManifest = serde_json::from_value(serde_json::json!({
+            "slug": "housing", "title": "Housing", "description": "", "organization_code": "X", "department": "x", "views": [],
+            "tables": [{ "id": "applications", "name": "Applications", "slug": "applications", "primary_field": "name", "fields": [
+                { "name": "name", "label": "name", "field_type": "Text", "required": false, "ferpa_sensitive": false },
+                { "name": "amount", "label": "amount", "field_type": "Number", "required": false, "ferpa_sensitive": false }
+            ] }],
+        }))
+        .unwrap();
+        let arm = Branch { when: vec![FieldPredicate { field_name: "amount".into(), operator: ConditionOperator::GreaterThan, expected_value: "100".into() }], steps: vec![] };
+        let branch = ProcessStep { id: "split".into(), when: vec![], kind: StepKind::Branch { branches: vec![arm], otherwise: vec![] } };
+        let flow = AutomationRule {
+            id: "f".into(), app_slug: "housing".into(), name: "f".into(), description: String::new(), enabled: true, trigger: TriggerEvent::RecordCreated,
+            predicates: vec![], actions: vec![], steps: vec![branch], version: 0, home_workspace: None, grants: vec![],
+        };
+        let grants = derive_grants(&flow, &[manifest]);
+        assert!(grants.iter().any(|g| g.table_id == "applications" && g.read.iter().any(|f| f == "amount")), "{grants:?}");
+    }
 }
