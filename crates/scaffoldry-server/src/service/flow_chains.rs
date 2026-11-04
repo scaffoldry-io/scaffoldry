@@ -66,8 +66,8 @@ fn next_of<'a>(rule: &AutomationRule, all: &'a [AutomationRule]) -> Vec<&'a Auto
     out
 }
 
-/// A path from `rule` back to itself through the active flows, as names, when there is one.
-fn cycle_from(rule: &AutomationRule, all: &[AutomationRule]) -> Option<Vec<String>> {
+/// A path from `rule` back to itself through the active flows, as `(id, name)` pairs, when there is one.
+fn cycle_from(rule: &AutomationRule, all: &[AutomationRule]) -> Option<Vec<(String, String)>> {
     fn walk<'a>(at: &'a AutomationRule, target: &str, all: &'a [AutomationRule], path: &mut Vec<&'a AutomationRule>) -> bool {
         for next in next_of(at, all) {
             if next.id == target {
@@ -87,7 +87,7 @@ fn cycle_from(rule: &AutomationRule, all: &[AutomationRule]) -> Option<Vec<Strin
     }
     let start = all.iter().find(|r| r.id == rule.id)?;
     let mut path = vec![start];
-    walk(start, &rule.id, all, &mut path).then(|| path.iter().map(|r| r.name.clone()).collect())
+    walk(start, &rule.id, all, &mut path).then(|| path.iter().map(|r| (r.id.clone(), r.name.clone())).collect())
 }
 
 /// What stops a rule's triggers and calls from being saved: a bad schedule, a call to a flow that is not a called flow,
@@ -128,11 +128,16 @@ pub fn validate(state: &SharedState, manifest: &AppManifest, rule: &AutomationRu
     }
     if let Some(path) = cycle_from(rule, &all) {
         let (first, rest) = path.split_first().expect("a path has a start");
-        let mut sentence = format!("{first} starts {}", rest[0]);
-        for name in &rest[1..] {
+        let mut sentence = format!("{} starts {}", first.1, rest[0].1);
+        for (_, name) in &rest[1..] {
             sentence.push_str(&format!(", which starts {name}"));
         }
-        problems.push(format!("the flows would start each other without end: {sentence}."));
+        // The step that starts the next flow, when a step does. A trigger that waits for this flow names no step.
+        let by = all_steps(&rule.steps).into_iter().find(|s| matches!(&s.kind, StepKind::Service { action: ActionType::StartFlow { flow_id, .. } } if flow_id == &rest[0].0));
+        match by {
+            Some(s) => problems.push(format!("step '{}': the flows would start each other without end: {sentence}.", s.id)),
+            None => problems.push(format!("the flows would start each other without end: {sentence}.")),
+        }
     }
     problems
 }
