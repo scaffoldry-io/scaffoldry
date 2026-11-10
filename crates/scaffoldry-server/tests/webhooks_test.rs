@@ -231,15 +231,27 @@ fn checks_of(body: &Value) -> Vec<Value> {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unlisted_host_or_a_missing_secret_fails_webhook_host() {
     let w = world(vec![OK]);
+    // A failed check does not refuse the proposal: it is stored with the check failed, and a failed check blocks approval.
+    let failing = |body: &Value| checks_of(body).into_iter().find(|c| c["name"] == "webhook_host").unwrap_or_else(|| panic!("a webhook_host check: {body}"));
+
     let away = hook(&w, json!({ "url": "https://elsewhere.example.net/in" }));
     let (s, b) = send(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(manifest(&slug(), vec![away]))).await;
-    assert!(s.is_client_error(), "{s} {b}");
-    assert!(b.to_string().contains("webhook_host") && b.to_string().contains("elsewhere.example.net"), "{b}");
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    let c = failing(&b);
+    assert_eq!(c["outcome"], "fail", "{c}");
+    assert!(c.to_string().contains("elsewhere.example.net"), "{c}");
 
     let nosecret = hook(&w, json!({ "secret": "no-such-secret" }));
     let (s, b) = send(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(manifest(&slug(), vec![nosecret]))).await;
-    assert!(s.is_client_error(), "{s} {b}");
-    assert!(b.to_string().contains("webhook_host") && b.to_string().contains("no-such-secret"), "{b}");
+    assert_eq!(s, StatusCode::ACCEPTED, "{b}");
+    let c = failing(&b);
+    assert_eq!(c["outcome"], "fail", "{c}");
+    assert!(c.to_string().contains("no-such-secret"), "{c}");
+
+    // A webhook on the list, with its secret, passes.
+    let (s, b) = send(&w.app, "POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(manifest(&slug(), vec![hook(&w, json!({}))]))).await;
+    assert!(s.is_success(), "{b}");
+    assert!(checks_of(&b).iter().all(|c| c["name"] != "webhook_host" || c["outcome"] == "pass"), "{b}");
 }
 
 // 2. A matching write makes a delivery in its own transaction. A rolled-back write makes none.
@@ -298,7 +310,8 @@ async fn a_failure_retries_on_the_schedule_until_dead() {
     let w = world(vec![FAIL]);
     let slug = make_app(&w, vec![hook(&w, json!({}))]).await;
     create(&w, &slug, json!({ "name": "Ada" })).await;
-    let mut now = chrono::Utc::now();
+    // A whole second, so the waits are measured exactly.
+    let mut now = chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp() + 1, 0).unwrap();
     let mut waits = Vec::new();
     for _ in 0..8 {
         webhooks::deliver_due(&w.state, &client(&w), now).unwrap();
