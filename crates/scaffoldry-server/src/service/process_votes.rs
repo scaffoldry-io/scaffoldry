@@ -98,6 +98,9 @@ pub fn vote(caller: &AuthUser, slug: &str, inst: ProcessInstance, step: &str, vo
         Voted::Closed { approved, .. } => {
             let next = if approved { approve_next } else { reject_next };
             let decision = if approved { "approve" } else { "reject" };
+            let actions = if approved { committee.approve } else { committee.reject };
+            let effects = crate::service::processes::step_effects(actions, &mut Vec::new());
+            crate::webhooks::after_process(state, slug, &next.record_id, &effects, true);
             crate::service::flow_chains::on_decided(state, slug, &next.rule_id, decision, &next.record_id, &caller.eppn);
             crate::service::processes::tell_decision(state, slug, &next, decision, &caller.eppn);
             Ok(next)

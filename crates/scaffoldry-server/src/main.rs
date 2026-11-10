@@ -116,6 +116,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "purge_notifications", 24 * 60 * 60)?;
     // Mail that is due is sent every 15 seconds. Nothing is sent while mail.enabled is false.
     jobs::register_schedule(repo, "send_email", 15)?;
+    // Integrations phase 4: webhooks are sent every 10 seconds, and each call log is trimmed once a day.
+    jobs::register_schedule(repo, "deliver_webhooks", 10)?;
+    jobs::register_schedule(repo, "purge_webhook_deliveries", 24 * 60 * 60)?;
     // Each person's digest goes out at 07:00 in the institution's zone.
     scaffoldry_server::mail::register_digest_schedule(repo)?;
     // The policy library's web sources are checked every hour. Each one is fetched at most once a day.

@@ -433,6 +433,8 @@ pub fn decide_process(
         .map_err(|e| ServiceError::Internal(e.to_string()))?
     {
         crate::repository::Decided::Done => {
+            // Integrations phase 4: the decision's webhook steps and the app's `process.decided` webhooks.
+            crate::webhooks::after_process(state, slug, &instance.record_id, &field_effects, true);
             // Workflows phase 3: the flows waiting for this decision start, with the decided record.
             crate::service::flow_chains::on_decided(state, slug, &instance.rule_id, &decision, &instance.record_id, &caller.eppn);
         }

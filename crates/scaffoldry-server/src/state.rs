@@ -492,6 +492,8 @@ impl ServerState {
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
         settings_map.insert("oauth.allow_localhost".to_string(), serde_json::json!(false));
+        // Integrations phase 4: plain-http webhook receivers, for tests and local work only. Off in production.
+        settings_map.insert("webhooks.allow_http".to_string(), serde_json::json!(false));
         settings_map.insert("flows.max_steps".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_STEPS));
         settings_map.insert("flows.max_writes_per_run".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_WRITES));
         settings_map.insert("flows.cross_workspace_enabled".to_string(), serde_json::json!(true));

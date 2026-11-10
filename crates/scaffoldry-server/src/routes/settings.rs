@@ -22,6 +22,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "mcp.disabled_tools",
     "pages.disabled",
     "oauth.allow_localhost",
+    "webhooks.allow_http",
     "access.agent_session_hours",
     "access.person_grant_max_days",
     "access.request_max_days",
@@ -79,7 +80,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "tokens.max_days" | "process.stale_days" => {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
-        "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" | "mail.enabled" | "flows.cross_workspace_enabled" | "process.require_reject_comment" => value.is_boolean(),
+        "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" | "webhooks.allow_http" | "mail.enabled" | "flows.cross_workspace_enabled" | "process.require_reject_comment" => value.is_boolean(),
         "mail.smtp" => crate::mail::Smtp::parse(value).is_ok(),
         "platform.base_url" => crate::mail::valid_base_url(value),
         "notifications.defaults" => crate::notifications::valid_defaults(value),
