@@ -394,7 +394,7 @@ impl Run<'_> {
             ActionType::UpdateRecordStatus { new_status } if self.dry => self.note(format!("would set the status to {new_status}"), false, None),
             ActionType::NotifyCollaborator { role, .. } if self.dry => self.note(format!("would notify {role}"), false, None),
             ActionType::CreateLedgerAuditEntry { summary, .. } if self.dry => self.note(format!("would add an audit entry: {summary}"), false, None),
-            ActionType::WebhookDispatch { target_url } if self.dry => self.note(format!("would not send the webhook to {target_url}: a rule may not hold a webhook"), false, None),
+            ActionType::WebhookDispatch { webhook_id } if self.dry => self.note(format!("would send the webhook '{webhook_id}'"), false, None),
             _ => {}
         }
         Ok(())

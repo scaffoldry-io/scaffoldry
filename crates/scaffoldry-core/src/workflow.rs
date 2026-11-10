@@ -86,6 +86,8 @@ pub enum ActionEffect {
     Notify { role: String, message: String },
     LedgerNote { summary: String, oscal_control: String },
     Rejected { reason: String },
+    /// Integrations phase 4: a delivery of the app's webhook, with the event `process.step`.
+    Webhook { webhook_id: String },
 }
 
 pub fn apply_field_effects(record: &mut serde_json::Value, effects: &[ActionEffect]) {
@@ -449,7 +451,12 @@ pub enum ActionType {
     NotifyCollaborator { role: String, message_template: String },
     UpdateRecordStatus { new_status: String },
     CreateLedgerAuditEntry { summary: String, oscal_control: String },
-    WebhookDispatch { target_url: String },
+    /// Integrations phase 4: enqueues a delivery of an approved webhook of the same app, with the event
+    /// `process.step`. A stored rule from before named a URL; it reads here as an unknown webhook id.
+    WebhookDispatch {
+        #[serde(alias = "target_url")]
+        webhook_id: String,
+    },
     /// Matches one indexed field by exact value, case-insensitive. At most `limit` records, at most 100.
     FindRecord { id: String, app: String, table: String, field: String, equals: Expr, limit: u8 },
     CreateRecord { id: String, app: String, table: String, fields: Vec<(String, Expr)> },

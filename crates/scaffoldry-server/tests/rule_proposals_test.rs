@@ -252,7 +252,7 @@ async fn a_webhook_step_is_refused_with_its_id_and_stores_no_proposal() {
     live_app(&w, false).await;
     let base_rows = proposal_rows(&w.slug);
     let mut rule = service_rule(&format!("r-{}", &Uuid::new_v4().to_string()[..8]), "Approved");
-    rule["steps"] = json!([{ "id": "hook-step", "when": [], "kind": { "Service": { "action": { "WebhookDispatch": { "target_url": "https://example.org/x" } } } } }]);
+    rule["steps"] = json!([{ "id": "hook-step", "when": [], "kind": { "Service": { "action": { "WebhookDispatch": { "webhook_id": "no-such-hook" } } } } }]);
     let (s, body) = rest(&w.app, "POST", &format!("/api/v1/apps/{}/automations", w.slug), &w.owner, Some(rule)).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
     assert!(body["error"].as_str().unwrap().contains("hook-step"), "{body}");

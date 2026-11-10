@@ -189,7 +189,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         department: "biology".to_string(),
         workspace_id: None,
         herm_capability_id: Some("RES-01".to_string()),
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         custom_domain: Some(format!("{}.state.edu", test_slug)),
         custom_domain_verified: true,
         tables: vec![],

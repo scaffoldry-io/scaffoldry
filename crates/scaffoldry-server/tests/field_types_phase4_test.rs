@@ -98,7 +98,7 @@ fn manifest_with_tables(slug: &str, tables: Vec<AppTable>) -> AppManifest {
         department: "biology".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables,
@@ -153,7 +153,7 @@ async fn test_duration_inputs_store_5400_and_bad_input_rejected() {
         ],
         primary_field: Some("title".to_string()),
         sample_records: vec![],
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         row_place: Default::default(),
     }]);
     w.state.persist_app_manifest(m).expect("manifest");
@@ -241,7 +241,7 @@ async fn test_sum_rollup_over_durations() {
         ],
         primary_field: Some("name".to_string()),
         sample_records: vec![],
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         row_place: Default::default(),
     };
 
@@ -270,7 +270,7 @@ async fn test_sum_rollup_over_durations() {
         ],
         primary_field: Some("desc".to_string()),
         sample_records: vec![],
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         row_place: Default::default(),
     };
 
@@ -358,7 +358,7 @@ async fn test_date_never_shifts_across_timezone_change() {
         ],
         primary_field: Some("name".to_string()),
         sample_records: vec![],
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         row_place: Default::default(),
     }]);
     w.state.persist_app_manifest(m).expect("manifest");

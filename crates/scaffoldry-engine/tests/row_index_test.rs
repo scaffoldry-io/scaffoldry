@@ -19,7 +19,7 @@ fn manifest(fields: Vec<FieldSpec>) -> AppManifest {
         department: "x".into(),
         workspace_id: None,
         herm_capability_id: None,
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
@@ -32,7 +32,7 @@ fn manifest(fields: Vec<FieldSpec>) -> AppManifest {
             fields,
             primary_field: None,
             sample_records: vec![],
-            coordinates: None, sealed: false,
+            coordinates: None, sealed: false, integrations: Default::default(),
             row_place: Default::default(),
         }],
         relationships: vec![],

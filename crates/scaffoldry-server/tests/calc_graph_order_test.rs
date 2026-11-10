@@ -81,7 +81,7 @@ fn computed(name: &str, t: FieldType, via: &str, target: Option<&str>) -> FieldS
 }
 
 fn table(id: &str, fields: Vec<FieldSpec>) -> AppTable {
-    AppTable { retired_fields: Vec::new(), id: id.into(), name: id.into(), slug: id.into(), description: None, icon: None, fields, primary_field: None, sample_records: vec![] , coordinates: None, sealed: false, row_place: Default::default() }
+    AppTable { retired_fields: Vec::new(), id: id.into(), name: id.into(), slug: id.into(), description: None, icon: None, fields, primary_field: None, sample_records: vec![] , coordinates: None, sealed: false, integrations: Default::default(), row_place: Default::default() }
 }
 
 /// `chain.a` is declared before `chain.b`, but reads it. `parents` roll up their children's amount.
@@ -95,7 +95,7 @@ fn manifest(slug: &str) -> AppManifest {
         department: "biology".into(),
         workspace_id: Some(WORKSPACE.into()),
         herm_capability_id: None,
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![

@@ -400,7 +400,7 @@ async fn a_rule_with_timers_that_make_no_sense_is_refused() {
         (w.rule("zero", 0, None, vec![DueAction::Remind], vec![]), "due in 0 days"),
         (w.rule("long", 400, None, vec![DueAction::Remind], vec![]), "due in 400 days"),
         (w.rule("every", 3, Some(1), vec![DueAction::EscalateUp], vec![]), "no Remind"),
-        (w.rule("hook", 3, None, vec![DueAction::Fail { reason: "late".into() }], vec![ActionType::WebhookDispatch { target_url: "https://example.org".into() }]), "webhook"),
+        (w.rule("hook", 3, None, vec![DueAction::Fail { reason: "late".into() }], vec![ActionType::WebhookDispatch { webhook_id: "notify".into() }]), "webhook"),
         (w.rule("nobody", 3, None, vec![DueAction::Escalate { approver: ApproverSpec::Position { key: "provost".into(), from: Origin::Workspace, walk_up: false } }], vec![]), "escalates to someone it cannot find"),
     ];
     for (rule, words) in cases {

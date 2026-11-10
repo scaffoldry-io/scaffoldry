@@ -115,12 +115,21 @@ pub fn validate_rule(state: &SharedState, manifest: &AppManifest, rule: &Automat
             StepKind::UserTask { approve, reject, on_fail, .. } => approve.iter().chain(reject.iter()).chain(on_fail.iter()).collect(),
             StepKind::Branch { .. } => vec![],
         };
-        if actions.iter().any(|a| matches!(a, ActionType::WebhookDispatch { .. })) {
-            problems.push(format!("step '{}' is a webhook, which a rule may not hold", step.id));
+        // Integrations phase 4: a webhook step names an approved webhook of the rule's own app.
+        for a in &actions {
+            if let ActionType::WebhookDispatch { webhook_id } = a {
+                if !manifest.integrations.webhooks.iter().any(|w| &w.id == webhook_id) {
+                    problems.push(format!("step '{}' sends the webhook '{webhook_id}', which is not an approved webhook of this app", step.id));
+                }
+            }
         }
     }
-    if rule.actions.iter().any(|a| matches!(a, ActionType::WebhookDispatch { .. })) {
-        problems.push("a rule may not hold a webhook".to_string());
+    for a in &rule.actions {
+        if let ActionType::WebhookDispatch { webhook_id } = a {
+            if !manifest.integrations.webhooks.iter().any(|w| &w.id == webhook_id) {
+                problems.push(format!("the rule sends the webhook '{webhook_id}', which is not an approved webhook of this app"));
+            }
+        }
     }
     problems.extend(structure_problems(manifest, rule, state));
     problems.extend(crate::service::flow_chains::validate(state, manifest, rule));
@@ -291,8 +300,9 @@ pub fn step_effects(actions: &[ActionType], log: &mut Vec<String>) -> Vec<Action
             ActionType::CreateLedgerAuditEntry { summary, oscal_control } => {
                 log.push(format!("Appended audit log: {summary} (Control: {oscal_control})"));
             }
-            ActionType::WebhookDispatch { target_url } => {
-                log.push(format!("Webhook not sent: {target_url}"));
+            ActionType::WebhookDispatch { webhook_id } => {
+                log.push(format!("Webhook '{webhook_id}' queued"));
+                effects.push(ActionEffect::Webhook { webhook_id: webhook_id.clone() });
             }
             // A flow action is never the result of a decision: saving refuses it there.
             ActionType::FindRecord { .. } | ActionType::CreateRecord { .. } | ActionType::UpdateRecord { .. } | ActionType::SetLink { .. } | ActionType::StartFlow { .. } => {}
