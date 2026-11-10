@@ -465,3 +465,63 @@ pub fn purge_job(ctx: &crate::jobs::JobCtx, _payload: Value) -> Result<Value, cr
     let removed = purge_deliveries(ctx.repository()).map_err(|e| crate::jobs::JobError::Retry(e.to_string()))?;
     Ok(json!({ "removed": removed }))
 }
+
+/// Whether a JSON value is an old webhook action: `WebhookDispatch` naming a URL, from before a webhook was part of the
+/// manifest. A rule that names an approved webhook by id is not one.
+fn is_url_webhook(action: &Value) -> bool {
+    let Some(w) = action.get("WebhookDispatch") else { return false };
+    w.get("target_url").is_some() || w.get("webhook_id").and_then(Value::as_str).is_some_and(|id| id.contains("://"))
+}
+
+/// Removes old webhook actions from `v`, and the process steps that hold one, and counts what it removed.
+fn strip_url_webhooks(v: &mut Value) -> u64 {
+    match v {
+        Value::Array(items) => {
+            let before = items.len();
+            items.retain(|item| !(is_url_webhook(item) || item.pointer("/kind/Service/action").is_some_and(is_url_webhook)));
+            let mut removed = (before - items.len()) as u64;
+            for item in items.iter_mut() {
+                removed += strip_url_webhooks(item);
+            }
+            removed
+        }
+        Value::Object(map) => map.values_mut().map(strip_url_webhooks).sum(),
+        _ => 0,
+    }
+}
+
+/// Integrations phase 4, at boot: a webhook is part of the app's manifest now, so a live rule that sent to a URL loses
+/// that step. One ledger entry says how many were dropped. A rule version already stored is left as it was.
+pub fn drop_url_webhook_steps(repo: &PostgresRepository) -> Result<u64, RepositoryError> {
+    repo.with_client(move |c| {
+        let mut tx = c.transaction()?;
+        let rows = tx.query("SELECT id, rule_json FROM workflow_automations", &[])?;
+        let mut dropped = 0u64;
+        let mut rules = Vec::new();
+        for r in rows {
+            let (id, mut json): (String, Value) = (r.get(0), r.get(1));
+            let n = strip_url_webhooks(&mut json);
+            if n > 0 {
+                tx.execute("UPDATE workflow_automations SET rule_json = $2 WHERE id = $1", &[&id, &json])?;
+                rules.push(id);
+                dropped += n;
+            }
+        }
+        if dropped > 0 {
+            crate::repository::append_ledger_in_tx(
+                &mut tx,
+                crate::repository::AppendDecisionParams {
+                    principal: "system".to_string(),
+                    organization_code: "institutional".to_string(),
+                    app_slug: None,
+                    decision_type: scaffoldry_core::DecisionType::ProcessDefinitionChanged,
+                    oscal_control_id: "CM-03".to_string(),
+                    rationale: format!("{dropped} webhook steps that named a URL were dropped from live rules, because a webhook is now approved with its app"),
+                    payload: json!({ "dropped": dropped, "rules": rules }),
+                },
+            )?;
+        }
+        tx.commit()?;
+        Ok(dropped)
+    })
+}

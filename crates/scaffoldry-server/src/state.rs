@@ -618,6 +618,8 @@ impl ServerState {
         {
             relationships.insert(rel.id.clone(), rel);
         }
+        // Integrations phase 4: a rule that sent to a URL loses that step, with one ledger note.
+        crate::webhooks::drop_url_webhook_steps(repo).map_err(|e| read("the webhook steps", e))?;
         for r in repo
             .list_workflow_automations(None)
             .map_err(|e| read("the automations", e))?

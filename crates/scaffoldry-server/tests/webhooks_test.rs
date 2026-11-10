@@ -504,3 +504,27 @@ async fn the_call_log_keeps_200_per_webhook() {
     assert_eq!(log["deliveries"].as_array().unwrap().len(), 200);
     assert!(log["deliveries"][0].get("payload").is_none(), "the call log holds no payload");
 }
+
+// A live rule from before webhooks were approved with the app loses its URL step, with one ledger note. A rule that
+// names an approved webhook by id is left alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn old_url_webhook_steps_are_dropped_with_one_ledger_note() {
+    let w = world(vec![OK]);
+    let old = json!({
+        "id": "old-hook", "app_slug": "legacy", "name": "Old", "enabled": true, "trigger": "RecordCreated", "predicates": [], "actions": [], "version": 1,
+        "steps": [
+            { "id": "keep", "when": [], "kind": { "Service": { "action": { "UpdateRecordStatus": { "new_status": "Open" } } } } },
+            { "id": "send", "when": [], "kind": { "Service": { "action": { "WebhookDispatch": { "target_url": "https://example.org/x" } } } } },
+            { "id": "by-id", "when": [], "kind": { "Service": { "action": { "WebhookDispatch": { "webhook_id": "notify-housing" } } } } }
+        ],
+    });
+    w.db.run(move |c| c.execute("INSERT INTO workflow_automations (id, app_slug, name, rule_json, enabled) VALUES ('old-hook', 'legacy', 'Old', $1, TRUE)", &[&old]).unwrap());
+    let before: i64 = w.db.run(|c| c.query_one("SELECT COUNT(*) FROM governance_ledger WHERE rationale LIKE '%webhook steps that named a URL%'", &[]).unwrap().get(0));
+    assert_eq!(webhooks::drop_url_webhook_steps(&w.state.repository).unwrap(), 1);
+    let after: Value = w.db.run(|c| c.query_one("SELECT rule_json FROM workflow_automations WHERE id = 'old-hook'", &[]).unwrap().get(0));
+    let ids: Vec<&str> = after["steps"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["keep", "by-id"], "{after}");
+    let noted: i64 = w.db.run(|c| c.query_one("SELECT COUNT(*) FROM governance_ledger WHERE rationale LIKE '%webhook steps that named a URL%'", &[]).unwrap().get(0));
+    assert_eq!(noted - before, 1, "one counted note");
+    assert_eq!(webhooks::drop_url_webhook_steps(&w.state.repository).unwrap(), 0, "a second boot drops nothing and writes nothing");
+}
