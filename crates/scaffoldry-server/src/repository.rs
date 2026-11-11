@@ -102,6 +102,7 @@ const SCHEMA_0094: &str = include_str!("../../scaffoldry-core/migrations/0094_pr
 const SCHEMA_0095: &str = include_str!("../../scaffoldry-core/migrations/0095_process_votes.sql");
 const SCHEMA_0096: &str = include_str!("../../scaffoldry-core/migrations/0096_task_grants.sql");
 const SCHEMA_0097: &str = include_str!("../../scaffoldry-core/migrations/0097_work_items.sql");
+const SCHEMA_0099: &str = include_str!("../../scaffoldry-core/migrations/0099_webhooks.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -235,6 +236,9 @@ pub struct WriteCtx {
     /// A flow effect: its dedupe key and the run's instance id. The key is recorded in `flow_effects` in the same
     /// transaction as the write, and a write whose key is already there is skipped, so a retry never writes twice.
     pub effect: Option<(String, String)>,
+    /// Integrations phase 4: the app's approved webhooks. A write that matches one queues a delivery in its own
+    /// transaction. The list is the live manifest's, which an approval replaces.
+    pub webhooks: std::sync::Arc<Vec<scaffoldry_engine::Webhook>>,
 }
 
 impl WriteCtx {
@@ -255,6 +259,7 @@ impl WriteCtx {
             action: None,
             on_behalf_of: None,
             effect: None,
+            webhooks: Default::default(),
         }
     }
 
@@ -610,6 +615,8 @@ pub(crate) fn write_history(
         "create" | "delete" | "restore" => at.action,
         _ => "update",
     };
+    // Integrations phase 4: a delivery for each webhook the write matches, in this transaction.
+    crate::webhooks::enqueue_in_tx(tx, &ctx.webhooks, at.app_slug, at.table_id, at.record_id, at.version, at.action, changes)?;
     let notice = serde_json::json!({ "app": at.app_slug, "table": at.table_id, "record": at.record_id, "version": at.version, "kind": kind }).to_string();
     tx.execute("SELECT pg_notify('scaffoldry_changes', $1)", &[&notice])?;
     Ok(())
@@ -1198,6 +1205,7 @@ impl PostgresRepository {
                             ("0095_process_votes.sql", SCHEMA_0095),
                             ("0096_task_grants.sql", SCHEMA_0096),
                             ("0097_work_items.sql", SCHEMA_0097),
+                            ("0099_webhooks.sql", SCHEMA_0099),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 

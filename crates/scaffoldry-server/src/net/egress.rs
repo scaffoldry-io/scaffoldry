@@ -201,6 +201,11 @@ impl Allow {
         settings.get("egress.allow").and_then(|v| Allow::parse(v).ok()).unwrap_or_default()
     }
 
+    /// Whether `host` and `port` are on the list by name. A proposal checks a webhook's receiver with this.
+    pub fn lists_host(&self, host: &str, port: u16) -> bool {
+        self.host_allowed(&normal_host(host), port)
+    }
+
     fn host_allowed(&self, host: &str, port: u16) -> bool {
         self.entries.iter().any(|e| matches!(e, Entry::Host { host: h, ports } if h == host && ports.contains(&port)))
     }

@@ -58,7 +58,7 @@ fn a_webhook_step_has_no_sentence() {
     r.steps.push(ProcessStep {
         id: "hook".into(),
         when: vec![],
-        kind: StepKind::Service { action: ActionType::WebhookDispatch { target_url: "https://example.org".into() } },
+        kind: StepKind::Service { action: ActionType::WebhookDispatch { webhook_id: "notify".into() } },
     });
     let sentences = describe_rule(&r);
     assert!(sentences.iter().all(|s| !s.contains("example.org")), "{sentences:?}");

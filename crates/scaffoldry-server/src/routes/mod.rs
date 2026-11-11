@@ -28,6 +28,7 @@ pub mod mail;
 pub mod delegations;
 pub mod work;
 pub mod flows;
+pub mod webhooks;
 pub mod holds;
 pub mod realtime;
 pub mod notifications;
@@ -104,6 +105,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(delegations::router())
         .merge(work::router())
         .merge(flows::router())
+        .merge(webhooks::router())
         .merge(realtime::router())
         .merge(notifications::router())
         .merge(comments::router())

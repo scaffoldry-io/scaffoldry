@@ -68,6 +68,6 @@ export function actionWords(action: Record<string, any>): string {
   if (action.UpdateRecordStatus) return `Set the status to ${action.UpdateRecordStatus.new_status}.`;
   if (action.NotifyCollaborator) return `Tell the ${action.NotifyCollaborator.role}: ${action.NotifyCollaborator.message_template}.`;
   if (action.CreateLedgerAuditEntry) return `Record in the ledger: ${action.CreateLedgerAuditEntry.summary}.`;
-  if (action.WebhookDispatch) return `Send a webhook to ${action.WebhookDispatch.target_url}.`;
+  if (action.WebhookDispatch) return `Send the webhook ${action.WebhookDispatch.webhook_id}.`;
   return "Do something the builder cannot show yet.";
 }

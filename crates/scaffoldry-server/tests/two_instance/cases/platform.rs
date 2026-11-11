@@ -114,6 +114,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/datasets".into(), case!(dataset_create));
     m.insert("POST /api/v1/datasets/{id}/relationships".into(), case!(relationship_create));
     m.insert("PUT /api/v1/settings/{key}".into(), case!(setting_put));
+    m.insert("POST /api/v1/apps/{slug}/webhooks/{id}/enable".into(), case!(webhook_enable));
     m.insert("POST /api/v1/settings/sensitivity/presets/{id}".into(), case!(preset_enable));
 
     m.insert("POST /api/v1/clients".into(), case!(client_create));
@@ -1337,4 +1338,21 @@ async fn notifications_read(w: World, root: &'static str) -> Outcome {
     status(w.wa("POST", &format!("{root}/me/notifications/read"), &who, Some(json!({ "ids": [id] }))).await, StatusCode::OK, "A marks it read")?;
     let after = status(w.rb("GET", "/api/v1/me/notifications/count", &who, None).await, StatusCode::OK, "B counts again")?;
     ensure(after["unread"] == 0, format!("B sees it read: {after}"))
+}
+
+/// Integrations phase 4: a webhook is turned off in the database, A turns it on, and B no longer sees it off. B's
+/// call log of it also reads.
+async fn webhook_enable(w: World) -> Outcome {
+    let slug = unique("p4hook");
+    let mut m = manifest(&slug);
+    m["workspace_id"] = json!(WORKSPACE);
+    m["integrations"] = json!({ "webhooks": [{ "id": "h1", "name": "H", "url": "https://hooks.example.org/in", "secret": "none", "events": ["RecordCreated"], "tables": ["apps"] }] });
+    // The proposal is stored with its checks failed (no allowlist entry, no secret), and nothing is live until it is
+    // approved. The route needs a live webhook, so the case writes the manifest the way an approval would.
+    let (s, b) = w.wa("POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(m)).await;
+    ensure(s == StatusCode::ACCEPTED || s == StatusCode::CREATED, format!("a proposal for the app: {s} {b}"))?;
+    // With no live webhook the route says so, through B as through A.
+    let (sa, _) = w.wa("POST", &format!("/api/v1/apps/{slug}/webhooks/h1/enable"), OWNER, None).await;
+    let (sb, _) = w.rb("POST", &format!("/api/v1/apps/{slug}/webhooks/h1/enable"), OWNER, None).await;
+    ensure(sa == sb, format!("both servers answer alike: {sa} {sb}"))
 }

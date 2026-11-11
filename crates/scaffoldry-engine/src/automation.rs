@@ -258,11 +258,10 @@ impl AutomationEngine {
                     oscal_control: oscal_control.clone(),
                 });
             }
-            ActionType::WebhookDispatch { target_url } => {
-                executed.push(format!("Webhook not sent: {target_url}"));
-                effects.push(ActionEffect::Rejected {
-                    reason: format!("webhook disabled: {target_url}"),
-                });
+            // Integrations phase 4: the server enqueues the delivery; the webhook is approved with the app.
+            ActionType::WebhookDispatch { webhook_id } => {
+                executed.push(format!("Webhook '{webhook_id}' queued"));
+                effects.push(ActionEffect::Webhook { webhook_id: webhook_id.clone() });
             }
             // A flow step finds, creates, updates or links records by address. The server's flow runner does it,
             // inside the flow's grants, so the engine records nothing for it here.

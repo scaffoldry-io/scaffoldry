@@ -90,7 +90,7 @@ fn manifest(slug: &str) -> AppManifest {
         department: "biology".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable { retired_fields: Vec::new(), id: "t1".to_string(), name: "Things".to_string(), slug: "things".to_string(), description: None, icon: None, fields, primary_field: None, sample_records: vec![] , coordinates: None, sealed: false, row_place: Default::default() }],

@@ -63,6 +63,9 @@ pub fn ctx_for(actor: &str, kind: ActorKind, app_slug: &str, data: &Value, state
         ctx.calc = crate::service::records::calc_tables_of(app_slug, state);
     }
     ctx.formulas = crate::service::records::formula_specs_of(app_slug, table, state).0;
+    ctx.webhooks = std::sync::Arc::new(
+        state.engine.read().ok().and_then(|e| scaffoldry_engine::HostRouter::resolve_by_slug(&*e, app_slug).map(|m| m.integrations.webhooks.clone())).unwrap_or_default(),
+    );
     ctx
 }
 

@@ -164,6 +164,22 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::calc_jobs::convert_select_options,
     },
     JobKind {
+        name: "deliver_webhooks",
+        title: "Sending webhooks",
+        description: "Signs and sends the webhook deliveries that are due through the outbound allowlist, and schedules each failed one to try again.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::webhooks::deliver_job,
+    },
+    JobKind {
+        name: "purge_webhook_deliveries",
+        title: "Trimming webhook call logs",
+        description: "Keeps the newest 200 finished deliveries of each webhook and removes the older ones.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::webhooks::purge_job,
+    },
+    JobKind {
         name: "purge_expired",
         title: "Destroying what retention has expired",
         description: "Destroys trashed records, history and retired values that their retention policy no longer keeps, and leaves a certificate.",

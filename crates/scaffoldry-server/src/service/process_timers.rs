@@ -188,6 +188,11 @@ fn apply_timer(state: &SharedState, t: &Timer) -> Result<bool, String> {
     if !state.repository.apply_timer(&t.step_id, TimerOutcome { next: next.clone(), record, timers, detail, grants, work }).map_err(|e| e.to_string())? {
         return Ok(false);
     }
+    // Integrations phase 4: a `Fail` runs its `on_fail` actions, and a webhook among them is queued now it committed.
+    if let DueAction::Fail { .. } = &action {
+        let effects = crate::service::processes::step_effects(d.on_fail, &mut Vec::new());
+        crate::webhooks::after_process(state, &next.app_slug, &next.record_id, &effects, false);
+    }
 
     let (app, table, step, owner) = timer_notice_parts(state, &next);
     match (&action, escalated) {

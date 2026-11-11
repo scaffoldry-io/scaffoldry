@@ -492,6 +492,8 @@ impl ServerState {
         settings_map.insert("mcp.disabled_tools".to_string(), serde_json::json!([]));
         settings_map.insert("pages.disabled".to_string(), serde_json::json!([]));
         settings_map.insert("oauth.allow_localhost".to_string(), serde_json::json!(false));
+        // Integrations phase 4: plain-http webhook receivers, for tests and local work only. Off in production.
+        settings_map.insert("webhooks.allow_http".to_string(), serde_json::json!(false));
         settings_map.insert("flows.max_steps".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_STEPS));
         settings_map.insert("flows.max_writes_per_run".to_string(), serde_json::json!(crate::service::flows::DEFAULT_MAX_WRITES));
         settings_map.insert("flows.cross_workspace_enabled".to_string(), serde_json::json!(true));
@@ -616,6 +618,8 @@ impl ServerState {
         {
             relationships.insert(rel.id.clone(), rel);
         }
+        // Integrations phase 4: a rule that sent to a URL loses that step, with one ledger note.
+        crate::webhooks::drop_url_webhook_steps(repo).map_err(|e| read("the webhook steps", e))?;
         for r in repo
             .list_workflow_automations(None)
             .map_err(|e| read("the automations", e))?
@@ -1468,7 +1472,7 @@ impl ServerState {
             department: "physics".to_string(),
             workspace_id: Some("ws-physics-optics".to_string()),
             herm_capability_id: None,
-            coordinates: None, sealed: false,
+            coordinates: None, sealed: false, integrations: Default::default(),
             custom_domain: None,
             custom_domain_verified: false,
             tables: vec![],

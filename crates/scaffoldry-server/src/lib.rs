@@ -21,6 +21,7 @@ pub mod notifications;
 pub mod mail;
 pub mod net;
 pub mod secrets;
+pub mod webhooks;
 pub mod realtime;
 pub mod repository_archives;
 pub mod repository_snapshots;

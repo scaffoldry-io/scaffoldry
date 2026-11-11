@@ -25,7 +25,7 @@ fn make_manifest(slug: &str) -> AppManifest {
         department: "testing".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {

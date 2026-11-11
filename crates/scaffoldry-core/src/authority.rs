@@ -82,6 +82,7 @@ pub const FLAGGED: &[(&str, &str)] = &[
     ("cross_workspace", "A flow reads or writes in more than one workspace."),
     ("data_movement", "A flow copies a sensitive field from one app into another."),
     ("task_sensitivity", "A task shows a sensitive field to the person it is assigned to."),
+    ("webhook_sensitive", "A webhook sends the value of a sensitive field to another system."),
 ];
 
 /// What would avoid each flagged check, as one sentence. `None` where there is honestly nothing to change but the proposal
@@ -101,6 +102,7 @@ pub const REMEDIES: &[(&str, Option<&str>)] = &[
     ("cross_workspace", Some("Keep the flow inside its own workspace.")),
     ("data_movement", Some("Leave the sensitive field out of what the flow reads.")),
     ("task_sensitivity", Some("Leave the sensitive field out of what the task shows.")),
+    ("webhook_sensitive", Some("Leave the sensitive field out of the webhook's listed fields, or send no values.")),
 ];
 
 /// What would avoid the flagged check `name`, if anything.

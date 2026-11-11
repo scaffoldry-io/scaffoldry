@@ -2118,6 +2118,13 @@ fn run_automations_in(
                     crate::service::flows::run_flow(state, rule, &trigger, &actor.identity.eppn, &uuid::Uuid::new_v4().to_string());
                 }
             }
+            // Integrations phase 4: a webhook step is queued for the app's approved webhook.
+            if let Some(id) = record.get("id").and_then(Value::as_str) {
+                let hooks: Vec<scaffoldry_core::workflow::ActionEffect> = res.effects.iter().filter(|e| matches!(e, scaffoldry_core::workflow::ActionEffect::Webhook { .. })).cloned().collect();
+                if !hooks.is_empty() {
+                    crate::webhooks::after_process(state, app_slug, id, &hooks, false);
+                }
+            }
             // Notifications phase 4: a Notify effect tells the people its role names, with names only.
             for effect in &res.effects {
                 if let scaffoldry_core::workflow::ActionEffect::Notify { role, .. } = effect {

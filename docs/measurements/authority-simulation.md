@@ -1,8 +1,8 @@
 # Decision authority simulation
 
-Date: 2026-11-04. Run time for all twelve runs on the machine that wrote this: 1.26 seconds.
+Date: 2026-11-11. Run time for all twelve runs on the machine that wrote this: 1.33 seconds.
 
-One position is a bottleneck under the matrices that send High changes to a single privacy officer. Under "High to the privacy officer" (everyone present), the privacy officer of unit 0 has a busiest week of 87 items. A delegation to a deputy, or a row at each college that sends High changes to the college's own privacy contact, would relieve it. 6 of the twelve runs have a week above 50 items.
+One position is a bottleneck under the matrices that send High changes to a single privacy officer. Under "High to the privacy officer" (everyone present), the privacy officer of unit 0 has a busiest week of 74 items. A delegation to a deputy, or a row at each college that sends High changes to the college's own privacy contact, would relieve it. 6 of the twelve runs have a week above 50 items.
 
 This simulation does not measure waiting time, and it does not measure whether people find the screens clear. Waiting time needs real decisions: see `GET /admin/authority/load`.
 
@@ -18,9 +18,9 @@ No rows and no signals. Every raised check is Moderate and needs a second owner 
 
 | Scenario | Direct | Second person | Approver | Applied by the proposer alone | No approver | Only the proposer | Approvers with items | Busiest approver | Median / 95th / largest week |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Everyone present | 70.4% | 29.6% | 0.0% | 20.5% | 0 | 0 | 0 | none | 0 / 0 / 0 |
-| 5% of positions vacant | 70.4% | 29.6% | 0.0% | 20.5% | 0 | 0 | 0 | none | 0 / 0 / 0 |
-| 10% of holders away, with a delegate, for two weeks | 70.4% | 29.6% | 0.0% | 20.5% | 0 | 0 | 0 | none | 0 / 0 / 0 |
+| Everyone present | 70.7% | 29.3% | 0.0% | 20.9% | 0 | 0 | 0 | none | 0 / 0 / 0 |
+| 5% of positions vacant | 70.7% | 29.3% | 0.0% | 20.9% | 0 | 0 | 0 | none | 0 / 0 / 0 |
+| 10% of holders away, with a delegate, for two weeks | 70.7% | 29.3% | 0.0% | 20.9% | 0 | 0 | 0 | none | 0 / 0 / 0 |
 
 ## Moderate to the department chair
 
@@ -28,9 +28,9 @@ One row at the institution: a Moderate change needs the chair of the workspace's
 
 | Scenario | Direct | Second person | Approver | Applied by the proposer alone | No approver | Only the proposer | Approvers with items | Busiest approver | Median / 95th / largest week |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Everyone present | 70.4% | 0.0% | 29.6% | 20.5% | 0 | 0 | 40 | chair of unit 41 | 8 / 17 / 17 |
-| 5% of positions vacant | 70.4% | 0.0% | 29.6% | 20.5% | 46 | 0 | 39 | chair of unit 41 | 8 / 17 / 17 |
-| 10% of holders away, with a delegate, for two weeks | 70.4% | 0.0% | 29.6% | 20.5% | 0 | 0 | 44 | chair of unit 41 | 8 / 17 / 17 |
+| Everyone present | 70.7% | 0.0% | 29.3% | 20.9% | 0 | 0 | 40 | chair of unit 34 | 12 / 17 / 17 |
+| 5% of positions vacant | 70.7% | 0.0% | 29.3% | 20.9% | 45 | 0 | 39 | chair of unit 34 | 12 / 17 / 17 |
+| 10% of holders away, with a delegate, for two weeks | 70.7% | 0.0% | 29.3% | 20.9% | 0 | 0 | 44 | chair of unit 34 | 12 / 17 / 17 |
 
 ## High to the privacy officer
 
@@ -38,9 +38,9 @@ Three checks (sensitivity, page_sensitivity, data_loss) count as High at the ins
 
 | Scenario | Direct | Second person | Approver | Applied by the proposer alone | No approver | Only the proposer | Approvers with items | Busiest approver | Median / 95th / largest week |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Everyone present | 70.4% | 20.5% | 9.1% | 20.5% | 0 | 0 | 1 | privacy officer of unit 0 | 70 / 87 / 87 |
-| 5% of positions vacant | 70.4% | 20.5% | 9.1% | 20.5% | 0 | 0 | 1 | privacy officer of unit 0 | 70 / 87 / 87 |
-| 10% of holders away, with a delegate, for two weeks | 70.4% | 20.5% | 9.1% | 20.5% | 0 | 0 | 1 | privacy officer of unit 0 | 70 / 87 / 87 |
+| Everyone present | 70.7% | 20.9% | 8.4% | 20.9% | 0 | 0 | 1 | privacy officer of unit 0 | 66 / 74 / 74 |
+| 5% of positions vacant | 70.7% | 20.9% | 8.4% | 20.9% | 0 | 0 | 1 | privacy officer of unit 0 | 66 / 74 / 74 |
+| 10% of holders away, with a delegate, for two weeks | 70.7% | 20.9% | 8.4% | 20.9% | 0 | 0 | 1 | privacy officer of unit 0 | 66 / 74 / 74 |
 
 ## Both together
 
@@ -48,7 +48,7 @@ The two rows above and the three High signals.
 
 | Scenario | Direct | Second person | Approver | Applied by the proposer alone | No approver | Only the proposer | Approvers with items | Busiest approver | Median / 95th / largest week |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Everyone present | 70.4% | 0.0% | 29.6% | 20.5% | 0 | 0 | 41 | privacy officer of unit 0 | 70 / 87 / 87 |
-| 5% of positions vacant | 70.4% | 0.0% | 29.6% | 20.5% | 37 | 0 | 40 | privacy officer of unit 0 | 70 / 87 / 87 |
-| 10% of holders away, with a delegate, for two weeks | 70.4% | 0.0% | 29.6% | 20.5% | 0 | 0 | 45 | privacy officer of unit 0 | 70 / 87 / 87 |
+| Everyone present | 70.7% | 0.0% | 29.3% | 20.9% | 0 | 0 | 41 | privacy officer of unit 0 | 66 / 74 / 74 |
+| 5% of positions vacant | 70.7% | 0.0% | 29.3% | 20.9% | 30 | 0 | 40 | privacy officer of unit 0 | 66 / 74 / 74 |
+| 10% of holders away, with a delegate, for two weeks | 70.7% | 0.0% | 29.3% | 20.9% | 0 | 0 | 45 | privacy officer of unit 0 | 66 / 74 / 74 |
 

@@ -671,6 +671,8 @@ fn check_manifest_part(
             (was != Some(mask) && mask.weaker_than(default)).then(|| format!("table '{}' field '{}': the mask shows more than its category's default. {} The default: {}", t.id, f.name, mask.sentence(), default.sentence()))
         })
         .collect();
+    // Integrations phase 4: each webhook's receiver is on the allowlist and its secret exists, now.
+    let (webhook_host, webhook_sensitive, webhook_scope) = webhook_checks(&manifest, baseline, state);
     let checks = vec![
         check("schema", vec![]),
         check("sensitivity", sensitivity_problems),
@@ -683,8 +685,80 @@ fn check_manifest_part(
         check("access_loosened", loosened),
         check("coordinates_widened", coordinates_widened),
         check("mask_weakened", mask_weakened),
+        check("webhook_host", webhook_host),
+        check("webhook_sensitive", webhook_sensitive),
+        warn("webhook_scope", webhook_scope),
     ];
     Ok(ManifestPart { manifest, checks, sources: provided.into_iter().collect() })
+}
+
+/// Integrations phase 4: what a manifest's webhooks raise.
+///
+/// `webhook_host` fails when a webhook's address is not https, its host and port are not on `egress.allow` now, its
+/// secret does not exist, or it names a table or field the app does not have. `webhook_sensitive` is raised when a
+/// webhook new or changed since the reviewed version sends the value of an effectively sensitive field, and needs a
+/// second person. `webhook_scope` warns when a webhook sends values with no filter, so every record's values leave.
+fn webhook_checks(manifest: &AppManifest, baseline: Option<&AppManifest>, state: &SharedState) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let (mut host, mut sensitive, mut scope) = (Vec::new(), Vec::new(), Vec::new());
+    let hooks = &manifest.integrations.webhooks;
+    if hooks.is_empty() {
+        return (host, sensitive, scope);
+    }
+    let (allow, allow_http) = {
+        let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
+        (crate::net::egress::Allow::from_settings(&settings), settings.get("webhooks.allow_http").and_then(Value::as_bool).unwrap_or(false))
+    };
+    let secrets: BTreeSet<String> = crate::secrets::list(&state.repository).map(|l| l.into_iter().map(|s| s.name).collect()).unwrap_or_default();
+    let flagged = sensitive_fields(manifest, state);
+    let mut ids = BTreeSet::new();
+    for h in hooks {
+        if !ids.insert(h.id.clone()) {
+            host.push(format!("two webhooks have the id '{}'", h.id));
+        }
+        let (scheme, rest) = h.url.split_once("://").unwrap_or(("", ""));
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        let (name, port) = match authority.rsplit_once(':') {
+            Some((n, p)) => (n.to_string(), p.parse::<u16>().ok()),
+            None => (authority.to_string(), Some(if scheme == "http" { 80 } else { 443 })),
+        };
+        if !(scheme == "https" || (allow_http && scheme == "http")) {
+            host.push(format!("webhook '{}': its address {} is not https", h.id, h.url));
+        } else if name.is_empty() || port.is_none() {
+            host.push(format!("webhook '{}': {} names no host and port", h.id, h.url));
+        } else if !allow.lists_host(&name, port.unwrap_or(0)) {
+            host.push(format!("webhook '{}': the host {name} and port {} are not on egress.allow", h.id, port.unwrap_or(0)));
+        }
+        if !secrets.contains(&h.secret) {
+            host.push(format!("webhook '{}': the secret {} does not exist", h.id, h.secret));
+        }
+        if h.events.is_empty() || h.tables.is_empty() {
+            host.push(format!("webhook '{}': it names no event or no table", h.id));
+        }
+        for t in &h.tables {
+            match manifest.tables.iter().find(|x| &x.id == t) {
+                None => host.push(format!("webhook '{}': the app has no table '{t}'", h.id)),
+                Some(table) => {
+                    for f in h.fields.iter().filter(|f| !table.fields.iter().any(|x| &x.name == *f)) {
+                        host.push(format!("webhook '{}': the table '{t}' has no field '{f}'", h.id));
+                    }
+                }
+            }
+        }
+        if h.include_values {
+            if h.filter.is_none() {
+                scope.push(format!("webhook '{}' sends the values of {} for every record, with no filter", h.id, h.fields.join(", ")));
+            }
+            let reviewed = baseline.and_then(|b| b.integrations.webhooks.iter().find(|x| x.id == h.id)).map(|x| serde_json::to_value(x).unwrap_or_default());
+            if reviewed != Some(serde_json::to_value(h).unwrap_or_default()) {
+                for f in &h.fields {
+                    if h.tables.iter().any(|t| flagged.contains(&(t.clone(), f.clone()))) {
+                        sensitive.push(format!("webhook '{}' sends the sensitive field '{f}' to {name}", h.id));
+                    }
+                }
+            }
+        }
+    }
+    (host, sensitive, scope)
 }
 
 /// The checks on a rules part. A rule that fails `rule_schema` stores no proposal.

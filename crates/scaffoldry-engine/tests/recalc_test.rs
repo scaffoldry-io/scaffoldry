@@ -46,7 +46,7 @@ fn manifest(tables: Vec<AppTable>) -> AppManifest {
         department: "biology".into(),
         workspace_id: None,
         herm_capability_id: None,
-        coordinates: None, sealed: false,
+        coordinates: None, sealed: false, integrations: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables,

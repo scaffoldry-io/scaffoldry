@@ -1125,6 +1125,64 @@ pub struct AppManifest {
     /// A sealed app stops every grant anchored above it. Unsealing is a widening change.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sealed: bool,
+    /// Integrations phase 4: what the app sends out. A webhook is approved with the app, through a proposal.
+    #[serde(default, skip_serializing_if = "Integrations::is_empty")]
+    pub integrations: Integrations,
+}
+
+/// What an app sends to other systems.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Integrations {
+    #[serde(default)]
+    pub webhooks: Vec<Webhook>,
+}
+
+impl Integrations {
+    pub fn is_empty(&self) -> bool {
+        self.webhooks.is_empty()
+    }
+}
+
+/// Integrations phase 4: a webhook. It posts a signed event to `url` when a listed event happens to a listed table.
+/// The body names the record by id. It carries values only when `include_values` is true, and then only `fields`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Webhook {
+    pub id: String,
+    pub name: String,
+    /// https only.
+    pub url: String,
+    /// The name of a stored secret, used to sign each delivery.
+    pub secret: String,
+    pub events: Vec<WebhookEvent>,
+    pub tables: Vec<String>,
+    #[serde(default)]
+    pub include_values: bool,
+    /// The fields whose values a delivery carries, when `include_values` is true.
+    #[serde(default)]
+    pub fields: Vec<String>,
+    /// Which records' events are sent. None sends every record's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<CompoundFilter>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WebhookEvent {
+    RecordCreated,
+    RecordUpdated,
+    RecordDeleted,
+    ProcessDecided,
+}
+
+impl WebhookEvent {
+    /// The event's name in a delivery's body.
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            WebhookEvent::RecordCreated => "record.created",
+            WebhookEvent::RecordUpdated => "record.updated",
+            WebhookEvent::RecordDeleted => "record.deleted",
+            WebhookEvent::ProcessDecided => "process.decided",
+        }
+    }
 }
 
 /// A screen of an app: a built-in view, or a custom page an agent wrote.

@@ -430,7 +430,7 @@ export type WorkflowActionItem =
   | { type: "NotifyCollaborator"; role: string; message_template: string }
   | { type: "UpdateRecordStatus"; new_status: string }
   | { type: "CreateLedgerAuditEntry"; summary: string; oscal_control: string }
-  | { type: "WebhookDispatch"; target_url: string };
+  | { type: "WebhookDispatch"; webhook_id: string };
 
 export type ProcessStepKind =
   | {
@@ -439,7 +439,7 @@ export type ProcessStepKind =
           | { NotifyCollaborator: { role: string; message_template: string } }
           | { UpdateRecordStatus: { new_status: string } }
           | { CreateLedgerAuditEntry: { summary: string; oscal_control: string } }
-          | { WebhookDispatch: { target_url: string } };
+          | { WebhookDispatch: { webhook_id: string } };
       };
     }
   | {
