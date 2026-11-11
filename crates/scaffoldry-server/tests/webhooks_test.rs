@@ -26,7 +26,12 @@ const OWNER: &str = "einstein@physics.state.edu";
 const CO_OWNER: &str = "bohr@physics.state.edu";
 const WORKSPACE: &str = "ws-physics-optics";
 const SECRET_NAME: &str = "housing-hook";
-const SECRET_VALUE: &[u8] = b"whsec-3f9a-local";
+
+/// The signing secret of the test webhook, made fresh for each run so no key is written in the source.
+fn secret_value() -> &'static [u8] {
+    static SECRET: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    SECRET.get_or_init(|| format!("whsec-{}", uuid::Uuid::new_v4().simple()).into_bytes())
+}
 
 /// Every name resolves to `ip`.
 struct To(IpAddr);
@@ -138,7 +143,7 @@ fn world(replies: Vec<&'static str>) -> World {
     state.seed_demo().expect("seed");
     let app = build_app_with_state(state.clone()).expect("router");
     let master = scaffoldry_server::secrets::MasterKey::from_file(&key).unwrap();
-    scaffoldry_server::secrets::put(&state.repository, &master, SECRET_NAME, SECRET_VALUE, ADMIN).unwrap();
+    scaffoldry_server::secrets::put(&state.repository, &master, SECRET_NAME, secret_value(), ADMIN).unwrap();
     let (port, got) = receiver(replies);
     {
         let mut s = state.settings.write().unwrap();
@@ -295,11 +300,11 @@ async fn a_delivery_is_signed_and_verifies() {
     let got = w.got.lock().unwrap()[0].clone();
     let sig = got.header("X-Scaffoldry-Signature").expect("a signature");
     assert!(sig.starts_with("t=") && sig.contains(",v1="), "{sig}");
-    assert!(webhooks::verify(SECRET_VALUE, &sig, &got.body));
+    assert!(webhooks::verify(secret_value(), &sig, &got.body));
     let mut changed = got.body.clone();
     changed.push(b' ');
-    assert!(!webhooks::verify(SECRET_VALUE, &sig, &changed), "a changed body fails");
-    assert!(!webhooks::verify(b"another secret", &sig, &got.body), "another secret fails");
+    assert!(!webhooks::verify(secret_value(), &sig, &changed), "a changed body fails");
+    assert!(!webhooks::verify(format!("other-{}", uuid::Uuid::new_v4().simple()).as_bytes(), &sig, &got.body), "another secret fails");
     assert_eq!(got.header("X-Scaffoldry-Event-Id").as_deref(), got.json()["id"].as_str(), "the event id is the idempotency key");
     assert_eq!(deliveries(&w, &slug)[0]["state"], "delivered");
 }
