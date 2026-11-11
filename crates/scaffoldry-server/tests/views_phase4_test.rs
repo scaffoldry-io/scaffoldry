@@ -143,7 +143,7 @@ fn manifest(slug: &str) -> AppManifest {
             fields: vec![indexed("amount", FieldType::Number), indexed("bucket", FieldType::Number), status, indexed("due", FieldType::Date)],
             primary_field: None,
             sample_records: vec![],
-            coordinates: None, sealed: false, integrations: Default::default(),
+            coordinates: None, sealed: false,
             row_place: Default::default(),
         }],
         relationships: vec![],

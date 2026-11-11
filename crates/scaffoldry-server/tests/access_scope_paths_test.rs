@@ -78,7 +78,7 @@ fn manifest(slug: &str) -> AppManifest {
             fields: vec![FieldSpec::simple("name", "name", FieldType::Text, false, false), advisor],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
-            coordinates: None, sealed: false, integrations: Default::default(),
+            coordinates: None, sealed: false,
             row_place: Default::default(),
         }],
         relationships: vec![],

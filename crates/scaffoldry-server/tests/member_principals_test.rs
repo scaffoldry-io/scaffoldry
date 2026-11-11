@@ -75,7 +75,7 @@ fn manifest(slug: &str) -> AppManifest {
             )],
             primary_field: Some("name".to_string()),
             sample_records: vec![],
-            coordinates: None, sealed: false, integrations: Default::default(),
+            coordinates: None, sealed: false,
             row_place: Default::default(),
         }],
         relationships: vec![],

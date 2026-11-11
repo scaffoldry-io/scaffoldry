@@ -98,7 +98,7 @@ fn manifest(slug: &str, views: Vec<AppView>) -> AppManifest {
             fields: fields(),
             primary_field: None,
             sample_records: vec![],
-            coordinates: None, sealed: false, integrations: Default::default(),
+            coordinates: None, sealed: false,
             row_place: Default::default(),
         }],
         relationships: vec![],

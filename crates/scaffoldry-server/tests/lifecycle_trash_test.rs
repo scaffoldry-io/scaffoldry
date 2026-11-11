@@ -103,7 +103,7 @@ async fn fixture() -> Fixture {
                     fields: fields(),
                     primary_field: Some("title".to_string()),
                     sample_records: vec![],
-                    coordinates: None, sealed: false, integrations: Default::default(),
+                    coordinates: None, sealed: false,
                     row_place: Default::default(),
                 },
                 AppTable {
@@ -116,7 +116,7 @@ async fn fixture() -> Fixture {
                     fields: vec![FieldSpec::simple("applicant", "Applicant", FieldType::Text, false, false), link("program", "programs", LinkCardinality::One, "applications")],
                     primary_field: Some("applicant".to_string()),
                     sample_records: vec![],
-                    coordinates: None, sealed: false, integrations: Default::default(),
+                    coordinates: None, sealed: false,
                     row_place: Default::default(),
                 },
                 AppTable {
@@ -129,7 +129,7 @@ async fn fixture() -> Fixture {
                     fields: vec![FieldSpec::simple("code", "Code", FieldType::Text, false, false), link("applications", "apps", LinkCardinality::Many, "program")],
                     primary_field: Some("code".to_string()),
                     sample_records: vec![],
-                    coordinates: None, sealed: false, integrations: Default::default(),
+                    coordinates: None, sealed: false,
                     row_place: Default::default(),
                 },
             ],

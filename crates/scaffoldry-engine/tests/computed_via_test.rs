@@ -35,7 +35,7 @@ fn table(id: &str, fields: Vec<FieldSpec>) -> AppTable {
         fields,
         primary_field: None,
         sample_records: vec![],
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false,
         row_place: Default::default(),
     }
 }

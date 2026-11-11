@@ -102,7 +102,7 @@ fn apply_field_effects_sets_status() {
 }
 
 #[test]
-fn webhook_is_not_a_success() {
+fn a_webhook_action_is_queued_by_name_and_not_sent_by_the_engine() {
     let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
         .expect("Failed to initialize policy engine");
     let automation_engine = AutomationEngine::new(policy_engine);
@@ -117,7 +117,7 @@ fn webhook_is_not_a_success() {
         predicates: vec![],
         actions: vec![
             ActionType::WebhookDispatch {
-                target_url: "https://example.com/webhook".to_string(),
+                webhook_id: "notify".to_string(),
             },
         ],
         steps: vec![],
@@ -140,14 +140,10 @@ fn webhook_is_not_a_success() {
     assert!(result.trigger_matched);
     assert!(result.conditions_met);
     assert_eq!(result.actions_executed.len(), 1);
-    assert!(result.actions_executed[0].contains("Webhook not sent"));
+    // Integrations phase 4: the engine sends nothing. It names the webhook, and the server queues the delivery.
+    assert!(result.actions_executed[0].contains("queued"));
     assert!(!result.actions_executed[0].contains("Dispatched"));
-    assert_eq!(
-        result.effects,
-        vec![scaffoldry_core::ActionEffect::Rejected {
-            reason: "webhook disabled: https://example.com/webhook".to_string()
-        }]
-    );
+    assert_eq!(result.effects, vec![scaffoldry_core::ActionEffect::Webhook { webhook_id: "notify".to_string() }]);
 }
 
 #[test]

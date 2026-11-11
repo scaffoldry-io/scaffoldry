@@ -131,6 +131,7 @@ async fn fixture() -> Fixture {
         herm_capability_id: None,
         coordinates: None,
         sealed: false,
+        integrations: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         views: vec![AppView::table("main", "Main", ViewType::Table, fields.clone())],

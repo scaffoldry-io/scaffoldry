@@ -41,7 +41,7 @@ fn make_manifest(slug: &str) -> AppManifest {
                 FieldSpec::simple("spent", "Spent", FieldType::Number, false, false),
             ],
             primary_field: Some("title".to_string()),
-            coordinates: None, sealed: false, integrations: Default::default(),
+            coordinates: None, sealed: false,
             row_place: Default::default(),
             sample_records: vec![json!({
                 "id": "GRANT-1",

@@ -122,7 +122,7 @@ async fn fixture() -> Fixture {
                 fields,
                 primary_field: Some("title".to_string()),
                 sample_records: vec![],
-                coordinates: None, sealed: false, integrations: Default::default(),
+                coordinates: None, sealed: false,
                 row_place: Default::default(),
             },
         ],

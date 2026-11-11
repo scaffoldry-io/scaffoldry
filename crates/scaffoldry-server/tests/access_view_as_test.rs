@@ -59,7 +59,7 @@ fn table(id: &str, fields: Vec<FieldSpec>, primary: &str) -> AppTable {
         fields,
         primary_field: Some(primary.into()),
         sample_records: vec![],
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false,
         row_place: Default::default(),
     }
 }
