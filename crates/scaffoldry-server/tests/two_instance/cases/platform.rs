@@ -116,6 +116,9 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/settings/{key}".into(), case!(setting_put));
     m.insert("POST /api/v1/apps/{slug}/webhooks/{id}/enable".into(), case!(webhook_enable));
     m.insert("PUT /api/v1/admin/egress/allow".into(), case!(egress_allow));
+    m.insert("POST /api/v1/admin/connections".into(), case!(connection_create));
+    m.insert("PATCH /api/v1/admin/connections/{id}".into(), case!(connection_update));
+    m.insert("POST /api/v1/admin/connections/{id}/run".into(), case!(connection_run));
     m.insert("POST /api/v1/admin/webhooks/{app}/{id}/disable".into(), case!(admin_webhook_disable));
     m.insert("POST /api/v1/admin/webhooks/{app}/{id}/enable".into(), case!(admin_webhook_enable));
     exempt(m, "POST /api/v1/admin/egress/test", "asks the outbound check about a host and reports in words; stores nothing");
@@ -562,6 +565,46 @@ async fn egress_allow(w: World) -> Outcome {
     status(w.wa("PUT", "/api/v1/admin/egress/allow", ADMIN, Some(json!({ "allow": list, "reason": "The feed moves here" }))).await, StatusCode::OK, "save the list")?;
     let seen = status(w.rb("GET", "/api/v1/admin/egress", ADMIN, None).await, StatusCode::OK, "B reads the list")?;
     ensure(seen["allow"] == list, format!("B shows the list A saved: {seen}"))
+}
+
+/// Connections phase 1: a connection A creates, B reads. It is a row, and the dataset it fills is an app both serve.
+fn connection_body(name: &str, app: &str, path: &str) -> Value {
+    json!({
+        "name": name, "kind": "file_drop", "reason": "A feed", "config": { "path": path, "format": "csv" },
+        "dataset_app": app, "dataset_table": "rows", "key_field": "code",
+        "column_map": [{ "source": "Code", "field": "code", "type": "Text" }], "sensitivity": "Public",
+    })
+}
+
+async fn connection_create(w: World) -> Outcome {
+    let (name, app) = (unique("P1conn"), unique("p1ds"));
+    let made = status(w.wa("POST", "/api/v1/admin/connections", ADMIN, Some(connection_body(&name, &app, "feeds/p1.csv"))).await, StatusCode::CREATED, "create the connection")?;
+    let id = made["connection"]["id"].as_str().ok_or("a connection id")?.to_string();
+    let seen = status(w.rb("GET", "/api/v1/admin/connections", ADMIN, None).await, StatusCode::OK, "B lists connections")?;
+    ensure(has(&seen, &id), format!("B lists the connection A made: {seen}"))?;
+    let dataset = status(w.rb("GET", &format!("/api/v1/apps/{app}"), ADMIN, None).await, StatusCode::OK, "B reads the dataset app")?;
+    ensure(dataset["kind"] == "Dataset", format!("B serves the dataset as a dataset: {dataset}"))
+}
+
+async fn connection_update(w: World) -> Outcome {
+    let (name, app) = (unique("P1upd"), unique("p1upd"));
+    let made = status(w.wa("POST", "/api/v1/admin/connections", ADMIN, Some(connection_body(&name, &app, "feeds/p1.csv"))).await, StatusCode::CREATED, "create the connection")?;
+    let id = made["connection"]["id"].as_str().ok_or("a connection id")?.to_string();
+    status(w.wa("PATCH", &format!("/api/v1/admin/connections/{id}"), ADMIN, Some(json!({ "enabled": false, "reason": "Paused" }))).await, StatusCode::OK, "pause it")?;
+    let seen = status(w.rb("GET", "/api/v1/admin/connections", ADMIN, None).await, StatusCode::OK, "B lists connections")?;
+    let row = seen["connections"].as_array().and_then(|l| l.iter().find(|c| c["id"] == id.as_str())).ok_or("B lists the connection")?;
+    ensure(row["enabled"] == false, format!("B shows it paused: {row}"))
+}
+
+/// A run needs a file. With none in the drop directory the run fails and is recorded, the same through either server.
+async fn connection_run(w: World) -> Outcome {
+    let (name, app) = (unique("P1run"), unique("p1run"));
+    let made = status(w.wa("POST", "/api/v1/admin/connections", ADMIN, Some(connection_body(&name, &app, "feeds/none.csv"))).await, StatusCode::CREATED, "create the connection")?;
+    let id = made["connection"]["id"].as_str().ok_or("a connection id")?.to_string();
+    let ran = status(w.wa("POST", &format!("/api/v1/admin/connections/{id}/run"), ADMIN, Some(json!({}))).await, StatusCode::OK, "run it on A")?;
+    ensure(ran["run"]["state"] == "failed", format!("the run fails without a file: {ran}"))?;
+    let runs = status(w.rb("GET", &format!("/api/v1/admin/connections/{id}/runs"), ADMIN, None).await, StatusCode::OK, "B reads the runs")?;
+    ensure(runs["runs"].as_array().map(Vec::len) == Some(1), format!("B shows the run A made: {runs}"))
 }
 
 /// Integrations phase 5: the admin switch for a webhook checks the webhook first, so a webhook that is not live is the

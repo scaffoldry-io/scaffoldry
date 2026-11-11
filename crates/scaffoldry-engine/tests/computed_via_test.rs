@@ -54,7 +54,7 @@ fn manifest(parent_extra: Vec<FieldSpec>, child_extra: Vec<FieldSpec>) -> AppMan
         department: "x".into(),
         workspace_id: None,
         herm_capability_id: None,
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![table("parents", parent_fields), table("children", child_fields)],

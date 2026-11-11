@@ -46,6 +46,7 @@ async fn upload_import(
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers).ok_or_else(|| pair(ServiceError::unauthorized("Unauthorized")))?;
     authorize_app(&user, &slug, AppAction::WriteRecords, &state).map_err(pair)?;
+    crate::service::connections::ensure_writable(&slug, &state).map_err(pair)?;
     crate::guard::origin(&state, &headers).map_err(pair)?;
     let repo = &state.repository;
     let dir = files::dir().ok_or_else(|| pair(ServiceError::BadRequest("File storage is not set up on this server.".to_string())))?;

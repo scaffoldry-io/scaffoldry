@@ -272,6 +272,9 @@ pub struct ServerState {
     /// The file holding the master key for the secrets store, from `SCAFFOLDRY_MASTER_KEY_FILE` (integrations phase 1).
     /// The key is read from it each time a secret is used, so nothing keeps it in memory between requests.
     pub master_key_file: Option<std::path::PathBuf>,
+    /// The directory a file-drop connection reads from, from `SCAFFOLDRY_DROP_DIR` (connections phase 1). The operator
+    /// mounts it, so a file drop reaches no network.
+    pub drop_dir: Option<std::path::PathBuf>,
     /// The domain tree (`access_domains`): `(key, parent key)`. It changes only by migration, so it is read once.
     pub domains: std::sync::OnceLock<Vec<(String, Option<String>)>>,
 }
@@ -527,6 +530,10 @@ impl ServerState {
             format!("Failed to read {what} at start: {e}").into()
         };
 
+        // Connections phase 1: the workspace that holds every dataset exists from the first boot. It is made before the counters are read, so making it is not
+        // taken for a write that landed while the rest loads.
+        crate::service::connections::ensure_system_workspace(repo).map_err(|e| read("the system workspace", e))?;
+
         // The counters come first. A write that lands while the rest loads is then seen by the first refresh.
         let versions = repo
             .cache_versions()
@@ -744,6 +751,7 @@ impl ServerState {
             formula_rate_limits: RwLock::new(HashMap::new()),
             realtime_streams: crate::realtime::Hub::new(),
             master_key_file: crate::secrets::key_file_from_env(),
+            drop_dir: std::env::var_os("SCAFFOLDRY_DROP_DIR").filter(|v| !v.is_empty()).map(std::path::PathBuf::from),
             domains: std::sync::OnceLock::new(),
         })
     }
@@ -1335,10 +1343,6 @@ impl ServerState {
                 ],
                 record_count: 240,
                 published_at: now.clone(),
-                sample_data: vec![
-                    json!({ "eppn": "dr.smith@university.edu", "full_name": "Dr. Sarah Smith", "title": "Professor of Physics", "department": "Physics", "research_specialty": "Quantum Lattice Systems" }),
-                    json!({ "eppn": "dr.alan@university.edu", "full_name": "Dr. Alan Turing", "title": "Chair of Computing", "department": "Computer Science", "research_specialty": "Automata & Cryptography" }),
-                ],
             },
         );
 
@@ -1360,10 +1364,6 @@ impl ServerState {
                 ],
                 record_count: 58,
                 published_at: now.clone(),
-                sample_data: vec![
-                    json!({ "code": "PHYS-PHD", "degree_name": "Doctor of Philosophy in Physics", "department": "Physics" }),
-                    json!({ "code": "CS-BS", "degree_name": "Bachelor of Science in Computer Science", "department": "Computer Science" }),
-                ],
             },
         );
 
@@ -1387,10 +1387,6 @@ impl ServerState {
                 ],
                 record_count: 840,
                 published_at: now.clone(),
-                sample_data: vec![
-                    json!({ "course_code": "PHYS-401", "course_title": "Quantum Mechanics I", "credits": 4, "instructor_eppn": "dr.smith@university.edu", "program_code": "PHYS-PHD" }),
-                    json!({ "course_code": "CS-302", "course_title": "Theory of Computation", "credits": 3, "instructor_eppn": "dr.alan@university.edu", "program_code": "CS-BS" }),
-                ],
             },
         );
 
@@ -1414,9 +1410,6 @@ impl ServerState {
                 ],
                 record_count: 115,
                 published_at: now.clone(),
-                sample_data: vec![
-                    json!({ "award_number": "NSF-PHY-2026-01", "project_title": "Quantum Lattice Topological Phases", "pi_eppn": "dr.smith@university.edu", "amount": 750000, "is_ferpa_restricted": true }),
-                ],
             },
         );
 
@@ -1472,7 +1465,7 @@ impl ServerState {
             department: "physics".to_string(),
             workspace_id: Some("ws-physics-optics".to_string()),
             herm_capability_id: None,
-            coordinates: None, sealed: false, integrations: Default::default(),
+            coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
             custom_domain: None,
             custom_domain_verified: false,
             tables: vec![],

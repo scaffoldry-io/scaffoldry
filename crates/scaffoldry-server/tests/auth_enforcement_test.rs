@@ -882,7 +882,8 @@ async fn test_phase_6_open_routes_enforcement() {
     ).await;
     assert_eq!(st, StatusCode::OK, "Admin can decide admin step");
 
-    // 4. A faculty caller reading the grants dataset receives no sample_data key.
+    // 4. The catalog holds metadata only (connections phase 1): a faculty caller reading the grants dataset receives no
+    // sample_data key, and nothing a caller sends can put one there.
     let (st, _) = send(
         &app,
         "POST",
@@ -911,7 +912,7 @@ async fn test_phase_6_open_routes_enforcement() {
     assert_eq!(st, StatusCode::OK);
     assert!(
         ds_body.get("sample_data").is_none(),
-        "Faculty must not receive sample_data key for Restricted dataset"
+        "The catalog never returns rows, even when a caller sends some"
     );
 
     // 5. A student gets 403 on GET /governance/ledger.
@@ -1212,16 +1213,18 @@ async fn test_phase_8_faculty_caller_gets_403_on_get_settings() {
 }
 
 #[test]
-fn test_phase_8_fresh_database_has_zero_workspaces() {
+fn test_phase_8_fresh_database_has_only_the_system_workspace() {
     let _db = common::TestDb::new();
     let db_url = scaffoldry_server::testing::database_url();
     if let Ok(mut client) = postgres::Client::connect(&db_url, postgres::NoTls) {
         let _ = client.batch_execute("TRUNCATE TABLE workspaces CASCADE;");
     }
     let state = ServerState::new().expect("ServerState::new on fresh database");
-    assert_eq!(state.workspaces.read().unwrap().len(), 0, "Fresh database after boot must have zero workspaces");
-    let repo_count = state.repository.list_workspaces().unwrap().len();
-    assert_eq!(repo_count, 0, "PostgreSQL repository must have zero workspaces after fresh boot");
+    // The only workspace a fresh boot makes is the system one that holds datasets (connections phase 1). No demo data.
+    let ids: Vec<String> = state.workspaces.read().unwrap().keys().cloned().collect();
+    assert_eq!(ids, vec!["system-datasets".to_string()], "Fresh database after boot must have only the system workspace");
+    let stored: Vec<String> = state.repository.list_workspaces().unwrap().into_iter().map(|w| w.id).collect();
+    assert_eq!(stored, vec!["system-datasets".to_string()], "PostgreSQL repository must have only the system workspace after fresh boot");
 }
 
 #[test]

@@ -88,6 +88,8 @@ pub enum DecisionType {
     FlowRunRetried,
     /// Integrations phase 5: a Platform Admin turned a webhook off or on, with a reason.
     WebhookChanged,
+    /// Connections phase 1: a Platform Admin created or changed a data connection, or approved a shrunken source.
+    ConnectionChanged,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -156,6 +158,7 @@ impl DecisionType {
         DecisionType::FlowPartyApproved,
         DecisionType::FlowRunRetried,
         DecisionType::WebhookChanged,
+        DecisionType::ConnectionChanged,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -223,6 +226,7 @@ impl DecisionType {
             DecisionType::FlowPartyApproved => "FlowPartyApproved",
             DecisionType::FlowRunRetried => "FlowRunRetried",
             DecisionType::WebhookChanged => "WebhookChanged",
+            DecisionType::ConnectionChanged => "ConnectionChanged",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",

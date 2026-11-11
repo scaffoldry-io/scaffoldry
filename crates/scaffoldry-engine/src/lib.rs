@@ -1128,6 +1128,24 @@ pub struct AppManifest {
     /// Integrations phase 4: what the app sends out. A webhook is approved with the app, through a proposal.
     #[serde(default, skip_serializing_if = "Integrations::is_empty")]
     pub integrations: Integrations,
+    /// Connections phase 1: an app, or a dataset. A dataset holds a read-only copy of another system's data. Only its
+    /// sync writes its records.
+    #[serde(default, skip_serializing_if = "AppKind::is_app")]
+    pub kind: AppKind,
+}
+
+/// What an app is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AppKind {
+    #[default]
+    App,
+    Dataset,
+}
+
+impl AppKind {
+    pub fn is_app(&self) -> bool {
+        *self == AppKind::App
+    }
 }
 
 /// What an app sends to other systems.

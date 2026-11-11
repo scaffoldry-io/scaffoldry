@@ -33,8 +33,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     if args.len() > 1 && args[1] == "seed-demo" {
-        let state = ServerState::new()?;
+        let state = std::sync::Arc::new(ServerState::new()?);
         state.seed_demo()?;
+        service::connections::seed_demo_connections(&state);
         println!("Demo data seeded successfully.");
         return Ok(());
     }
@@ -118,6 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "send_email", 15)?;
     // Integrations phase 4: webhooks are sent every 10 seconds, and each call log is trimmed once a day.
     jobs::register_schedule(repo, "deliver_webhooks", 10)?;
+    jobs::register_schedule(repo, "sync_due_connections", 60)?;
     jobs::register_schedule(repo, "purge_webhook_deliveries", 24 * 60 * 60)?;
     // Each person's digest goes out at 07:00 in the institution's zone.
     scaffoldry_server::mail::register_digest_schedule(repo)?;

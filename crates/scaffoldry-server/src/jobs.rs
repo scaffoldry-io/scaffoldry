@@ -164,6 +164,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::calc_jobs::convert_select_options,
     },
     JobKind {
+        name: "sync_due_connections",
+        title: "Syncing data connections",
+        description: "Runs each data connection whose schedule is due, copying its source into its read-only dataset and recording what changed.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::connections::sync_due_job,
+    },
+    JobKind {
         name: "deliver_webhooks",
         title: "Sending webhooks",
         description: "Signs and sends the webhook deliveries that are due through the outbound allowlist, and schedules each failed one to try again.",

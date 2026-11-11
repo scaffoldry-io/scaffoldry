@@ -24,7 +24,6 @@ pub mod supervision;
 pub mod access_review;
 pub mod receipts;
 pub mod coordinates;
-pub mod catalog;
 pub mod guidance;
 pub mod comments;
 pub mod disclosure;
@@ -68,6 +67,7 @@ pub mod views;
 pub mod lifecycle;
 pub mod retention;
 pub mod outbound;
+pub mod connections;
 pub mod secrets;
 pub mod mail;
 pub mod delegations;
@@ -208,6 +208,8 @@ pub enum ServiceError {
     PreviewReadOnly(String),
     /// A write to an archived app or workspace (lifecycle phase 2). An archive only reads until it is unarchived.
     Archived(String),
+    /// A write to a dataset record that was not made by the dataset's sync (connections phase 1).
+    ReadOnlySource(String),
     /// Too many of something at once, such as event streams (real-time phase 1). Waiting or closing one helps.
     RateLimited(String),
     /// The secrets store has no master key to work with (integrations phase 1).
@@ -275,7 +277,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
-            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::FlowGrantExceeded(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::FlowGrantExceeded(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) | Self::ReadOnlySource(_) => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::ScannerUnavailable(_) | Self::StorageUnavailable(_) | Self::MasterKeyMissing(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -308,6 +310,7 @@ impl ServiceError {
             Self::AuthorityLoosens(_) => "authority_loosens",
             Self::PreviewReadOnly(_) => "preview_read_only",
             Self::Archived(_) => "archived",
+            Self::ReadOnlySource(_) => "read_only_source",
             Self::MasterKeyMissing(_) => "master_key_missing",
             Self::RateLimited(_) => "rate_limited",
             Self::TokenScope(_) => "token_scope",
@@ -348,6 +351,7 @@ impl ServiceError {
             | Self::AuthorityLoosens(msg)
             | Self::PreviewReadOnly(msg)
             | Self::Archived(msg)
+            | Self::ReadOnlySource(msg)
             | Self::RateLimited(msg)
             | Self::MasterKeyMissing(msg)
             | Self::TokenScope(msg)

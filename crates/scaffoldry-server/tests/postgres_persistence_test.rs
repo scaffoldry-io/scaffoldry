@@ -189,7 +189,7 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         department: "biology".to_string(),
         workspace_id: None,
         herm_capability_id: Some("RES-01".to_string()),
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
         custom_domain: Some(format!("{}.state.edu", test_slug)),
         custom_domain_verified: true,
         tables: vec![],
@@ -214,7 +214,6 @@ fn test_postgres_apps_and_datasets_persistence_lifecycle() {
         fields: vec![],
         record_count: 42,
         published_at: chrono::Utc::now().to_rfc3339(),
-        sample_data: vec![],
     };
     state.persist_dataset(ds.clone()).expect("Persist dataset");
 

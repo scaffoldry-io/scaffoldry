@@ -46,7 +46,7 @@ async fn send_req(
 #[test]
 fn test_decision_types_properties_and_pinned_hashes() {
     let _db = common::TestDb::new();
-    assert_eq!(DecisionType::ALL.len(), 63);
+    assert_eq!(DecisionType::ALL.len(), 64);
 
     for &dt in DecisionType::ALL {
         let s = dt.as_str();
@@ -406,9 +406,10 @@ async fn test_overview_counts_match_fixture() {
         "Overview must return 200 OK for admin"
     );
 
-    // Assert counts match fixture: three users, one on hold, two units, one workspace
+    // Assert counts match fixture: three users, one on hold, two units, one workspace and the system workspace that
+    // holds datasets (connections phase 1)
     assert_eq!(body["organization"]["unit_count"], 2, "Two units");
-    assert_eq!(body["workspaces"]["workspace_count"], 1, "One workspace");
+    assert_eq!(body["workspaces"]["workspace_count"], 2, "One workspace, and the system workspace");
     assert_eq!(body["people"]["active"], 2, "Two active users");
     assert_eq!(body["people"]["on_hold"], 1, "One user on hold");
     assert_eq!(body["people"]["inactive"], 0, "Zero inactive users");

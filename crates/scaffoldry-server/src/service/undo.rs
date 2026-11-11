@@ -21,6 +21,7 @@ fn internal(e: impl ToString) -> ServiceError {
 /// of the app, can do it, and only while every record still holds what the batch wrote.
 pub fn undo_batch(caller: &AuthUser, origin: &Origin, app_slug: &str, batch_id: &str, state: &SharedState) -> Result<Value, ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
+    crate::service::connections::ensure_writable(app_slug, state)?;
     let orig = uuid::Uuid::parse_str(batch_id).map_err(|_| ServiceError::BadRequest("batch id is not one this server issued".to_string()))?;
     let repo = repo(state)?;
     let entries = repo.batch_entries(app_slug, batch_id).map_err(internal)?;
@@ -63,6 +64,7 @@ pub fn restore_record(
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
+    crate::service::connections::ensure_writable(app_slug, state)?;
     let to_version = payload.get("to_version").and_then(Value::as_i64).filter(|v| *v >= 1).ok_or_else(|| ServiceError::Invalid {
         message: "to_version is required: the version to restore from".to_string(),
         fields: std::collections::BTreeMap::from([("to_version".to_string(), "required".to_string())]),

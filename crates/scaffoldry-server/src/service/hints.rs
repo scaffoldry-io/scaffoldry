@@ -63,6 +63,7 @@ pub fn hint_for(err: &ServiceError) -> String {
                 "Call list_workspaces to see where you have access, and ask a workspace owner for a role if you need more."
             }
         }
+        "read_only_source" => "This is a copy of another system's data. Change it at its source, and the next sync brings the change here.",
         "version_conflict" => "Call get_record to read the current version, then call the tool again with it.",
         "constraint_violated" => "Call describe_app to see which fields are required and their limits, then send them.",
         "field_hidden" | "field_read_only" => "Call describe_app to see which fields you may read and change, then retry without the others.",
