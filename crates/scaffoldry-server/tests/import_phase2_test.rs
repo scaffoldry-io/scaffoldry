@@ -104,7 +104,7 @@ async fn fixture() -> Fixture {
         department: "science".to_string(),
         workspace_id: Some(WORKSPACE.to_string()),
         herm_capability_id: None,
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         views: vec![AppView::table("main", "Main", ViewType::Table, fields.clone())],

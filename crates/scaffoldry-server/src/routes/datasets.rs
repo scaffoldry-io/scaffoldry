@@ -26,8 +26,8 @@ async fn list_datasets(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
-    let user = session_user(&state, &headers);
-    let is_admin = user.as_ref().map(|u| u.affiliation == "central_admin").unwrap_or(false);
+    // The catalog is metadata for a signed-in person. Rows are read through the dataset's own app, under its access rules.
+    session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     let datasets = state.datasets.read().map_err(|_| lock_err())?;
     let rels = state.relationships.read().map_err(|_| lock_err())?;
@@ -39,9 +39,7 @@ async fn list_datasets(
             .filter(|r| r.source_dataset_id == ds.id || r.target_dataset_id == ds.id)
             .count();
 
-        let show_sample = crate::service::catalog::sample_visible(is_admin, &ds.sensitivity_level);
-
-        let mut item = json!({
+        let item = json!({
             "id": ds.id,
             "name": ds.name,
             "description": ds.description,
@@ -54,12 +52,6 @@ async fn list_datasets(
             "published_at": ds.published_at,
             "relationship_count": rel_count,
         });
-
-        if show_sample {
-            if let Some(map) = item.as_object_mut() {
-                map.insert("sample_data".to_string(), json!(ds.sample_data));
-            }
-        }
 
         list.push(item);
     }
@@ -75,8 +67,7 @@ async fn get_dataset(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let user = session_user(&state, &headers);
-    let is_admin = user.as_ref().map(|u| u.affiliation == "central_admin").unwrap_or(false);
+    session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     let datasets = state.datasets.read().map_err(|_| lock_err())?;
     let ds = datasets.get(&id).ok_or(ServiceError::not_found("Dataset not found").into_pair())?;
@@ -88,9 +79,7 @@ async fn get_dataset(
         .cloned()
         .collect();
 
-    let show_sample = crate::service::catalog::sample_visible(is_admin, &ds.sensitivity_level);
-
-    let mut doc = json!({
+    let doc = json!({
         "id": ds.id,
         "name": ds.name,
         "description": ds.description,
@@ -103,12 +92,6 @@ async fn get_dataset(
         "published_at": ds.published_at,
         "relationships": related_rels,
     });
-
-    if show_sample {
-        if let Some(map) = doc.as_object_mut() {
-            map.insert("sample_data".to_string(), json!(ds.sample_data));
-        }
-    }
 
     Ok(Json(doc))
 }
@@ -179,17 +162,7 @@ async fn publish_dataset(
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
 
-    let sample_data = payload
-        .get("sample_data")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let record_count = payload
-        .get("record_count")
-        .and_then(|v| v.as_u64())
-        .map(|c| c as usize)
-        .unwrap_or(sample_data.len());
+    let record_count = payload.get("record_count").and_then(|v| v.as_u64()).map(|c| c as usize).unwrap_or(0);
 
     let dataset = PublishedDataset {
         id: id.clone(),
@@ -202,7 +175,6 @@ async fn publish_dataset(
         fields,
         record_count,
         published_at: Utc::now().to_rfc3339(),
-        sample_data,
     };
 
     state.persist_dataset(dataset.clone()).map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;

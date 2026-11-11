@@ -55,6 +55,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::CitationNotFound("No such passage".into()), "citation_not_found", StatusCode::BAD_REQUEST),
         (ServiceError::AuthorityLoosens("Too loose".into()), "authority_loosens", StatusCode::BAD_REQUEST),
         (ServiceError::ConstraintViolated("Linked".into()), "constraint_violated", StatusCode::CONFLICT),
+        (ServiceError::ReadOnlySource("Only the sync changes it".into()), "read_only_source", StatusCode::CONFLICT),
         (
             ServiceError::ConstraintViolation {
                 message: "field 'score' violates constraint 'min'".into(),
@@ -98,6 +99,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::ProposalChanged(_)
             | ServiceError::PreviewReadOnly(_)
             | ServiceError::Archived(_)
+            | ServiceError::ReadOnlySource(_)
             | ServiceError::RateLimited(_)
             | ServiceError::MasterKeyMissing(_)
             | ServiceError::TokenScope(_)

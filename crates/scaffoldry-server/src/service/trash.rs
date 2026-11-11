@@ -118,6 +118,7 @@ pub fn list_trash(caller: &AuthUser, app_slug: &str, limit: Option<usize>, curso
 /// Brings back a record, or every record of a batch deleted together.
 pub fn restore(caller: &AuthUser, origin: &Origin, app_slug: &str, selector: &str, state: &SharedState) -> Result<Value, ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
+    crate::service::connections::ensure_writable(app_slug, state)?;
     let repo = repo(state)?;
     let rows = repo.trashed_by_selector(app_slug, selector, keep_days(state)).map_err(internal)?;
     let rows: Vec<_> = rows

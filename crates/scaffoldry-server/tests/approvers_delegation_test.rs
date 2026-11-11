@@ -210,7 +210,7 @@ async fn world() -> (World, People) {
         department: "physics".to_string(),
         workspace_id: Some(WS.to_string()),
         herm_capability_id: None,
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![],

@@ -639,22 +639,14 @@ fn run_create_record(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
     to_value(&records::create_record(caller, origin, app_slug, &data, state)?)
 }
 
-fn run_list_datasets(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_list_datasets(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
     let dept_filter = args.get("department").and_then(|v| v.as_str());
-    // Sample rows follow the catalog's rule, the same as the HTTP route. Where it withholds them, the key is absent.
+    // Metadata only, as the HTTP route. Rows are read through the dataset's own app.
     let list: Vec<Value> = datasets
         .values()
         .filter(|d| dept_filter.is_none_or(|f| d.department.eq_ignore_ascii_case(f)))
-        .map(|d| {
-            let mut v = serde_json::to_value(d).unwrap_or(Value::Null);
-            if !crate::service::catalog::sample_visible_to(caller, &d.sensitivity_level) {
-                if let Some(map) = v.as_object_mut() {
-                    map.remove("sample_data");
-                }
-            }
-            v
-        })
+        .map(|d| serde_json::to_value(d).unwrap_or(Value::Null))
         .collect();
     to_value(&list)
 }

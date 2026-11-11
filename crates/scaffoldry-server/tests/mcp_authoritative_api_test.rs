@@ -230,7 +230,7 @@ async fn test_mcp_record_tools_allow_and_deny_by_department() {
             department: "physics".to_string(),
             workspace_id: Some("ws-physics-optics".to_string()),
             herm_capability_id: None,
-            coordinates: None, sealed: false, integrations: Default::default(),
+            coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
             custom_domain: None,
             custom_domain_verified: false,
             tables: vec![],
@@ -357,35 +357,25 @@ async fn seeded_app() -> Router {
     scaffoldry_server::build_app_with_state(state).expect("router")
 }
 
-/// The catalog shows sample rows only for public and directory data, or to a Platform Admin. The tool must follow the
-/// same rule as the HTTP route, or an agent could read samples of restricted data that the route would withhold.
+/// The catalog is metadata (connections phase 1). The tool answers with each dataset's fields and owner and never with
+/// rows, to anyone, so an agent cannot read a dataset's data through it. Rows are read through the dataset's own app,
+/// under its access rules.
 #[tokio::test]
-async fn list_datasets_withholds_samples_of_restricted_data_from_a_non_admin() {
+async fn list_datasets_returns_metadata_and_never_rows() {
     let _db = common::TestDb::new();
     let app = seeded_app().await;
-    let samples = |token: String| {
-        let app = app.clone();
-        async move {
-            let (_, res) = mcp_call(&app, &token, "tools/call", Some(json!({ "name": "list_datasets", "arguments": {} }))).await;
-            let text = res["result"]["content"][0]["text"].as_str().unwrap().to_string();
-            let list: Value = serde_json::from_str(&text).unwrap();
-            let items = list.get("items").cloned().unwrap_or(list);
-            items
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|d| (d["id"].as_str().unwrap().to_string(), d.get("sample_data").is_some_and(|s| !s.as_array().unwrap().is_empty())))
-                .collect::<std::collections::BTreeMap<String, bool>>()
+    for who in ["prof.curie@science.state.edu", "jordan.lee@state.edu"] {
+        let token = login_user(&app, who).await;
+        let (_, res) = mcp_call(&app, &token, "tools/call", Some(json!({ "name": "list_datasets", "arguments": {} }))).await;
+        let text = res["result"]["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(!text.contains("sample_data"), "{who}: no rows in the catalog");
+        let list: Value = serde_json::from_str(&text).unwrap();
+        let items = list.get("items").cloned().unwrap_or(list);
+        let ids: Vec<&str> = items.as_array().unwrap().iter().filter_map(|d| d["id"].as_str()).collect();
+        for want in ["faculty", "programs", "courses", "grants"] {
+            assert!(ids.contains(&want), "{who} sees {want} in the catalog: {ids:?}");
         }
-    };
-
-    let person = samples(login_user(&app, "prof.curie@science.state.edu").await).await;
-    assert!(person["programs"], "public data shows samples");
-    assert!(person["faculty"], "directory data shows samples");
-    assert!(!person["grants"], "restricted FERPA data shows none to a non-admin");
-
-    let admin = samples(login_user(&app, "jordan.lee@state.edu").await).await;
-    assert!(admin["grants"], "a Platform Admin sees every sample");
+    }
 }
 
 /// The server tells an agent, at the start, who it acts for and the few rules that hold everywhere. It is built for

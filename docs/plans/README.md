@@ -284,7 +284,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | --- | --- | --- | --- |
 | 164 | [integrations.md](integrations.md) | 4 | Webhooks behind an allowlist and a proposal, with signing, retries, and a call log | **COMPLETED** |
 | 165 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels | **COMPLETED** |
-| 166 | [connections.md](connections.md) | 1 | Datasets are real and read-only. A file-drop sync |
+| 166 | [connections.md](connections.md) | 1 | Datasets are real and read-only. A file-drop sync | **COMPLETED** |
 | 167 | [connections.md](connections.md) | 2 | A changed source stops the sync and makes a proposal |
 | 168 | [connections.md](connections.md) | 3 | PostgreSQL connector. Needs a TLS connector |
 | 169 | [connections.md](connections.md) | 4 | HTTP connector |

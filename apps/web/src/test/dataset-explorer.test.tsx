@@ -16,7 +16,6 @@ const dataset = (id: string, name: string, department: string, rows: number) => 
   published_at: "2026-10-01T00:00:00Z",
   relationship_count: 0,
   fields: [{ name: "code", label: "Code", field_type: "Text", required: true, ferpa_sensitive: false }],
-  sample_data: [{ code: `${id}-001` }],
 });
 
 function serve(handler: (path: string) => { status?: number; body: unknown }) {
@@ -45,6 +44,18 @@ describe("the Datasets screen", () => {
     const options = Array.from(document.querySelectorAll("select option")).map((o) => o.textContent);
     expect(options).toEqual(expect.arrayContaining(["Facilities", "Transport"]));
     expect(options).not.toContain("Office of the Registrar");
+  });
+
+  it("shows no rows in the catalog, and says where the rows are read (connections phase 1)", async () => {
+    serve((p) => (p === "/datasets" ? { body: { total: 1, datasets: [dataset("rooms", "Room Inventory", "Facilities", 17)] } } : { body: { relationships: [] } }));
+    render(<DatasetExplorer />);
+    const note = await screen.findByTestId("dataset-records-note");
+    expect(note.textContent).toContain("17 rows, read-only");
+    expect(note.textContent).toMatch(/never its rows/);
+    expect(note.textContent).toMatch(/only its sync changes them/);
+    // No table of rows, and no sample value such as `rooms-001`.
+    expect(document.querySelector("tbody")).toBeNull();
+    expect(screen.queryByText("rooms-001")).toBeNull();
   });
 
   it("says so when the server holds no datasets", async () => {

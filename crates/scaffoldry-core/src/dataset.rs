@@ -1,7 +1,6 @@
 //! Sovereign Dataset, Schema, and Relational Lattice Domain Models
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RelationshipType {
@@ -44,6 +43,4 @@ pub struct PublishedDataset {
     pub fields: Vec<DatasetField>,
     pub record_count: usize,
     pub published_at: String,
-    #[serde(default)]
-    pub sample_data: Vec<Value>,
 }

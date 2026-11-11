@@ -528,9 +528,6 @@ async fn test_published_datasets_and_relationships_api() {
             { "name": "lab_id", "label": "Laboratory ID", "field_type": "Text", "required": true, "ferpa_sensitive": false },
             { "name": "room_number", "label": "Room Number", "field_type": "Text", "required": true, "ferpa_sensitive": false },
             { "name": "supervisor_eppn", "label": "Faculty Supervisor", "field_type": "Relation", "required": true, "ferpa_sensitive": false }
-        ],
-        "sample_data": [
-            { "lab_id": "LAB-PHY-101", "room_number": "Curie Hall 304", "supervisor_eppn": "dr.smith@university.edu" }
         ]
     });
     let resp = app
@@ -1804,7 +1801,7 @@ async fn test_phase_4_decide_approve_as_faculty_and_deny_student() {
         department: "physics".to_string(),
         workspace_id: Some("ws-physics-optics".to_string()),
         herm_capability_id: None,
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![],

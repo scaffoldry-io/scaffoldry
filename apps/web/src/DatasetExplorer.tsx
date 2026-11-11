@@ -302,7 +302,7 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
                       : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                   }`}
                 >
-                  Tabular Records Preview ({selectedDataset.sample_data?.length || 0})
+                  Records ({selectedDataset.record_count})
                 </button>
                 <button
                   onClick={() => setActiveTab("schema")}
@@ -330,63 +330,17 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
             {/* Sub-tab Content Panels */}
             <div className="p-6">
               {activeTab === "records" && (
-                <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
-                  <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                      Sample Relational Records
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      Synchronized from operational store
-                    </span>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-100/70 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700/60 font-semibold text-slate-700 dark:text-slate-300">
-                          {selectedDataset.fields.map((f) => (
-                            <th key={f.name} className="px-4 py-2.5 whitespace-nowrap">
-                              <div className="flex items-center gap-1.5">
-                                <span>{f.label}</span>
-                                {f.field_type === "Relation" ? (
-                                  <span className="text-[10px] px-1 py-0.2 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-mono">
-                                    🔗 rel
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-mono text-slate-400 font-normal">
-                                    ({f.field_type.toLowerCase()})
-                                  </span>
-                                )}
-                              </div>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono text-[11px]">
-                        {(selectedDataset.sample_data || []).map((row, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                            {selectedDataset.fields.map((f) => (
-                              <td key={f.name} className="px-4 py-2.5 whitespace-nowrap text-slate-800 dark:text-slate-200">
-                                {typeof row[f.name] === "boolean" ? (
-                                  row[f.name] ? (
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">YES</span>
-                                  ) : (
-                                    <span className="text-slate-400">NO</span>
-                                  )
-                                ) : f.field_type === "Relation" ? (
-                                  <span className="text-blue-600 dark:text-blue-400 underline font-medium">
-                                    {String(row[f.name])}
-                                  </span>
-                                ) : (
-                                  String(row[f.name] || "-")
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                <div
+                  data-testid="dataset-records-note"
+                  className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-5 space-y-2"
+                >
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    {selectedDataset.record_count} {selectedDataset.record_count === 1 ? "row" : "rows"}, read-only
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    The catalog shows what a dataset holds, never its rows. A dataset is a copy of another system&apos;s data. Its
+                    rows are read through its own app, under that app&apos;s access rules, and only its sync changes them.
+                  </p>
                 </div>
               )}
 

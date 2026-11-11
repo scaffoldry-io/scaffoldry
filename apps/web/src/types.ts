@@ -372,7 +372,6 @@ export interface PublishedDataset {
   record_count: number;
   published_at: string;
   relationships?: DatasetRelationship[];
-  sample_data?: Record<string, any>[];
 }
 
 export interface McpTool {

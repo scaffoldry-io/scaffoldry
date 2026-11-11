@@ -79,7 +79,7 @@ fn manifest(slug: &str) -> AppManifest {
         department: "biology".into(),
         workspace_id: Some(WORKSPACE.into()),
         herm_capability_id: None,
-        coordinates: None, sealed: false, integrations: Default::default(),
+        coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![

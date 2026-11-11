@@ -694,6 +694,7 @@ pub fn create_record(
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
+    crate::service::connections::ensure_writable(app_slug, state)?;
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,
         "student" => EduPersonAffiliation::Student,
@@ -928,7 +929,7 @@ pub fn update_record(
 ) -> Result<DatasetRecord, ServiceError> {
     // Workflows phase 4: a person without the right to write may still fill the fields an open task grant lists, on that
     // one record.
-    let task = match authorize_app(caller, app_slug, AppAction::WriteRecords, state) {
+    let task = match authorize_app(caller, app_slug, AppAction::WriteRecords, state).and_then(|()| crate::service::connections::ensure_writable(app_slug, state)) {
         Ok(()) => None,
         Err(e) => match crate::service::task_grants::open_grant(caller, app_slug, id, state) {
             Some(grant) if !grant.write_fields.is_empty() => Some(grant),
@@ -1112,6 +1113,7 @@ pub fn delete_record(
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
+    crate::service::connections::ensure_writable(app_slug, state)?;
     let current = state
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?
@@ -1140,6 +1142,7 @@ pub fn delete_record_checked(
 ) -> Result<(), ServiceError> {
     use crate::repository::RecordWrite;
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
+    crate::service::connections::ensure_writable(app_slug, state)?;
     let current = state
         .find_record(app_slug, id)
         .map_err(ServiceError::Internal)?

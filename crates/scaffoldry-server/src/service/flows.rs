@@ -304,6 +304,7 @@ impl Run<'_> {
                     version: 1,
                 };
                 let again = self.done_before(&key);
+                crate::service::connections::ensure_writable(app, self.state).map_err(|e| Stop(e.message().to_string()))?;
                 let ctx = self.ctx(app, &data, key);
                 self.state.insert_record(&rec, &ctx).map_err(|e| Stop(e.to_string()))?;
                 let stored = load(self.state, app, &record_id)?.unwrap_or(rec);

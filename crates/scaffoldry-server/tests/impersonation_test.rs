@@ -49,7 +49,7 @@ fn manifest(slug: &str) -> AppManifest {
         herm_capability_id: None,
         coordinates: None,
         sealed: false,
-        integrations: Default::default(),
+        integrations: Default::default(), kind: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![table()],
