@@ -4,6 +4,8 @@ import { Overview } from "./Overview";
 import { Jobs } from "./Jobs";
 import { LegalHolds } from "./LegalHolds";
 import { Secrets } from "./Secrets";
+import { OutboundAccess } from "./OutboundAccess";
+import { Webhooks } from "./Webhooks";
 import { PolicyLibrary } from "./PolicyLibrary";
 import { People } from "./People";
 import { Positions } from "./Positions";
@@ -23,8 +25,8 @@ export interface AdminConsoleProps {
   navigateTo?: (path: string) => void;
   /** The path the console is showing, for sections with views of their own. */
   currentPath?: string;
-  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -62,7 +64,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -141,6 +143,10 @@ export function AdminConsole({
         <ProcessInsightsPanel />
       ) : currentTab === "secrets" ? (
         <Secrets />
+      ) : currentTab === "outbound" ? (
+        <OutboundAccess />
+      ) : currentTab === "webhooks" ? (
+        <Webhooks />
       ) : currentTab === "library" ? (
         <PolicyLibrary path={currentPath?.startsWith("/admin/library") ? currentPath : "/admin/library"} navigate={navigateTo ?? (() => {})} />
       ) : currentTab === "workspaces" ? (

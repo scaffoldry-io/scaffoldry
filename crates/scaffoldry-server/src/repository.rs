@@ -103,6 +103,7 @@ const SCHEMA_0095: &str = include_str!("../../scaffoldry-core/migrations/0095_pr
 const SCHEMA_0096: &str = include_str!("../../scaffoldry-core/migrations/0096_task_grants.sql");
 const SCHEMA_0097: &str = include_str!("../../scaffoldry-core/migrations/0097_work_items.sql");
 const SCHEMA_0099: &str = include_str!("../../scaffoldry-core/migrations/0099_webhooks.sql");
+const SCHEMA_0100: &str = include_str!("../../scaffoldry-core/migrations/0100_webhook_finished.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1206,6 +1207,7 @@ impl PostgresRepository {
                             ("0096_task_grants.sql", SCHEMA_0096),
                             ("0097_work_items.sql", SCHEMA_0097),
                             ("0099_webhooks.sql", SCHEMA_0099),
+                            ("0100_webhook_finished.sql", SCHEMA_0100),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 

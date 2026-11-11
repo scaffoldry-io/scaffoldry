@@ -115,6 +115,10 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/datasets/{id}/relationships".into(), case!(relationship_create));
     m.insert("PUT /api/v1/settings/{key}".into(), case!(setting_put));
     m.insert("POST /api/v1/apps/{slug}/webhooks/{id}/enable".into(), case!(webhook_enable));
+    m.insert("PUT /api/v1/admin/egress/allow".into(), case!(egress_allow));
+    m.insert("POST /api/v1/admin/webhooks/{app}/{id}/disable".into(), case!(admin_webhook_disable));
+    m.insert("POST /api/v1/admin/webhooks/{app}/{id}/enable".into(), case!(admin_webhook_enable));
+    exempt(m, "POST /api/v1/admin/egress/test", "asks the outbound check about a host and reports in words; stores nothing");
     m.insert("POST /api/v1/settings/sensitivity/presets/{id}".into(), case!(preset_enable));
 
     m.insert("POST /api/v1/clients".into(), case!(client_create));
@@ -549,6 +553,31 @@ async fn setting_put(w: World) -> Outcome {
     status(w.wa("PUT", "/api/v1/settings/process.stale_days", ADMIN, Some(json!(days))).await, StatusCode::OK, "put the setting")?;
     let seen = status(w.rb("GET", "/api/v1/settings", ADMIN, None).await, StatusCode::OK, "B reads settings again")?;
     ensure(before != seen && has(&seen, &days.to_string()), format!("B shows the setting A wrote ({days}): {seen}"))
+}
+
+/// Integrations phase 5: A saves the outbound allowlist, and B reads the list A saved.
+async fn egress_allow(w: World) -> Outcome {
+    let host = format!("{}.example.edu", unique("p5feed"));
+    let list = json!([{ "host": host, "ports": [443] }]);
+    status(w.wa("PUT", "/api/v1/admin/egress/allow", ADMIN, Some(json!({ "allow": list, "reason": "The feed moves here" }))).await, StatusCode::OK, "save the list")?;
+    let seen = status(w.rb("GET", "/api/v1/admin/egress", ADMIN, None).await, StatusCode::OK, "B reads the list")?;
+    ensure(seen["allow"] == list, format!("B shows the list A saved: {seen}"))
+}
+
+/// Integrations phase 5: the admin switch for a webhook checks the webhook first, so a webhook that is not live is the
+/// same 404 through either server and nothing is written.
+async fn admin_webhook_disable(w: World) -> Outcome {
+    let uri = format!("/api/v1/admin/webhooks/{}/h1/disable", unique("p5app"));
+    let (sa, _) = w.wa("POST", &uri, ADMIN, Some(json!({ "reason": "Maintenance" }))).await;
+    let (sb, _) = w.rb("POST", &uri, ADMIN, Some(json!({ "reason": "Maintenance" }))).await;
+    ensure(sa == StatusCode::NOT_FOUND && sa == sb, format!("both servers answer alike: {sa} {sb}"))
+}
+
+async fn admin_webhook_enable(w: World) -> Outcome {
+    let uri = format!("/api/v1/admin/webhooks/{}/h1/enable", unique("p5app"));
+    let (sa, _) = w.wa("POST", &uri, ADMIN, Some(json!({ "reason": "Ready" }))).await;
+    let (sb, _) = w.rb("POST", &uri, ADMIN, Some(json!({ "reason": "Ready" }))).await;
+    ensure(sa == StatusCode::NOT_FOUND && sa == sb, format!("both servers answer alike: {sa} {sb}"))
 }
 
 async fn preset_enable(w: World) -> Outcome {

@@ -36,6 +36,8 @@ export interface AdminOverviewData {
   };
   /** Lifecycle phase 3: true while any retention policy still has the placeholder basis. */
   retention?: { placeholder: boolean };
+  /** Integrations phase 5: webhooks that are failing or off, and deliveries that ended dead in the last day. */
+  outbound?: { webhooks_failing: number; webhooks_disabled: number; deliveries_dead_last_day: number };
   files?: {
     scanner: { configured: boolean; reachable: boolean; last_result: string | null };
     error: number;
@@ -678,6 +680,48 @@ export interface SecretListing {
   rotated_at: string | null;
   /** How many things name this secret. */
   references: number;
+}
+
+/** One line of the outbound allowlist: a host or a network, and the ports it may use. */
+export interface EgressEntry {
+  host?: string;
+  cidr?: string;
+  ports: number[];
+}
+
+/** What the outbound check says of a host and port, in words. */
+export interface EgressTestResult {
+  host: string;
+  port: number;
+  allowed: boolean;
+  address: string | null;
+  explanation: string;
+}
+
+/** A webhook across apps, as the console lists it. Its secret is named by the app and never shown here. */
+export interface WebhookRow {
+  app: string;
+  app_title: string;
+  id: string;
+  name: string;
+  host: string;
+  events: string[];
+  state: "Active" | "Failing" | "Disabled";
+  consecutive_failures: number;
+  last_success: string | null;
+}
+
+/** One delivery in a webhook's call log: never a body. */
+export interface WebhookDelivery {
+  id: string;
+  event: string | null;
+  record: string | null;
+  state: "queued" | "delivered" | "dead";
+  attempts: number;
+  last_status: number | null;
+  last_error: string | null;
+  created_at: string;
+  delivered_at: string | null;
 }
 
 export interface LegalHold extends HoldScope {
@@ -1790,6 +1834,38 @@ export const apiClient = {
   /** Deletes a secret nothing uses. One in use is refused with what uses it. */
   deleteSecret: async (name: string, reason: string): Promise<void> => {
     await request<unknown>(`/admin/secrets/${encodeURIComponent(name)}`, { method: "DELETE", body: JSON.stringify({ reason }) });
+  },
+
+  /** The outbound allowlist (integrations phase 5). A Platform Admin only. */
+  getEgress: async (): Promise<EgressEntry[]> => {
+    const res = await request<{ allow: EgressEntry[] }>("/admin/egress");
+    return Array.isArray(res?.allow) ? res.allow : [];
+  },
+
+  /** Saves the whole list, with the reason for the change. */
+  saveEgress: async (allow: EgressEntry[], reason: string): Promise<void> => {
+    await request<unknown>("/admin/egress/allow", { method: "PUT", body: JSON.stringify({ allow, reason }) });
+  },
+
+  /** Asks the outbound check about a host. Nothing is sent. */
+  testEgress: async (host: string, port: number): Promise<EgressTestResult> =>
+    request<EgressTestResult>("/admin/egress/test", { method: "POST", body: JSON.stringify({ host, port }) }),
+
+  /** Every webhook of every app. */
+  listWebhooks: async (): Promise<WebhookRow[]> => {
+    const res = await request<{ webhooks: WebhookRow[] }>("/admin/webhooks");
+    return Array.isArray(res?.webhooks) ? res.webhooks : [];
+  },
+
+  /** A webhook's newest deliveries. */
+  webhookDeliveries: async (app: string, id: string): Promise<WebhookDelivery[]> => {
+    const res = await request<{ deliveries: WebhookDelivery[] }>(`/admin/webhooks/${encodeURIComponent(app)}/${encodeURIComponent(id)}/deliveries`);
+    return Array.isArray(res?.deliveries) ? res.deliveries : [];
+  },
+
+  /** Turns a webhook off or on, with a reason. */
+  setWebhookEnabled: async (app: string, id: string, enabled: boolean, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/webhooks/${encodeURIComponent(app)}/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`, { method: "POST", body: JSON.stringify({ reason }) });
   },
 
   /** Legal holds (lifecycle phase 4). A Platform Admin or `compliance` only. */

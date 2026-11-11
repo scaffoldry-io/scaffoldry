@@ -67,6 +67,7 @@ pub mod view_as;
 pub mod views;
 pub mod lifecycle;
 pub mod retention;
+pub mod outbound;
 pub mod secrets;
 pub mod mail;
 pub mod delegations;

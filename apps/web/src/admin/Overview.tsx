@@ -231,6 +231,37 @@ export function Overview() {
         </div>
 
         {/* JOBS TELEMETRY CARD */}
+        {data.outbound && (
+          <div
+            data-testid="admin-overview-outbound-card"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+          >
+            <div className="mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Outbound webhooks</span>
+            </div>
+            <div className="space-y-2 mt-4">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 dark:text-slate-400">Failing</span>
+                <span className={`font-mono font-semibold ${data.outbound.webhooks_failing > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-900 dark:text-slate-100"}`} data-testid="overview-webhooks-failing">
+                  {data.outbound.webhooks_failing}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 dark:text-slate-400">Turned off</span>
+                <span className={`font-mono font-semibold ${data.outbound.webhooks_disabled > 0 ? "text-rose-600 dark:text-rose-400" : "text-slate-900 dark:text-slate-100"}`} data-testid="overview-webhooks-disabled">
+                  {data.outbound.webhooks_disabled}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 dark:text-slate-400">Dead deliveries, last day</span>
+                <span className={`font-mono font-semibold ${data.outbound.deliveries_dead_last_day > 0 ? "text-rose-600 dark:text-rose-400" : "text-slate-900 dark:text-slate-100"}`} data-testid="overview-deliveries-dead">
+                  {data.outbound.deliveries_dead_last_day}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {data.jobs && (
           <div
             data-testid="admin-overview-jobs-card"
