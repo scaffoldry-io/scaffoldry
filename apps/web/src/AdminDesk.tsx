@@ -689,7 +689,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
+  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
     if (typeof window !== "undefined") {
       const p = window.location.pathname;
       if (p === "/admin/jobs") return "jobs";
@@ -705,6 +705,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       if (p === "/admin/holds") return "holds";
       if (p === "/admin/processes") return "processes";
       if (p === "/admin/secrets") return "secrets";
+      if (p === "/admin/outbound") return "outbound";
+      if (p === "/admin/webhooks") return "webhooks";
       if (p === "/admin/library" || p.startsWith("/admin/library/")) return "library";
       if (p === "/admin/workspaces") return "workspaces";
       if (p === "/admin/settings") return "settings";
@@ -2483,6 +2485,44 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                     </svg>
                     {navRailExpanded && <span>Secrets</span>}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="admin-outbound-tab-btn"
+                    onClick={() => {
+                      setAdminTab("outbound");
+                      navigateTo("/admin/outbound");
+                    }}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "outbound"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
+                    {navRailExpanded && <span>Outbound access</span>}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="admin-webhooks-tab-btn"
+                    onClick={() => {
+                      setAdminTab("webhooks");
+                      navigateTo("/admin/webhooks");
+                    }}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "webhooks"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
+                    {navRailExpanded && <span>Webhooks</span>}
                   </button>
 
                   <button

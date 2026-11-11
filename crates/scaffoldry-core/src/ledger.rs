@@ -86,6 +86,8 @@ pub enum DecisionType {
     FlowPartyApproved,
     /// Workflows phase 10: an owner or administrator retried a failed flow run, with a reason.
     FlowRunRetried,
+    /// Integrations phase 5: a Platform Admin turned a webhook off or on, with a reason.
+    WebhookChanged,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -153,6 +155,7 @@ impl DecisionType {
         DecisionType::SecretChanged,
         DecisionType::FlowPartyApproved,
         DecisionType::FlowRunRetried,
+        DecisionType::WebhookChanged,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -219,6 +222,7 @@ impl DecisionType {
             DecisionType::SecretChanged => "SecretChanged",
             DecisionType::FlowPartyApproved => "FlowPartyApproved",
             DecisionType::FlowRunRetried => "FlowRunRetried",
+            DecisionType::WebhookChanged => "WebhookChanged",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",

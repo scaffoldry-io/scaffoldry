@@ -23,6 +23,7 @@ pub mod disclosures;
 pub mod history;
 pub mod lifecycle;
 pub mod retention;
+pub mod outbound;
 pub mod secrets;
 pub mod mail;
 pub mod delegations;
@@ -101,6 +102,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(retention::router())
         .merge(holds::router())
         .merge(secrets::router())
+        .merge(outbound::router())
         .merge(mail::router())
         .merge(delegations::router())
         .merge(work::router())

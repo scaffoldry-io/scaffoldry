@@ -84,7 +84,13 @@ pub(crate) fn enqueue_in_tx(
     changes: &Map<String, Value>,
 ) -> Result<(), postgres::Error> {
     let Some(event) = event_of(action) else { return Ok(()) };
-    let matching: Vec<&Webhook> = hooks.iter().filter(|h| h.events.contains(&event) && h.tables.iter().any(|t| t == table)).collect();
+    let mut matching: Vec<&Webhook> = hooks.iter().filter(|h| h.events.contains(&event) && h.tables.iter().any(|t| t == table)).collect();
+    if matching.is_empty() {
+        return Ok(());
+    }
+    // A webhook that is off queues nothing. Turning it on again does not send what happened while it was off.
+    let off: Vec<String> = tx.query("SELECT webhook_id FROM webhook_state WHERE app_slug = $1 AND disabled_at IS NOT NULL", &[&app])?.iter().map(|r| r.get(0)).collect();
+    matching.retain(|h| !off.contains(&h.id));
     if matching.is_empty() {
         return Ok(());
     }
@@ -123,6 +129,9 @@ pub fn enqueue_event(state: &SharedState, app: &str, table: &str, record: &str, 
     };
     let rec = state.find_record(app, record).ok().flatten();
     for hook in chosen {
+        if disabled(state, app, &hook.id) {
+            continue;
+        }
         let data = rec.as_ref().map(|r| r.data.clone());
         if let (Some(filter), Some(d)) = (&hook.filter, &data) {
             if !scaffoldry_engine::matches_filter(d, filter) {
@@ -289,7 +298,7 @@ fn finish(state: &SharedState, d: &Due, outcome: &str, status: Option<i32>, erro
     let delivered = (outcome == "delivered").then_some(now);
     let _ = state.repository.with_client(move |c| {
         c.execute(
-            "UPDATE webhook_deliveries SET state = $2, attempts = attempts + 1, last_status = $3, last_error = $4, delivered_at = $5 WHERE id = $1",
+            "UPDATE webhook_deliveries SET state = $2, attempts = attempts + 1, last_status = $3, last_error = $4, delivered_at = $5, finished_at = NOW() WHERE id = $1",
             &[&id, &outcome, &status, &error, &delivered],
         )?;
         Ok(())
@@ -370,6 +379,26 @@ pub fn enable(repo: &PostgresRepository, app: &str, webhook: &str) -> Result<(),
              ON CONFLICT (app_slug, webhook_id) DO UPDATE SET consecutive_failures = 0, disabled_at = NULL",
             &[&a, &w],
         )?;
+        Ok(())
+    })
+}
+
+/// Turns a webhook off on an administrator's word. What was queued ends `dead`, with the reason in its error, so the
+/// call log keeps it. Nothing more is queued or sent until it is turned on again.
+pub fn disable(repo: &PostgresRepository, app: &str, webhook: &str, reason: &str) -> Result<(), RepositoryError> {
+    let (a, w, error) = (app.to_string(), webhook.to_string(), format!("Turned off by an administrator: {reason}"));
+    repo.with_client(move |c| {
+        let mut tx = c.transaction()?;
+        tx.execute(
+            "INSERT INTO webhook_state (app_slug, webhook_id, consecutive_failures, disabled_at) VALUES ($1, $2, 0, NOW()) \
+             ON CONFLICT (app_slug, webhook_id) DO UPDATE SET disabled_at = COALESCE(webhook_state.disabled_at, NOW())",
+            &[&a, &w],
+        )?;
+        tx.execute(
+            "UPDATE webhook_deliveries SET state = 'dead', last_error = $3, finished_at = NOW() WHERE app_slug = $1 AND webhook_id = $2 AND state = 'queued'",
+            &[&a, &w, &error],
+        )?;
+        tx.commit()?;
         Ok(())
     })
 }
