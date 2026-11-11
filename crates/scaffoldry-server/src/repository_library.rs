@@ -509,8 +509,10 @@ impl PostgresRepository {
             let rules = c.query(
                 "(SELECT 'unbound', r.id, r.key, p.id, p.key, '[]'::jsonb, \
                          (SELECT count(*) FROM library_rules r2 JOIN library_policies p2 ON p2.id = r2.policy_id \
-                           WHERE r2.status = 'Published' AND p2.status = 'Active' AND ($1::uuid[] IS NULL OR p2.organization_id = ANY($1)) \
-                             AND NOT EXISTS (SELECT 1 FROM library_bindings b WHERE b.rule_key_policy_id = r2.policy_id AND b.rule_key = r2.key)) \
+                           WHERE r2.status = 'Published' AND p2.status = 'Active' AND ($1::uuid[] IS NULL OR p2.organization_id = ANY($1))) \
+                         - (SELECT count(*) FROM library_rules r3 JOIN library_policies p3 ON p3.id = r3.policy_id \
+                             WHERE r3.status = 'Published' AND p3.status = 'Active' AND ($1::uuid[] IS NULL OR p3.organization_id = ANY($1)) \
+                               AND EXISTS (SELECT 1 FROM library_bindings b WHERE b.rule_key_policy_id = r3.policy_id AND b.rule_key = r3.key)) \
                     FROM library_policies p JOIN library_rules r ON r.policy_id = p.id AND r.status = 'Published' \
                    WHERE p.status = 'Active' AND ($1::uuid[] IS NULL OR p.organization_id = ANY($1)) \
                      AND NOT EXISTS (SELECT 1 FROM library_bindings b WHERE b.rule_key_policy_id = r.policy_id AND b.rule_key = r.key) \
