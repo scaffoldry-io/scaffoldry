@@ -129,6 +129,13 @@ pub fn queue(tx: &mut postgres::Transaction<'_>, notification: Option<Uuid>, to:
     Ok(queued)
 }
 
+/// Queues the one-time sign-in link for a guest (guests phase 1). A guest is not in the directory and no notice stands behind
+/// the mail, so it is not a producer's notice. The link is the whole of the mail's purpose, and the mail module is the only place
+/// outside `notify` that writes to the outbox.
+pub fn queue_sign_in_link(tx: &mut postgres::Transaction<'_>, to: &str, subject: &str, body: &str) -> Result<bool, postgres::Error> {
+    queue(tx, None, to, subject, body)
+}
+
 /// The address mail for a person goes to: their directory address, else their sign-in name when it is an address.
 pub fn address_of(c: &mut postgres::Transaction<'_>, eppn: &str, scim_email: Option<&str>) -> Result<Option<String>, postgres::Error> {
     if let Some(e) = scim_email.filter(|e| e.contains('@')) {

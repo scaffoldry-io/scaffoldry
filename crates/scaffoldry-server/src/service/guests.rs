@@ -141,7 +141,7 @@ pub fn start(state: &SharedState, headers: &axum::http::HeaderMap, app: &str, fo
             let text = format!(
                 "Use this link to open the form: {base}/g/{raw}\n\nIt works once, and it stops working in {LINK_MINUTES} minutes. If you did not ask for it, you can ignore this mail.\n"
             );
-            crate::mail::queue(&mut tx, None, &to, "Your sign-in link", &text)?;
+            crate::mail::queue_sign_in_link(&mut tx, &to, "Your sign-in link", &text)?;
             tx.commit()?;
             Ok(())
         })
