@@ -24,8 +24,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function frame(): Promise<HTMLIFrameElement> {
-  render(<PageFrame appSlug="scholarships" pageId="board" />);
+async function frame(selection?: string | null): Promise<HTMLIFrameElement> {
+  render(<PageFrame appSlug="scholarships" pageId="board" selection={selection} />);
   return (await screen.findByTestId("page-frame")) as HTMLIFrameElement;
 }
 
@@ -154,5 +154,29 @@ describe("PageFrame", () => {
     render(<PageFrame appSlug="scholarships" pageId="board" />);
     expect((await screen.findByRole("alert")).textContent).toMatch(/shows a view/);
     expect(screen.queryByTestId("page-frame")).toBeNull();
+  });
+
+  // Views phase 5: a page in a dashboard widget is told which record is selected in the linked widget, as one id.
+  it("tells the page the selected record's id when it initializes, and again when the selection changes", async () => {
+    const { rerender } = render(<PageFrame appSlug="scholarships" pageId="board" selection="rec-7" />);
+    const el = (await screen.findByTestId("page-frame")) as HTMLIFrameElement;
+    const spy = listen(el);
+    fromFrame(el, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appCapabilities: {}, clientInfo: { name: "scaffoldry-page", version: "1" } } });
+    const answer = spy.mock.calls[0][0] as { result: { hostContext: Record<string, unknown> } };
+    expect(answer.result.hostContext).toEqual({ selection: "rec-7" });
+
+    rerender(<PageFrame appSlug="scholarships" pageId="board" selection="rec-9" />);
+    const told = spy.mock.calls.map((c) => c[0] as { method?: string; params?: Record<string, unknown> }).filter((m) => m.method === "ui/notifications/host-context-changed");
+    expect(told).toHaveLength(1);
+    expect(told[0].params).toEqual({ selection: "rec-9" });
+    // The selection goes through no route. It is the desk telling the frame, and the frame asks the server for nothing more.
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("tells a page no selection when none is given", async () => {
+    const el = await frame();
+    const spy = listen(el);
+    fromFrame(el, { jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appCapabilities: {}, clientInfo: { name: "scaffoldry-page", version: "1" } } });
+    expect((spy.mock.calls[0][0] as { result: { hostContext: unknown } }).result.hostContext).toEqual({});
   });
 });

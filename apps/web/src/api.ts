@@ -959,6 +959,24 @@ export const runView = (
   return request(`/apps/${appSlug}/views/${viewId}/data${qs ? `?${qs}` : ""}`);
 };
 
+/** One widget of a dashboard, run on the server. `select` is the selected row's value of the source field. */
+export interface DashboardWidgetData {
+  widget_id: string;
+  kind: "view" | "chart" | "stat" | "text" | "page";
+  /** What the server filtered by, when it was asked to. */
+  selected: { field: string; value: string } | null;
+  data: ViewData & { stat?: { fn: string | null; field: string | null; value: number } };
+}
+
+export const dashboardWidget = (appSlug: string, viewId: string, widgetId: string, opts: { select?: string; cursor?: string; limit?: number } = {}): Promise<DashboardWidgetData> => {
+  const q = new URLSearchParams();
+  if (opts.select !== undefined) q.set("select", opts.select);
+  if (opts.cursor) q.set("cursor", opts.cursor);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return request(`/apps/${encodeURIComponent(appSlug)}/views/${encodeURIComponent(viewId)}/widgets/${encodeURIComponent(widgetId)}${qs ? `?${qs}` : ""}`);
+};
+
 export const duplicateView = (
   appSlug: string,
   viewId: string
@@ -2362,6 +2380,7 @@ export const apiClient = {
   listViews: async (appSlug: string) => listViews(appSlug),
   createView: async (appSlug: string, payload: Parameters<typeof createView>[1]) => createView(appSlug, payload),
   updateView: async (appSlug: string, viewId: string, payload: Parameters<typeof updateView>[2]) => updateView(appSlug, viewId, payload),
+  dashboardWidget: async (appSlug: string, viewId: string, widgetId: string, opts: Parameters<typeof dashboardWidget>[3] = {}) => dashboardWidget(appSlug, viewId, widgetId, opts),
   deleteView: async (appSlug: string, viewId: string) => deleteView(appSlug, viewId),
   duplicateView: async (appSlug: string, viewId: string) => duplicateView(appSlug, viewId),
 };

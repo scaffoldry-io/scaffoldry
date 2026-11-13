@@ -11,8 +11,29 @@
   var failed = null;
   var waiting = [];
 
+  // The record selected in a linked dashboard widget, as one id. The host tells the page, and the page can only read it. A
+  // value that is not a short string is no selection, so a page never holds a record, only the id of one.
+  var selection = null;
+  var watchers = [];
+  function idOf(v) {
+    return typeof v === "string" && v.length > 0 && v.length <= 128 ? v : null;
+  }
+  function setSelection(v) {
+    var next = idOf(v);
+    if (next === selection) return;
+    selection = next;
+    watchers.slice().forEach(function (fn) { try { fn(selection); } catch (e) { /* a page's own fault stays its own */ } });
+  }
+  var context = {};
+  Object.defineProperty(context, "selection", { enumerable: true, get: function () { return selection; } });
+  Object.freeze(context);
+
   window.addEventListener("message", function (ev) {
     var msg = ev.data;
+    if (ev.source === window.parent && msg && msg.jsonrpc === "2.0" && msg.method === "ui/notifications/host-context-changed") {
+      setSelection(msg.params && msg.params.selection);
+      return;
+    }
     if (ev.source !== window.parent || !msg || msg.jsonrpc !== "2.0" || typeof msg.id !== "number" || !pending[msg.id]) return;
     var p = pending[msg.id];
     delete pending[msg.id];
@@ -41,7 +62,8 @@
 
   var initId = next++;
   pending[initId] = {
-    resolve: function () {
+    resolve: function (answer) {
+      setSelection(answer && answer.hostContext && answer.hostContext.selection);
       window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
       ready = true;
       waiting.splice(0).forEach(function (w) { w.send(); });
@@ -59,6 +81,12 @@
   window.scaffoldry = {
     app: meta.app,
     grants: meta.grants,
+    context: context,
+    onContextChange: function (fn) {
+      if (typeof fn !== "function") return function () {};
+      watchers.push(fn);
+      return function () { watchers = watchers.filter(function (w) { return w !== fn; }); };
+    },
     records: {
       list: function (a) { return call("list", a); },
       get: function (a) { return call("get", a); },

@@ -39,7 +39,7 @@ fn is_owner(v: &StoredView, caller: &AuthUser) -> bool {
 }
 
 /// A personal view is its owner's alone. Every other view is for anyone who can read the app.
-fn visible(v: &StoredView, caller: &AuthUser) -> bool {
+pub(crate) fn visible(v: &StoredView, caller: &AuthUser) -> bool {
     v.ownership != "personal" || is_owner(v, caller)
 }
 
@@ -169,7 +169,7 @@ fn canonical_table(manifest: &AppManifest, table: &str) -> Result<String, Servic
         .ok_or_else(|| ServiceError::BadRequest(format!("'{table}' is not a table of this app")))
 }
 
-fn runtime_manifest(state: &SharedState, app_slug: &str) -> Result<AppManifest, ServiceError> {
+pub(crate) fn runtime_manifest(state: &SharedState, app_slug: &str) -> Result<AppManifest, ServiceError> {
     state
         .engine
         .read()
@@ -298,6 +298,9 @@ pub fn create(caller: &AuthUser, app_slug: &str, body: CreateBody, state: &Share
         valid_summary(&config)?;
     }
     authorize_change(caller, app_slug, &ownership, true, state)?;
+    if body.kind == "dashboard" {
+        crate::service::dashboards::validate(caller, app_slug, &config, ownership != "personal", state)?;
+    }
     let table_id = body.table_id.as_deref().map(|t| canonical_table(&runtime_manifest(state, app_slug)?, t)).transpose()?;
     if let Some(table) = &table_id {
         check_visible(caller, app_slug, table, &config, state)?;
@@ -343,7 +346,7 @@ pub struct UpdateBody {
     pub version: i32,
 }
 
-fn existing(caller: &AuthUser, app_slug: &str, id: Uuid, state: &SharedState) -> Result<StoredView, ServiceError> {
+pub(crate) fn existing(caller: &AuthUser, app_slug: &str, id: Uuid, state: &SharedState) -> Result<StoredView, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Read, state)?;
     repo(state)?.get_app_view(app_slug, id).map_err(internal)?.filter(|v| visible(v, caller)).ok_or_else(not_found)
 }
@@ -356,6 +359,9 @@ pub fn update(caller: &AuthUser, app_slug: &str, id: Uuid, body: UpdateBody, sta
     valid_config(&body.config)?;
     if current.kind == "summary" {
         valid_summary(&body.config)?;
+    }
+    if current.kind == "dashboard" {
+        crate::service::dashboards::validate(caller, app_slug, &body.config, current.ownership != "personal", state)?;
     }
     if let Some(table) = &current.table_id {
         check_visible(caller, app_slug, table, &body.config, state)?;
@@ -422,6 +428,23 @@ pub struct RunQuery {
     /// `exact` asks for the row count, which says `at_least` when it runs out of time.
     #[serde(default)]
     pub count: Option<String>,
+    /// One more equality the caller adds to the view's own filter: `(field, value)`. A linked dashboard widget sets it.
+    #[serde(skip)]
+    pub also: Option<(String, String)>,
+}
+
+/// `base` and one more equality, joined by AND. The view's own filter is left as it was.
+pub(crate) fn and_clause(base: Option<scaffoldry_engine::CompoundFilter>, field: &str, value: &str) -> scaffoldry_engine::CompoundFilter {
+    use scaffoldry_engine::{CompoundFilter, FilterClause, FilterConjunction, FilterOperator};
+    let clause = FilterClause { id: "selection".to_string(), field_name: field.to_string(), operator: FilterOperator::Equals, value: value.to_string() };
+    match base {
+        None => CompoundFilter { conjunction: FilterConjunction::And, clauses: vec![clause], groups: vec![] },
+        Some(mut b) if b.conjunction == FilterConjunction::And => {
+            b.clauses.push(clause);
+            b
+        }
+        Some(b) => CompoundFilter { conjunction: FilterConjunction::And, clauses: vec![clause], groups: vec![b] },
+    }
 }
 
 /// The view's filter, narrowed to one group.
@@ -494,8 +517,11 @@ fn footers(caller: &AuthUser, app_slug: &str, table_id: &str, view: &scaffoldry_
 /// rows are the ones the person's row scope and column rules already allow.
 pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug: &str, id: Uuid, query: RunQuery, state: &SharedState) -> Result<Value, ServiceError> {
     let stored = existing(caller, app_slug, id, state)?;
-    let view = materialize(&stored).ok_or_else(|| ServiceError::BadRequest("config is not a view".to_string()))?;
+    let mut view = materialize(&stored).ok_or_else(|| ServiceError::BadRequest("config is not a view".to_string()))?;
     let table_id = view.table_id.clone().ok_or_else(|| ServiceError::BadRequest("This view is not over a table".to_string()))?;
+    if let Some((field, value)) = &query.also {
+        view.filters = Some(and_clause(view.filters.take(), field, value));
+    }
     check_runnable(caller, app_slug, &view, state)?;
     if stored.kind == "summary" {
         return run_summary(caller, app_slug, &stored, &view, &table_id, state);
