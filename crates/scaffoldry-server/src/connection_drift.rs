@@ -83,7 +83,7 @@ fn actor(conn: &Conn) -> AuthUser {
         affiliation: "central_admin".to_string(),
         department: "platform".to_string(),
         view_as_by: None,
-        via_client: None,
+        via_client: None, shared_link: None,
     }
 }
 

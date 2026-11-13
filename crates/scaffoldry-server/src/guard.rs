@@ -265,7 +265,9 @@ pub async fn require_session(
     next: Next,
 ) -> Response {
     let path = req.uri().path();
-    if PUBLIC_PATHS.contains(&path) || path.starts_with("/scim/v2/") {
+    // A shared link opens without a session when it is public. The route checks the token, the scope and the rate limit, and
+    // asks for a session itself when the link is for the institution.
+    if PUBLIC_PATHS.contains(&path) || path.starts_with("/scim/v2/") || path.starts_with("/api/v1/shared/") {
         return next.run(req).await;
     }
     match session_user(&state, req.headers()) {

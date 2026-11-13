@@ -959,6 +959,48 @@ export const runView = (
   return request(`/apps/${appSlug}/views/${viewId}/data${qs ? `?${qs}` : ""}`);
 };
 
+/** A shared link, as the lists show it. The token is never in one: it is shown once, when the link is made. */
+export interface ShareRow {
+  id: string;
+  app: string;
+  view_id: string;
+  scope: "institution" | "public";
+  allow_download: boolean;
+  expires_at: string;
+  created_by: string;
+  created_at: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  use_count: number;
+  state: "Active" | "Revoked" | "Expired";
+}
+
+/** What a person may choose when they make a link: the scopes that are on, and whether a public one is possible here. */
+export interface ShareOptions {
+  scopes: string[];
+  public: { allowed: boolean; reason: string | null };
+  default_days: number;
+  max_days: number;
+}
+
+export interface CreatedShare {
+  share: ShareRow;
+  /** Shown once. The server keeps only its hash. */
+  token: string;
+  link: string;
+  /** What the creator should know before they hand the link on. */
+  warnings: string[];
+}
+
+export interface SharedViewInfo {
+  name: string;
+  kind: string;
+  app_title: string | null;
+  scope: "institution" | "public";
+  allow_download: boolean;
+  expires_at: string;
+}
+
 /** One widget of a dashboard, run on the server. `select` is the selected row's value of the source field. */
 export interface DashboardWidgetData {
   widget_id: string;
@@ -2381,6 +2423,49 @@ export const apiClient = {
   createView: async (appSlug: string, payload: Parameters<typeof createView>[1]) => createView(appSlug, payload),
   updateView: async (appSlug: string, viewId: string, payload: Parameters<typeof updateView>[2]) => updateView(appSlug, viewId, payload),
   dashboardWidget: async (appSlug: string, viewId: string, widgetId: string, opts: Parameters<typeof dashboardWidget>[3] = {}) => dashboardWidget(appSlug, viewId, widgetId, opts),
+
+  /** The links of a view, and what the person may choose when they make one (views phase 6). */
+  listShares: async (appSlug: string, viewId: string): Promise<{ shares: ShareRow[]; options: ShareOptions }> =>
+    request(`/apps/${encodeURIComponent(appSlug)}/views/${encodeURIComponent(viewId)}/shares`),
+  createShare: async (appSlug: string, viewId: string, body: { scope: string; expires_in_days: number; allow_download: boolean }): Promise<CreatedShare> =>
+    request(`/apps/${encodeURIComponent(appSlug)}/views/${encodeURIComponent(viewId)}/shares`, { method: "POST", body: JSON.stringify(body) }),
+  revokeShare: async (appSlug: string, viewId: string, shareId: string): Promise<void> => {
+    await request<unknown>(`/apps/${encodeURIComponent(appSlug)}/views/${encodeURIComponent(viewId)}/shares/${encodeURIComponent(shareId)}`, { method: "DELETE" });
+  },
+  /** Every link of every app. A Platform Admin only. */
+  adminShares: async (): Promise<(ShareRow & { app_title: string | null; view_name: string | null })[]> => {
+    const res = await request<{ shares: (ShareRow & { app_title: string | null; view_name: string | null })[] }>("/admin/shares");
+    return Array.isArray(res?.shares) ? res.shares : [];
+  },
+  /** Revokes every active link of one app, with a reason. Returns how many. */
+  revokeAppShares: async (app: string, reason: string): Promise<number> => {
+    const res = await request<{ revoked: number }>("/admin/shares/revoke", { method: "POST", body: JSON.stringify({ app, reason }) });
+    return res.revoked;
+  },
+  /** A shared link opened. The token is the only credential, and an institution link also needs a session. */
+  sharedView: async (token: string): Promise<SharedViewInfo> => request(`/shared/${encodeURIComponent(token)}`),
+  sharedData: async (token: string, opts: { cursor?: string; limit?: number } = {}): Promise<ViewData> => {
+    const q = new URLSearchParams();
+    if (opts.cursor) q.set("cursor", opts.cursor);
+    if (opts.limit) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return request(`/shared/${encodeURIComponent(token)}/data${qs ? `?${qs}` : ""}`);
+  },
+  /** A link's download, as CSV text. It is a call and not a plain link, because an institution link needs the person's token. */
+  sharedDownload: async (token: string): Promise<string> => {
+    const auth = getAuthToken();
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}/shared/${encodeURIComponent(token)}/download`, { headers: auth ? { Authorization: `Bearer ${auth}` } : {} });
+    } catch (e) {
+      throw new ApiError(0, e instanceof Error ? e.message : "The server is not reachable.");
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new ApiError(res.status, body?.error ?? `HTTP ${res.status}`);
+    }
+    return res.text();
+  },
   deleteView: async (appSlug: string, viewId: string) => deleteView(appSlug, viewId),
   duplicateView: async (appSlug: string, viewId: string) => duplicateView(appSlug, viewId),
 };

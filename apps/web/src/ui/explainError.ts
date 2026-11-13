@@ -71,6 +71,8 @@ export function explainError(e: unknown): ExplainedError {
         : "Sort or filter on a field that is already indexed.";
       return { message: e.message, next };
     }
+    case "share_not_allowed":
+      return { message: e.message, next: "Ask a Platform Admin to turn on this kind of link in the settings, or share it another way." };
     case "calculating":
       return { message: e.message, next: "Try again when it has finished." };
     case "index_building":

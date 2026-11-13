@@ -158,7 +158,7 @@ fn user_named(state: &SharedState, eppn: &str, department: &str) -> AuthUser {
         affiliation: "member".to_string(),
         department: department.to_string(),
         view_as_by: None,
-        via_client: None,
+        via_client: None, shared_link: None,
     })
 }
 

@@ -221,6 +221,19 @@ pub struct AuthUser {
     /// narrowed by the ceiling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via_client: Option<Box<ViaClient>>,
+    /// Set on a request that reads through a shared link (views phase 6). It never comes from a session: the share route
+    /// sets it after it has checked the token. A shared link reads one view, and never a sensitive or a hidden field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_link: Option<Box<SharedLink>>,
+}
+
+/// The shared link a request reads through.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedLink {
+    pub share_id: uuid::Uuid,
+    pub app_slug: String,
+    /// `institution` or `public`. A public link has no person behind it.
+    pub scope: String,
 }
 
 /// The outside app a request came through.

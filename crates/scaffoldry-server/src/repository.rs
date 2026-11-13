@@ -106,6 +106,7 @@ const SCHEMA_0099: &str = include_str!("../../scaffoldry-core/migrations/0099_we
 const SCHEMA_0100: &str = include_str!("../../scaffoldry-core/migrations/0100_webhook_finished.sql");
 const SCHEMA_0101: &str = include_str!("../../scaffoldry-core/migrations/0101_connections.sql");
 const SCHEMA_0102: &str = include_str!("../../scaffoldry-core/migrations/0102_connection_drift.sql");
+const SCHEMA_0103: &str = include_str!("../../scaffoldry-core/migrations/0103_view_shares.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1212,6 +1213,7 @@ impl PostgresRepository {
                             ("0100_webhook_finished.sql", SCHEMA_0100),
                             ("0101_connections.sql", SCHEMA_0101),
                             ("0102_connection_drift.sql", SCHEMA_0102),
+                            ("0103_view_shares.sql", SCHEMA_0103),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -2442,7 +2444,7 @@ impl PostgresRepository {
                     role_title: r.get(3),
                     affiliation: r.get(4),
                     department: r.get(5),
-        view_as_by: None, via_client: None,
+        view_as_by: None, via_client: None, shared_link: None,
                 };
                 let original_admin = orig_admin.and_then(|v| serde_json::from_value(v).ok());
                 let session = AuthSession {

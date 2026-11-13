@@ -82,7 +82,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
             affiliation: "service".to_string(),
             department: "System".to_string(),
             view_as_by: None,
-            via_client: None,
+            via_client: None, shared_link: None,
         });
     }
     if eppn == "setup@scaffoldry.local" {
@@ -97,7 +97,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
             role_title: "Setup".to_string(),
             affiliation: "central_admin".to_string(),
             department: "System".to_string(),
-        view_as_by: None, via_client: None,
+        view_as_by: None, via_client: None, shared_link: None,
         });
     }
 
@@ -154,7 +154,7 @@ pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
         role_title,
         affiliation,
         department,
-        view_as_by: None, via_client: None,
+        view_as_by: None, via_client: None, shared_link: None,
     })
 }
 
