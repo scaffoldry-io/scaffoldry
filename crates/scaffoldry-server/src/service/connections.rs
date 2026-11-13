@@ -66,7 +66,8 @@ fn check_config(kind: &str, config: &Value) -> Result<(), ServiceError> {
             }
         }
         "postgres" => crate::connection_pg::check_config(config).map_err(bad),
-        other => Err(bad(format!("The connection kind '{other}' is not available yet. Use file_drop or postgres"))),
+        "http" => crate::connection_http::check_config(config).map_err(bad),
+        other => Err(bad(format!("The connection kind '{other}' is not known. Use file_drop, postgres or http"))),
     }
 }
 
@@ -145,7 +146,7 @@ pub struct Spec {
     name: String,
     kind: String,
     config: Value,
-    /// The stored secret a source's password or token is read from. A postgres source needs one.
+    /// The stored secret a source's password or token is read from. A postgres source needs one, and an http source may.
     secret: Option<String>,
     app: String,
     table: String,

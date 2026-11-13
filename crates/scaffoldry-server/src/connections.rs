@@ -428,6 +428,9 @@ fn apply(state: &SharedState, conn: &Conn, opts: &RunOpts) -> Result<(Option<Cou
     if conn.kind == "postgres" {
         return crate::connection_pg::apply(state, conn, opts);
     }
+    if conn.kind == "http" {
+        return crate::connection_http::apply(state, conn, opts);
+    }
     if conn.kind != "file_drop" {
         return Err(format!("The connection kind '{}' is not built yet", conn.kind).into());
     }
