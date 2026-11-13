@@ -525,6 +525,15 @@ pub fn authorize_app_with_role(
     known: Option<KnownCaller<'_>>,
     state: &SharedState,
 ) -> Result<(), ServiceError> {
+    // A public shared link reads one view of one app and nothing else. There is no person behind it to ask Cedar about, and the
+    // share route has already checked the token. The link never reaches a write, a comment, or another app.
+    if let Some(link) = caller.shared_link.as_deref().filter(|l| l.scope == "public") {
+        return if action == AppAction::Read && link.app_slug == slug {
+            Ok(())
+        } else {
+            Err(ServiceError::forbidden("A shared link reads only the view it was made for"))
+        };
+    }
     let app = {
         let engine = state
             .engine

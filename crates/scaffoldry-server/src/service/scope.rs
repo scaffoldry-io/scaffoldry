@@ -463,7 +463,7 @@ pub fn preview_access(
             role_title: String::new(),
             department: String::new(),
             affiliation: String::new(),
-        view_as_by: None, via_client: None,
+        view_as_by: None, via_client: None, shared_link: None,
         };
         person_of(&dummy, state)
     } else {

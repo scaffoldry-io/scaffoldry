@@ -291,7 +291,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 170 | [connections.md](connections.md) | 5 | Apps link to datasets | **COMPLETED** |
 | 171 | [connections.md](connections.md) | 6 | The connections panel | **COMPLETED** |
 | 172 | [views.md](views.md) | 5 | Dashboards and linked widgets | **COMPLETED** |
-| 173 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields |
+| 173 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields | **COMPLETED** |
 | 174 | [views.md](views.md) | 7 | Forms with conditions, boards, calendars, and galleries |
 | 175 | [guests.md](guests.md) | 1 | A guest proves an email address with a one-time link |
 | 176 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule |

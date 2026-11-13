@@ -44,6 +44,7 @@ pub mod flow_chains;
 pub mod buttons;
 pub mod dashboards;
 pub mod pages;
+pub mod shares;
 pub mod proposals;
 pub mod hints;
 pub mod prompts;
@@ -211,6 +212,8 @@ pub enum ServiceError {
     Archived(String),
     /// A write to a dataset record that was not made by the dataset's sync (connections phase 1).
     ReadOnlySource(String),
+    /// A shared link the institution has not turned on, or one this workspace may not have (views phase 6).
+    ShareNotAllowed(String),
     /// Too many of something at once, such as event streams (real-time phase 1). Waiting or closing one helps.
     RateLimited(String),
     /// The secrets store has no master key to work with (integrations phase 1).
@@ -275,7 +278,7 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) | Self::ShareNotAllowed(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::FlowGrantExceeded(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) | Self::ReadOnlySource(_) => StatusCode::CONFLICT,
@@ -314,6 +317,7 @@ impl ServiceError {
             Self::ReadOnlySource(_) => "read_only_source",
             Self::MasterKeyMissing(_) => "master_key_missing",
             Self::RateLimited(_) => "rate_limited",
+            Self::ShareNotAllowed(_) => "share_not_allowed",
             Self::TokenScope(_) => "token_scope",
             Self::ClientScope(_) => "client_scope",
             Self::LastOwner(_) => "last_owner",
@@ -354,6 +358,7 @@ impl ServiceError {
             | Self::Archived(msg)
             | Self::ReadOnlySource(msg)
             | Self::RateLimited(msg)
+            | Self::ShareNotAllowed(msg)
             | Self::MasterKeyMissing(msg)
             | Self::TokenScope(msg)
             | Self::ClientScope(msg)

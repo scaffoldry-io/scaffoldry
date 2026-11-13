@@ -90,6 +90,8 @@ pub enum DecisionType {
     WebhookChanged,
     /// Connections phase 1: a Platform Admin created or changed a data connection, or approved a shrunken source.
     ConnectionChanged,
+    /// Views phase 6: someone shared a view by a link, or revoked one, or a Platform Admin revoked an app's links.
+    ShareChanged,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -159,6 +161,7 @@ impl DecisionType {
         DecisionType::FlowRunRetried,
         DecisionType::WebhookChanged,
         DecisionType::ConnectionChanged,
+        DecisionType::ShareChanged,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -227,6 +230,7 @@ impl DecisionType {
             DecisionType::FlowRunRetried => "FlowRunRetried",
             DecisionType::WebhookChanged => "WebhookChanged",
             DecisionType::ConnectionChanged => "ConnectionChanged",
+            DecisionType::ShareChanged => "ShareChanged",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",

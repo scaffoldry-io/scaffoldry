@@ -1599,7 +1599,12 @@ fn withheld_on(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSp
             .map(|f| (f.name.clone(), scaffoldry_engine::effective_mask(f, &categories)))
             .collect()
     };
-    if !protected.is_empty() && protected_withheld(caller, app_slug, table, page, state) {
+    // A shared link never carries a protected field, whoever opens it: it is left out, not masked.
+    if !protected.is_empty() && caller.shared_link.is_some() {
+        for (name, _) in protected {
+            add(name, Mask::Hide);
+        }
+    } else if !protected.is_empty() && protected_withheld(caller, app_slug, table, page, state) {
         for (name, mask) in protected {
             add(name, mask);
         }
@@ -2119,7 +2124,7 @@ fn run_automations_in(
                 role_title: String::new(),
                 affiliation: aff_str.to_string(),
                 department: actor.department.to_string(),
-        view_as_by: None, via_client: None,
+        view_as_by: None, via_client: None, shared_link: None,
             };
             let resource = scaffoldry_policy::entities::Resource::Record(scaffoldry_policy::entities::RecordCtx {
                 app_slug: app_slug.to_string(),

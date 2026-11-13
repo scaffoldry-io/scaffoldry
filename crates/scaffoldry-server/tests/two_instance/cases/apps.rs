@@ -51,6 +51,9 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/apps/{slug}/views/{id}".into(), case!(view_update));
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}".into(), case!(view_delete));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/duplicate".into(), case!(view_duplicate));
+    m.insert("POST /api/v1/apps/{slug}/views/{id}/shares".into(), case!(share_create));
+    m.insert("DELETE /api/v1/apps/{slug}/views/{id}/shares/{share}".into(), case!(share_revoke));
+    m.insert("POST /api/v1/admin/shares/revoke".into(), case!(admin_shares_revoke));
 
     m.insert("POST /api/v1/apps/{slug}/processes/{id}/decide".into(), case!(process_decide));
     m.insert("POST /api/v1/me/work/{id}/act".into(), case!(work_act));
@@ -555,6 +558,39 @@ async fn view_duplicate(w: World) -> Outcome {
     let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/views"), OWNER, None).await, StatusCode::OK, "B lists views")?;
     let copies = seen.to_string().matches(&name).count();
     ensure(copies >= 2, format!("B lists the view and its copy ({copies} mention the name): {seen}"))
+}
+
+// --- shared links ----------------------------------------------------------------------------------------------------------
+
+/// Turns the institution scope on through A, makes an app with a view, and shares the view through A.
+async fn shared(w: &World) -> Result<(String, String, String), String> {
+    status(w.wa("PUT", "/api/v1/settings/sharing.allowed_scopes", ADMIN, Some(json!(["institution"]))).await, StatusCode::OK, "turn on institution links")?;
+    let slug = make_app(w).await?;
+    let view = new_view(w, &slug, &unique("p6share")).await?;
+    let made = status(w.wa("POST", &format!("/api/v1/apps/{slug}/views/{view}/shares"), OWNER, Some(json!({ "scope": "institution" }))).await, StatusCode::CREATED, "share the view")?;
+    Ok((slug, view, made["share"]["id"].as_str().ok_or("a share id")?.to_string()))
+}
+
+async fn share_create(w: World) -> Outcome {
+    let (slug, view, share) = shared(&w).await?;
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/views/{view}/shares"), OWNER, None).await, StatusCode::OK, "B lists the links")?;
+    ensure(has(&seen, &share), format!("B lists the link A made: {seen}"))
+}
+
+async fn share_revoke(w: World) -> Outcome {
+    let (slug, view, share) = shared(&w).await?;
+    let (s, body) = w.wa("DELETE", &format!("/api/v1/apps/{slug}/views/{view}/shares/{share}"), OWNER, None).await;
+    ensure(s.is_success(), format!("revoke: {s} {body}"))?;
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/views/{view}/shares"), OWNER, None).await, StatusCode::OK, "B lists the links")?;
+    ensure(has(&seen, "Revoked") && !has(&seen, "\"Active\""), format!("B shows the link as revoked: {seen}"))
+}
+
+async fn admin_shares_revoke(w: World) -> Outcome {
+    let (slug, _view, share) = shared(&w).await?;
+    status(w.wa("POST", "/api/v1/admin/shares/revoke", ADMIN, Some(json!({ "app": slug, "reason": "Closing the app's links" }))).await, StatusCode::OK, "revoke the app's links")?;
+    let seen = status(w.rb("GET", "/api/v1/admin/shares", ADMIN, None).await, StatusCode::OK, "B lists every link")?;
+    let row = seen["shares"].as_array().and_then(|a| a.iter().find(|r| r["id"] == share.as_str())).cloned().ok_or(format!("B lists the link: {seen}"))?;
+    ensure(row["state"] == "Revoked", format!("B shows it revoked: {row}"))
 }
 
 // --- processes, view-as ----------------------------------------------------------------------------------------------------

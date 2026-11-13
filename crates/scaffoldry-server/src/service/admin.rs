@@ -22,6 +22,8 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/admin/egress"),
     ("PUT", "/admin/egress/allow"),
     ("POST", "/admin/egress/test"),
+    ("GET", "/admin/shares"),
+    ("POST", "/admin/shares/revoke"),
     ("GET", "/admin/webhooks"),
     ("GET", "/admin/webhooks/{app}/{id}/deliveries"),
     ("POST", "/admin/webhooks/{app}/{id}/disable"),

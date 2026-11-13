@@ -82,6 +82,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::PreviewReadOnly("Read only".into()), "preview_read_only", StatusCode::FORBIDDEN),
         (ServiceError::Archived("Archived".into()), "archived", StatusCode::CONFLICT),
         (ServiceError::RateLimited("Too many".into()), "rate_limited", StatusCode::TOO_MANY_REQUESTS),
+        (ServiceError::ShareNotAllowed("Not on".into()), "share_not_allowed", StatusCode::FORBIDDEN),
         (ServiceError::MasterKeyMissing("No key".into()), "master_key_missing", StatusCode::SERVICE_UNAVAILABLE),
         (ServiceError::TokenScope("Scoped".into()), "token_scope", StatusCode::FORBIDDEN),
         (ServiceError::ClientScope("Ceiling".into()), "client_scope", StatusCode::FORBIDDEN),
@@ -101,6 +102,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::Archived(_)
             | ServiceError::ReadOnlySource(_)
             | ServiceError::RateLimited(_)
+            | ServiceError::ShareNotAllowed(_)
             | ServiceError::MasterKeyMissing(_)
             | ServiceError::TokenScope(_)
             | ServiceError::ClientScope(_)
