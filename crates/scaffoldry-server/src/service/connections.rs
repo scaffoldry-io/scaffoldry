@@ -69,13 +69,15 @@ fn check_config(kind: &str, config: &Value) -> Result<(), ServiceError> {
 
 /// The connection as the routes show it, with its newest run. A secret is named and never shown.
 fn show(state: &SharedState, id: Uuid) -> Result<Value, ServiceError> {
+    // A change approved since the last run, by a job that finished its snapshot, reaches the connection here too.
+    crate::connection_drift::settle_by_id(state, id);
     let row = state
         .repository
         .with_client(move |c| {
             Ok(c.query_opt(
                 "SELECT json_build_object('id', id, 'name', name, 'kind', kind, 'config', config, 'secret', secret, 'dataset_app', dataset_app, 'dataset_table', dataset_table, \
                         'key_field', key_field, 'column_map', column_map, 'sensitivity', sensitivity, 'every_minutes', every_minutes, 'at_time', at_time, 'enabled', enabled, \
-                        'created_by', created_by, 'created_at', created_at) FROM connections WHERE id = $1",
+                        'created_by', created_by, 'created_at', created_at, 'pending_proposal', pending_proposal) FROM connections WHERE id = $1",
                 &[&id],
             )?
             .map(|r| r.get::<_, Value>(0)))
@@ -84,6 +86,20 @@ fn show(state: &SharedState, id: Uuid) -> Result<Value, ServiceError> {
         .ok_or_else(|| ServiceError::NotFound("Connection not found".to_string()))?;
     let mut v = row;
     v["last_run"] = connections::runs(&state.repository, id).map_err(storage)?.into_iter().next().unwrap_or(Value::Null);
+    // What the console says: a connection a changed source stopped needs a person to review the proposal.
+    let (mut status, mut note) = (if v["enabled"] == false { "Disabled" } else { "Active" }, Value::Null);
+    // A drift that made no proposal (a preview is running, or the key column is gone) is also waiting on a person.
+    let drift_error = v["last_run"]["error"].as_str().filter(|e| e.starts_with("schema_drift") && !e.contains("Proposal ")).map(str::to_string);
+    if let Some(pid) = v["pending_proposal"].as_str().and_then(|p| Uuid::parse_str(p).ok()) {
+        let rejected = state.repository.get_proposal(pid).ok().flatten().is_some_and(|r| r.status.eq_ignore_ascii_case("rejected"));
+        status = "Needs review";
+        note = json!(if rejected { format!("The proposal {pid} for the change in the source was rejected. The connection stays stopped.") } else { format!("The proposal {pid} for the change in the source is waiting for approval.") });
+    } else if let Some(e) = drift_error {
+        status = "Needs review";
+        note = json!(e);
+    }
+    v["state"] = json!(status);
+    v["review_note"] = note;
     Ok(v)
 }
 
@@ -281,8 +297,9 @@ pub fn run_now(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) -
     let id = id_of(id)?;
     show(state, id)?;
     let approve = body.get("approve_shrink").and_then(Value::as_bool).unwrap_or(false);
+    let repropose = body.get("repropose").and_then(Value::as_bool).unwrap_or(false);
     let go = || {
-        connections::run(state, id, approve, false).map_err(|e| match e {
+        connections::run(state, id, connections::RunOpts { approve_shrink: approve, only_if_due: false, repropose }).map_err(|e| match e {
             RunError::NotFound => ServiceError::NotFound("Connection not found".to_string()),
             RunError::Busy => ServiceError::conflict("A run of this connection is already going"),
             RunError::NotDue => ServiceError::conflict("The connection is not due"),
@@ -387,7 +404,7 @@ pub fn seed_demo_connections(state: &SharedState) {
             payload: &payload,
         });
         if store(spec, conn, "system", state).is_ok() {
-            let _ = connections::run(state, conn, false, false);
+            let _ = connections::run(state, conn, connections::RunOpts::default());
         }
     }
 }

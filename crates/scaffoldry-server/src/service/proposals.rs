@@ -1445,6 +1445,8 @@ pub fn decide_as(caller: &AuthUser, proposal_id: &str, decision: &str, rationale
     // A trial copy lasts while its proposal waits.
     crate::service::trials::destroy_for_proposal(state, id);
     tell_decided(caller, &row, decision, state);
+    // Connections phase 2: a change a data connection proposed reaches the connection as soon as it is approved.
+    crate::connection_drift::after_decision(state, &row.app_slug);
     get(proposal_id, state)
 }
 
