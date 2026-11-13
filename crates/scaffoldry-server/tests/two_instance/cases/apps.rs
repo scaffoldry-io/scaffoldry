@@ -52,6 +52,8 @@ pub fn add(m: &mut Entries) {
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}".into(), case!(view_delete));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/duplicate".into(), case!(view_duplicate));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/submit".into(), case!(form_submit));
+    m.insert("POST /api/v1/guest/{app}/{form}/start".into(), case!(guest_start));
+    m.insert("POST /api/v1/guest/verify".into(), case!(guest_verify));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/shares".into(), case!(share_create));
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}/shares/{share}".into(), case!(share_revoke));
     m.insert("POST /api/v1/admin/shares/revoke".into(), case!(admin_shares_revoke));
@@ -576,6 +578,47 @@ async fn form_submit(w: World) -> Outcome {
     ensure(sent["success_message"] == "Thanks.", format!("the form's own message: {sent}"))?;
     let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/records?table_id=apps"), OWNER, None).await, StatusCode::OK, "B lists the records")?;
     ensure(has(&seen, &name), format!("B lists the record the form made: {seen}"))
+}
+
+// --- guests ----------------------------------------------------------------------------------------------------------------
+
+/// Turns guests on, and mail with a base address, through A. Makes an app and a form that is open to guests.
+async fn guest_setup(w: &World) -> Result<(String, String), String> {
+    status(w.wa("PUT", "/api/v1/settings/guests.enabled", ADMIN, Some(json!(true))).await, StatusCode::OK, "turn guests on")?;
+    status(w.wa("PUT", "/api/v1/settings/mail.enabled", ADMIN, Some(json!(true))).await, StatusCode::OK, "turn mail on")?;
+    status(w.wa("PUT", "/api/v1/settings/mail.smtp", ADMIN, Some(json!({ "host": "mail.test", "port": 587, "security": "starttls", "from": "desk@state.edu", "username": "desk", "secret": "smtp_password" }))).await, StatusCode::OK, "set the mail server")?;
+    status(w.wa("PUT", "/api/v1/settings/platform.base_url", ADMIN, Some(json!("https://desk.state.edu"))).await, StatusCode::OK, "set the base address")?;
+    let slug = make_app(w).await?;
+    let made = status(
+        w.wa("POST", &format!("/api/v1/apps/{slug}/views"), OWNER, Some(json!({ "name": unique("p8form"), "kind": "form", "ownership": "collaborative", "table_id": "apps", "config": { "audience": "Guests", "form_fields": [{ "name": "name" }] } }))).await,
+        StatusCode::CREATED,
+        "make a guest form",
+    )?;
+    Ok((slug, made["id"].as_str().ok_or("a view id")?.to_string()))
+}
+
+async fn guest_start(w: World) -> Outcome {
+    let (slug, form) = guest_setup(&w).await?;
+    let email = format!("{}@example.org", unique("guest"));
+    status(w.wa("POST", &format!("/api/v1/guest/{slug}/{form}/start"), ADMIN, Some(json!({ "email": email }))).await, StatusCode::OK, "ask for a link on A")?;
+    // B, a second server on the same database, shares the mail A queued and the guest A made.
+    let e = email.clone();
+    let queued: i64 = w.db.run(move |c| c.query_one("SELECT count(*) FROM email_outbox WHERE to_address = $1", &[&e]).unwrap().get(0));
+    let known: i64 = w.db.run(move |c| c.query_one("SELECT count(*) FROM guests WHERE email = $1", &[&email]).unwrap().get(0));
+    ensure(queued == 1 && known == 1, format!("one mail queued and one guest made: {queued} {known}"))
+}
+
+async fn guest_verify(w: World) -> Outcome {
+    let (slug, form) = guest_setup(&w).await?;
+    let email = format!("{}@example.org", unique("guest"));
+    status(w.wa("POST", &format!("/api/v1/guest/{slug}/{form}/start"), ADMIN, Some(json!({ "email": email }))).await, StatusCode::OK, "ask for a link")?;
+    let mail: String = w.db.run(move |c| c.query_one("SELECT body FROM email_outbox WHERE to_address = $1", &[&email]).unwrap().get(0));
+    let at = mail.find("/g/").ok_or("a link in the mail")?;
+    let token: String = mail[at + 3..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    // A takes the link. B, which never saw it, refuses it a second time, because the use is in the database.
+    status(w.wa("POST", "/api/v1/guest/verify", ADMIN, Some(json!({ "token": token }))).await, StatusCode::OK, "A takes the link")?;
+    let (s, body) = w.rb("POST", "/api/v1/guest/verify", ADMIN, Some(json!({ "token": token }))).await;
+    ensure(s == StatusCode::NOT_FOUND, format!("B refuses a link A used: {s} {body}"))
 }
 
 // --- shared links ----------------------------------------------------------------------------------------------------------

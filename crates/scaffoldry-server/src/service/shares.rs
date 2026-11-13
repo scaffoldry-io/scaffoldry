@@ -10,6 +10,7 @@
 
 use crate::service::access::{authorize_app, AppAction};
 use crate::service::admin::{admin_write, require_platform_admin};
+use crate::service::rate_limit::{hit, Window};
 use crate::service::views::{self, RunQuery};
 use crate::service::{records, scope, ServiceError};
 use crate::state::{AuthUser, RecordDecisionInput, SharedLink, SharedState};
@@ -303,31 +304,6 @@ pub struct Opened {
     pub expires_at: String,
 }
 
-/// Counts one request against a key in the current minute. The request that passes the limit is refused.
-fn hit(state: &SharedState, key: String, limit: i32) -> Result<(), ServiceError> {
-    let count: i32 = state
-        .repository
-        .with_client(move |c| {
-            let n: i32 = c
-                .query_one(
-                    "INSERT INTO rate_limits (key, window_start, count) VALUES ($1, date_trunc('minute', NOW()), 1) \
-                     ON CONFLICT (key, window_start) DO UPDATE SET count = rate_limits.count + 1 RETURNING count",
-                    &[&key],
-                )?
-                .get(0);
-            // A key's first request of a minute also clears what is over an hour old.
-            if n == 1 {
-                c.execute("DELETE FROM rate_limits WHERE window_start < NOW() - INTERVAL '1 hour'", &[])?;
-            }
-            Ok(n)
-        })
-        .map_err(storage)?;
-    if count > limit {
-        return Err(ServiceError::RateLimited("Too many requests for this link. Wait a minute and try again.".to_string()));
-    }
-    Ok(())
-}
-
 /// Opens a token for one request: finds it, counts it, and decides who reads through it. A token that is wrong, revoked or
 /// past its expiry is not found, whatever the reason.
 pub fn open(state: &SharedState, headers: &axum::http::HeaderMap, token: &str) -> Result<Opened, ServiceError> {
@@ -347,7 +323,7 @@ pub fn open(state: &SharedState, headers: &axum::http::HeaderMap, token: &str) -
         .map_err(storage)?;
     let (share, app, view, scope_name, allow_download, expires_at) = found.ok_or_else(not_found)?;
 
-    hit(state, format!("share:{hash}"), PER_TOKEN)?;
+    hit(state, format!("share:{hash}"), PER_TOKEN, Window::Minute)?;
     let link = Box::new(SharedLink { share_id: share, app_slug: app.clone(), scope: scope_name.clone() });
     let reader = if scope_name == "public" {
         let address = headers
@@ -358,7 +334,7 @@ pub fn open(state: &SharedState, headers: &axum::http::HeaderMap, token: &str) -
             .filter(|a| !a.is_empty())
             .unwrap_or("unknown")
             .to_string();
-        hit(state, format!("addr:{address}"), PER_ADDRESS)?;
+        hit(state, format!("addr:{address}"), PER_ADDRESS, Window::Minute)?;
         AuthUser {
             eppn: String::new(),
             name: "Shared link".to_string(),

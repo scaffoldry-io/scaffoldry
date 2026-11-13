@@ -99,6 +99,10 @@ fn session_user_inner(state: &SharedState, headers: &HeaderMap) -> Option<AuthUs
         let _ = state.update_token_last_used(&hash, now);
     }
 
+    // A guest is not in the directory. Its session reads as a guest while the guest may still use it.
+    if row.kind == "guest" {
+        return crate::service::guests::session_user(state, &row);
+    }
     let mut user = resolve_user(&row.eppn, state)?;
     if row.kind == "viewas" {
         // The viewer must still resolve. Rights are the target's intersected with theirs.
@@ -267,11 +271,15 @@ pub async fn require_session(
     let path = req.uri().path();
     // A shared link opens without a session when it is public. The route checks the token, the scope and the rate limit, and
     // asks for a session itself when the link is for the institution.
-    if PUBLIC_PATHS.contains(&path) || path.starts_with("/scim/v2/") || path.starts_with("/api/v1/shared/") {
+    if PUBLIC_PATHS.contains(&path) || path.starts_with("/scim/v2/") || path.starts_with("/api/v1/shared/") || path.starts_with("/api/v1/guest/") {
         return next.run(req).await;
     }
     match session_user(&state, req.headers()) {
         Some(user) => {
+            // A guest session reaches the guest routes and signs out, and nothing else, whatever its scope would allow.
+            if token_row(&state, req.headers()).is_some_and(|r| r.kind == "guest") && !matches!(req.uri().path(), "/api/v1/auth/logout") {
+                return ServiceError::TokenScope("A guest session reaches one form and nothing else.".to_string()).into_response();
+            }
             if let Some(row) = view_as_token(&state, req.headers()) {
                 if let Some(refusal) = view_as_gate(&row, req.method(), req.uri().path()) {
                     return refusal.into_response();

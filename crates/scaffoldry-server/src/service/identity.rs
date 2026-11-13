@@ -72,6 +72,10 @@ fn root_roles(eppn: &str, state: &SharedState) -> (bool, bool) {
 }
 
 pub fn resolve_user(eppn: &str, state: &SharedState) -> Option<AuthUser> {
+    // A guest is never a directory person. Its address is in a name that cannot resolve, and nothing here may invent a person for it.
+    if crate::service::guests::is_guest_address(eppn) {
+        return None;
+    }
     // A client's service identity is not a person. It exists while its client is active and has one.
     if let Some(client_id) = crate::service::oauth::service_client_id(eppn) {
         let client = state.repository.get_client(client_id).ok().flatten().filter(|c| c.status == "Active" && c.service_identity)?;
