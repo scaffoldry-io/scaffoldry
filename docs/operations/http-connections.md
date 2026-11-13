@@ -37,4 +37,4 @@ A connection of kind `http` reads a JSON or JSON Lines web service and copies it
 
 - It reads every page first and keeps the rows in a private temporary file, so memory stays flat and the service is asked once.
 - It then checks every row and counts them. A bad value, a repeated key, or a result under half the size of the last one stops the run before anything is written. It writes only what changed.
-- If the rows gain or lose a key that the connection maps, the run stops and makes a proposal for the dataset, as a changed file does. A key the connection does not map and the rows no longer have is not noticed until you add it to the map.
+- A service has no list of columns, so the columns are the keys its rows have. If a row gains a key the connection does not map, or no row has a key it does map, the run stops and makes a proposal for the dataset, as a changed file does.
