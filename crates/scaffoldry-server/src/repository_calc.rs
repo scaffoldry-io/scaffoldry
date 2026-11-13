@@ -68,7 +68,10 @@ pub(crate) fn sync_calcs_in_tx(tx: &mut postgres::Transaction<'_>, old: Option<&
         let job = crate::jobs::enqueue_in_tx(tx, "recalc_field", &payload, requested_by, Some(&key))?;
         mark(tx, &new.slug, &table.id, &change.fields, job)?;
     }
-    if let Some(old) = old {
+    // A dataset's records are written only by its sync, so a change of type converts nothing here. The next run writes
+    // the values in their new type.
+    let converts = new.kind != scaffoldry_engine::AppKind::Dataset;
+    if let (Some(old), true) = (old, converts) {
         for change in type_changes(old, new).into_iter().filter(|c| conversion_supported(c.from, c.to)) {
             let Some(table) = new.tables.iter().find(|t| t.id == change.table_id) else { continue };
             let indexed = scaffoldry_engine::indexed_fields(new, &table.id);

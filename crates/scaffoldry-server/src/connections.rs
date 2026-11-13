@@ -59,6 +59,9 @@ pub struct Conn {
     pub key_field: String,
     pub columns: Vec<Column>,
     pub sensitivity: String,
+    /// The proposal a changed source made, and the column map it would give the connection.
+    pub pending_proposal: Option<Uuid>,
+    pub pending_map: Option<Value>,
 }
 
 pub fn columns_of(map: &Value) -> Vec<Column> {
@@ -111,7 +114,7 @@ pub fn record_id(conn: Uuid, table: &str, key: &str) -> String {
     Uuid::from_bytes(bytes).to_string()
 }
 
-fn typed(kind: &str, raw: &str) -> Result<Value, String> {
+pub(crate) fn typed(kind: &str, raw: &str) -> Result<Value, String> {
     let raw = raw.trim();
     match kind {
         "Text" => Ok(Value::String(raw.to_string())),
@@ -142,39 +145,33 @@ fn typed(kind: &str, raw: &str) -> Result<Value, String> {
     }
 }
 
-/// The rows of a file as `(key, data)`, or why the file cannot be used. Nothing is written here.
 /// A row of the file: its key, and its typed fields.
 type Row = (String, Map<String, Value>);
 
-fn read_rows(conn: &Conn, bytes: &[u8]) -> Result<Vec<Row>, String> {
+/// A file as read: its header (a csv has one) and each row by column name.
+pub(crate) struct Source {
+    pub headers: Option<Vec<String>>,
+    pub rows: Vec<HashMap<String, String>>,
+}
+
+/// Reads a file into rows of text. Nothing is typed or checked against the column map here.
+fn parse_source(conn: &Conn, bytes: &[u8]) -> Result<Source, String> {
     let format = conn.config.get("format").and_then(Value::as_str).unwrap_or("csv");
-    let mut raw: Vec<HashMap<String, String>> = Vec::new();
     match format {
         "csv" => {
             let (headers, rows) = crate::import_jobs::parse_csv_stream(bytes, ',', None)?;
-            let mapped: HashSet<&str> = conn.columns.iter().map(|c| c.source.as_str()).collect();
-            let present: HashSet<&str> = headers.iter().map(String::as_str).collect();
-            let missing: Vec<&str> = conn.columns.iter().map(|c| c.source.as_str()).filter(|s| !present.contains(s)).collect();
-            let extra: Vec<&str> = headers.iter().map(String::as_str).filter(|h| !mapped.contains(h)).collect();
-            if !missing.is_empty() || !extra.is_empty() {
-                let mut parts = Vec::new();
-                for m in &missing {
-                    parts.push(format!("The source no longer has \"{m}\"."));
-                }
-                for e in &extra {
-                    parts.push(format!("The source added \"{e}\"."));
-                }
-                return Err(format!("schema_drift: {}", parts.join(" ")));
-            }
+            let mut raw = Vec::with_capacity(rows.len());
             for row in rows {
                 if row.len() == 1 && row[0].is_empty() {
                     continue;
                 }
                 raw.push(headers.iter().cloned().zip(row.into_iter().chain(std::iter::repeat(String::new()))).collect());
             }
+            Ok(Source { headers: Some(headers), rows: raw })
         }
         "jsonl" => {
             let text = std::str::from_utf8(bytes).map_err(|_| "Invalid file encoding: only UTF-8 is supported.".to_string())?;
+            let mut raw = Vec::new();
             for (i, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
                 let v: Value = serde_json::from_str(line).map_err(|e| format!("Line {}: not JSON ({e})", i + 1))?;
                 let obj = v.as_object().ok_or_else(|| format!("Line {}: not an object", i + 1))?;
@@ -184,13 +181,18 @@ fn read_rows(conn: &Conn, bytes: &[u8]) -> Result<Vec<Row>, String> {
                         .collect(),
                 );
             }
+            Ok(Source { headers: None, rows: raw })
         }
-        other => return Err(format!("The format '{other}' is not csv or jsonl")),
+        other => Err(format!("The format '{other}' is not csv or jsonl")),
     }
+}
+
+/// The rows of a file as `(key, data)`, or why the file cannot be used. Nothing is written here.
+fn type_rows(conn: &Conn, src: &Source) -> Result<Vec<Row>, String> {
     let key_source = conn.columns.iter().find(|c| c.field == conn.key_field).map(|c| c.source.clone()).unwrap_or_default();
     let mut seen = HashSet::new();
-    let mut out = Vec::with_capacity(raw.len());
-    for (i, row) in raw.iter().enumerate() {
+    let mut out = Vec::with_capacity(src.rows.len());
+    for (i, row) in src.rows.iter().enumerate() {
         let n = i + 2;
         let mut data = Map::new();
         data.insert("_table_id".into(), Value::String(conn.dataset_table.clone()));
@@ -236,7 +238,7 @@ pub fn runs(repo: &crate::repository::PostgresRepository, id: Uuid) -> Result<Ve
 /// The connection with this id, as the sync reads it.
 pub fn load(repo: &crate::repository::PostgresRepository, id: Uuid) -> Result<Option<Conn>, RepositoryError> {
     repo.with_client(move |c| {
-        Ok(c.query_opt("SELECT id, name, kind, config, dataset_app, dataset_table, key_field, column_map, sensitivity FROM connections WHERE id = $1", &[&id])?.map(|r| Conn {
+        Ok(c.query_opt("SELECT id, name, kind, config, dataset_app, dataset_table, key_field, column_map, sensitivity, pending_proposal, pending_column_map FROM connections WHERE id = $1", &[&id])?.map(|r| Conn {
             id: r.get(0),
             name: r.get(1),
             kind: r.get(2),
@@ -246,6 +248,8 @@ pub fn load(repo: &crate::repository::PostgresRepository, id: Uuid) -> Result<Op
             key_field: r.get(6),
             columns: columns_of(&r.get::<_, Value>(7)),
             sensitivity: r.get(8),
+            pending_proposal: r.get(9),
+            pending_map: r.get(10),
         }))
     })
 }
@@ -353,8 +357,17 @@ fn write_batch(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteC
                         restore_record_in_tx(&mut tx, &app, &id, &ctx)?;
                         added += 1;
                     }
-                    if *old != data {
-                        update_record_in_tx(&mut tx, &app, &id, &data, None, &ctx)?;
+                    // A field the dataset retired is not in the file. Its values stay, as the record held them.
+                    let merged = match (old.as_object(), data.as_object()) {
+                        (Some(o), Some(n)) => {
+                            let mut m = o.clone();
+                            m.extend(n.iter().map(|(k, v)| (k.clone(), v.clone())));
+                            Value::Object(m)
+                        }
+                        _ => data.clone(),
+                    };
+                    if *old != merged {
+                        update_record_in_tx(&mut tx, &app, &id, &merged, None, &ctx)?;
                         if !*trashed {
                             changed += 1;
                         }
@@ -394,30 +407,41 @@ fn trash_removed(state: &SharedState, conn: &Conn, ctx: &crate::repository::Writ
 }
 
 /// The work of one run, after it is open. `Ok(None)` is `unchanged`. A fault comes back as text, and the run keeps it.
-fn apply(state: &SharedState, conn: &Conn, approve_shrink: bool) -> Result<(Option<Counts>, String), String> {
+fn apply(state: &SharedState, conn: &Conn, opts: &RunOpts) -> Result<(Option<Counts>, String), Fault> {
     if conn.kind != "file_drop" {
-        return Err(format!("The connection kind '{}' is not built yet", conn.kind));
+        return Err(format!("The connection kind '{}' is not built yet", conn.kind).into());
     }
     let root = state.drop_dir.as_deref().ok_or("No drop directory is configured. Set SCAFFOLDRY_DROP_DIR to the mounted directory")?;
     let rel = conn.config.get("path").and_then(Value::as_str).unwrap_or("");
     let path = resolve_in(root, rel)?;
     let meta = std::fs::metadata(&path).map_err(|e| format!("The file could not be read: {e}"))?;
     if !meta.is_file() {
-        return Err("The path is not a file".to_string());
+        return Err("The path is not a file".into());
     }
     if meta.len() > MAX_FILE_BYTES {
-        return Err(format!("file_too_large: the file is {} bytes, over the limit of {MAX_FILE_BYTES}", meta.len()));
+        return Err(format!("file_too_large: the file is {} bytes, over the limit of {MAX_FILE_BYTES}", meta.len()).into());
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("The file could not be read: {e}"))?;
     let hash: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     let (last_hash, last_rows) = last_good(state, conn.id).map_err(|e| e.to_string())?;
     if last_hash.as_deref() == Some(hash.as_str()) {
+        // The file is the one the dataset already holds, so a change proposed for the source is no longer needed.
+        if conn.pending_proposal.is_some() {
+            crate::connection_drift::withdraw(state, conn);
+        }
         return Ok((None, hash));
     }
-    let rows = read_rows(conn, &bytes)?;
+    let src = parse_source(conn, &bytes)?;
+    if let Some(drift) = crate::connection_drift::find(conn, &src) {
+        return Err(Fault::Drift(drift));
+    }
+    if conn.pending_proposal.is_some() {
+        crate::connection_drift::withdraw(state, conn);
+    }
+    let rows = type_rows(conn, &src)?;
     if let Some(prev) = last_rows.filter(|p| *p > 0) {
-        if !approve_shrink && rows.len() * 100 < prev * SHRINK_FLOOR_PERCENT {
-            return Err(format!("source_shrank: the file holds {} rows and the last run held {prev}. A person must approve a file this much smaller", rows.len()));
+        if !opts.approve_shrink && rows.len() * 100 < prev * SHRINK_FLOOR_PERCENT {
+            return Err(format!("source_shrank: the file holds {} rows and the last run held {prev}. A person must approve a file this much smaller", rows.len()).into());
         }
     }
     let table_row = serde_json::json!({ "_table_id": conn.dataset_table });
@@ -452,20 +476,55 @@ fn apply(state: &SharedState, conn: &Conn, approve_shrink: bool) -> Result<(Opti
     Ok((Some(n), hash))
 }
 
+/// Why a run stopped before it wrote: a fault in words, or a source that changed shape.
+pub(crate) enum Fault {
+    Text(String),
+    Drift(crate::connection_drift::Drift),
+}
+
+impl From<String> for Fault {
+    fn from(s: String) -> Self {
+        Fault::Text(s)
+    }
+}
+
+impl From<&str> for Fault {
+    fn from(s: &str) -> Self {
+        Fault::Text(s.to_string())
+    }
+}
+
+/// How a run was asked for.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunOpts {
+    /// A person approves a file much smaller than the last one.
+    pub approve_shrink: bool,
+    /// The scheduler's run: only if the connection is due.
+    pub only_if_due: bool,
+    /// A person asks for a change to be proposed again after its proposal was rejected.
+    pub repropose: bool,
+}
+
 /// Runs a connection now. A fault ends the run as `failed` with its text, and is returned as the run, not as an error.
-pub fn run(state: &SharedState, id: Uuid, approve_shrink: bool, only_if_due: bool) -> Result<Value, RunError> {
-    let conn = load(&state.repository, id)?.ok_or(RunError::NotFound)?;
-    let run_id = match start_run(state, id, only_if_due)? {
+pub fn run(state: &SharedState, id: Uuid, opts: RunOpts) -> Result<Value, RunError> {
+    let mut conn = load(&state.repository, id)?.ok_or(RunError::NotFound)?;
+    // An approved change to the dataset puts its column map in place before the file is read.
+    crate::connection_drift::settle(state, &mut conn)?;
+    let run_id = match start_run(state, id, opts.only_if_due)? {
         Some(r) => r,
-        None if only_if_due => return Err(RunError::NotDue),
+        None if opts.only_if_due => return Err(RunError::NotDue),
         None => return Err(RunError::Busy),
     };
     let zero = Counts { added: 0, changed: 0, removed: 0, unchanged: 0 };
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply(state, &conn, approve_shrink))).unwrap_or_else(|_| Err("The sync stopped unexpectedly".to_string()));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply(state, &conn, &opts))).unwrap_or_else(|_| Err(Fault::Text("The sync stopped unexpectedly".to_string())));
     match outcome {
         Ok((None, hash)) => finish_run(state, run_id, "unchanged", &zero, None, Some(&hash))?,
         Ok((Some(n), hash)) => finish_run(state, run_id, "done", &n, None, Some(&hash))?,
-        Err(error) => finish_run(state, run_id, "failed", &zero, Some(&error), None)?,
+        Err(Fault::Text(error)) => finish_run(state, run_id, "failed", &zero, Some(&error), None)?,
+        Err(Fault::Drift(drift)) => {
+            let error = crate::connection_drift::handle(state, &conn, &drift, opts);
+            finish_run(state, run_id, "failed", &zero, Some(&error), None)?
+        }
     }
     Ok(state.repository.with_client(move |c| Ok(run_json(&c.query_one(&format!("{} WHERE id = $1", run_select()), &[&run_id])?)))?)
 }
@@ -479,7 +538,7 @@ pub fn sync_due(state: &SharedState) -> Result<usize, String> {
         .map_err(|e| e.to_string())?;
     let mut ran = 0;
     for id in ids {
-        match run(state, id, false, true) {
+        match run(state, id, RunOpts { only_if_due: true, ..RunOpts::default() }) {
             Ok(_) => ran += 1,
             Err(RunError::Busy | RunError::NotDue | RunError::NotFound) => {}
             Err(RunError::Storage(e)) => return Err(e),
