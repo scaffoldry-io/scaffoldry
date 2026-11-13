@@ -286,7 +286,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 165 | [integrations.md](integrations.md) | 5 | Outbound access, secrets, and webhook panels | **COMPLETED** |
 | 166 | [connections.md](connections.md) | 1 | Datasets are real and read-only. A file-drop sync | **COMPLETED** |
 | 167 | [connections.md](connections.md) | 2 | A changed source stops the sync and makes a proposal | **COMPLETED** |
-| 168 | [connections.md](connections.md) | 3 | PostgreSQL connector. Needs a TLS connector |
+| 168 | [connections.md](connections.md) | 3 | PostgreSQL connector, on `tokio-postgres-rustls` |
 | 169 | [connections.md](connections.md) | 4 | HTTP connector |
 | 170 | [connections.md](connections.md) | 5 | Apps link to datasets |
 | 171 | [connections.md](connections.md) | 6 | The connections panel |
@@ -408,6 +408,7 @@ Settled. These were open and are now decided. Each is written into the brief nam
 | `calamine`, `rust_xlsxwriter` and `flate2` are approved, each added only in the phase that names it and only if the license audit passes. `aes-gcm` waits for the master key decision | `import-export.md`, approved 2026-10-13 |
 | CI runs the Rust tests with `cargo-nextest`, in parallel, with a time limit per test | `.github/workflows/ci.yml`, approved 2026-10-13 |
 | The million-row test met every limit. The JSON record with a pivot index stays | `row-scale.md` phase 6, PR 114 |
+| `tokio-postgres-rustls` is approved for `connections.md` phase 3, on the `rustls` and system certificate store already approved, only if the license audit passes | `connections.md` phase 3, approved 2026-11-13 |
 | `lettre` is approved for `notifications.md` phase 2, without default features, on `rustls` with `ring` and the system certificate store | `notifications.md` phase 2, approved 2026-11-02 |
 | `aes-gcm`, and `ureq` with `rustls`, are approved for `integrations.md` phase 1. `ureq` runs without default features, on `ring`, with the system certificate store read by `rustls-native-certs`, so `webpki-roots` (not on the license list) is not in the lockfile | `integrations.md` phase 1, approved 2026-11-02 |
 
