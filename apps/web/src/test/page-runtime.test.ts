@@ -152,3 +152,48 @@ describe("the files", () => {
     expect(shellText.indexOf("Content-Security-Policy")).toBeLessThan(shellText.indexOf("<script"));
   });
 });
+
+// Views phase 5: a page in a dashboard widget may be told which record is selected in the linked widget. It is one id, read only.
+describe("the host context", () => {
+  const PAGE_NOOP = `export default function P() { return <p id="out">ok</p>; }`;
+  const change = (win: Window, params: unknown) =>
+    win.dispatchEvent(new (win as unknown as { MessageEvent: typeof MessageEvent }).MessageEvent("message", { data: { jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params }, source: win }));
+  const selection = (win: Window) => (win as unknown as { scaffoldry: { context: { selection: unknown } } }).scaffoldry.context.selection;
+
+  it("holds the selected record's id from the first answer of the host", async () => {
+    const { win } = await open(PAGE_NOOP, (rpc) => (rpc.method === "ui/initialize" ? { hostContext: { selection: "rec-7" } } : {}));
+    expect(selection(win as unknown as Window)).toBe("rec-7");
+  });
+
+  it("holds no selection when the host names none", async () => {
+    const { win } = await open(PAGE_NOOP, () => ({}));
+    expect(selection(win as unknown as Window)).toBeNull();
+  });
+
+  it("follows the host's changes, and holds nothing but an id", async () => {
+    const { win } = await open(PAGE_NOOP, () => ({}));
+    const w = win as unknown as Window;
+    change(w, { selection: "rec-9" });
+    expect(selection(w)).toBe("rec-9");
+    change(w, { selection: { id: "rec-1", data: { name: "Ada" } } });
+    expect(selection(w)).toBeNull();
+    change(w, { selection: "x".repeat(300) });
+    expect(selection(w)).toBeNull();
+    change(w, { selection: "rec-2" });
+    change(w, {});
+    expect(selection(w)).toBeNull();
+    const context = (w as unknown as { scaffoldry: { context: object } }).scaffoldry.context;
+    expect(Object.keys(context)).toEqual(["selection"]);
+  });
+
+  it("cannot be set by the page", async () => {
+    const { win } = await open(PAGE_NOOP, () => ({}));
+    const w = win as unknown as { scaffoldry: { context: { selection: unknown } } };
+    try {
+      w.scaffoldry.context.selection = "forged";
+    } catch {
+      /* a frozen object may throw in strict mode */
+    }
+    expect(w.scaffoldry.context.selection).toBeNull();
+  });
+});

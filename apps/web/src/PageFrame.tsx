@@ -9,12 +9,19 @@ import { ApiError, callPage, getPage } from "./api";
  * component, with one request: a JSON-RPC `tools/call` of `page_call`. The component forwards that call to this page's
  * own route, with this page's own app and page ids, and sends the answer back. The server decides what the page may do.
  *
+ * In a dashboard, the page may be told which record is selected in the widget it is linked to. That is one id, offered as
+ * `hostContext.selection` when the page initializes and as `ui/notifications/host-context-changed` after. It gives the page
+ * nothing it cannot already read.
+ *
  * A page cannot approve a proposal or decide a process step. Those buttons are drawn by the desk, outside the frame.
  */
-export function PageFrame({ appSlug, pageId }: { appSlug: string; pageId: string }) {
+export function PageFrame({ appSlug, pageId, selection = null }: { appSlug: string; pageId: string; selection?: string | null }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // What the page was last told, so the init answer and a later change agree.
+  const told = useRef<string | null>(selection);
+  const ready = useRef(false);
 
   useEffect(() => {
     let current = true;
@@ -42,7 +49,8 @@ export function PageFrame({ appSlug, pageId }: { appSlug: string; pageId: string
       // MCP Apps (specification 2026-01-26): the page says ui/initialize and waits for this answer before it sends a tool
       // call. The desk offers no host capability. `ui/notifications/initialized` has no id, so it is ignored above.
       if (request.method === "ui/initialize") {
-        reply({ id: request.id, result: { protocolVersion: "2026-01-26", hostCapabilities: {}, hostInfo: { name: "scaffoldry-desk", version: "1" }, hostContext: {} } });
+        reply({ id: request.id, result: { protocolVersion: "2026-01-26", hostCapabilities: {}, hostInfo: { name: "scaffoldry-desk", version: "1" }, hostContext: told.current ? { selection: told.current } : {} } });
+        ready.current = true;
         return;
       }
       if (request.method !== "tools/call") {
@@ -67,6 +75,13 @@ export function PageFrame({ appSlug, pageId }: { appSlug: string; pageId: string
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [appSlug, pageId, reply]);
+
+  // A change of selection after the page has started is sent to it as a notification.
+  useEffect(() => {
+    if (told.current === selection) return;
+    told.current = selection;
+    if (ready.current) reply({ method: "ui/notifications/host-context-changed", params: { selection } });
+  }, [selection, reply]);
 
   if (problem) {
     return (
