@@ -11,7 +11,7 @@ import { FieldSpec, RowDensity, FieldType, AppView, AppTable } from "./types";
 import { explainError } from "./ui/explainError";
 import { AttachmentChips, type AttachedFile } from "./ui/Attachments";
 import { LinkCell } from "./LinkCell";
-import { linkedIds, recordLabel } from "./LinkedRecords";
+import { linkedIds, linkTargetApp, recordLabel } from "./LinkedRecords";
 
 export type CellAddr = { recordId: string; fieldName: string };
 
@@ -1422,7 +1422,7 @@ export function DataGrid({
                           const one = field.link_cardinality === "One";
                           return (
                             <LinkCell
-                              appSlug={appSlug as string}
+                              appSlug={linkTargetApp(field, appSlug as string)}
                               tableId={field.link_target_table as string}
                               label={field.label}
                               cardinality={one ? "one" : "many"}

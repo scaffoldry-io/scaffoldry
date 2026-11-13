@@ -371,6 +371,12 @@ fn check_manifest_part(
         return Err(ServiceError::BadRequest(format!("schema: the manifest has {} problem(s): {}", problems.len(), problems.join("; "))));
     }
 
+    // Connections phase 5: a link or a join that names a dataset must name a dataset, and one of its tables.
+    let datasets = crate::service::connections::dataset_link_problems(&manifest, state);
+    if !datasets.is_empty() {
+        return Err(ServiceError::BadRequest(format!("schema: the manifest has {} problem(s) with the datasets it links to: {}", datasets.len(), datasets.join("; "))));
+    }
+
     let placed = crate::service::coordinates::manifest_problems(state, ws, &manifest)?;
     if !placed.is_empty() {
         return Err(ServiceError::BadRequest(format!("coordinates: the manifest has {} problem(s): {}", placed.len(), placed.join("; "))));

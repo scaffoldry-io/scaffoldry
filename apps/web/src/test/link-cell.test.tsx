@@ -179,3 +179,12 @@ describe("a link column in the grid", () => {
     await waitFor(() => expect(onPatch).toHaveBeenCalledWith("a1", "program", ["p2", "p1"], expect.any(String)));
   });
 });
+
+// Connections phase 5: a link to a dataset is picked from the dataset's app, under its access rules.
+describe("the app a link field is picked from", () => {
+  it("is the dataset a link names, and this app otherwise", async () => {
+    const { linkTargetApp } = await import("../LinkedRecords");
+    expect(linkTargetApp({ link_target_app: "registrar-programs" }, "applications")).toBe("registrar-programs");
+    expect(linkTargetApp({}, "applications")).toBe("applications");
+  });
+});

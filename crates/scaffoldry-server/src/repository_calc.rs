@@ -110,6 +110,7 @@ pub(crate) fn sync_calcs_in_tx(tx: &mut postgres::Transaction<'_>, old: Option<&
                 "relation_id": relation.id,
                 "target_table_id": relation.target_table_id,
                 "target_field": relation.target_field,
+                "target_app": relation.target_app,
                 "batch_id": uuid::Uuid::new_v4(),
                 "actor": requested_by,
                 "index_fields": index_fields,

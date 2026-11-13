@@ -429,3 +429,36 @@ pub fn seed_demo_connections(state: &SharedState) {
         }
     }
 }
+
+/// Connections phase 5: what is wrong with the links and joins of `manifest` that name a dataset. The engine sees one
+/// app, so it cannot say that the app is a dataset or that it has the table. This does, from the apps the server serves.
+pub fn dataset_link_problems(manifest: &scaffoldry_engine::AppManifest, state: &SharedState) -> Vec<String> {
+    use scaffoldry_engine::FieldType;
+    let Ok(engine) = state.engine.read() else { return Vec::new() };
+    let check = |app: &str, table: Option<&str>, field: Option<&str>, who: &str| -> Option<String> {
+        let Some(target) = engine.resolve_by_slug(app) else { return Some(format!("{who} names the app '{app}', which does not exist")) };
+        if target.kind != scaffoldry_engine::AppKind::Dataset {
+            return Some(format!("{who} names the app '{app}', which is not a dataset"));
+        }
+        let table = table?;
+        let Some(t) = target.tables.iter().find(|t| t.id == table) else { return Some(format!("{who} names the table '{table}', which the dataset '{app}' does not have")) };
+        match field {
+            Some(f) if !t.fields.iter().any(|x| x.name == f) => Some(format!("{who} names the field '{f}', which the table '{table}' of the dataset '{app}' does not have")),
+            _ => None,
+        }
+    };
+    let mut out = Vec::new();
+    for t in &manifest.tables {
+        for f in t.fields.iter().filter(|f| f.field_type == FieldType::Link) {
+            if let Some(app) = f.link_target_app.as_deref() {
+                out.extend(check(app, f.link_target_table.as_deref(), None, &format!("table '{}': Link field '{}'", t.id, f.name)));
+            }
+        }
+    }
+    for r in &manifest.relationships {
+        if let Some(app) = r.target_app.as_deref() {
+            out.extend(check(app, Some(&r.target_table_id), Some(&r.target_field), &format!("relationship '{}'", r.id)));
+        }
+    }
+    out
+}

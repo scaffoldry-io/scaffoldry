@@ -177,7 +177,20 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                         problems.push(format!("table '{}': Link field '{}' cannot be indexed, links have their own index", table.id, f.name));
                     }
                     if let Some(app) = f.link_target_app.as_deref() {
-                        problems.push(format!("table '{}': Link field '{}' names the app '{app}', which is not a dataset app", table.id, f.name));
+                        // A link to a dataset. The engine sees one app, so the server checks that the app is a dataset and
+                        // has the table. Here: what the field says of itself.
+                        if app == m.slug {
+                            problems.push(format!("table '{}': Link field '{}' names its own app as another app", table.id, f.name));
+                        }
+                        if f.link_target_table.as_deref().is_none_or(str::is_empty) {
+                            problems.push(format!("table '{}': Link field '{}' names the app '{app}' and no table of it", table.id, f.name));
+                        }
+                        if f.link_related_field.is_some() {
+                            problems.push(format!("table '{}': Link field '{}' links to the dataset '{app}', which only its sync changes, so the link is one-way and has no related field", table.id, f.name));
+                        }
+                        if f.link_on_delete == crate::LinkOnDelete::Restrict {
+                            problems.push(format!("table '{}': Link field '{}' links to the dataset '{app}', whose records the sync may remove, so it can only unlink", table.id, f.name));
+                        }
                         continue;
                     }
                     let Some(target_id) = f.link_target_table.as_deref() else {
@@ -217,6 +230,10 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                     };
                     if via_field.field_type != FieldType::Link {
                         problems.push(format!("table '{}': {kind} field '{}' goes through '{via}', which is not a Link field", table.id, f.name));
+                        continue;
+                    }
+                    if via_field.link_target_app.is_some() && f.field_type != FieldType::Lookup {
+                        problems.push(format!("table '{}': {kind} field '{}' goes through '{via}', a link to a dataset. Only a Lookup can read a dataset for now", table.id, f.name));
                         continue;
                     }
                     let Some(target) = via_field.link_target_table.as_deref().and_then(|t| table_of(m, t)) else { continue };

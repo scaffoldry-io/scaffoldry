@@ -54,6 +54,10 @@ fn relationship_of(app_slug: &str, relation_id: &str, state: &SharedState) -> Re
 pub fn relation_preview(caller: &AuthUser, app_slug: &str, relation_id: &str, state: &SharedState) -> Result<Value, ServiceError> {
     authorize_app(caller, app_slug, AppAction::Manage, state)?;
     let (_, relation) = relationship_of(app_slug, relation_id, state)?;
+    // A join to a dataset reads the dataset, so the person must be able to read it.
+    if let Some(dataset) = relation.target_app.as_deref() {
+        authorize_app(caller, dataset, AppAction::Read, state)?;
+    }
     let payload = json!({
         "app_slug": app_slug,
         "relation_id": relation.id,
@@ -61,6 +65,7 @@ pub fn relation_preview(caller: &AuthUser, app_slug: &str, relation_id: &str, st
         "field": relation.source_field,
         "target_table_id": relation.target_table_id,
         "target_field": relation.target_field,
+        "target_app": relation.target_app,
     });
     let job = crate::jobs::enqueue(&state.repository, "relation_preview", payload, &caller.eppn, None).map_err(|e| match e {
         crate::jobs::JobsError::Quota(message) => ServiceError::QuotaExceeded(message),
@@ -87,6 +92,8 @@ pub fn relation_convert(caller: &AuthUser, app_slug: &str, relation_id: &str, st
     }
     field.field_type = FieldType::Link;
     field.link_target_table = Some(relation.target_table_id.clone());
+    // A join to a dataset becomes a link to the dataset. Such a link is one-way: only the sync writes a dataset.
+    field.link_target_app = relation.target_app.clone();
     field.link_cardinality = scaffoldry_engine::LinkCardinality::One;
     manifest.relationships.retain(|r| r.id != relation.id);
     let summary = format!("Turn the value join '{}' into a link", relation.name);

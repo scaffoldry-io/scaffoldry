@@ -740,6 +740,10 @@ pub struct TableRelationship {
     pub target_field: String,
     pub relationship_type: String,
     pub display_field: String,
+    /// Connections phase 5: the dataset app the join reads, when the target table is a dataset's and not this app's. Such a
+    /// join can become a link to the dataset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_app: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -24,18 +24,22 @@ fn mirror_is_one(app_slug: &str, record: &DatasetRecord, field: &str, state: &Sh
     fields.iter().any(|f| f.name == field && f.link_cardinality == scaffoldry_engine::LinkCardinality::One)
 }
 
+/// A link field's ids to check: `(field, target table, ids, mirror field, target app)`.
+type LinkCheck = (String, String, Vec<String>, Option<String>, Option<String>);
+
 /// Checks the link fields of a record about to be written. Each id must name a record of the target
 /// table of this app, a `One` field takes at most one id, and no id repeats. A record that is missing,
 /// in another table, or in an app the writer has no part in is refused with the same sentence, so the
 /// answer does not tell them apart. Every problem names its field.
-fn validate_links(app_slug: &str, id: Option<&str>, current: Option<&Value>, data: &Value, state: &SharedState) -> Result<(), ServiceError> {
+fn validate_links(caller: &AuthUser, app_slug: &str, id: Option<&str>, current: Option<&Value>, data: &Value, state: &SharedState) -> Result<(), ServiceError> {
     use crate::repository_links::{linked_ids, MAX_LINKS_PER_FIELD};
     use scaffoldry_engine::{FieldType, LinkCardinality};
     let table = data.get("_table_id").and_then(Value::as_str).unwrap_or("");
     let (fields, _) = table_fields_lenient(app_slug, table, state);
     let mut bad = std::collections::BTreeMap::new();
     let mut mirror_added: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    let mut to_check: Vec<(String, String, Vec<String>, Option<String>)> = Vec::new();
+    // `(field, target table, ids, mirror field, target app)`. The target app is the dataset a link to a dataset names.
+    let mut to_check: Vec<LinkCheck> = Vec::new();
     for f in fields.iter().filter(|f| f.field_type == FieldType::Link) {
         let value = data.get(&f.name);
         let shaped = match value {
@@ -67,12 +71,24 @@ fn validate_links(app_slug: &str, id: Option<&str>, current: Option<&Value>, dat
                 let before = linked_ids(current.and_then(|c| c.get(&f.name)));
                 ids.iter().filter(|x| !before.contains(x)).cloned().collect()
             };
-            to_check.push((f.name.clone(), target, ids, f.link_related_field.clone().filter(|_| !added.is_empty())));
+            to_check.push((f.name.clone(), target, ids, f.link_related_field.clone().filter(|_| !added.is_empty()), f.link_target_app.clone()));
             mirror_added.insert(f.name.clone(), added);
         }
     }
-    for (name, target, ids, related) in to_check {
-        let found = state.existing_record_ids(app_slug, &target, &ids).map_err(ServiceError::Internal)?;
+    for (name, target, ids, related, target_app) in to_check {
+        // A link to a dataset names records of that app, which the writer must be able to read. Without that, the record
+        // is refused in the same words as one that does not exist.
+        let home = match &target_app {
+            Some(dataset) => {
+                if authorize_app(caller, dataset, AppAction::Read, state).is_err() {
+                    bad.insert(name, format!("links to a record that does not exist or cannot be seen: {}", ids[0]));
+                    continue;
+                }
+                dataset.as_str()
+            }
+            None => app_slug,
+        };
+        let found = state.existing_record_ids(home, &target, &ids).map_err(ServiceError::Internal)?;
         if let Some(missing) = ids.iter().find(|id| !found.contains(id)) {
             bad.insert(name, format!("links to a record that does not exist or cannot be seen: {missing}"));
             continue;
@@ -724,7 +740,7 @@ pub fn create_record(
     validate_known_fields_and_types(app_slug, &table, &cleaned, state)?;
     validate_record_constraints(app_slug, &table, &cleaned, state)?;
     let data_payload = &cleaned;
-    validate_links(app_slug, None, None, data_payload, state)?;
+    validate_links(caller, app_slug, None, None, data_payload, state)?;
 
     let mut submitted = {
         let engine = state
@@ -1022,7 +1038,7 @@ pub fn update_record(
     if task.is_none() {
         check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
     }
-    validate_links(app_slug, Some(id), Some(&current.data), &new_data, state)?;
+    validate_links(caller, app_slug, Some(id), Some(&current.data), &new_data, state)?;
 
     let (fields, _) = table_fields_lenient(app_slug, &table, state);
     let mut final_new_data = new_data;
@@ -1484,9 +1500,16 @@ fn fill_lookups(caller: &AuthUser, app_slug: &str, rows: &mut [DatasetRecord], s
         let (fields, _) = table_fields_lenient(app_slug, &table, state);
         for f in fields.iter().filter(|f| f.field_type == FieldType::Lookup) {
             let (Some(via), Some(target)) = (f.computed_via.as_deref(), f.target_display_field.as_deref()) else { continue };
-            let Some(target_table) = fields.iter().find(|x| x.name == via).and_then(|x| x.link_target_table.clone()) else { continue };
-            let (target_fields, canonical) = table_fields_lenient(app_slug, &target_table, state);
-            if hidden_fields(caller, app_slug, &canonical, &target_fields, state).iter().any(|h| h == target) {
+            let Some(via_field) = fields.iter().find(|x| x.name == via) else { continue };
+            let Some(target_table) = via_field.link_target_table.clone() else { continue };
+            // A lookup through a link to a dataset reads the dataset, under the dataset's rules: the reader must be
+            // able to read it, and a field hidden from them there is not shown here.
+            let home = via_field.link_target_app.as_deref().unwrap_or(app_slug);
+            if home != app_slug && authorize_app(caller, home, AppAction::Read, state).is_err() {
+                continue;
+            }
+            let (target_fields, canonical) = table_fields_lenient(home, &target_table, state);
+            if hidden_fields(caller, home, &canonical, &target_fields, state).iter().any(|h| h == target) {
                 continue;
             }
             let owners: Vec<String> = positions.iter().map(|i| rows[*i].id.clone()).collect();

@@ -337,6 +337,8 @@ type PreviewPage = (Vec<(String, Option<String>)>, HashMap<String, Vec<String>>)
 pub fn relation_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     let (app, table, field, relation) = (text(&payload, "app_slug")?, text(&payload, "table_id")?, text(&payload, "field")?, text(&payload, "relation_id")?);
     let (target_table, target_field) = (text(&payload, "target_table_id")?, text(&payload, "target_field")?);
+    // A join to a dataset reads the dataset's app. Otherwise the target is a table of this app.
+    let target_app = payload.get("target_app").and_then(Value::as_str).unwrap_or(&app).to_string();
     let repo = ctx.repository();
     let total = count_rows(ctx, &app, &table)?;
     let (mut after, mut done) = resume(ctx);
@@ -353,6 +355,7 @@ pub fn relation_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError>
             return Err(JobError::Cancelled);
         }
         let (a, t, f, from_id, tt, tf) = (app.clone(), table.clone(), field.clone(), after.clone(), target_table.clone(), target_field.clone());
+        let ta = target_app.clone();
         let (rows, found): PreviewPage = repo
             .with_client(move |c| {
                 let rows: Vec<(String, Option<String>)> = c
@@ -368,7 +371,7 @@ pub fn relation_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError>
                     .query(
                         "SELECT data ->> $3::text, array_agg(id ORDER BY id) FROM dataset_records \
                          WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND data ->> $3::text = ANY($4) GROUP BY 1",
-                        &[&a, &tt, &tf, &values],
+                        &[&ta, &tt, &tf, &values],
                     )?
                     .iter()
                     .map(|r| (r.get::<_, String>(0), r.get::<_, Vec<String>>(1)))
@@ -429,6 +432,7 @@ pub fn relation_preview(ctx: &JobCtx, payload: Value) -> Result<Value, JobError>
 pub fn convert_relation_to_link(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     let (app, table, field, actor) = (text(&payload, "app_slug")?, text(&payload, "table_id")?, text(&payload, "field")?, text(&payload, "actor")?);
     let (target_table, target_field) = (text(&payload, "target_table_id")?, text(&payload, "target_field")?);
+    let target_app = payload.get("target_app").and_then(Value::as_str).unwrap_or(&app).to_string();
     let batch_id = uuid::Uuid::parse_str(&text(&payload, "batch_id")?).map_err(|e| JobError::Permanent(e.to_string()))?;
     let mut write = WriteCtx::system(&actor);
     write.batch_id = batch_id;
@@ -446,7 +450,7 @@ pub fn convert_relation_to_link(ctx: &JobCtx, payload: Value) -> Result<Value, J
             return Err(JobError::Cancelled);
         }
         let (a, t, f, from_id, w) = (app.clone(), table.clone(), field.clone(), after.clone(), write.clone());
-        let (tt, tf) = (target_table.clone(), target_field.clone());
+        let (tt, tf, ta) = (target_table.clone(), target_field.clone(), target_app.clone());
         let (last, read, l, b) = repo
             .with_client(move |c| {
                 let mut tx = c.transaction()?;
@@ -461,7 +465,7 @@ pub fn convert_relation_to_link(ctx: &JobCtx, payload: Value) -> Result<Value, J
                     .query(
                         "SELECT data ->> $3::text, array_agg(id ORDER BY id) FROM dataset_records \
                          WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND data ->> $3::text = ANY($4) GROUP BY 1",
-                        &[&a, &tt, &tf, &values],
+                        &[&ta, &tt, &tf, &values],
                     )?
                     .iter()
                     .map(|r| (r.get::<_, String>(0), r.get::<_, Vec<String>>(1)))

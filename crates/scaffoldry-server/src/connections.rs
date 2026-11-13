@@ -363,6 +363,8 @@ pub(crate) fn write_batch(state: &SharedState, conn: &Conn, ctx: &crate::reposit
                 Some((old, trashed)) => {
                     if *trashed {
                         restore_record_in_tx(&mut tx, &app, &id, &ctx)?;
+                        // The links other apps held to the record come back with it.
+                        crate::repository_links::restore_links_in_tx(&mut tx, &app, &id, &ctx)?;
                         added += 1;
                     }
                     // A field the dataset retired is not in the file. Its values stay, as the record held them.
