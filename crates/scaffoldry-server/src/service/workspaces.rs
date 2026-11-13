@@ -555,6 +555,10 @@ pub fn add_collaborator(
     payload: CollaboratorPayload,
     state: &SharedState,
 ) -> Result<CollaboratorRecord, ServiceError> {
+    // A guest is not a person of the directory. It reaches one form, and nothing else can be given to it.
+    if crate::service::guests::is_guest_address(&payload.eppn) {
+        return Err(ServiceError::BadRequest("A guest is not a person of the directory, so it cannot be a member of a workspace.".to_string()));
+    }
     let ws = {
         let ws_guard = state
             .workspaces

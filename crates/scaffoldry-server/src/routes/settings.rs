@@ -57,6 +57,9 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "flows.max_runs_per_minute",
     "process.require_reject_comment",
     "sharing.allowed_scopes",
+    "guests.enabled",
+    "guests.captcha_hook",
+    "forms.disabled",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -81,7 +84,7 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "tokens.max_days" | "process.stale_days" => {
             value.as_i64().is_some_and(|n| (1..=365).contains(&n))
         }
-        "tokens.agent_enabled" | "files.require_scan" | "oauth.allow_localhost" | "webhooks.allow_http" | "mail.enabled" | "flows.cross_workspace_enabled" | "process.require_reject_comment" => value.is_boolean(),
+        "tokens.agent_enabled" | "guests.enabled" | "files.require_scan" | "oauth.allow_localhost" | "webhooks.allow_http" | "mail.enabled" | "flows.cross_workspace_enabled" | "process.require_reject_comment" => value.is_boolean(),
         // The scopes a shared link may have. Empty, the default, turns sharing off.
         "sharing.allowed_scopes" => crate::service::shares::valid_scopes(value),
         "mail.smtp" => crate::mail::Smtp::parse(value).is_ok(),
@@ -104,7 +107,9 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "flows.max_runs_per_minute" => value.as_i64().is_some_and(|n| (1..=100_000).contains(&n)),
         "egress.allow" => crate::net::egress::Allow::parse(value).is_ok(),
         "platform.contact_email" => value.as_str().is_some_and(|s| s.len() <= 255 && s.contains('@') && !s.contains(char::is_whitespace)),
-        "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" | "flows.disabled" => {
+        // Left empty. An institution that adds a check names it here, and the code calls `guests::captcha_ok`.
+        "guests.captcha_hook" => value.is_null() || value.is_string(),
+        "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" | "flows.disabled" | "forms.disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
         // The shape of these two is checked in full, with a path, where the state is known.
