@@ -3,6 +3,10 @@ import type { RegisteredApp } from "./types";
 import { MultiViewWorkspace } from "./MultiViewWorkspace";
 import { PageFrame } from "./PageFrame";
 import { Dashboard } from "./Dashboard";
+import { FormView, type FieldMeta } from "./views/FormView";
+import { BoardView } from "./views/BoardView";
+import { CalendarView } from "./views/CalendarView";
+import { GalleryView } from "./views/GalleryView";
 import { apiClient, type AppView } from "./api";
 
 /** A page of the app as the server stores it: a view of the app, or a custom page shown in a frame. */
@@ -25,25 +29,61 @@ function navPages(app: RegisteredApp): NavPage[] {
     });
 }
 
+/** The fields of a table, as a form or a board needs them. */
+function tableOf(app: RegisteredApp, tableId: string | null) {
+  type Raw = { name: string; label?: string; field_type?: unknown; required?: boolean; select_options?: { id: string; label: string }[] };
+  const tables = (app.manifest.tables ?? []) as unknown as { id: string; slug?: string; fields: Raw[]; primary_field?: string | null }[];
+  const table = tables.find((t) => t.id === tableId || t.slug === tableId) ?? tables[0];
+  const fields: FieldMeta[] = (table?.fields ?? []).map((f) => ({
+    name: f.name,
+    label: f.label ?? f.name,
+    field_type: typeof f.field_type === "string" ? f.field_type : Object.keys((f.field_type as object) ?? {})[0] ?? "Text",
+    required: f.required,
+    select_options: f.select_options?.map((o) => ({ id: o.id, label: o.label })),
+  }));
+  return { fields, title: table?.primary_field ?? fields[0]?.name ?? "" };
+}
+
+/** The saved view kinds a page can open. Any other view, and a view that cannot be found or loaded, shows the app's tables. */
+const OPENS = ["dashboard", "form", "kanban", "calendar", "gallery"];
+
+function ViewOpened({ app, view, onSaved }: { app: RegisteredApp; view: AppView; onSaved: (v: AppView) => void }) {
+  const { fields, title } = tableOf(app, view.table_id);
+  switch (view.kind) {
+    case "form":
+      return <FormView appSlug={app.slug} view={view} fields={fields} />;
+    case "kanban": {
+      const field = fields.find((f) => f.name === view.config?.kanban_column_field);
+      return field ? <BoardView appSlug={app.slug} view={view} columnField={{ name: field.name, options: field.select_options ?? [] }} titleField={title} /> : <p role="alert" className="text-sm text-red-700">This board has no column field.</p>;
+    }
+    case "calendar":
+      return <CalendarView appSlug={app.slug} view={view} titleField={title} />;
+    case "gallery":
+      return <GalleryView appSlug={app.slug} view={view} titleField={title} />;
+    default:
+      return <Dashboard appSlug={app.slug} view={view} canEdit onSaved={onSaved} />;
+  }
+}
+
 /**
- * A page of kind View names a saved view. A dashboard is drawn as one. Any other view, and a view that cannot be found or
- * loaded, shows the app's tables as before.
+ * A page of kind View names a saved view. A dashboard, a form, a board, a calendar or a gallery is drawn as one. Any other
+ * view, and a view that cannot be found or loaded, shows the app's tables as before.
  */
 function ViewPage({ app, viewId, fallback }: { app: RegisteredApp; viewId: string; fallback: React.ReactNode }) {
-  const [dashboard, setDashboard] = useState<AppView | null>(null);
+  const [opened, setOpened] = useState<AppView | null>(null);
   useEffect(() => {
     let live = true;
-    setDashboard(null);
+    setOpened(null);
     apiClient
       .listViews(app.slug)
-      .then((r) => live && setDashboard(r.views.find((v) => v.id === viewId && v.kind === "dashboard") ?? null))
-      .catch(() => live && setDashboard(null));
+      .then((r) => live && setOpened(r.views.find((v) => v.id === viewId && OPENS.includes(v.kind)) ?? null))
+      .catch(() => live && setOpened(null));
     return () => {
       live = false;
     };
   }, [app.slug, viewId]);
   // The server decides who may save a layout. A person who may not sees its refusal.
-  if (dashboard) return <div className="px-6 py-4"><Dashboard appSlug={app.slug} view={dashboard} canEdit onSaved={setDashboard} /></div>;
+  if (opened) return <div className="px-6 py-4"><ViewOpened app={app} view={opened} onSaved={setOpened} /></div>;
   return <>{fallback}</>;
 }
 

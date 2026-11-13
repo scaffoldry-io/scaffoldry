@@ -43,6 +43,7 @@ pub mod date_triggers;
 pub mod flow_chains;
 pub mod buttons;
 pub mod dashboards;
+pub mod forms;
 pub mod pages;
 pub mod shares;
 pub mod proposals;

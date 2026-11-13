@@ -141,6 +141,14 @@ pub fn check_runnable(caller: &AuthUser, app_slug: &str, view: &scaffoldry_engin
     }
 }
 
+/// A form view names fields of its table, and its conditions name fields above them.
+fn check_form(app_slug: &str, table: Option<&str>, config: &Value, state: &SharedState) -> Result<(), ServiceError> {
+    let table = table.ok_or_else(|| ServiceError::BadRequest("A form is over a table".to_string()))?;
+    let (fields, _) = records::table_fields_lenient(app_slug, table, state);
+    let names: Vec<String> = fields.into_iter().map(|f| f.name).collect();
+    crate::service::forms::validate(config, &names)
+}
+
 fn valid_config(config: &Value) -> Result<(), ServiceError> {
     if !config.is_object() {
         return Err(ServiceError::BadRequest("config must be an object".to_string()));
@@ -301,6 +309,9 @@ pub fn create(caller: &AuthUser, app_slug: &str, body: CreateBody, state: &Share
     if body.kind == "dashboard" {
         crate::service::dashboards::validate(caller, app_slug, &config, ownership != "personal", state)?;
     }
+    if body.kind == "form" {
+        check_form(app_slug, body.table_id.as_deref(), &config, state)?;
+    }
     let table_id = body.table_id.as_deref().map(|t| canonical_table(&runtime_manifest(state, app_slug)?, t)).transpose()?;
     if let Some(table) = &table_id {
         check_visible(caller, app_slug, table, &config, state)?;
@@ -362,6 +373,9 @@ pub fn update(caller: &AuthUser, app_slug: &str, id: Uuid, body: UpdateBody, sta
     }
     if current.kind == "dashboard" {
         crate::service::dashboards::validate(caller, app_slug, &body.config, current.ownership != "personal", state)?;
+    }
+    if current.kind == "form" {
+        check_form(app_slug, current.table_id.as_deref(), &body.config, state)?;
     }
     if let Some(table) = &current.table_id {
         check_visible(caller, app_slug, table, &body.config, state)?;
@@ -431,12 +445,25 @@ pub struct RunQuery {
     /// One more equality the caller adds to the view's own filter: `(field, value)`. A linked dashboard widget sets it.
     #[serde(skip)]
     pub also: Option<(String, String)>,
+    /// A calendar's date range, as `YYYY-MM-DD`, both ends included.
+    #[serde(skip)]
+    pub from: Option<String>,
+    #[serde(skip)]
+    pub to: Option<String>,
 }
+
+/// The most events a calendar shows for one range.
+pub const CALENDAR_EVENTS: usize = 500;
 
 /// `base` and one more equality, joined by AND. The view's own filter is left as it was.
 pub(crate) fn and_clause(base: Option<scaffoldry_engine::CompoundFilter>, field: &str, value: &str) -> scaffoldry_engine::CompoundFilter {
-    use scaffoldry_engine::{CompoundFilter, FilterClause, FilterConjunction, FilterOperator};
-    let clause = FilterClause { id: "selection".to_string(), field_name: field.to_string(), operator: FilterOperator::Equals, value: value.to_string() };
+    and_with(base, field, scaffoldry_engine::FilterOperator::Equals, value)
+}
+
+/// `base` and one more clause, joined by AND.
+pub(crate) fn and_with(base: Option<scaffoldry_engine::CompoundFilter>, field: &str, op: scaffoldry_engine::FilterOperator, value: &str) -> scaffoldry_engine::CompoundFilter {
+    use scaffoldry_engine::{CompoundFilter, FilterClause, FilterConjunction};
+    let clause = FilterClause { id: "selection".to_string(), field_name: field.to_string(), operator: op, value: value.to_string() };
     match base {
         None => CompoundFilter { conjunction: FilterConjunction::And, clauses: vec![clause], groups: vec![] },
         Some(mut b) if b.conjunction == FilterConjunction::And => {
@@ -445,6 +472,20 @@ pub(crate) fn and_clause(base: Option<scaffoldry_engine::CompoundFilter>, field:
         }
         Some(b) => CompoundFilter { conjunction: FilterConjunction::And, clauses: vec![clause], groups: vec![b] },
     }
+}
+
+/// A calendar's range, checked: both ends, as dates, the start no later than the end.
+fn calendar_range(query: &RunQuery) -> Result<(String, String), ServiceError> {
+    let parse = |label: &str, v: &Option<String>| -> Result<chrono::NaiveDate, ServiceError> {
+        v.as_deref()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+            .ok_or_else(|| ServiceError::BadRequest(format!("Ask a calendar for a range: `{label}` is a date such as 2026-03-01")))
+    };
+    let (from, to) = (parse("from", &query.from)?, parse("to", &query.to)?);
+    if from > to {
+        return Err(ServiceError::BadRequest("The range starts after it ends".to_string()));
+    }
+    Ok((from.to_string(), to.to_string()))
 }
 
 /// The view's filter, narrowed to one group.
@@ -522,12 +563,27 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
     if let Some((field, value)) = &query.also {
         view.filters = Some(and_clause(view.filters.take(), field, value));
     }
+    // A calendar is asked for a range of dates, and shows the events in it, earliest first.
+    let range = if stored.kind == "calendar" {
+        let field = view.calendar_date_field.clone().ok_or_else(|| ServiceError::BadRequest("This calendar has no date field".to_string()))?;
+        let (from, to) = calendar_range(&query)?;
+        view.filters = Some(and_with(view.filters.take(), &field, scaffoldry_engine::FilterOperator::Between, &format!("{from}..{to}")));
+        Some(field)
+    } else {
+        None
+    };
     check_runnable(caller, app_slug, &view, state)?;
     if stored.kind == "summary" {
         return run_summary(caller, app_slug, &stored, &view, &table_id, state);
     }
 
-    let levels: Vec<String> = if view.group_by.is_empty() { view.group_by_field.iter().cloned().collect() } else { view.group_by.clone() };
+    // A board is grouped by its column field: one group for each column, and the cards of a column paged inside it.
+    let board_field = view.kanban_column_field.clone().filter(|_| stored.kind == "kanban");
+    let levels: Vec<String> = if !view.group_by.is_empty() {
+        view.group_by.clone()
+    } else {
+        view.group_by_field.iter().cloned().chain(board_field).take(1).collect()
+    };
     if query.group_path.len() > levels.len() {
         return Err(ServiceError::BadRequest(format!("This view groups by {} fields, and the path names {}", levels.len(), query.group_path.len())));
     }
@@ -558,8 +614,22 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
         return Ok(body);
     }
 
-    let sort = view.sort_rules.first().map(|r| records::SortSpec { field_name: r.field_name.clone(), descending: r.direction == scaffoldry_engine::SortDirection::Desc });
-    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let sort = match &range {
+        Some(field) => Some(records::SortSpec { field_name: field.clone(), descending: false }),
+        None => view.sort_rules.first().map(|r| records::SortSpec { field_name: r.field_name.clone(), descending: r.direction == scaffoldry_engine::SortDirection::Desc }),
+    };
+    let limit = query.limit.unwrap_or(if range.is_some() { CALENDAR_EVENTS } else { 100 }).clamp(1, if range.is_some() { CALENDAR_EVENTS } else { 1000 });
+    // How many events the range holds, so the screen can say `+12 more`.
+    let calendar_total = if range.is_some() {
+        Some(records::count_rows(
+            caller,
+            app_slug,
+            records::WindowQuery { table_id: table_id.clone(), filter: filter.clone(), sort: sort.clone(), offset: 0, limit: 1, reverse: false, view_id: Some(stored.id) },
+            state,
+        )?)
+    } else {
+        None
+    };
     let count = match query.count.as_deref() {
         None => None,
         Some("exact") => {
@@ -623,6 +693,17 @@ pub fn run(caller: &AuthUser, origin: &crate::service::history::Origin, app_slug
     }
     if let Some(c) = count {
         body["count"] = c;
+    }
+    if let Some(total) = calendar_total {
+        let shown = body["records"].as_array().map_or(0, Vec::len);
+        let (total, exact) = match total {
+            records::RowCount::Exact(n) => (n as usize, true),
+            records::RowCount::AtLeast(n) => (n as usize, false),
+        };
+        body["calendar"] = json!({ "shown": shown, "total": total, "more": total.saturating_sub(shown) });
+        if !exact {
+            body["calendar"]["at_least"] = json!(true);
+        }
     }
     if let Some(f) = footer {
         body["footers"] = f;
