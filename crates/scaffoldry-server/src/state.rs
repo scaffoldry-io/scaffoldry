@@ -275,6 +275,8 @@ pub struct ServerState {
     /// The directory a file-drop connection reads from, from `SCAFFOLDRY_DROP_DIR` (connections phase 1). The operator
     /// mounts it, so a file drop reaches no network.
     pub drop_dir: Option<std::path::PathBuf>,
+    /// How outbound names are looked up. `None` is the system's resolver. A test sets its own, so none needs a network.
+    pub egress_resolver: Option<Arc<dyn crate::net::egress::Resolver>>,
     /// The domain tree (`access_domains`): `(key, parent key)`. It changes only by migration, so it is read once.
     pub domains: std::sync::OnceLock<Vec<(String, Option<String>)>>,
 }
@@ -752,6 +754,7 @@ impl ServerState {
             realtime_streams: crate::realtime::Hub::new(),
             master_key_file: crate::secrets::key_file_from_env(),
             drop_dir: std::env::var_os("SCAFFOLDRY_DROP_DIR").filter(|v| !v.is_empty()).map(std::path::PathBuf::from),
+            egress_resolver: None,
             domains: std::sync::OnceLock::new(),
         })
     }

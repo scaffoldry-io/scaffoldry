@@ -56,14 +56,18 @@ fn check_schedule(body: &Value) -> Result<(Option<i32>, Option<String>), Service
 }
 
 fn check_config(kind: &str, config: &Value) -> Result<(), ServiceError> {
-    if kind != "file_drop" {
-        return Err(bad(format!("The connection kind '{kind}' is not available yet. Use file_drop")));
-    }
-    let path = config.get("path").and_then(Value::as_str).unwrap_or("");
-    connections::check_name(path).map_err(bad)?;
-    match config.get("format").and_then(Value::as_str) {
-        Some("csv" | "jsonl") => Ok(()),
-        _ => Err(bad("format is csv or jsonl")),
+    match kind {
+        "file_drop" => {
+            let path = config.get("path").and_then(Value::as_str).unwrap_or("");
+            connections::check_name(path).map_err(bad)?;
+            match config.get("format").and_then(Value::as_str) {
+                Some("csv" | "jsonl") => Ok(()),
+                _ => Err(bad("format is csv or jsonl")),
+            }
+        }
+        "postgres" => crate::connection_pg::check_config(config).map_err(bad),
+        "http" => crate::connection_http::check_config(config).map_err(bad),
+        other => Err(bad(format!("The connection kind '{other}' is not known. Use file_drop, postgres or http"))),
     }
 }
 
@@ -142,6 +146,8 @@ pub struct Spec {
     name: String,
     kind: String,
     config: Value,
+    /// The stored secret a source's password or token is read from. A postgres source needs one, and an http source may.
+    secret: Option<String>,
     app: String,
     table: String,
     key: String,
@@ -195,13 +201,28 @@ pub fn parse_spec(body: &Value) -> Result<Spec, ServiceError> {
         return Err(bad(format!("sensitivity is one of {}", SENSITIVITIES.join(", "))));
     }
     let (every, at) = check_schedule(body)?;
-    Ok(Spec { name, kind, config, app, table, key, map, columns, sensitivity, every, at })
+    let secret = match body.get("secret") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_str().filter(|n| crate::secrets::valid_name(n)).ok_or_else(|| bad("secret names a stored secret"))?.to_string()),
+    };
+    match (kind.as_str(), &secret) {
+        ("postgres", None) => return Err(bad("A postgres connection names the secret that holds its password")),
+        ("file_drop", Some(_)) => return Err(bad("A file drop reads no secret")),
+        _ => {}
+    }
+    Ok(Spec { name, kind, config, secret, app, table, key, map, columns, sensitivity, every, at })
 }
 
 /// Refuses a connection whose name or dataset is taken.
 pub fn check_free(spec: &Spec, state: &SharedState) -> Result<(), ServiceError> {
     if crate::service::proposals::live_app_exists(&spec.app, state) {
         return Err(ServiceError::conflict(format!("An app named '{}' already exists", spec.app)));
+    }
+    if let Some(name) = &spec.secret {
+        let known = crate::secrets::list(&state.repository).map_err(storage)?.iter().any(|s| s.name == *name);
+        if !known {
+            return Err(bad(format!("There is no stored secret named '{name}'. Add it under Secrets first")));
+        }
     }
     let name = spec.name.clone();
     let taken: bool = state.repository.with_client(move |c| Ok(c.query_opt("SELECT 1 FROM connections WHERE name = $1", &[&name])?.is_some())).map_err(storage)?;
@@ -221,8 +242,8 @@ pub fn store(spec: Spec, id: Uuid, created_by: &str, state: &SharedState) -> Res
         .with_client(move |c| {
             c.execute(
                 "INSERT INTO connections (id, name, kind, config, secret, dataset_app, dataset_table, key_field, column_map, sensitivity, every_minutes, at_time, created_by) \
-                 VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12)",
-                &[&id, &spec.name, &spec.kind, &spec.config, &spec.app, &spec.table, &spec.key, &spec.map, &spec.sensitivity, &spec.every, &spec.at, &by],
+                 VALUES ($1, $2, $3, $4, $13, $5, $6, $7, $8, $9, $10, $11, $12)",
+                &[&id, &spec.name, &spec.kind, &spec.config, &spec.app, &spec.table, &spec.key, &spec.map, &spec.sensitivity, &spec.every, &spec.at, &by, &spec.secret],
             )?;
             Ok(())
         })
