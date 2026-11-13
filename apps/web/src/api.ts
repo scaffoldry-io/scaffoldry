@@ -38,6 +38,8 @@ export interface AdminOverviewData {
   retention?: { placeholder: boolean };
   /** Integrations phase 5: webhooks that are failing or off, and deliveries that ended dead in the last day. */
   outbound?: { webhooks_failing: number; webhooks_disabled: number; deliveries_dead_last_day: number };
+  /** Connections phase 6: data connections by health, and the age of the oldest successful sync of one that is on. */
+  connections?: { healthy: number; failing: number; needs_review: number; disabled: number; oldest_success_age_secs: number | null };
   files?: {
     scanner: { configured: boolean; reachable: boolean; last_result: string | null };
     error: number;
@@ -696,6 +698,42 @@ export interface EgressTestResult {
   allowed: boolean;
   address: string | null;
   explanation: string;
+}
+
+/** One run of a data connection: what it did, or why it stopped. */
+export interface DataConnectionRun {
+  id: string;
+  state: "running" | "done" | "unchanged" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  added: number;
+  changed: number;
+  removed: number;
+  unchanged: number;
+  error: string | null;
+}
+
+/** A data connection, as the console lists it (connections phase 6). A secret is named by the server and never shown. */
+export interface DataConnection {
+  id: string;
+  name: string;
+  kind: string;
+  dataset_app: string;
+  dataset_table: string;
+  state: "Healthy" | "Needs review" | "Failing" | "Disabled";
+  enabled: boolean;
+  review_note: string | null;
+  /** The last run in words: `Added 12, changed 3, removed 1`, or its error. */
+  last_result: string;
+  last_success: string | null;
+  next_run: string | null;
+  last_run: DataConnectionRun | null;
+}
+
+/** A connection's column map, each column with up to three values the last run wrote. */
+export interface DataConnectionMapping {
+  columns: { source: string; field: string; type: string; key: boolean; sample: unknown[] }[];
+  changes: string;
 }
 
 /** A webhook across apps, as the console lists it. Its secret is named by the app and never shown here. */
@@ -1850,6 +1888,34 @@ export const apiClient = {
   /** Asks the outbound check about a host. Nothing is sent. */
   testEgress: async (host: string, port: number): Promise<EgressTestResult> =>
     request<EgressTestResult>("/admin/egress/test", { method: "POST", body: JSON.stringify({ host, port }) }),
+
+  /** Every data connection (connections phase 6). A Platform Admin only. */
+  listDataConnections: async (): Promise<DataConnection[]> => {
+    const res = await request<{ connections: DataConnection[] }>("/admin/connections");
+    return Array.isArray(res?.connections) ? res.connections : [];
+  },
+
+  /** A connection's newest runs, newest first, up to 100. */
+  dataConnectionRuns: async (id: string): Promise<DataConnectionRun[]> => {
+    const res = await request<{ runs: DataConnectionRun[] }>(`/admin/connections/${encodeURIComponent(id)}/runs`);
+    return Array.isArray(res?.runs) ? res.runs : [];
+  },
+
+  /** Runs a connection now. A fault is the run's own state, not an error. */
+  runDataConnection: async (id: string, approveShrink?: { reason: string }): Promise<DataConnectionRun> => {
+    const body = approveShrink ? { approve_shrink: true, reason: approveShrink.reason } : {};
+    const res = await request<{ run: DataConnectionRun }>(`/admin/connections/${encodeURIComponent(id)}/run`, { method: "POST", body: JSON.stringify(body) });
+    return res.run;
+  },
+
+  /** Turns a connection off or on, with a reason. */
+  setDataConnectionEnabled: async (id: string, enabled: boolean, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/connections/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled, reason }) });
+  },
+
+  /** The column map with a sample of what the last run wrote. */
+  dataConnectionMapping: async (id: string): Promise<DataConnectionMapping> =>
+    request<DataConnectionMapping>(`/admin/connections/${encodeURIComponent(id)}/mapping`),
 
   /** Every webhook of every app. */
   listWebhooks: async (): Promise<WebhookRow[]> => {

@@ -289,7 +289,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 168 | [connections.md](connections.md) | 3 | PostgreSQL connector, on `tokio-postgres-rustls` | **COMPLETED** |
 | 169 | [connections.md](connections.md) | 4 | HTTP connector | **COMPLETED** |
 | 170 | [connections.md](connections.md) | 5 | Apps link to datasets | **COMPLETED** |
-| 171 | [connections.md](connections.md) | 6 | The connections panel |
+| 171 | [connections.md](connections.md) | 6 | The connections panel | **COMPLETED** |
 | 172 | [views.md](views.md) | 5 | Dashboards and linked widgets |
 | 173 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields |
 | 174 | [views.md](views.md) | 7 | Forms with conditions, boards, calendars, and galleries |

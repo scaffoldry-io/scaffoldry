@@ -91,7 +91,7 @@ fn show(state: &SharedState, id: Uuid) -> Result<Value, ServiceError> {
     let mut v = row;
     v["last_run"] = connections::runs(&state.repository, id).map_err(storage)?.into_iter().next().unwrap_or(Value::Null);
     // What the console says: a connection a changed source stopped needs a person to review the proposal.
-    let (mut status, mut note) = (if v["enabled"] == false { "Disabled" } else { "Active" }, Value::Null);
+    let (mut status, mut note) = (if v["enabled"] == false { "Disabled" } else { "Healthy" }, Value::Null);
     // A drift that made no proposal (a preview is running, or the key column is gone) is also waiting on a person.
     let drift_error = v["last_run"]["error"].as_str().filter(|e| e.starts_with("schema_drift") && !e.contains("Proposal ")).map(str::to_string);
     if let Some(pid) = v["pending_proposal"].as_str().and_then(|p| Uuid::parse_str(p).ok()) {
@@ -102,9 +102,99 @@ fn show(state: &SharedState, id: Uuid) -> Result<Value, ServiceError> {
         status = "Needs review";
         note = json!(e);
     }
+    // A run that failed is a failing connection. A run that stopped for a changed source is not: it is under review,
+    // or the change was approved and the next run goes ahead.
+    let drifted = v["last_run"]["error"].as_str().is_some_and(|e| e.starts_with("schema_drift"));
+    if status == "Healthy" && v["last_run"]["state"] == "failed" && !drifted {
+        status = "Failing";
+    }
     v["state"] = json!(status);
     v["review_note"] = note;
+    v["last_result"] = json!(if v["last_run"].is_null() { "Not run yet".to_string() } else { connections::result_words(&v["last_run"]) });
+    v["last_success"] = last_success(state, id)?;
+    v["next_run"] = next_run(state, id)?;
     Ok(v)
+}
+
+/// When the last run that applied or confirmed its source finished.
+fn last_success(state: &SharedState, id: Uuid) -> Result<Value, ServiceError> {
+    let col = connections::ts("MAX(finished_at)");
+    let at: Option<String> = state
+        .repository
+        .with_client(move |c| Ok(c.query_one(&format!("SELECT {col} FROM sync_runs WHERE connection_id = $1 AND state IN ('done', 'unchanged')"), &[&id])?.get(0)))
+        .map_err(storage)?;
+    Ok(json!(at))
+}
+
+/// When the schedule runs the connection next. `null` for a disabled connection or one with no schedule. A connection
+/// that is due now says now.
+fn next_run(state: &SharedState, id: Uuid) -> Result<Value, ServiceError> {
+    let tz = connections::timezone(state);
+    let col = connections::ts("CASE \
+        WHEN NOT c.enabled THEN NULL \
+        WHEN c.every_minutes IS NOT NULL THEN GREATEST(COALESCE((SELECT MAX(r.started_at) FROM sync_runs r WHERE r.connection_id = c.id) + make_interval(mins => c.every_minutes), NOW()), NOW()) \
+        WHEN c.at_time IS NOT NULL THEN CASE \
+            WHEN NOW() < slot.today THEN slot.today \
+            WHEN NOT EXISTS (SELECT 1 FROM sync_runs r WHERE r.connection_id = c.id AND r.started_at >= slot.today) THEN NOW() \
+            ELSE slot.today + INTERVAL '1 day' END \
+        END");
+    let at: Option<String> = state
+        .repository
+        .with_client(move |c| {
+            Ok(c.query_one(
+                &format!("SELECT {col} FROM connections c CROSS JOIN LATERAL (SELECT ((date_trunc('day', NOW() AT TIME ZONE $2::text) + c.at_time::time) AT TIME ZONE $2::text) AS today) slot WHERE c.id = $1"),
+                &[&id, &tz],
+            )?
+            .get(0))
+        })
+        .map_err(storage)?;
+    Ok(json!(at))
+}
+
+/// What the Overview shows: connections by health, and how old the oldest successful sync of a running connection is.
+pub fn counts(state: &SharedState) -> Value {
+    let ids: Vec<Uuid> = state.repository.with_client(|c| Ok(c.query("SELECT id FROM connections", &[])?.iter().map(|r| r.get(0)).collect())).unwrap_or_default();
+    let mut by = std::collections::HashMap::new();
+    for id in ids {
+        if let Ok(v) = show(state, id) {
+            *by.entry(v["state"].as_str().unwrap_or("").to_string()).or_insert(0i64) += 1;
+        }
+    }
+    let n = |k: &str| by.get(k).copied().unwrap_or(0);
+    let oldest: Option<i64> = state
+        .repository
+        .with_client(|c| {
+            Ok(c.query_one(
+                "SELECT MAX(EXTRACT(EPOCH FROM NOW() - t))::bigint FROM (SELECT MAX(r.finished_at) AS t FROM sync_runs r JOIN connections c ON c.id = r.connection_id \
+                 WHERE c.enabled AND r.state IN ('done', 'unchanged') GROUP BY r.connection_id) s",
+                &[],
+            )?
+            .get(0))
+        })
+        .unwrap_or(None);
+    json!({ "healthy": n("Healthy"), "failing": n("Failing"), "needs_review": n("Needs review"), "disabled": n("Disabled"), "oldest_success_age_secs": oldest })
+}
+
+/// The column map, each column with up to three values the last run wrote. The map is read here, and the shape of a
+/// dataset changes only by a proposal.
+pub fn mapping(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
+    require_platform_admin(caller, state)?;
+    let id = id_of(id)?;
+    let conn = connections::load(&state.repository, id).map_err(storage)?.ok_or_else(|| ServiceError::NotFound("Connection not found".to_string()))?;
+    let (app, key) = (conn.dataset_app.clone(), conn.key_field.clone());
+    let sample: Vec<Value> = state
+        .repository
+        .with_client(move |c| Ok(c.query("SELECT data FROM dataset_records WHERE app_slug = $1 AND deleted_at IS NULL ORDER BY data ->> $2, id LIMIT 3", &[&app, &key])?.iter().map(|r| r.get(0)).collect()))
+        .map_err(storage)?;
+    let columns: Vec<Value> = conn
+        .columns
+        .iter()
+        .map(|col| {
+            let values: Vec<Value> = sample.iter().filter_map(|d| d.get(&col.field).cloned()).collect();
+            json!({ "source": col.source, "field": col.field, "type": col.kind, "key": col.field == conn.key_field, "sample": values })
+        })
+        .collect();
+    Ok(json!({ "columns": columns, "changes": "A column that the source adds, drops or changes comes as a proposal. Nothing here edits the map." }))
 }
 
 pub fn list(caller: &AuthUser, state: &SharedState) -> Result<Value, ServiceError> {

@@ -17,6 +17,7 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/admin/connections"),
     ("PATCH", "/admin/connections/{id}"),
     ("GET", "/admin/connections/{id}/runs"),
+    ("GET", "/admin/connections/{id}/mapping"),
     ("POST", "/admin/connections/{id}/run"),
     ("GET", "/admin/egress"),
     ("PUT", "/admin/egress/allow"),

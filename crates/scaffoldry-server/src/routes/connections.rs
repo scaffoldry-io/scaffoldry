@@ -15,6 +15,7 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/connections", get(list).post(create))
         .route("/admin/connections/{id}", axum::routing::patch(update))
         .route("/admin/connections/{id}/runs", get(runs))
+        .route("/admin/connections/{id}/mapping", get(mapping))
         .route("/admin/connections/{id}/run", post(run_now))
 }
 
@@ -59,4 +60,9 @@ async fn run_now(State(state): State<SharedState>, user: Option<Extension<AuthUs
     let caller = caller(user, &headers, &state)?;
     let body = body_of(body);
     Ok(Json(blocking(move || connections::run_now(&caller, &id, &body, &state)).await?))
+}
+
+async fn mapping(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path(id): Path<String>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    Ok(Json(blocking(move || connections::mapping(&caller, &id, &state)).await?))
 }

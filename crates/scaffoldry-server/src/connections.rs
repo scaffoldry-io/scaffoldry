@@ -221,7 +221,7 @@ fn type_rows(conn: &Conn, src: &Source) -> Result<Vec<Row>, String> {
 
 // ---- Rows in the database ---------------------------------------------------------------------------------------
 
-fn ts(col: &str) -> String {
+pub(crate) fn ts(col: &str) -> String {
     format!("to_char({col} AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')")
 }
 
@@ -284,7 +284,7 @@ const DUE: &str = "c.enabled AND ( \
     OR (c.at_time IS NOT NULL AND (NOW() AT TIME ZONE $1::text)::time >= c.at_time::time \
         AND NOT EXISTS (SELECT 1 FROM sync_runs r WHERE r.connection_id = c.id AND r.started_at >= ((date_trunc('day', NOW() AT TIME ZONE $1::text) + c.at_time::time) AT TIME ZONE $1::text))))";
 
-fn timezone(state: &SharedState) -> String {
+pub(crate) fn timezone(state: &SharedState) -> String {
     state.settings.read().ok().and_then(|s| s.get("platform.timezone").and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| "UTC".to_string())
 }
 
@@ -527,6 +527,43 @@ pub struct RunOpts {
     pub repropose: bool,
 }
 
+/// What a run did, in words for the console: `Added 12, changed 3, removed 1`. A run that failed says its error.
+pub fn result_words(run: &Value) -> String {
+    match run["state"].as_str().unwrap_or("") {
+        "failed" => run["error"].as_str().filter(|e| !e.is_empty()).unwrap_or("The run failed").to_string(),
+        "running" => "Running now".to_string(),
+        "unchanged" => "No change since the last run".to_string(),
+        _ => {
+            let n = |k: &str| run[k].as_i64().unwrap_or(0);
+            let parts: Vec<String> = [("Added", n("added")), ("changed", n("changed")), ("removed", n("removed"))].iter().filter(|(_, c)| *c > 0).map(|(w, c)| format!("{w} {c}")).collect();
+            if parts.is_empty() { "No records changed".to_string() } else { parts.join(", ") }
+        }
+    }
+}
+
+/// Tells the connection's owner and the Platform Admins that a run failed, when the run before it did not. A failure
+/// that goes on, however often it retries, tells them once. A failure after a good run is a new one. A change that
+/// needs review ends its run as a failure too, so it tells them once as well.
+fn tell_if_newly_failing(state: &SharedState, conn: &Conn, run: Uuid) {
+    let id = conn.id;
+    let facts = state.repository.with_client(move |c| {
+        let failed: bool = c.query_one("SELECT state = 'failed' FROM sync_runs WHERE id = $1", &[&run])?.get(0);
+        let before: Option<String> = c.query_opt("SELECT state FROM sync_runs WHERE connection_id = $1 AND id <> $2 AND state <> 'running' ORDER BY started_at DESC, id LIMIT 1", &[&id, &run])?.map(|r| r.get(0));
+        let owner: Option<String> = c.query_opt("SELECT created_by FROM connections WHERE id = $1", &[&id])?.map(|r| r.get(0));
+        Ok((failed, before, owner))
+    });
+    let Ok((true, before, owner)) = facts else { return };
+    if before.as_deref() == Some("failed") {
+        return;
+    }
+    let mut people: Vec<String> = owner.into_iter().collect();
+    people.extend(state.repository.platform_admin_names().unwrap_or_default());
+    let mut seen = std::collections::HashSet::new();
+    people.retain(|p| seen.insert(p.to_lowercase()));
+    let notice = crate::notifications::Notice::SyncFailed { app: crate::notifications::AppRef(conn.dataset_app.clone()), table: crate::notifications::TableRef(conn.dataset_table.clone()) };
+    let _ = crate::notifications::notify(state, &crate::notifications::Recipients::People(people), None, &notice);
+}
+
 /// Runs a connection now. A fault ends the run as `failed` with its text, and is returned as the run, not as an error.
 pub fn run(state: &SharedState, id: Uuid, opts: RunOpts) -> Result<Value, RunError> {
     let mut conn = load(&state.repository, id)?.ok_or(RunError::NotFound)?;
@@ -548,6 +585,7 @@ pub fn run(state: &SharedState, id: Uuid, opts: RunOpts) -> Result<Value, RunErr
             finish_run(state, run_id, "failed", &zero, Some(&error), None)?
         }
     }
+    tell_if_newly_failing(state, &conn, run_id);
     Ok(state.repository.with_client(move |c| Ok(run_json(&c.query_one(&format!("{} WHERE id = $1", run_select()), &[&run_id])?)))?)
 }
 
