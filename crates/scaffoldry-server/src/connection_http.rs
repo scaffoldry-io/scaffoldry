@@ -36,11 +36,11 @@ fn text<'a>(config: &'a Value, key: &str) -> Option<&'a str> {
 /// The parts of an http connection's `config`, checked. Nothing connects.
 pub fn check_config(config: &Value) -> Result<(), String> {
     let url = text(config, "url").ok_or("config.url is the address of the service")?;
-    let uri: ureq::http::Uri = url.parse().map_err(|_| "config.url is not an address".to_string())?;
-    if uri.scheme_str() != Some("https") || uri.host().is_none() {
+    let address = crate::net::egress::read_address(url).ok_or("config.url is not an address")?;
+    if !address.https {
         return Err("config.url must be an https address. Plain http is not used".to_string());
     }
-    if url.contains('@') && uri.authority().is_some_and(|a| a.as_str().contains('@')) {
+    if address.has_credentials {
         return Err("config.url may not carry a user name or password. Use a secret".to_string());
     }
     let format = text(config, "format").unwrap_or("");
@@ -67,7 +67,7 @@ fn at<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
 }
 
 fn is_https(url: &str) -> bool {
-    url.parse::<ureq::http::Uri>().is_ok_and(|u| u.scheme_str() == Some("https") && u.host().is_some())
+    crate::net::egress::read_address(url).is_some_and(|a| a.https)
 }
 
 /// Rows read from a service, kept in a temporary file between the two passes.

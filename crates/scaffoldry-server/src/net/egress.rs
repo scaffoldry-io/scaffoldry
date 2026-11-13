@@ -215,6 +215,23 @@ impl Allow {
     }
 }
 
+/// Reads an address without opening anything. Code outside this module that only needs to know what an address says
+/// asks here, so no other module names the HTTP client.
+pub fn read_address(url: &str) -> Option<Address> {
+    let uri: Uri = url.parse().ok()?;
+    let host = uri.host()?.to_string();
+    Some(Address { https: uri.scheme_str() == Some("https"), host, has_credentials: uri.authority().is_some_and(|a| a.as_str().contains('@')) })
+}
+
+/// What an address says.
+#[derive(Debug, Clone)]
+pub struct Address {
+    pub https: bool,
+    pub host: String,
+    /// The address carries a user name or a password.
+    pub has_credentials: bool,
+}
+
 /// Resolves `host` once and returns the address to connect to, or why not. The first address that passes is kept: the
 /// caller connects to it and never looks the name up again.
 pub fn resolve_and_check(host: &str, port: u16, allow: &Allow, resolver: &dyn Resolver) -> Result<SocketAddr, EgressError> {
