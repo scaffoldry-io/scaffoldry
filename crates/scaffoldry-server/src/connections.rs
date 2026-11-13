@@ -34,7 +34,7 @@ pub const MAX_FILE_BYTES: u64 = 256 << 20;
 /// Runs kept for each connection.
 pub const KEEP_RUNS: i64 = 100;
 /// The file may hold at least this share of the last good run's rows, or the run stops.
-const SHRINK_FLOOR_PERCENT: usize = 50;
+pub(crate) const SHRINK_FLOOR_PERCENT: usize = 50;
 
 /// The types a column may be mapped to.
 pub const COLUMN_TYPES: [&str; 4] = ["Text", "Number", "Date", "Boolean"];
@@ -59,6 +59,8 @@ pub struct Conn {
     pub key_field: String,
     pub columns: Vec<Column>,
     pub sensitivity: String,
+    /// The name of the stored secret the source's password or token is read from.
+    pub secret: Option<String>,
     /// The proposal a changed source made, and the column map it would give the connection.
     pub pending_proposal: Option<Uuid>,
     pub pending_map: Option<Value>,
@@ -146,7 +148,7 @@ pub(crate) fn typed(kind: &str, raw: &str) -> Result<Value, String> {
 }
 
 /// A row of the file: its key, and its typed fields.
-type Row = (String, Map<String, Value>);
+pub(crate) type Row = (String, Map<String, Value>);
 
 /// A file as read: its header (a csv has one) and each row by column name.
 pub(crate) struct Source {
@@ -187,29 +189,34 @@ fn parse_source(conn: &Conn, bytes: &[u8]) -> Result<Source, String> {
     }
 }
 
+/// One row as typed fields and its key, or why it cannot be used. `n` is the row's number in the source, for the message.
+pub(crate) fn type_one(conn: &Conn, key_source: &str, row: &HashMap<String, String>, n: usize, seen: &mut HashSet<String>) -> Result<Row, String> {
+    let mut data = Map::new();
+    data.insert("_table_id".into(), Value::String(conn.dataset_table.clone()));
+    for col in &conn.columns {
+        let cell = row.get(&col.source).map(String::as_str).unwrap_or("");
+        data.insert(col.field.clone(), typed(&col.kind, cell).map_err(|e| format!("bad_value: row {n}, column \"{}\": {e}", col.source))?);
+    }
+    let key = row.get(key_source).map(|k| k.trim().to_string()).unwrap_or_default();
+    if key.is_empty() {
+        return Err(format!("bad_key: row {n} has no value in the key column \"{key_source}\""));
+    }
+    if !seen.insert(key.clone()) {
+        return Err(format!("duplicate_key: the key \"{key}\" is on more than one row (row {n})"));
+    }
+    Ok((key, data))
+}
+
+/// The source column the connection's key field comes from.
+pub(crate) fn key_source_of(conn: &Conn) -> String {
+    conn.columns.iter().find(|c| c.field == conn.key_field).map(|c| c.source.clone()).unwrap_or_default()
+}
+
 /// The rows of a file as `(key, data)`, or why the file cannot be used. Nothing is written here.
 fn type_rows(conn: &Conn, src: &Source) -> Result<Vec<Row>, String> {
-    let key_source = conn.columns.iter().find(|c| c.field == conn.key_field).map(|c| c.source.clone()).unwrap_or_default();
+    let key_source = key_source_of(conn);
     let mut seen = HashSet::new();
-    let mut out = Vec::with_capacity(src.rows.len());
-    for (i, row) in src.rows.iter().enumerate() {
-        let n = i + 2;
-        let mut data = Map::new();
-        data.insert("_table_id".into(), Value::String(conn.dataset_table.clone()));
-        for col in &conn.columns {
-            let cell = row.get(&col.source).map(String::as_str).unwrap_or("");
-            data.insert(col.field.clone(), typed(&col.kind, cell).map_err(|e| format!("bad_value: row {n}, column \"{}\": {e}", col.source))?);
-        }
-        let key = row.get(&key_source).map(|k| k.trim().to_string()).unwrap_or_default();
-        if key.is_empty() {
-            return Err(format!("bad_key: row {n} has no value in the key column \"{key_source}\""));
-        }
-        if !seen.insert(key.clone()) {
-            return Err(format!("duplicate_key: the key \"{key}\" is on more than one row (row {n})"));
-        }
-        out.push((key, data));
-    }
-    Ok(out)
+    src.rows.iter().enumerate().map(|(i, row)| type_one(conn, &key_source, row, i + 2, &mut seen)).collect()
 }
 
 // ---- Rows in the database ---------------------------------------------------------------------------------------
@@ -238,7 +245,7 @@ pub fn runs(repo: &crate::repository::PostgresRepository, id: Uuid) -> Result<Ve
 /// The connection with this id, as the sync reads it.
 pub fn load(repo: &crate::repository::PostgresRepository, id: Uuid) -> Result<Option<Conn>, RepositoryError> {
     repo.with_client(move |c| {
-        Ok(c.query_opt("SELECT id, name, kind, config, dataset_app, dataset_table, key_field, column_map, sensitivity, pending_proposal, pending_column_map FROM connections WHERE id = $1", &[&id])?.map(|r| Conn {
+        Ok(c.query_opt("SELECT id, name, kind, config, dataset_app, dataset_table, key_field, column_map, sensitivity, pending_proposal, pending_column_map, secret FROM connections WHERE id = $1", &[&id])?.map(|r| Conn {
             id: r.get(0),
             name: r.get(1),
             kind: r.get(2),
@@ -250,6 +257,7 @@ pub fn load(repo: &crate::repository::PostgresRepository, id: Uuid) -> Result<Op
             sensitivity: r.get(8),
             pending_proposal: r.get(9),
             pending_map: r.get(10),
+            secret: r.get(11),
         }))
     })
 }
@@ -298,11 +306,11 @@ fn start_run(state: &SharedState, id: Uuid, only_if_due: bool) -> Result<Option<
     })
 }
 
-struct Counts {
-    added: i64,
-    changed: i64,
-    removed: i64,
-    unchanged: i64,
+pub(crate) struct Counts {
+    pub added: i64,
+    pub changed: i64,
+    pub removed: i64,
+    pub unchanged: i64,
 }
 
 fn finish_run(state: &SharedState, run: Uuid, outcome: &str, n: &Counts, error: Option<&str>, hash: Option<&str>) -> Result<(), RepositoryError> {
@@ -325,7 +333,7 @@ fn finish_run(state: &SharedState, run: Uuid, outcome: &str, n: &Counts, error: 
 }
 
 /// The hash of the last run that applied or confirmed its file, and the rows the last run that wrote held.
-fn last_good(state: &SharedState, id: Uuid) -> Result<(Option<String>, Option<usize>), RepositoryError> {
+pub(crate) fn last_good(state: &SharedState, id: Uuid) -> Result<(Option<String>, Option<usize>), RepositoryError> {
     state.repository.with_client(move |c| {
         let hash = c.query_opt("SELECT source_hash FROM sync_runs WHERE connection_id = $1 AND state IN ('done', 'unchanged') ORDER BY started_at DESC LIMIT 1", &[&id])?.and_then(|r| r.get::<_, Option<String>>(0)).map(|h| h.trim().to_string());
         let rows = c.query_opt("SELECT added + changed + unchanged FROM sync_runs WHERE connection_id = $1 AND state = 'done' ORDER BY started_at DESC LIMIT 1", &[&id])?.map(|r| r.get::<_, i64>(0) as usize);
@@ -334,7 +342,7 @@ fn last_good(state: &SharedState, id: Uuid) -> Result<(Option<String>, Option<us
 }
 
 /// One batch of the file, written in one transaction.
-fn write_batch(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteCtx, batch: Vec<(String, Value)>, ferpa: bool) -> Result<(i64, i64, i64), RepositoryError> {
+pub(crate) fn write_batch(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteCtx, batch: Vec<(String, Value)>, ferpa: bool) -> Result<(i64, i64, i64), RepositoryError> {
     let (app, ctx, by) = (conn.dataset_app.clone(), ctx.clone(), ctx.actor.clone());
     state.repository.with_client(move |c| {
         let mut tx = c.transaction()?;
@@ -383,7 +391,7 @@ fn write_batch(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteC
 }
 
 /// Sends the records whose key is no longer in the file to trash, in batches. Returns how many.
-fn trash_removed(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteCtx, seen: HashSet<String>) -> Result<i64, RepositoryError> {
+pub(crate) fn trash_removed(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteCtx, seen: HashSet<String>) -> Result<i64, RepositoryError> {
     let (app, table) = (conn.dataset_app.clone(), conn.dataset_table.clone());
     let live: Vec<String> = state.repository.with_client(move |c| Ok(c.query("SELECT id FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL", &[&app, &table])?.iter().map(|r| r.get(0)).collect()))?;
     let gone: Vec<String> = live.into_iter().filter(|id| !seen.contains(id)).collect();
@@ -406,8 +414,20 @@ fn trash_removed(state: &SharedState, conn: &Conn, ctx: &crate::repository::Writ
     Ok(removed)
 }
 
+/// How the sync writes: its own actor, the kind `sync`, and the dataset's table.
+pub(crate) fn sync_ctx(state: &SharedState, conn: &Conn) -> crate::repository::WriteCtx {
+    let table_row = serde_json::json!({ "_table_id": conn.dataset_table });
+    let actor = format!("sync:{}", conn.name);
+    let mut ctx = crate::service::history::ctx_for(&actor, ActorKind::Sync, &conn.dataset_app, &table_row, state);
+    ctx.token_label = Some(conn.name.clone());
+    ctx
+}
+
 /// The work of one run, after it is open. `Ok(None)` is `unchanged`. A fault comes back as text, and the run keeps it.
 fn apply(state: &SharedState, conn: &Conn, opts: &RunOpts) -> Result<(Option<Counts>, String), Fault> {
+    if conn.kind == "postgres" {
+        return crate::connection_pg::apply(state, conn, opts);
+    }
     if conn.kind != "file_drop" {
         return Err(format!("The connection kind '{}' is not built yet", conn.kind).into());
     }
@@ -444,10 +464,7 @@ fn apply(state: &SharedState, conn: &Conn, opts: &RunOpts) -> Result<(Option<Cou
             return Err(format!("source_shrank: the file holds {} rows and the last run held {prev}. A person must approve a file this much smaller", rows.len()).into());
         }
     }
-    let table_row = serde_json::json!({ "_table_id": conn.dataset_table });
-    let actor = format!("sync:{}", conn.name);
-    let mut ctx = crate::service::history::ctx_for(&actor, ActorKind::Sync, &conn.dataset_app, &table_row, state);
-    ctx.token_label = Some(conn.name.clone());
+    let ctx = sync_ctx(state, conn);
     let ferpa = is_sensitive(&conn.sensitivity);
 
     let mut seen = HashSet::with_capacity(rows.len());
