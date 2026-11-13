@@ -385,18 +385,20 @@ pub(crate) fn delete_record_links(tx: &mut postgres::Transaction<'_>, app_slug: 
          ON CONFLICT DO NOTHING",
         &[&record_id],
     )?;
-    let incoming = tx.query("SELECT from_record, field FROM record_links WHERE to_record = $1 ORDER BY from_record, field", &[&record_id])?;
+    // The records that point at it may be in another app: a record of an app that links to a dataset. Each is found and
+    // changed in its own app.
+    let incoming = tx.query("SELECT from_record, field, app_slug FROM record_links WHERE to_record = $1 ORDER BY from_record, field", &[&record_id])?;
     for row in &incoming {
-        let (from, field): (String, String) = (row.get(0), row.get(1));
+        let (from, field, from_app): (String, String, String) = (row.get(0), row.get(1), row.get(2));
         tx.execute(
             "INSERT INTO trash_links (record_id, field, other_record, direction) VALUES ($1, $2, $3, 'in') ON CONFLICT DO NOTHING",
             &[&record_id, &field, &from],
         )?;
-        let one = match lock(tx, app_slug, &from)? {
+        let one = match lock(tx, &from_app, &from)? {
             Some((data, _, _)) => !matches!(data.get(&field), Some(Value::Array(_))),
             None => true,
         };
-        set_membership(tx, app_slug, Membership { record_id: &from, field: &field, one, other: record_id, present: false }, ctx)?;
+        set_membership(tx, &from_app, Membership { record_id: &from, field: &field, one, other: record_id, present: false }, ctx)?;
     }
     tx.execute("DELETE FROM record_links WHERE to_record = $1", &[&record_id])?;
     tx.execute("DELETE FROM record_links WHERE from_record = $1", &[&record_id])?;
@@ -449,8 +451,9 @@ pub(crate) fn restore_links_in_tx(tx: &mut postgres::Transaction<'_>, slug: &str
     let out_fields: BTreeSet<String> = rows.iter().filter(|r| r.get::<_, String>(2) == "out").map(|r| r.get(0)).collect();
     for field in &out_fields {
         let ids = linked_ids(data.get(field));
+        // A link may name a record of a dataset, so the other end is found by its id, which is the same in every app.
         let live: Vec<String> = tx
-            .query("SELECT id FROM dataset_records WHERE app_slug = $1 AND id = ANY($2) AND deleted_at IS NULL", &[&slug, &ids])?
+            .query("SELECT id FROM dataset_records WHERE id = ANY($1) AND deleted_at IS NULL", &[&ids])?
             .iter()
             .map(|r| r.get(0))
             .collect();
@@ -478,13 +481,15 @@ pub(crate) fn restore_links_in_tx(tx: &mut postgres::Transaction<'_>, slug: &str
     // Links in: put the restored record back into the field of each record that still exists.
     for row in rows.iter().filter(|r| r.get::<_, String>(2) == "in") {
         let (field, other): (String, String) = (row.get(0), row.get(1));
-        let Some((theirs, _, _)) = lock(tx, slug, &other)? else { continue };
+        // The record that pointed here may be in another app.
+        let Some(their_app) = tx.query_opt("SELECT app_slug FROM dataset_records WHERE id = $1", &[&other])?.map(|r| r.get::<_, String>(0)) else { continue };
+        let Some((theirs, _, _)) = lock(tx, &their_app, &other)? else { continue };
         let one = !matches!(theirs.get(&field), Some(Value::Array(_)));
         let occupied = one && !linked_ids(theirs.get(&field)).is_empty();
         if occupied {
             continue;
         }
-        if set_membership(tx, slug, Membership { record_id: &other, field: &field, one, other: id, present: true }, ctx)? {
+        if set_membership(tx, &their_app, Membership { record_id: &other, field: &field, one, other: id, present: true }, ctx)? {
             restored += 1;
         }
     }

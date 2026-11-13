@@ -133,7 +133,7 @@ fn a_relationship_is_deprecated_and_the_validator_warns() {
         source_field: "title".into(),
         target_field: "name".into(),
         relationship_type: "one_to_many".into(),
-        display_field: "name".into(),
+        display_field: "name".into(), target_app: None,
     });
     let warnings = manifest_warnings(&m);
     assert!(warnings.iter().any(|w| w.contains("'r'") && w.contains("Link")), "{warnings:?}");

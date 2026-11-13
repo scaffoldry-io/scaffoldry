@@ -22,6 +22,11 @@ function cellText(v: unknown): string {
   return String(v);
 }
 
+/** The app whose records a link field points at: the dataset it names, or this app. */
+export function linkTargetApp(field: { link_target_app?: string }, appSlug: string): string {
+  return field.link_target_app ?? appSlug;
+}
+
 export interface LinkedRecordsProps {
   field: FieldSpec;
   /** The table the field points at, with the records the person has loaded. */

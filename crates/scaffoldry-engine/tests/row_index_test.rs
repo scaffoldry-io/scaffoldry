@@ -73,7 +73,7 @@ fn a_field_is_indexed_when_marked_when_a_view_uses_it_or_when_a_relationship_joi
         source_field: "joined".into(),
         target_field: "x".into(),
         relationship_type: "one_to_many".into(),
-        display_field: "x".into(),
+        display_field: "x".into(), target_app: None,
     }];
     let set: Vec<String> = indexed_fields(&m, "t1").into_iter().collect();
     assert_eq!(set, vec!["filtered", "joined", "marked", "sorted"], "a view of another table does not count");

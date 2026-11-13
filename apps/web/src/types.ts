@@ -141,6 +141,8 @@ export interface FieldSpec {
   link_filter?: LinkFilter;
   /** A `Link` field: the table it points at, how many records it holds, and the field that shows it from the other side. */
   link_target_table?: string;
+  /** Connections phase 5: the dataset app the target table belongs to. Without it, the table is this app's. */
+  link_target_app?: string;
   link_cardinality?: "One" | "Many";
   link_related_field?: string;
   formula_expression?: string;

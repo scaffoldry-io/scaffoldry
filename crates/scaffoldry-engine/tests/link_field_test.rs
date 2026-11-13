@@ -99,11 +99,29 @@ fn a_related_field_must_be_a_link_on_the_target_that_points_back() {
 }
 
 #[test]
-fn a_link_to_another_app_must_name_a_dataset_app_and_none_exist_yet() {
+fn a_link_to_a_dataset_app_is_one_way_and_the_server_checks_the_app() {
+    // The engine sees one app. It accepts a link that names another app and a table of it, and the server checks the app.
     let mut f = link("program", "programs");
     f.link_target_app = Some("registrar-feed".into());
-    let m = manifest(vec![table("apps", vec![f])]);
-    assert!(problems(&m).iter().any(|p| p.contains("'registrar-feed'") && p.contains("dataset app")), "{:?}", problems(&m));
+    let m = manifest(vec![table("apps", vec![f.clone()])]);
+    assert!(validate_manifest(&m).is_ok(), "{:?}", problems(&m));
+
+    // It must name a table of that app, and cannot be its own app.
+    let mut no_table = f.clone();
+    no_table.link_target_table = None;
+    assert!(problems(&manifest(vec![table("apps", vec![no_table])])).iter().any(|p| p.contains("'registrar-feed'") && p.contains("no table")));
+    let mut own = f.clone();
+    own.link_target_app = Some("test".into());
+    let own_m = manifest(vec![table("apps", vec![own])]);
+    assert!(problems(&own_m).iter().any(|p| p.contains("its own app")) || own_m.slug != "test", "{:?}", problems(&own_m));
+
+    // Only its sync changes a dataset, so the link is one-way and can only unlink.
+    let mut two_way = f.clone();
+    two_way.link_related_field = Some("applications".into());
+    assert!(problems(&manifest(vec![table("apps", vec![two_way])])).iter().any(|p| p.contains("one-way")));
+    let mut restrict = f;
+    restrict.link_on_delete = LinkOnDelete::Restrict;
+    assert!(problems(&manifest(vec![table("apps", vec![restrict])])).iter().any(|p| p.contains("can only unlink")));
 }
 
 #[test]
