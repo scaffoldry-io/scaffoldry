@@ -2,6 +2,7 @@
   "heavy": [
     "access_scope_test",
     "calc_recalc_test",
+    "connections_phase3_big_test",
     "index_jobs_test",
     "views_phase2_test",
     "views_phase3_test",

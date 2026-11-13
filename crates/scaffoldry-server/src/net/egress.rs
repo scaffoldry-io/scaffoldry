@@ -322,7 +322,7 @@ impl Client {
     /// A client with the allowlist this server holds and the system resolver.
     pub fn for_state(state: &crate::state::ServerState) -> Self {
         let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
-        Client::new(Allow::from_settings(&settings), Arc::new(SystemResolver))
+        Client::new(Allow::from_settings(&settings), state.egress_resolver.clone().unwrap_or_else(|| Arc::new(SystemResolver)))
     }
 
     pub fn get(&self, url: &str) -> Result<Response, EgressError> {

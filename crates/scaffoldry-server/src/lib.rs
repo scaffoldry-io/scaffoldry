@@ -22,6 +22,7 @@ pub mod mail;
 pub mod net;
 pub mod secrets;
 pub mod connection_drift;
+pub mod connection_pg;
 pub mod connections;
 pub mod webhooks;
 pub mod realtime;
