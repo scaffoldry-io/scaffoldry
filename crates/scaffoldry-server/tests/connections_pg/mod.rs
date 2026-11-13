@@ -63,8 +63,7 @@ fn pki() -> &'static Pki {
     })
 }
 
-/// A TLS proxy for `name`'s certificate in front of `backend`. Returns its port.
-pub async fn proxy(name: &str, backend: SocketAddr) -> u16 {
+fn acceptor_for(name: &str) -> tokio_rustls::TlsAcceptor {
     use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     let pki = pki();
@@ -76,7 +75,12 @@ pub async fn proxy(name: &str, backend: SocketAddr) -> u16 {
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .unwrap();
-    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+    tokio_rustls::TlsAcceptor::from(Arc::new(config))
+}
+
+/// A TLS proxy for `name`'s certificate in front of `backend`. Returns its port.
+pub async fn proxy(name: &str, backend: SocketAddr) -> u16 {
+    let acceptor = acceptor_for(name);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -251,4 +255,112 @@ pub fn seed(w: &World, rows: i64) {
     w.src.run(move |c| {
         c.execute("INSERT INTO programs SELECT 'P' || lpad(g::text, 6, '0'), 'Program ' || g, 3 + (g % 3)::int FROM generate_series(1, $1::bigint) g", &[&rows]).unwrap();
     });
+}
+
+// ---- An HTTPS server ---------------------------------------------------------------------------------------------
+
+/// One request an HTTPS test server got.
+#[derive(Clone, Debug)]
+pub struct Got {
+    pub path: String,
+    pub headers: Vec<(String, String)>,
+}
+
+impl Got {
+    pub fn header(&self, name: &str) -> Option<String> {
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())
+    }
+}
+
+pub struct Reply {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl Reply {
+    pub fn json(v: &Value) -> Reply {
+        Reply { status: 200, headers: vec![("Content-Type".into(), "application/json".into())], body: v.to_string().into_bytes() }
+    }
+}
+
+pub type Handler = Arc<dyn Fn(&Got) -> Reply + Send + Sync>;
+
+/// An HTTPS server with `name`'s certificate. Returns its port and every request it got.
+pub async fn https_server(name: &str, handler: Handler) -> (u16, Arc<std::sync::Mutex<Vec<Got>>>) {
+    let acceptor = acceptor_for(name);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let got = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let kept = got.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((client, _)) = listener.accept().await else { continue };
+            let (acceptor, handler, kept) = (acceptor.clone(), handler.clone(), kept.clone());
+            tokio::spawn(async move {
+                let Ok(mut tls) = acceptor.accept(client).await else { return };
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                while !buf.windows(4).any(|w| w == b"\r\n\r\n") && buf.len() < 65_536 {
+                    match tls.read(&mut chunk).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&buf).to_string();
+                let mut lines = head.lines();
+                let path = lines.next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("/").to_string();
+                let headers = lines.take_while(|l| !l.is_empty()).filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))).collect();
+                let got = Got { path, headers };
+                kept.lock().unwrap().push(got.clone());
+                let reply = handler(&got);
+                let mut out = format!("HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n", reply.status, reply.body.len());
+                for (k, v) in &reply.headers {
+                    out.push_str(&format!("{k}: {v}\r\n"));
+                }
+                out.push_str("\r\n");
+                let _ = tls.write_all(out.as_bytes()).await;
+                let _ = tls.write_all(&reply.body).await;
+                let _ = tls.shutdown().await;
+            });
+        }
+    });
+    (port, got)
+}
+
+impl World {
+    /// Stores a secret under `name`.
+    pub fn put_secret(&self, name: &str, value: &str) {
+        let key = self.state.master_key_file.clone().expect("a master key file");
+        let master = scaffoldry_server::secrets::MasterKey::from_file(&key).unwrap();
+        scaffoldry_server::secrets::put(&self.state.repository, &master, name, value.as_bytes(), ADMIN).unwrap();
+    }
+}
+
+/// The body of a new connection to a web service at `port`. `extra` changes `config`.
+pub fn http_body(port: u16, extra: Value, secret: Option<&str>) -> Value {
+    let mut config = json!({ "url": format!("https://{DB_HOST}:{port}/api/programs"), "format": "json", "path": "data", "next": "next" });
+    if let (Some(c), Some(e)) = (config.as_object_mut(), extra.as_object()) {
+        c.extend(e.clone());
+    }
+    let mut b = json!({
+        "name": unique("Feed"), "kind": "http", "reason": "A web service", "config": config,
+        "dataset_app": unique("httpprograms"), "dataset_table": "programs", "key_field": "code",
+        "column_map": [
+            { "source": "code", "field": "code", "type": "Text" },
+            { "source": "name", "field": "name", "type": "Text" },
+            { "source": "credits", "field": "credits", "type": "Number" },
+        ],
+        "sensitivity": "Directory",
+    });
+    if let Some(s) = secret {
+        b["secret"] = json!(s);
+    }
+    b
+}
+
+/// A page of `size` programs numbered from `first`, with `next` when there is one.
+pub fn page(first: usize, size: usize, next: Option<String>) -> Value {
+    let rows: Vec<Value> = (first..first + size).map(|i| json!({ "code": format!("P{i:06}"), "name": format!("Program {i}"), "credits": 3 + i % 3 })).collect();
+    json!({ "data": rows, "next": next })
 }
