@@ -208,7 +208,7 @@ async fn a_new_column_stops_the_run_and_one_proposal_names_it() {
 
     decide(&w, &list[0].0, "approve").await;
     let after = connection(&w, &c).await;
-    assert_eq!(after["state"], "Active", "{after}");
+    assert_eq!(after["state"], "Healthy", "{after}");
     assert!(after["column_map"].to_string().contains("Campus"), "the column map and the manifest changed together: {after}");
     let ran = run(&w, &c, false).await;
     assert_eq!(ran["state"], "done", "{ran}");
@@ -279,7 +279,7 @@ async fn a_rejected_proposal_leaves_the_connection_stopped() {
     put(&w, "sis/programs.csv", &programs(&data));
     let back = run(&w, &c, false).await;
     assert_eq!(back["state"], "unchanged", "{back}");
-    assert_eq!(connection(&w, &c).await["state"], "Active");
+    assert_eq!(connection(&w, &c).await["state"], "Healthy");
 }
 
 // 4. A type change shows a conversion preview with counts, and approving it converts nothing by itself.

@@ -1,6 +1,14 @@
 import { useAsync, ErrorState, Skeleton, PageHeader, Banner } from "../ui";
 import { apiClient, type AdminOverviewData } from "../api";
 
+/** An age in the largest whole unit: `2 days`, `5 hours`, `12 minutes`. */
+function age(secs: number): string {
+  const unit = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  if (secs >= 86400) return unit(Math.floor(secs / 86400), "day");
+  if (secs >= 3600) return unit(Math.floor(secs / 3600), "hour");
+  return unit(Math.floor(secs / 60), "minute");
+}
+
 export function Overview() {
   const { data, error, loading, reload } = useAsync<AdminOverviewData>(
     () => apiClient.getAdminOverview(),
@@ -229,6 +237,44 @@ export function Overview() {
             </span>
           </div>
         </div>
+
+        {/* DATA CONNECTIONS CARD (connections phase 6) */}
+        {data.connections && (
+          <div
+            data-testid="admin-overview-connections-card"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+          >
+            <div className="mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Data connections</span>
+            </div>
+            <div className="space-y-2 mt-4">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 dark:text-slate-400">Healthy</span>
+                <span className="font-mono font-semibold text-slate-900 dark:text-slate-100" data-testid="overview-connections-healthy">
+                  {data.connections.healthy}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 dark:text-slate-400">Failing</span>
+                <span className={`font-mono font-semibold ${data.connections.failing > 0 ? "text-rose-600 dark:text-rose-400" : "text-slate-900 dark:text-slate-100"}`} data-testid="overview-connections-failing">
+                  {data.connections.failing}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 dark:text-slate-400">Needs review</span>
+                <span className={`font-mono font-semibold ${data.connections.needs_review > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-900 dark:text-slate-100"}`} data-testid="overview-connections-review">
+                  {data.connections.needs_review}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 dark:text-slate-400">Oldest successful sync</span>
+                <span className="font-mono font-semibold text-slate-900 dark:text-slate-100" data-testid="overview-connections-oldest">
+                  {data.connections.oldest_success_age_secs === null ? "none yet" : age(data.connections.oldest_success_age_secs)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* JOBS TELEMETRY CARD */}
         {data.outbound && (
