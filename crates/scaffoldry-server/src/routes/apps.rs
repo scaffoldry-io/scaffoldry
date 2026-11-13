@@ -464,12 +464,7 @@ async fn list_app_processes(
                     return false;
                 }
             }
-            if query.mine.unwrap_or(false)
-                && !crate::service::approvers::caller_can_decide(&state, &user, inst)
-            {
-                return false;
-            }
-            true
+            !(query.mine.unwrap_or(false) && !crate::service::approvers::caller_can_decide(&state, &user, inst))
         })
         .map(|inst| crate::service::approvers::instance_view(&state, inst))
         .collect();
