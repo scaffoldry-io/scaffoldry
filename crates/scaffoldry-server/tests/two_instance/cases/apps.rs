@@ -51,6 +51,7 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/apps/{slug}/views/{id}".into(), case!(view_update));
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}".into(), case!(view_delete));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/duplicate".into(), case!(view_duplicate));
+    m.insert("POST /api/v1/apps/{slug}/views/{id}/submit".into(), case!(form_submit));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/shares".into(), case!(share_create));
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}/shares/{share}".into(), case!(share_revoke));
     m.insert("POST /api/v1/admin/shares/revoke".into(), case!(admin_shares_revoke));
@@ -558,6 +559,23 @@ async fn view_duplicate(w: World) -> Outcome {
     let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/views"), OWNER, None).await, StatusCode::OK, "B lists views")?;
     let copies = seen.to_string().matches(&name).count();
     ensure(copies >= 2, format!("B lists the view and its copy ({copies} mention the name): {seen}"))
+}
+
+// --- form views ------------------------------------------------------------------------------------------------------------
+
+async fn form_submit(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let made = status(
+        w.wa("POST", &format!("/api/v1/apps/{slug}/views"), OWNER, Some(json!({ "name": unique("p7form"), "kind": "form", "ownership": "collaborative", "table_id": "apps", "config": { "form_fields": [{ "name": "name", "label": "Name" }], "success_message": "Thanks." } }))).await,
+        StatusCode::CREATED,
+        "make a form",
+    )?;
+    let id = made["id"].as_str().ok_or("a view id")?.to_string();
+    let name = unique("submitted");
+    let sent = status(w.wa("POST", &format!("/api/v1/apps/{slug}/views/{id}/submit"), OWNER, Some(json!({ "data": { "name": name } }))).await, StatusCode::CREATED, "submit the form")?;
+    ensure(sent["success_message"] == "Thanks.", format!("the form's own message: {sent}"))?;
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/records?table_id=apps"), OWNER, None).await, StatusCode::OK, "B lists the records")?;
+    ensure(has(&seen, &name), format!("B lists the record the form made: {seen}"))
 }
 
 // --- shared links ----------------------------------------------------------------------------------------------------------

@@ -18,6 +18,7 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/views/{id}", axum::routing::put(update_view).delete(delete_view))
         .route("/apps/{slug}/views/{id}/duplicate", post(duplicate_view))
         .route("/apps/{slug}/views/{id}/data", get(view_data))
+        .route("/apps/{slug}/views/{id}/submit", post(submit_form))
         .route("/apps/{slug}/views/{id}/widgets/{widget_id}", get(widget_data))
 }
 
@@ -110,6 +111,9 @@ struct DataQuery {
     #[serde(default)]
     last: bool,
     count: Option<String>,
+    /// A calendar's range of dates.
+    from: Option<String>,
+    to: Option<String>,
 }
 
 async fn view_data(
@@ -126,7 +130,7 @@ async fn view_data(
         Some(p) => serde_json::from_str(p).map_err(|_| ServiceError::BadRequest("group_path must be a JSON array of strings".to_string()))?,
     };
     let origin = crate::guard::read_origin(&state, &headers);
-    let body = tokio::task::spawn_blocking(move || views::run(&caller, &origin, &slug, id, views::RunQuery { cursor: q.cursor, limit: q.limit, group_path, offset: q.offset, last: q.last, count: q.count, also: None }, &state))
+    let body = tokio::task::spawn_blocking(move || views::run(&caller, &origin, &slug, id, views::RunQuery { cursor: q.cursor, limit: q.limit, group_path, offset: q.offset, last: q.last, count: q.count, also: None, from: q.from, to: q.to }, &state))
         .await
         .map_err(|_| ServiceError::Internal("The read stopped".to_string()))??;
     Ok(Json(body))
@@ -147,4 +151,21 @@ async fn widget_data(
         .await
         .map_err(|_| ServiceError::Internal("The read stopped".to_string()))??;
     Ok(Json(body))
+}
+
+/// `POST /apps/{slug}/views/{id}/submit`: a filled-in form view. The conditions are run here, and the ordinary create rules apply.
+async fn submit_form(
+    State(state): State<SharedState>,
+    user: Option<Extension<AuthUser>>,
+    headers: HeaderMap,
+    Path((slug, id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let id = view_id(&id)?;
+    let origin = crate::guard::read_origin(&state, &headers);
+    let made = tokio::task::spawn_blocking(move || crate::service::forms::submit(&caller, &origin, &slug, id, &body, &state))
+        .await
+        .map_err(|_| ServiceError::Internal("The submit stopped".to_string()))??;
+    Ok((StatusCode::CREATED, Json(made)))
 }

@@ -935,6 +935,8 @@ export interface ViewData {
   window?: { offset: number | null; strategy: "offset" | "anchor" | "reverse" };
   /** Present when `count: "exact"` was asked for. `at_least` means the count ran out of time. */
   count?: { value: number; exact: true } | { at_least: number };
+  /** Present for a calendar: the events shown, how many the range holds, and how many are not shown. */
+  calendar?: { shown: number; total: number; more: number; at_least?: boolean };
   /** Present for a summary view: its groups and one value for each measure, 200 groups at most. */
   summary?: { columns: string[]; groups: { key: string[]; values: (number | null)[] }[]; has_more: boolean };
 }
@@ -946,9 +948,11 @@ export interface ViewData {
 export const runView = (
   appSlug: string,
   viewId: string,
-  opts: { groupPath?: string[]; cursor?: string; limit?: number; offset?: number; last?: boolean; count?: "exact" } = {}
+  opts: { groupPath?: string[]; cursor?: string; limit?: number; offset?: number; last?: boolean; count?: "exact"; from?: string; to?: string } = {}
 ): Promise<ViewData> => {
   const q = new URLSearchParams();
+  if (opts.from) q.set("from", opts.from);
+  if (opts.to) q.set("to", opts.to);
   if (opts.offset !== undefined) q.set("offset", String(opts.offset));
   if (opts.last) q.set("last", "true");
   if (opts.count) q.set("count", opts.count);
@@ -2423,6 +2427,14 @@ export const apiClient = {
   createView: async (appSlug: string, payload: Parameters<typeof createView>[1]) => createView(appSlug, payload),
   updateView: async (appSlug: string, viewId: string, payload: Parameters<typeof updateView>[2]) => updateView(appSlug, viewId, payload),
   dashboardWidget: async (appSlug: string, viewId: string, widgetId: string, opts: Parameters<typeof dashboardWidget>[3] = {}) => dashboardWidget(appSlug, viewId, widgetId, opts),
+
+  /** Runs a view on the server: its rows, the groups of a board, or a calendar's events for a range (views phase 7). */
+  runView: async (appSlug: string, viewId: string, opts: Parameters<typeof runView>[2] = {}) => runView(appSlug, viewId, opts),
+  /** Submits a filled-in form view. The server runs the form's conditions, then the ordinary create rules. */
+  submitForm: async (appSlug: string, viewId: string, data: Record<string, unknown>): Promise<{ record: AppRecord; success_message: string }> =>
+    request(`/apps/${encodeURIComponent(appSlug)}/views/${encodeURIComponent(viewId)}/submit`, { method: "POST", body: JSON.stringify({ data }) }),
+  /** A file of a record, as a Blob. */
+  fetchRecordFile: async (appSlug: string, recordId: string, refId: string): Promise<Blob> => fetchRecordFile(appSlug, recordId, refId),
 
   /** The links of a view, and what the person may choose when they make one (views phase 6). */
   listShares: async (appSlug: string, viewId: string): Promise<{ shares: ShareRow[]; options: ShareOptions }> =>

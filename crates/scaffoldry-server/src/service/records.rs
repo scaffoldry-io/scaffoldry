@@ -192,12 +192,13 @@ fn validate_record_constraints(
     app_slug: &str,
     table: &str,
     data: &Value,
+    skip_required: &[String],
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     let (fields, _) = table_fields_lenient(app_slug, table, state);
     for f in &fields {
         let val = data.get(&f.name);
-        let is_req = f.required || f.constraints.as_ref().is_some_and(|c| c.required);
+        let is_req = (f.required || f.constraints.as_ref().is_some_and(|c| c.required)) && !skip_required.contains(&f.name);
         if is_req {
             let empty = match val {
                 None | Some(Value::Null) => true,
@@ -709,6 +710,19 @@ pub fn create_record(
     data: &Value,
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
+    create_record_skipping(caller, origin, app_slug, data, &[], state)
+}
+
+/// `create_record`, with the table's required rule left off for the named fields. A form view passes the fields its
+/// conditions hid for these answers: a field the person was never shown cannot be required of them. Every other rule stands.
+pub fn create_record_skipping(
+    caller: &AuthUser,
+    origin: &Origin,
+    app_slug: &str,
+    data: &Value,
+    skip_required: &[String],
+    state: &SharedState,
+) -> Result<DatasetRecord, ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
     crate::service::connections::ensure_writable(app_slug, state)?;
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
@@ -738,7 +752,7 @@ pub fn create_record(
     let table = cleaned.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     apply_defaults_and_set_on_create(app_slug, &table, &mut cleaned, state);
     validate_known_fields_and_types(app_slug, &table, &cleaned, state)?;
-    validate_record_constraints(app_slug, &table, &cleaned, state)?;
+    validate_record_constraints(app_slug, &table, &cleaned, skip_required, state)?;
     let data_payload = &cleaned;
     validate_links(caller, app_slug, None, None, data_payload, state)?;
 
@@ -1021,7 +1035,7 @@ pub fn update_record(
 
     apply_set_on_change(app_slug, &table, &current.data, &mut new_data, state);
     validate_known_fields_and_types(app_slug, &table, &new_data, state)?;
-    validate_record_constraints(app_slug, &table, &new_data, state)?;
+    validate_record_constraints(app_slug, &table, &new_data, &[], state)?;
     validate_select_options(app_slug, &table, &new_data, state)?;
     validate_collaborators(app_slug, &table, &new_data, state)?;
     validate_long_text(app_slug, &table, &new_data, state)?;

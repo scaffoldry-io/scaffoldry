@@ -11,6 +11,7 @@ pub mod graph;
 pub mod index;
 pub mod manifest;
 pub mod recalc;
+pub mod show_when;
 pub mod sensitivity;
 pub mod formula;
 pub mod flow;
