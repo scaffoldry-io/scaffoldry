@@ -3482,6 +3482,19 @@ impl PostgresRepository {
     }
 }
 
+/// Sets the stored sensitivity flag of every record of one table from the names of its effective sensitive fields: a record is flagged when it
+/// holds a value (not `null`, not empty text, not an empty list) in any of them. It changes no data and no version, so it writes no history.
+/// Records are written only in this file, so this statement lives here.
+pub(crate) fn reflag_table(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &str, names: &[String]) -> Result<u64, postgres::Error> {
+    tx.execute(
+        "UPDATE dataset_records SET is_ferpa_sensitive = EXISTS ( \
+             SELECT 1 FROM unnest($3::text[]) AS f(name) \
+             WHERE data->f.name IS NOT NULL AND data->f.name NOT IN ('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb)) \
+         WHERE app_slug = $1 AND table_id = $2",
+        &[&app_slug, &table_id, &names],
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct AppendDecisionParams {
     pub principal: String,

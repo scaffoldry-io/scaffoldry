@@ -53,13 +53,7 @@ impl PostgresRepository {
             }
             // A record is flagged when it holds a value in any field that is now sensitive. The same test the backfill of a category uses.
             for t in &flags {
-                tx.execute(
-                    "UPDATE dataset_records SET is_ferpa_sensitive = EXISTS ( \
-                         SELECT 1 FROM unnest($3::text[]) AS f(name) \
-                         WHERE data->f.name IS NOT NULL AND data->f.name NOT IN ('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb)) \
-                     WHERE app_slug = $1 AND table_id = $2",
-                    &[&t.app_slug, &t.table_id, &t.names],
-                )?;
+                crate::repository::reflag_table(&mut tx, &t.app_slug, &t.table_id, &t.names)?;
             }
             crate::cache::bump(&mut tx, "labels")?;
             let entry = append_ledger_in_tx(&mut tx, ledger)?;
