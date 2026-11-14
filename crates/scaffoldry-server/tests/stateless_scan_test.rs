@@ -13,7 +13,6 @@ const FIELD_COLLECTION: &[(&str, &str)] = &[
     ("guards", "guards"),
     ("guard_policy_cache", "guards"),
     ("datasets", "datasets"),
-    ("relationships", "relationships"),
     ("automations", "rules"),
     ("engine", "manifests"),
     ("organizations", "organizations"),
@@ -176,7 +175,7 @@ fn no_static_holds_a_lock_outside_the_list() {
 
 /// The collections phase 3 moved onto the mechanism. Only `ServerState::reload` may replace them. Every other
 /// write reaches PostgreSQL first, bumps the counter, and lets `refresh` read it back.
-const RELOADED: &[&str] = &["organizations", "tree", "position_types", "workspaces", "collaborators", "guards", "datasets", "relationships", "automations"];
+const RELOADED: &[&str] = &["organizations", "tree", "position_types", "workspaces", "collaborators", "guards", "datasets", "automations"];
 
 fn without_space(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
