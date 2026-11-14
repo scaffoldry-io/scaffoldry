@@ -220,6 +220,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::notifications::purge_job,
     },
     JobKind {
+        name: "purge_guests",
+        title: "Removing unused guests",
+        description: "Removes guests who made no record and have not been seen for 90 days.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::guest_admin::purge_job,
+    },
+    JobKind {
         name: "send_email",
         title: "Sending mail",
         description: "Sends the mail that is due through the institution's mail server, and tries again later when it fails.",

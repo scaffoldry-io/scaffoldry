@@ -115,6 +115,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "scan_file", 10 * 60)?;
     // Old notices are cleared once a day.
     jobs::register_schedule(repo, "purge_notifications", 24 * 60 * 60)?;
+    // Guests nobody used for 90 days, who made nothing, are removed once a day.
+    jobs::register_schedule(repo, "purge_guests", 24 * 60 * 60)?;
     // Mail that is due is sent every 15 seconds. Nothing is sent while mail.enabled is false.
     jobs::register_schedule(repo, "send_email", 15)?;
     // Integrations phase 4: webhooks are sent every 10 seconds, and each call log is trimmed once a day.

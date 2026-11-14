@@ -125,3 +125,46 @@ The mail is a title and two links, never a value: one to `/g/{app}/{form}`, whic
 Stopping sets `notification_prefs` to `off` for the guest's address and the kind `guest_status`. It covers every form of that guest, not one form. Stopping twice is fine. A guest who is disabled, or whose address was never verified, is sent nothing. The 50 mails an hour per address still apply.
 
 A process step tells a guest through the status field it sets, the same way a member's save does. There is no separate path.
+
+## Operating guests
+
+The console's `Guests` panel is for a Platform Admin. Every route is in `ADMIN_ROUTES`, so any other caller answers `403`. Every change asks for a reason and is a ledger entry of the type `GuestChanged`. The ledger names a guest by id and never holds an address.
+
+| Route | What it does |
+| --- | --- |
+| `GET /admin/guests` | The forms open to guests, the guests (the newest 200), and the signs of abuse |
+| `POST /admin/guests/forms/{id}/close` | Adds the form to `forms.disabled`. It takes effect on the next request, on every server |
+| `POST /admin/guests/forms/{id}/open` | Takes it out again |
+| `POST /admin/guests/{id}/disable` and `.../enable` | A disabled guest's session stops on its next request |
+| `POST /admin/guests/{id}/erase` | See below |
+
+The panel shows for each form: the app, the submissions, the last submission, the link requests in the last day, and the rate-limit hits. A hit is a request past the form's limit of 200 an hour. For each guest it shows the address, the forms used, the submissions, when they were last seen, and the state (`Active`, `Disabled` or `Erased`).
+
+### Closing a form
+
+A closed form refuses every new link request and every guest request. A start answers the same neutral sentence as always and sends nothing, so it still does not say whether an address has applied. A guest who is signed in is told `This form is not accepting responses.` The records stay, and members read them as before.
+
+### Erasing a guest
+
+`Erase` is for a person's request to be forgotten. It is separate from retention, which is about records. It:
+
+- replaces the address with `erased:` and a hash of it, so the person can apply again later as a new guest;
+- removes mail that has not been sent, the links not yet used, and the person's mail choices;
+- revokes the person's sessions, and disables the guest;
+- keeps the records, with the same submitter. The panel shows the guest as `Former applicant`;
+- writes a ledger entry that names the guest by id.
+
+Erasing cannot be undone, and erasing twice answers `409`.
+
+### Signs of abuse
+
+- Addresses with three or more failed mails (a failed mail is one in the outbox in the state `failed`).
+- Networks that went past their limit of 20 link requests an hour in the last day, with how many requests went over.
+
+### Retention
+
+The job `purge_guests` runs daily. It removes a guest who has no records and has not been seen for 90 days. A guest who made a record is kept, because the record names them. A guest never seen is measured from when they were made.
+
+### Indexes
+
+Records made through a guest form are the only ones in two partial indexes (`idx_dataset_records_guest_submitter` and `idx_dataset_records_guest_form`). The limits, the status page and the purge look records up by `_submitter` and `_form` through them, and no other write pays for them.

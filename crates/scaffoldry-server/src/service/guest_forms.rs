@@ -198,6 +198,10 @@ pub fn context(state: &SharedState, headers: &axum::http::HeaderMap, app: &str, 
     if row.kind != "guest" || row.app_slug.as_deref() != Some(app) || row.label != format!("guest-form:{form_id}") {
         return Err(out_of_scope());
     }
+    // A form an administrator closed answers in words, on the next request. Anything else that stops it being open is the same refusal.
+    if guests::closed_forms(state).contains(&form_id.to_string()) {
+        return Err(ServiceError::forbidden("This form is not accepting responses."));
+    }
     if !guests::open_form(state, app, form_id) {
         return Err(ServiceError::forbidden("This form is not open to guests now"));
     }
@@ -240,9 +244,9 @@ fn counts(ctx: &Context, state: &SharedState) -> Result<(i64, i64), ServiceError
         .repository
         .with_client(move |c| {
             let day: i64 = c
-                .query_one("SELECT COUNT(*) FROM dataset_records WHERE app_slug = $1 AND data->>'_form' = $2 AND data->>'_submitter' = $3 AND created_at > NOW() - INTERVAL '1 day'", &[&app, &form, &me])?
+                .query_one("SELECT COUNT(*) FROM dataset_records WHERE app_slug = $1 AND data ? '_submitter' AND data->>'_form' = $2 AND data->>'_submitter' = $3 AND created_at > NOW() - INTERVAL '1 day'", &[&app, &form, &me])?
                 .get(0);
-            let all: i64 = c.query_one("SELECT COUNT(*) FROM dataset_records WHERE app_slug = $1 AND data->>'_form' = $2", &[&app, &form])?.get(0);
+            let all: i64 = c.query_one("SELECT COUNT(*) FROM dataset_records WHERE app_slug = $1 AND data ? '_form' AND data->>'_form' = $2", &[&app, &form])?.get(0);
             Ok((day, all))
         })
         .map_err(storage)
@@ -341,7 +345,7 @@ pub fn overview(ctx: &Context, state: &SharedState) -> Result<Value, ServiceErro
     let (app, form, me) = (ctx.app.clone(), ctx.form.to_string(), ctx.guest.eppn.clone());
     let ids: Vec<String> = state
         .repository
-        .with_client(move |c| Ok(c.query("SELECT id FROM dataset_records WHERE app_slug = $1 AND data->>'_form' = $2 AND data->>'_submitter' = $3 ORDER BY created_at DESC, id LIMIT 100", &[&app, &form, &me])?.iter().map(|r| r.get(0)).collect()))
+        .with_client(move |c| Ok(c.query("SELECT id FROM dataset_records WHERE app_slug = $1 AND data ? '_submitter' AND data->>'_form' = $2 AND data->>'_submitter' = $3 ORDER BY created_at DESC, id LIMIT 100", &[&app, &form, &me])?.iter().map(|r| r.get(0)).collect()))
         .map_err(storage)?;
     let mut rows = Vec::new();
     for id in ids {

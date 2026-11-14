@@ -2447,6 +2447,18 @@ export const apiClient = {
     const res = await request<{ revoked: number }>("/admin/shares/revoke", { method: "POST", body: JSON.stringify({ app, reason }) });
     return res.revoked;
   },
+  /** The Guests panel: forms open to guests, the guests, and signs of abuse. A Platform Admin only. */
+  adminGuests: async (): Promise<AdminGuests> => request<AdminGuests>("/admin/guests"),
+  closeGuestForm: async (formId: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/guests/forms/${encodeURIComponent(formId)}/close`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  openGuestForm: async (formId: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/guests/forms/${encodeURIComponent(formId)}/open`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  /** `disable`, `enable` or `erase`. An erase keeps the guest's records and removes the address and pending mail. */
+  actOnGuest: async (id: string, action: "disable" | "enable" | "erase", reason: string): Promise<void> => {
+    await request<unknown>(`/admin/guests/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
   /** A shared link opened. The token is the only credential, and an institution link also needs a session. */
   sharedView: async (token: string): Promise<SharedViewInfo> => request(`/shared/${encodeURIComponent(token)}`),
   sharedData: async (token: string, opts: { cursor?: string; limit?: number } = {}): Promise<ViewData> => {
@@ -2658,3 +2670,29 @@ export const guestApi = {
   update: (s: GuestSession, id: string, version: number, data: Record<string, unknown>): Promise<{ record: GuestRecord }> =>
     guestFetch(`/guest/${encodeURIComponent(s.app)}/${encodeURIComponent(s.form)}/records/${encodeURIComponent(id)}`, "PUT", s.token, { version, data }),
 };
+
+export interface AdminGuestForm {
+  app: string;
+  form_id: string;
+  name: string;
+  submissions: number;
+  last_submission: string | null;
+  link_requests_today: number;
+  rate_limit_hits: number;
+  closed: boolean;
+}
+
+export interface AdminGuest {
+  id: string;
+  address: string;
+  state: "Active" | "Disabled" | "Erased";
+  last_seen: string | null;
+  submissions: number;
+  forms_used: number;
+}
+
+export interface AdminGuests {
+  forms: AdminGuestForm[];
+  guests: AdminGuest[];
+  abuse: { bounces: { address: string; bounces: number }[]; networks: { network: string; hits: number }[] };
+}

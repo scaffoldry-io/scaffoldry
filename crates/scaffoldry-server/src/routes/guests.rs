@@ -89,3 +89,66 @@ async fn stop(State(state): State<SharedState>, body: Option<Json<Value>>) -> Re
     let made = tokio::task::spawn_blocking(move || guest_forms::stop(&state, &body)).await.map_err(join_error)??;
     Ok(Json(made))
 }
+
+// --- The console's Guests panel (guests phase 4). Each route is for a Platform Admin and checks it before anything else. ---
+
+pub fn admin_router() -> Router<SharedState> {
+    Router::new()
+        .route("/admin/guests", get(admin_overview))
+        .route("/admin/guests/forms/{id}/close", post(admin_close))
+        .route("/admin/guests/forms/{id}/open", post(admin_open))
+        .route("/admin/guests/{id}/disable", post(admin_disable))
+        .route("/admin/guests/{id}/enable", post(admin_enable))
+        .route("/admin/guests/{id}/erase", post(admin_erase))
+}
+
+fn caller(user: Option<axum::Extension<crate::state::AuthUser>>, headers: &HeaderMap, state: &SharedState) -> Result<crate::state::AuthUser, ServiceError> {
+    if let Some(axum::Extension(u)) = user {
+        return Ok(u);
+    }
+    crate::guard::session_user(state, headers).ok_or_else(|| ServiceError::Unauthorized("A valid session is required".to_string()))
+}
+
+fn id_of(raw: &str, what: &str) -> Result<uuid::Uuid, ServiceError> {
+    uuid::Uuid::parse_str(raw).map_err(|_| ServiceError::NotFound(format!("{what} not found")))
+}
+
+async fn admin_overview(State(state): State<SharedState>, user: Option<axum::Extension<crate::state::AuthUser>>, headers: HeaderMap) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_admin::overview(&caller, &state)).await.map_err(join_error)??))
+}
+
+async fn admin_close(State(state): State<SharedState>, user: Option<axum::Extension<crate::state::AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    let form = id_of(&id, "Form");
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_admin::set_form_closed(&caller, form?, true, &body, &state)).await.map_err(join_error)??))
+}
+
+async fn admin_open(State(state): State<SharedState>, user: Option<axum::Extension<crate::state::AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    let form = id_of(&id, "Form");
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_admin::set_form_closed(&caller, form?, false, &body, &state)).await.map_err(join_error)??))
+}
+
+async fn admin_disable(State(state): State<SharedState>, user: Option<axum::Extension<crate::state::AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    let guest = id_of(&id, "Guest");
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_admin::set_disabled(&caller, guest?, true, &body, &state)).await.map_err(join_error)??))
+}
+
+async fn admin_enable(State(state): State<SharedState>, user: Option<axum::Extension<crate::state::AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    let guest = id_of(&id, "Guest");
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_admin::set_disabled(&caller, guest?, false, &body, &state)).await.map_err(join_error)??))
+}
+
+async fn admin_erase(State(state): State<SharedState>, user: Option<axum::Extension<crate::state::AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    let guest = id_of(&id, "Guest");
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_admin::erase(&caller, guest?, &body, &state)).await.map_err(join_error)??))
+}
