@@ -60,6 +60,11 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/guest/{app}/{form}/records/{id}".into(), case!(guest_record_update));
     m.insert("POST /api/v1/guest/{app}/{form}/files".into(), case!(guest_file_upload));
     m.insert("POST /api/v1/guest/stop".into(), case!(guest_stop));
+    m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
+    m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
+    m.insert("POST /api/v1/admin/guests/{id}/disable".into(), case!(guest_disable));
+    m.insert("POST /api/v1/admin/guests/{id}/enable".into(), case!(guest_enable));
+    m.insert("POST /api/v1/admin/guests/{id}/erase".into(), case!(guest_erase));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/shares".into(), case!(share_create));
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}/shares/{share}".into(), case!(share_revoke));
     m.insert("POST /api/v1/admin/shares/revoke".into(), case!(admin_shares_revoke));
@@ -656,6 +661,59 @@ async fn guest_record_update(w: World) -> Outcome {
     status(World::call_with(&w.a, "PUT", &format!("/api/v1/guest/{slug}/{form}/records/{id}"), &token, Some(json!({ "version": version, "data": { "name": "Ada Lovelace" } }))).await, StatusCode::OK, "A changes it")?;
     let seen = status(World::call_with(&w.b, "GET", &format!("/api/v1/guest/{slug}/{form}/records/{id}"), &token, None).await, StatusCode::OK, "B reads it back")?;
     ensure(seen["record"]["data"]["name"] == "Ada Lovelace", format!("B shows the change A made: {seen}"))
+}
+
+/// The status page as a guest session sees it, through A or B.
+async fn guest_page(w: &World, on_a: bool, slug: &str, form: &str, token: &str) -> (StatusCode, Value) {
+    let app = if on_a { &w.a } else { &w.b };
+    World::call_with(app, "GET", &format!("/api/v1/guest/{slug}/{form}"), token, None).await
+}
+
+async fn guest_id(w: &World) -> uuid::Uuid {
+    w.db.run(|c| c.query_one("SELECT id FROM guests ORDER BY created_at DESC LIMIT 1", &[]).unwrap().get(0))
+}
+
+async fn guest_form_close(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/admin/guests/forms/{form}/close"), ADMIN, Some(json!({ "reason": "Too many applications." }))).await, StatusCode::OK, "A closes the form")?;
+    // B reads the setting from the database on its next request.
+    let (s, body) = guest_page(&w, false, &slug, &form, &token).await;
+    ensure(s == StatusCode::FORBIDDEN && body.to_string().contains("not accepting responses"), format!("B refuses a closed form: {s} {body}"))
+}
+
+async fn guest_form_open(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/admin/guests/forms/{form}/close"), ADMIN, Some(json!({ "reason": "A pause." }))).await, StatusCode::OK, "A closes the form")?;
+    status(w.rb("POST", &format!("/api/v1/admin/guests/forms/{form}/open"), ADMIN, Some(json!({ "reason": "The pause is over." }))).await, StatusCode::OK, "B opens it again")?;
+    let (s, body) = guest_page(&w, true, &slug, &form, &token).await;
+    ensure(s == StatusCode::OK, format!("A serves the form B opened: {s} {body}"))
+}
+
+async fn guest_disable(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    let id = guest_id(&w).await;
+    status(w.wa("POST", &format!("/api/v1/admin/guests/{id}/disable"), ADMIN, Some(json!({ "reason": "Repeated bounces." }))).await, StatusCode::OK, "A disables the guest")?;
+    let (s, body) = guest_page(&w, false, &slug, &form, &token).await;
+    ensure(s == StatusCode::UNAUTHORIZED, format!("B stops the session: {s} {body}"))
+}
+
+async fn guest_enable(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    let id = guest_id(&w).await;
+    status(w.wa("POST", &format!("/api/v1/admin/guests/{id}/disable"), ADMIN, Some(json!({ "reason": "A mistake." }))).await, StatusCode::OK, "A disables the guest")?;
+    status(w.rb("POST", &format!("/api/v1/admin/guests/{id}/enable"), ADMIN, Some(json!({ "reason": "Put right." }))).await, StatusCode::OK, "B enables the guest")?;
+    let (s, body) = guest_page(&w, true, &slug, &form, &token).await;
+    ensure(s == StatusCode::OK, format!("A serves the guest B enabled: {s} {body}"))
+}
+
+async fn guest_erase(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    let id = guest_id(&w).await;
+    status(w.wa("POST", &format!("/api/v1/admin/guests/{id}/erase"), ADMIN, Some(json!({ "reason": "Asked to be forgotten." }))).await, StatusCode::OK, "A erases the guest")?;
+    let (s, body) = guest_page(&w, false, &slug, &form, &token).await;
+    ensure(s == StatusCode::UNAUTHORIZED, format!("B stops the erased guest's session: {s} {body}"))?;
+    let shown = status(w.rb("GET", "/api/v1/admin/guests", ADMIN, None).await, StatusCode::OK, "B lists the guests")?;
+    ensure(has(&shown, "Former applicant"), format!("B shows a former applicant: {shown}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {

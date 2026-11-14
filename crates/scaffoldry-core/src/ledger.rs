@@ -94,6 +94,8 @@ pub enum DecisionType {
     ShareChanged,
     /// Guests phase 2: a form was proposed for guests, or a second person decided it.
     GuestExposureChanged,
+    /// Guests phase 4: a Platform Admin closed or opened a form to guests, or disabled, enabled or erased a guest.
+    GuestChanged,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -165,6 +167,7 @@ impl DecisionType {
         DecisionType::ConnectionChanged,
         DecisionType::ShareChanged,
         DecisionType::GuestExposureChanged,
+        DecisionType::GuestChanged,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -235,6 +238,7 @@ impl DecisionType {
             DecisionType::ConnectionChanged => "ConnectionChanged",
             DecisionType::ShareChanged => "ShareChanged",
             DecisionType::GuestExposureChanged => "GuestExposureChanged",
+            DecisionType::GuestChanged => "GuestChanged",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",

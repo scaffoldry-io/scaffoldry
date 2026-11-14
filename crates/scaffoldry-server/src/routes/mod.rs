@@ -102,6 +102,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(views::router())
         .merge(shares::router())
         .merge(guests::router())
+        .merge(guests::admin_router())
         .merge(link_options::router())
         .merge(lifecycle::router())
         .merge(retention::router())

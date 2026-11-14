@@ -339,7 +339,7 @@ async fn the_status_page_shows_only_the_guests_own_records_and_the_listed_fields
     let bob = session(&w, &form, "bob@example.org").await;
     submit(&w, &form, &ada, json!({ "kind": "grant", "amount": 40 })).await;
     submit(&w, &form, &ada, json!({ "kind": "loan", "amount": 5 })).await;
-    submit(&w, &form, &bob, json!({ "kind": "loan", "amount": 90 })).await;
+    submit(&w, &form, &bob, json!({ "kind": "loan", "amount": 9090909 })).await;
     // A record a member made and a field the form does not list.
     send(&w.app, "POST", &format!("/api/v1/apps/{}/records", w.slug), &w.admin, Some(json!({ "data": { "_table_id": "requests", "kind": "grant", "ssn": "123-45-6789", "note": "internal" } }))).await;
 
@@ -353,7 +353,7 @@ async fn the_status_page_shows_only_the_guests_own_records_and_the_listed_fields
         assert!(r["standing"].as_str().unwrap().starts_with("Where it stands:"), "{r}");
         assert_eq!(r["editable"], true);
     }
-    assert!(!page.to_string().contains("123-45-6789") && !page.to_string().contains("internal") && !page.to_string().contains("90"), "{page}");
+    assert!(!page.to_string().contains("123-45-6789") && !page.to_string().contains("internal") && !page.to_string().contains("9090909"), "{page}");
     assert_eq!(page["can_add"], true);
     assert_eq!(page["remaining_today"], 1);
     assert_eq!(page["form"]["fields"][0]["name"], "kind");

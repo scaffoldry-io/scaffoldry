@@ -49,7 +49,7 @@ pub(crate) fn setting_bool(state: &SharedState, key: &str) -> bool {
     state.settings.read().ok().and_then(|s| s.get(key).and_then(Value::as_bool)).unwrap_or(false)
 }
 
-fn closed_forms(state: &SharedState) -> Vec<String> {
+pub(crate) fn closed_forms(state: &SharedState) -> Vec<String> {
     state
         .settings
         .read()
