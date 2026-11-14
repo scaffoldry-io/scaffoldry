@@ -340,19 +340,6 @@ export interface RegisteredApp {
   manifest: AppManifest;
 }
 
-export type RelationshipType = "OneToOne" | "OneToMany" | "ManyToMany";
-
-export interface DatasetRelationship {
-  id: string;
-  name: string;
-  source_dataset_id: string;
-  target_dataset_id: string;
-  source_field: string;
-  target_field: string;
-  relationship_type: RelationshipType;
-  display_field: string;
-}
-
 export interface DatasetField {
   name: string;
   label: string;
@@ -373,7 +360,6 @@ export interface PublishedDataset {
   fields: DatasetField[];
   record_count: number;
   published_at: string;
-  relationships?: DatasetRelationship[];
 }
 
 export interface McpTool {

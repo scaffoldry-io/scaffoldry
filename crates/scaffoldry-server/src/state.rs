@@ -2,8 +2,8 @@
 
 use scaffoldry_core::{
     ActionType, AutomationRule, ConditionOperator, DatasetField,
-    DatasetRelationship, DecisionType, FieldPredicate, LedgerEntry, LedgerError,
-    PublishedDataset, RelationshipType, TriggerEvent,
+    DecisionType, FieldPredicate, LedgerEntry, LedgerError,
+    PublishedDataset, TriggerEvent,
 };
 use scaffoldry_engine::{AppManifest, ManifestEngine};
 use scaffoldry_policy::ScaffoldryPolicyEngine;
@@ -263,7 +263,6 @@ pub struct ServerState {
     pub guards: RwLock<HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>>>,
     pub guard_policy_cache: RwLock<HashMap<(String, i32), scaffoldry_policy::PolicySet>>,
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
-    pub relationships: RwLock<HashMap<String, DatasetRelationship>>,
     pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
     pub engine: RwLock<ManifestEngine>,
     pub policy_engine: ScaffoldryPolicyEngine,
@@ -429,18 +428,6 @@ impl ServerState {
                     .collect();
                 *self.datasets.write().unwrap_or_else(|p| p.into_inner()) = all;
             }
-            "relationships" => {
-                let all: HashMap<String, DatasetRelationship> = self
-                    .repository
-                    .list_dataset_relationships()?
-                    .into_iter()
-                    .map(|r| (r.id.clone(), r))
-                    .collect();
-                *self
-                    .relationships
-                    .write()
-                    .unwrap_or_else(|p| p.into_inner()) = all;
-            }
             _ => {}
         }
         if name == "manifests" {
@@ -493,7 +480,6 @@ impl ServerState {
         organizations.insert(default_root_id, default_root_org);
         let mut position_types: HashMap<String, PositionType> = HashMap::new();
         let mut datasets = HashMap::new();
-        let mut relationships = HashMap::new();
         let mut automations: HashMap<String, Vec<AutomationRule>> = HashMap::new();
         let mut guards: HashMap<String, Vec<scaffoldry_core::WorkspaceGuardRecord>> =
             HashMap::new();
@@ -634,12 +620,6 @@ impl ServerState {
         {
             datasets.insert(ds.id.clone(), ds);
         }
-        for rel in repo
-            .list_dataset_relationships()
-            .map_err(|e| read("the relationships", e))?
-        {
-            relationships.insert(rel.id.clone(), rel);
-        }
         // Integrations phase 4: a rule that sent to a URL loses that step, with one ledger note.
         crate::webhooks::drop_url_webhook_steps(repo).map_err(|e| read("the webhook steps", e))?;
         for r in repo
@@ -751,7 +731,6 @@ impl ServerState {
             guards: RwLock::new(guards),
             guard_policy_cache: RwLock::new(HashMap::new()),
             datasets: RwLock::new(datasets),
-            relationships: RwLock::new(relationships),
             automations: RwLock::new(automations),
             engine: RwLock::new(engine),
             policy_engine,
@@ -1134,15 +1113,6 @@ impl ServerState {
         self.datasets.read().ok()?.get(id).cloned()
     }
 
-    pub fn persist_relationship(
-        &self,
-        rel: DatasetRelationship,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.repository.upsert_dataset_relationship(&rel)?;
-        self.refresh()?;
-        Ok(())
-    }
-
     pub fn persist_automation(&self, rule: AutomationRule) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.repository.upsert_workflow_automation(&rule)?;
         self.refresh()?;
@@ -1338,7 +1308,6 @@ impl ServerState {
             uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
 
         let mut datasets = HashMap::new();
-        let mut relationships = HashMap::new();
         // 1. Faculty Roster & PI Directory
         datasets.insert(
             "faculty".to_string(),
@@ -1426,49 +1395,6 @@ impl ServerState {
                 ],
                 record_count: 115,
                 published_at: now.clone(),
-            },
-        );
-
-        // Seed Relationships
-        relationships.insert(
-            "rel_course_instructor".to_string(),
-            DatasetRelationship {
-                id: "rel_course_instructor".to_string(),
-                name: "Course Instructor Lookup".to_string(),
-                source_dataset_id: "courses".to_string(),
-                target_dataset_id: "faculty".to_string(),
-                source_field: "instructor_eppn".to_string(),
-                target_field: "eppn".to_string(),
-                relationship_type: RelationshipType::OneToMany,
-                display_field: "full_name".to_string(),
-            },
-        );
-
-        relationships.insert(
-            "rel_course_program".to_string(),
-            DatasetRelationship {
-                id: "rel_course_program".to_string(),
-                name: "Course Degree Plan".to_string(),
-                source_dataset_id: "courses".to_string(),
-                target_dataset_id: "programs".to_string(),
-                source_field: "program_code".to_string(),
-                target_field: "code".to_string(),
-                relationship_type: RelationshipType::OneToMany,
-                display_field: "degree_name".to_string(),
-            },
-        );
-
-        relationships.insert(
-            "rel_grant_pi".to_string(),
-            DatasetRelationship {
-                id: "rel_grant_pi".to_string(),
-                name: "Grant Principal Investigator".to_string(),
-                source_dataset_id: "grants".to_string(),
-                target_dataset_id: "faculty".to_string(),
-                source_field: "pi_eppn".to_string(),
-                target_field: "eppn".to_string(),
-                relationship_type: RelationshipType::OneToMany,
-                display_field: "full_name".to_string(),
             },
         );
 
@@ -1726,14 +1652,6 @@ impl ServerState {
                 .map(|d| d.id)
                 .collect()
         };
-        let stored_relationships: std::collections::HashSet<String> = {
-            let repo = &self.repository;
-            repo.list_dataset_relationships()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|r| r.id)
-                .collect()
-        };
         let stored_rules: std::collections::HashSet<String> = {
             let repo = &self.repository;
             repo.list_workflow_automations(None)
@@ -1754,7 +1672,6 @@ impl ServerState {
         workspaces.retain(|id, _| !stored_workspaces.contains(id));
         collaborators.retain(|id, _| workspaces.contains_key(id));
         datasets.retain(|id, _| !stored_datasets.contains(id));
-        relationships.retain(|id, _| !stored_relationships.contains(id));
         for rules in automations.values_mut() {
             rules.retain(|r| !stored_rules.contains(&r.id));
         }
@@ -1772,9 +1689,6 @@ impl ServerState {
             }
             for ds in datasets.values() {
                 repo.upsert_published_dataset(ds)?;
-            }
-            for rel in relationships.values() {
-                repo.upsert_dataset_relationship(rel)?;
             }
             if !manifest_stored {
                 repo.upsert_app_manifest(&demo_app)?;

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiClient } from "./api";
-import { DatasetRelationship, PublishedDataset } from "./types";
+import { PublishedDataset } from "./types";
 
 interface DatasetExplorerProps {
   onUseInApp?: (dataset: PublishedDataset) => void;
@@ -8,28 +8,21 @@ interface DatasetExplorerProps {
 
 export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) => {
   const [datasets, setDatasets] = useState<PublishedDataset[]>([]);
-  const [relationships, setRelationships] = useState<DatasetRelationship[]>([]);
   const [load, setLoad] = useState<{ state: "loading" | "ready" | "error"; message?: string }>({ state: "loading" });
   const [reloads, setReloads] = useState(0);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterDept, setFilterDept] = useState("all");
-  const [viewMode, setViewMode] = useState<"catalog" | "lattice">("catalog");
-  const [activeTab, setActiveTab] = useState<"records" | "schema" | "relationships">("records");
+  const [activeTab, setActiveTab] = useState<"records" | "schema">("records");
 
   useEffect(() => {
     let live = true;
     setLoad({ state: "loading" });
     apiClient
       .listDatasets()
-      .then(async (list) => {
-        // Relationships come per dataset. Each one is listed from both ends, so keep one copy by id.
-        const perDataset = await Promise.all(list.map((d) => apiClient.listDatasetRelationships(d.id)));
+      .then((list) => {
         if (!live) return;
-        const byId = new Map<string, DatasetRelationship>();
-        perDataset.flat().forEach((r) => byId.set(r.id, r));
         setDatasets(list);
-        setRelationships([...byId.values()]);
         setLoad({ state: "ready" });
       })
       .catch((e) => {
@@ -50,19 +43,6 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
     const matchesDept = filterDept === "all" || ds.department.toLowerCase().includes(filterDept.toLowerCase());
     return matchesSearch && matchesDept;
   });
-
-  const getDatasetRelationships = (datasetId: string) => {
-    return relationships.filter(
-      (r) => r.source_dataset_id === datasetId || r.target_dataset_id === datasetId
-    );
-  };
-
-  const getRelationshipTargetName = (rel: DatasetRelationship, currentId: string) => {
-    const isSource = rel.source_dataset_id === currentId;
-    const otherId = isSource ? rel.target_dataset_id : rel.source_dataset_id;
-    const other = datasets.find((d) => d.id === otherId);
-    return other ? other.name : otherId;
-  };
 
   if (load.state === "loading") {
     return <div className="flex-1 p-6 text-sm text-slate-500 dark:text-slate-400">Loading datasets…</div>;
@@ -93,42 +73,18 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
             <div className="flex items-center gap-2">
               <span className="text-xl">🗄️</span>
               <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-                Published Institutional Datasets & Relational Lattice
+                Published Institutional Datasets
               </h1>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300">
                 Data Layer
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-              Discover verified institutional datasets, inspect foreign key relationships, and link authoritative data into custom applications with automated Cedar policy safeguards.
+              Discover verified institutional datasets, inspect their fields, and link authoritative data into custom applications with automated Cedar policy safeguards.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* View Mode Toggle */}
-            <div className="inline-flex rounded-lg p-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold">
-              <button
-                onClick={() => setViewMode("catalog")}
-                className={`px-3 py-1.5 rounded-md transition-colors ${
-                  viewMode === "catalog"
-                    ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
-                    : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                }`}
-              >
-                Catalog & Table View
-              </button>
-              <button
-                onClick={() => setViewMode("lattice")}
-                className={`px-3 py-1.5 rounded-md transition-colors ${
-                  viewMode === "lattice"
-                    ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm"
-                    : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                }`}
-              >
-                Relational Lattice Graph
-              </button>
-            </div>
-
             {onUseInApp && (
               <button
                 onClick={() => onUseInApp(selectedDataset)}
@@ -175,364 +131,209 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
       </div>
 
       {/* Main Content Area */}
-      {viewMode === "catalog" ? (
-        <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
-          {/* Sidebar Dataset Directory */}
-          <div className="w-full md:w-80 lg:w-96 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] flex flex-col min-h-0 overflow-y-auto">
-            <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
-              <span>Published Catalog ({filteredDatasets.length})</span>
-              <span className="text-blue-600 dark:text-blue-400 font-normal lowercase">authoritative</span>
-            </div>
-
-            <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
-              {filteredDatasets.map((ds) => {
-                const isSelected = ds.id === selectedDataset.id;
-                const relCount = getDatasetRelationships(ds.id).length;
-
-                return (
-                  <button
-                    key={ds.id}
-                    onClick={() => setSelectedDatasetId(ds.id)}
-                    className={`w-full text-left p-4 transition-colors flex flex-col gap-1.5 ${
-                      isSelected
-                        ? "bg-blue-50/70 dark:bg-blue-950/30 border-l-4 border-blue-600 dark:border-blue-500"
-                        : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className={`text-xs font-bold leading-tight ${isSelected ? "text-blue-700 dark:text-blue-400" : "text-slate-900 dark:text-white"}`}>
-                        {ds.name}
-                      </h3>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                          ds.sensitivity_level.includes("FERPA")
-                            ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
-                            : ds.sensitivity_level === "Public"
-                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                            : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
-                        }`}
-                      >
-                        {ds.sensitivity_level}
-                      </span>
-                    </div>
-
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2">
-                      {ds.description}
-                    </p>
-
-                    <div className="flex items-center gap-3 text-[10px] text-slate-400 dark:text-slate-500 pt-1">
-                      <span>🏛️ {ds.department}</span>
-                      <span>📊 {ds.record_count.toLocaleString()} rows</span>
-                      <span>🔗 {relCount} {relCount === 1 ? "relation" : "relations"}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+      <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
+        {/* Sidebar Dataset Directory */}
+        <div className="w-full md:w-80 lg:w-96 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] flex flex-col min-h-0 overflow-y-auto">
+          <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
+            <span>Published Catalog ({filteredDatasets.length})</span>
+            <span className="text-blue-600 dark:text-blue-400 font-normal lowercase">authoritative</span>
           </div>
 
-          {/* Dataset Detail & Data Grid Pane */}
-          <div className="flex-1 flex flex-col min-h-0 bg-slate-50 dark:bg-[#0b0f19] overflow-y-auto">
-            {/* Detail Header */}
-            <div className="p-6 bg-white dark:bg-[#111827] border-b border-slate-200 dark:border-slate-800">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                      {selectedDataset.name}
-                    </h2>
-                    <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                      dataset:{selectedDataset.id}
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
+            {filteredDatasets.map((ds) => {
+              const isSelected = ds.id === selectedDataset.id;
+
+              return (
+                <button
+                  key={ds.id}
+                  onClick={() => setSelectedDatasetId(ds.id)}
+                  className={`w-full text-left p-4 transition-colors flex flex-col gap-1.5 ${
+                    isSelected
+                      ? "bg-blue-50/70 dark:bg-blue-950/30 border-l-4 border-blue-600 dark:border-blue-500"
+                      : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className={`text-xs font-bold leading-tight ${isSelected ? "text-blue-700 dark:text-blue-400" : "text-slate-900 dark:text-white"}`}>
+                      {ds.name}
+                    </h3>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                        ds.sensitivity_level.includes("FERPA")
+                          ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                          : ds.sensitivity_level === "Public"
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                          : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                      }`}
+                    >
+                      {ds.sensitivity_level}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 max-w-3xl">
-                    {selectedDataset.description}
+
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2">
+                    {ds.description}
                   </p>
-                </div>
 
-                <div className="flex items-center gap-2">
-                  {onUseInApp && (
-                    <button
-                      onClick={() => onUseInApp(selectedDataset)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-colors flex items-center gap-1.5"
-                    >
-                      <span>🔗</span>
-                      <span>Link in Application</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Badges and Governance Metadata */}
-              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
-                <div className="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-400">Authority:</span>
-                  <span className="font-medium">{selectedDataset.department}</span>
-                </div>
-
-                <div className="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-400">Total Live Rows:</span>
-                  <span className="font-bold text-slate-900 dark:text-white font-mono">
-                    {selectedDataset.record_count.toLocaleString()}
-                  </span>
-                </div>
-
-                {selectedDataset.herm_capability_id && (
-                  <div className="px-2.5 py-1 rounded bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 flex items-center gap-1 font-mono text-[11px]">
-                    <span>HERM:</span>
-                    <span>{selectedDataset.herm_capability_id}</span>
+                  <div className="flex items-center gap-3 text-[10px] text-slate-400 dark:text-slate-500 pt-1">
+                    <span>🏛️ {ds.department}</span>
+                    <span>📊 {ds.record_count.toLocaleString()} rows</span>
                   </div>
-                )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-                <div className="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 text-[11px]">
-                  <span className="text-slate-400">Security Gate:</span>
-                  <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                    Cedar ABAC Enforced
+        {/* Dataset Detail & Data Grid Pane */}
+        <div className="flex-1 flex flex-col min-h-0 bg-slate-50 dark:bg-[#0b0f19] overflow-y-auto">
+          {/* Detail Header */}
+          <div className="p-6 bg-white dark:bg-[#111827] border-b border-slate-200 dark:border-slate-800">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                    {selectedDataset.name}
+                  </h2>
+                  <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                    dataset:{selectedDataset.id}
                   </span>
                 </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 max-w-3xl">
+                  {selectedDataset.description}
+                </p>
               </div>
 
-              {/* Sub-tabs */}
-              <div className="flex gap-2 mt-5 border-b border-slate-200 dark:border-slate-800 -mb-6">
-                <button
-                  onClick={() => setActiveTab("records")}
-                  className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors ${
-                    activeTab === "records"
-                      ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400"
-                      : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                  }`}
-                >
-                  Records ({selectedDataset.record_count})
-                </button>
-                <button
-                  onClick={() => setActiveTab("schema")}
-                  className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors ${
-                    activeTab === "schema"
-                      ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400"
-                      : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                  }`}
-                >
-                  Schema & Standard CEDS Elements ({selectedDataset.fields.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab("relationships")}
-                  className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors ${
-                    activeTab === "relationships"
-                      ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400"
-                      : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                  }`}
-                >
-                  Cross-Dataset Relationships ({getDatasetRelationships(selectedDataset.id).length})
-                </button>
+              <div className="flex items-center gap-2">
+                {onUseInApp && (
+                  <button
+                    onClick={() => onUseInApp(selectedDataset)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-colors flex items-center gap-1.5"
+                  >
+                    <span>🔗</span>
+                    <span>Link in Application</span>
+                  </button>
+                )}
               </div>
             </div>
 
-            {/* Sub-tab Content Panels */}
-            <div className="p-6">
-              {activeTab === "records" && (
-                <div
-                  data-testid="dataset-records-note"
-                  className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-5 space-y-2"
-                >
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    {selectedDataset.record_count} {selectedDataset.record_count === 1 ? "row" : "rows"}, read-only
-                  </h4>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">
-                    The catalog shows what a dataset holds, never its rows. A dataset is a copy of another system&apos;s data. Its
-                    rows are read through its own app, under that app&apos;s access rules, and only its sync changes them.
-                  </p>
+            {/* Badges and Governance Metadata */}
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+              <div className="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 border border-slate-200 dark:border-slate-700">
+                <span className="text-slate-400">Authority:</span>
+                <span className="font-medium">{selectedDataset.department}</span>
+              </div>
+
+              <div className="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 border border-slate-200 dark:border-slate-700">
+                <span className="text-slate-400">Total Live Rows:</span>
+                <span className="font-bold text-slate-900 dark:text-white font-mono">
+                  {selectedDataset.record_count.toLocaleString()}
+                </span>
+              </div>
+
+              {selectedDataset.herm_capability_id && (
+                <div className="px-2.5 py-1 rounded bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 flex items-center gap-1 font-mono text-[11px]">
+                  <span>HERM:</span>
+                  <span>{selectedDataset.herm_capability_id}</span>
                 </div>
               )}
 
-              {activeTab === "schema" && (
-                <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
-                  <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      Formal Schema Fields & Standard Governance Elements
-                    </h4>
-                  </div>
-                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {selectedDataset.fields.map((f) => (
-                      <div key={f.name} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-900 dark:text-white">{f.label}</span>
-                            <span className="font-mono text-[11px] text-slate-400">({f.name})</span>
-                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono">
-                              {f.field_type}
-                            </span>
-                            {f.required && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                Required
-                              </span>
-                            )}
-                            {f.ferpa_sensitive && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-semibold">
-                                🔒 FERPA Sensitive
-                              </span>
-                            )}
-                          </div>
-                        </div>
+              <div className="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 text-[11px]">
+                <span className="text-slate-400">Security Gate:</span>
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                  Cedar ABAC Enforced
+                </span>
+              </div>
+            </div>
 
+            {/* Sub-tabs */}
+            <div className="flex gap-2 mt-5 border-b border-slate-200 dark:border-slate-800 -mb-6">
+              <button
+                onClick={() => setActiveTab("records")}
+                className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors ${
+                  activeTab === "records"
+                    ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400"
+                    : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                Records ({selectedDataset.record_count})
+              </button>
+              <button
+                onClick={() => setActiveTab("schema")}
+                className={`pb-2.5 px-3 text-xs font-semibold border-b-2 transition-colors ${
+                  activeTab === "schema"
+                    ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400"
+                    : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                Schema & Standard CEDS Elements ({selectedDataset.fields.length})
+              </button>
+            </div>
+          </div>
+
+          {/* Sub-tab Content Panels */}
+          <div className="p-6">
+            {activeTab === "records" && (
+              <div
+                data-testid="dataset-records-note"
+                className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-5 space-y-2"
+              >
+                <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  {selectedDataset.record_count} {selectedDataset.record_count === 1 ? "row" : "rows"}, read-only
+                </h4>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  The catalog shows what a dataset holds, never its rows. A dataset is a copy of another system&apos;s data. Its
+                  rows are read through its own app, under that app&apos;s access rules, and only its sync changes them.
+                </p>
+              </div>
+            )}
+
+            {activeTab === "schema" && (
+              <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+                <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Formal Schema Fields & Standard Governance Elements
+                  </h4>
+                </div>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {selectedDataset.fields.map((f) => (
+                    <div key={f.name} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                      <div>
                         <div className="flex items-center gap-2">
-                          {f.ceds_code ? (
-                            <span className="px-2 py-1 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-mono text-[11px] border border-blue-200 dark:border-blue-800">
-                              CEDS v11: {f.ceds_code}
+                          <span className="font-bold text-slate-900 dark:text-white">{f.label}</span>
+                          <span className="font-mono text-[11px] text-slate-400">({f.name})</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono">
+                            {f.field_type}
+                          </span>
+                          {f.required && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                              Required
                             </span>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">Unmapped custom attribute</span>
+                          )}
+                          {f.ferpa_sensitive && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-semibold">
+                              🔒 FERPA Sensitive
+                            </span>
                           )}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
-              {activeTab === "relationships" && (
-                <div className="space-y-4">
-                  <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
-                    <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        Linked Relational Connections
-                      </h4>
-                      <span className="text-[11px] text-slate-400">
-                        Foreign key lookups and cardinality
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {f.ceds_code ? (
+                          <span className="px-2 py-1 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-mono text-[11px] border border-blue-200 dark:border-blue-800">
+                            CEDS v11: {f.ceds_code}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">Unmapped custom attribute</span>
+                        )}
+                      </div>
                     </div>
-
-                    <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {getDatasetRelationships(selectedDataset.id).map((rel) => {
-                        const isSource = rel.source_dataset_id === selectedDataset.id;
-
-                        return (
-                          <div key={rel.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-                            <div className="flex items-start gap-3">
-                              <span className="text-lg">🔗</span>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-slate-900 dark:text-white">{rel.name}</span>
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-mono">
-                                    {rel.relationship_type === "OneToMany" ? "1 : N" : "1 : 1"}
-                                  </span>
-                                </div>
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
-                                  {isSource ? (
-                                    <>
-                                      <span className="text-blue-600 dark:text-blue-400 font-bold">{rel.source_field}</span>
-                                      {" ➔ "}
-                                      <span>{getRelationshipTargetName(rel, selectedDataset.id)}</span>.
-                                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">{rel.target_field}</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <span>{getRelationshipTargetName(rel, selectedDataset.id)}</span>.
-                                      <span className="text-blue-600 dark:text-blue-400 font-bold">{rel.source_field}</span>
-                                      {" ➔ "}
-                                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">{rel.target_field}</span>
-                                    </>
-                                  )}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="text-right">
-                              <span className="text-[11px] text-slate-400">Resolved Label: </span>
-                              <span className="font-mono text-xs font-semibold text-slate-700 dark:text-slate-300">
-                                {rel.display_field}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
-      ) : (
-        /* Relational Lattice Graph Topology View */
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="max-w-6xl mx-auto space-y-6">
-            <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>🌐</span>
-                <span>Institutional Relational Lattice Map</span>
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Topological view of published datasets and cross-departmental references. Applications can pull records across any connected node.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {datasets.map((ds) => {
-                const connectedRels = getDatasetRelationships(ds.id);
-                const isSelected = ds.id === selectedDataset.id;
-
-                return (
-                  <div
-                    key={ds.id}
-                    onClick={() => {
-                      setSelectedDatasetId(ds.id);
-                      setViewMode("catalog");
-                    }}
-                    className={`cursor-pointer bg-white dark:bg-[#111827] border rounded-xl p-5 shadow-sm hover:border-blue-500 transition-all flex flex-col justify-between gap-3 ${
-                      isSelected
-                        ? "border-blue-600 dark:border-blue-500 ring-2 ring-blue-500/20"
-                        : "border-slate-200 dark:border-slate-800"
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <span className="text-2xl">
-                          {ds.id === "courses" ? "📚" : ds.id === "faculty" ? "👩‍🏫" : ds.id === "grants" ? "🔬" : "🎓"}
-                        </span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                            ds.sensitivity_level.includes("FERPA")
-                              ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
-                              : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                          }`}
-                        >
-                          {ds.sensitivity_level}
-                        </span>
-                      </div>
-
-                      <h4 className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
-                        {ds.name}
-                      </h4>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-                        {ds.description}
-                      </p>
-                    </div>
-
-                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80">
-                      <div className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1.5">
-                        Connected Links ({connectedRels.length})
-                      </div>
-                      <div className="space-y-1">
-                        {connectedRels.map((r) => (
-                          <div
-                            key={r.id}
-                            className="text-[11px] font-mono flex items-center justify-between text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/60 px-2 py-1 rounded"
-                          >
-                            <span className="truncate">{getRelationshipTargetName(r, ds.id)}</span>
-                            <span className="text-[9px] text-purple-600 dark:text-purple-400 font-bold ml-1">
-                              {r.relationship_type === "OneToMany" ? "1:N" : "1:1"}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 };

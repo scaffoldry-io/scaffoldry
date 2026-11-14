@@ -37,3 +37,7 @@ The link is removed, and the record that held it shows no link. If the record re
 ## Turning a value join into a link
 
 An older app may join a text field to a dataset by value: a `relationships` entry with `target_app` set to the dataset. The preview says how many values match one record, none, or several, and how many are blank. The conversion is proposed with a link to the dataset, flagged when any value matches none or several. Nothing is converted until a person approves it.
+
+## The catalog holds no relationships
+
+The dataset catalog used to keep a list of by-value relationships between datasets, with a tab and a lattice view for them. They are gone. The catalog lists each dataset and its fields, and nothing more. A link to a dataset record is a link field of an app, as above. Migration `0105_drop_dataset_relationships.sql` drops the old table, and `GET` and `POST /datasets/{id}/relationships` no longer exist.

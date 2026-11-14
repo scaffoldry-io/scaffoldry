@@ -2,25 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RelationshipType {
-    OneToOne,
-    OneToMany,
-    ManyToMany,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatasetRelationship {
-    pub id: String,
-    pub name: String,
-    pub source_dataset_id: String,
-    pub target_dataset_id: String,
-    pub source_field: String,
-    pub target_field: String,
-    pub relationship_type: RelationshipType,
-    pub display_field: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetField {
     pub name: String,
