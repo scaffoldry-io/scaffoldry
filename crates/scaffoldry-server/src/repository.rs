@@ -110,6 +110,7 @@ const SCHEMA_0103: &str = include_str!("../../scaffoldry-core/migrations/0103_vi
 const SCHEMA_0104: &str = include_str!("../../scaffoldry-core/migrations/0104_guests.sql");
 const SCHEMA_0105: &str = include_str!("../../scaffoldry-core/migrations/0105_drop_dataset_relationships.sql");
 const SCHEMA_0106: &str = include_str!("../../scaffoldry-core/migrations/0106_form_exposures.sql");
+const SCHEMA_0107: &str = include_str!("../../scaffoldry-core/migrations/0107_guest_stops.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1220,6 +1221,7 @@ impl PostgresRepository {
                             ("0104_guests.sql", SCHEMA_0104),
                             ("0105_drop_dataset_relationships.sql", SCHEMA_0105),
                             ("0106_form_exposures.sql", SCHEMA_0106),
+                            ("0107_guest_stops.sql", SCHEMA_0107),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 

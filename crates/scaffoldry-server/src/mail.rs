@@ -136,6 +136,13 @@ pub fn queue_sign_in_link(tx: &mut postgres::Transaction<'_>, to: &str, subject:
     queue(tx, None, to, subject, body)
 }
 
+/// Queues the mail that tells a guest their request has an update (guests phase 3). Like the sign-in link it is not a notice of
+/// the directory's, and it holds a title and a link, never a value. The mail module is the only place outside `notify` that
+/// writes to the outbox.
+pub fn queue_guest_update(tx: &mut postgres::Transaction<'_>, to: &str, subject: &str, body: &str) -> Result<bool, postgres::Error> {
+    queue(tx, None, to, subject, body)
+}
+
 /// The address mail for a person goes to: their directory address, else their sign-in name when it is an address.
 pub fn address_of(c: &mut postgres::Transaction<'_>, eppn: &str, scim_email: Option<&str>) -> Result<Option<String>, postgres::Error> {
     if let Some(e) = scim_email.filter(|e| e.contains('@')) {

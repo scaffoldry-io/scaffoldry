@@ -303,3 +303,138 @@ pub fn update(ctx: &Context, origin: &crate::service::history::Origin, id: &str,
 pub fn file_limit(state: &SharedState) -> u64 {
     state.settings.read().ok().and_then(|s| s.get("guests.max_file_mb").and_then(Value::as_u64)).unwrap_or(FILE_MB).clamp(1, crate::files::MAX_MAX_MB) * 1024 * 1024
 }
+
+/// The field that says where a request stands: the form's `status_field`, else the field `locks_when` reads, else the first
+/// read-only field.
+fn status_field(config: &Value) -> Option<String> {
+    config
+        .get("status_field")
+        .and_then(Value::as_str)
+        .or_else(|| config.get("locks_when").and_then(|l| l.get("field")).and_then(Value::as_str))
+        .or_else(|| config.get("read_only_fields").and_then(Value::as_array).and_then(|a| a.first()).and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+/// The label of an option of a select field, or the value as it is.
+fn label_of(fields: &[scaffoldry_engine::FieldSpec], field: &str, value: &Value) -> String {
+    let raw = value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string());
+    fields.iter().find(|f| f.name == field).and_then(|f| f.select_options.iter().find(|o| o.id == raw)).map(|o| o.label.clone()).unwrap_or(raw)
+}
+
+/// The plain sentence for where a record stands.
+fn standing(ctx: &Context, fields: &[scaffoldry_engine::FieldSpec], r: &crate::state::DatasetRecord) -> String {
+    let mut s = match status_field(&ctx.view.config).and_then(|f| r.data.get(&f).filter(|v| !v.is_null()).map(|v| (f, v.clone()))) {
+        Some((field, v)) => format!("Where it stands: {}.", label_of(fields, &field, &v)),
+        None => "Where it stands: we have it.".to_string(),
+    };
+    if locked(ctx, r) {
+        s.push_str(" It can no longer be changed.");
+    }
+    s
+}
+
+/// `GET /guest/{app}/{form}`: everything the status page needs, in one answer. The guest's own records, newest first, with the
+/// form's fields and the read-only ones, and whether they may add another.
+pub fn overview(ctx: &Context, state: &SharedState) -> Result<Value, ServiceError> {
+    let table = ctx.view.table_id.clone().ok_or_else(|| bad("This form is not over a table"))?;
+    let (fields, _) = records::table_fields_lenient(&ctx.app, &table, state);
+    let (app, form, me) = (ctx.app.clone(), ctx.form.to_string(), ctx.guest.eppn.clone());
+    let ids: Vec<String> = state
+        .repository
+        .with_client(move |c| Ok(c.query("SELECT id FROM dataset_records WHERE app_slug = $1 AND data->>'_form' = $2 AND data->>'_submitter' = $3 ORDER BY created_at DESC, id LIMIT 100", &[&app, &form, &me])?.iter().map(|r| r.get(0)).collect()))
+        .map_err(storage)?;
+    let mut rows = Vec::new();
+    for id in ids {
+        if let Ok(r) = own(ctx, &id, state) {
+            let mut shown = shown_record(ctx, &r);
+            shown["standing"] = json!(standing(ctx, &fields, &r));
+            shown["editable"] = json!(!locked(ctx, &r));
+            rows.push(shown);
+        }
+    }
+    let (per_day, in_total) = (int(&ctx.view.config, "max_per_day", PER_DAY), int(&ctx.view.config, "max_total", IN_TOTAL));
+    let (day, all) = counts(ctx, state)?;
+    let remaining = (per_day - day).max(0);
+    let spec = |name: &str, label: Option<&str>, ro: bool| {
+        let f = fields.iter().find(|f| f.name == name);
+        json!({
+            "name": name,
+            "label": label.map(str::to_string).or_else(|| f.map(|f| f.label.clone())).unwrap_or_else(|| name.to_string()),
+            "type": f.map(|f| serde_json::to_value(f.field_type).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+            "required": f.is_some_and(|f| f.required),
+            "read_only": ro,
+            "options": f.map(|f| f.select_options.iter().map(|o| json!({ "id": o.id, "label": o.label })).collect::<Vec<_>>()).unwrap_or_default(),
+        })
+    };
+    let mut listed_fields: Vec<Value> = ctx.view.config["form_fields"].as_array().into_iter().flatten().filter_map(|f| Some(spec(f.get("name")?.as_str()?, f.get("label").and_then(Value::as_str), false))).collect();
+    listed_fields.extend(ctx.view.config.get("read_only_fields").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(|n| spec(n, None, true)));
+    Ok(json!({
+        "form": { "name": ctx.view.name, "fields": listed_fields, "success_message": ctx.view.config.get("success_message") },
+        "records": rows,
+        "can_add": remaining > 0 && all < in_total,
+        "remaining_today": remaining,
+    }))
+}
+
+fn random_token() -> String {
+    use aes_gcm::aead::{rand_core::RngCore, OsRng};
+    let mut b = [0u8; 16];
+    OsRng.fill_bytes(&mut b);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// A record of a guest form has been saved. When its status changed, the guest is told by mail, with no value in it. A guest who
+/// stopped these mails, or whose address was disabled, is told nothing. A failure here never fails the save.
+pub fn on_saved(app: &str, before: &crate::state::DatasetRecord, after: &crate::state::DatasetRecord, state: &SharedState) {
+    let (Some(who), Some(form)) = (after.data.get("_submitter").and_then(Value::as_str), after.data.get("_form").and_then(Value::as_str).and_then(|f| Uuid::parse_str(f).ok())) else { return };
+    let Some(guest) = guests::id_of(who) else { return };
+    let Ok(Some(view)) = state.repository.get_app_view(app, form) else { return };
+    let Some(field) = status_field(&view.config) else { return };
+    if before.data.get(&field) == after.data.get(&field) {
+        return;
+    }
+    let Ok(base) = crate::mail::mailing(&state.settings.read().unwrap_or_else(|p| p.into_inner())) else { return };
+    let (raw, address, app_s) = (random_token(), who.to_string(), app.to_string());
+    let hash = crate::service::identity::hash_token(&raw);
+    let _ = state.repository.with_client(move |c| {
+        let mut tx = c.transaction()?;
+        let row = tx.query_opt("SELECT email FROM guests WHERE id = $1 AND disabled_at IS NULL AND email_verified_at IS NOT NULL", &[&guest])?;
+        let Some(email) = row.map(|r| r.get::<_, String>(0)) else { return Ok(()) };
+        let stopped: i64 = tx.query_one("SELECT count(*) FROM notification_prefs WHERE eppn = $1 AND kind = 'guest_status' AND channel = 'off'", &[&address])?.get(0);
+        if stopped > 0 {
+            return Ok(());
+        }
+        tx.execute("INSERT INTO guest_stops (token_hash, guest_id) VALUES ($1, $2)", &[&hash, &guest])?;
+        let text = format!(
+            "There is an update on your request.\n\nSign in to see it: {base}/g/{app_s}/{form}\n\nTo stop these mails: {base}/g/stop/{raw}\n"
+        );
+        crate::mail::queue_guest_update(&mut tx, &email, "An update on your request", &text)?;
+        tx.commit()?;
+        Ok(())
+    });
+}
+
+/// `POST /guest/stop`: the link in a mail. It turns off status mail for the guest the link was made for. The link keeps working,
+/// so stopping twice is fine, and a token that is not one is not found.
+pub fn stop(state: &SharedState, body: &Value) -> Result<Value, ServiceError> {
+    let not_found = || ServiceError::NotFound("This link does not work.".to_string());
+    let raw = body.get("token").and_then(Value::as_str).filter(|t| !t.is_empty() && t.len() <= 200).ok_or_else(not_found)?;
+    let hash = crate::service::identity::hash_token(raw);
+    let found = state
+        .repository
+        .with_client(move |c| {
+            let mut tx = c.transaction()?;
+            let Some(guest) = tx.query_opt("SELECT guest_id FROM guest_stops WHERE token_hash = $1", &[&hash])?.map(|r| r.get::<_, Uuid>(0)) else { return Ok(false) };
+            tx.execute(
+                "INSERT INTO notification_prefs (eppn, kind, channel) VALUES ($1, 'guest_status', 'off') ON CONFLICT (eppn, kind) DO UPDATE SET channel = 'off'",
+                &[&guests::address_of(guest)],
+            )?;
+            tx.commit()?;
+            Ok(true)
+        })
+        .map_err(storage)?;
+    if !found {
+        return Err(not_found());
+    }
+    Ok(json!({ "message": "You will not get mail about your requests any more." }))
+}

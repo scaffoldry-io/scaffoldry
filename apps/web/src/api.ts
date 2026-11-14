@@ -2567,3 +2567,94 @@ export interface NotificationPrefs {
   kinds: NotificationPrefRow[];
   mail_enabled: boolean;
 }
+
+// --- Guests phase 3: the guest's own page. A guest holds a session of its own, kept for the tab, and no member's token. ---
+
+export interface GuestField {
+  name: string;
+  label: string;
+  type: unknown;
+  required: boolean;
+  read_only: boolean;
+  options: { id: string; label: string }[];
+}
+
+export interface GuestRecord {
+  id: string;
+  version: number;
+  data: Record<string, unknown>;
+  standing: string;
+  editable: boolean;
+}
+
+export interface GuestOverview {
+  form: { name: string; fields: GuestField[]; success_message?: string | null };
+  records: GuestRecord[];
+  can_add: boolean;
+  remaining_today: number;
+}
+
+export interface GuestSession {
+  token: string;
+  app: string;
+  form: string;
+}
+
+const GUEST_KEY = "scaffoldry_guest";
+
+export const guestSession = {
+  read(): GuestSession | null {
+    try {
+      const raw = sessionStorage.getItem(GUEST_KEY);
+      return raw ? (JSON.parse(raw) as GuestSession) : null;
+    } catch {
+      return null;
+    }
+  },
+  write(s: GuestSession) {
+    try {
+      sessionStorage.setItem(GUEST_KEY, JSON.stringify(s));
+    } catch {
+      /* A browser that refuses storage keeps the session for the page only. */
+    }
+  },
+  clear() {
+    try {
+      sessionStorage.removeItem(GUEST_KEY);
+    } catch {
+      /* Nothing was kept. */
+    }
+  },
+};
+
+const guestFetch = async <T>(path: string, method: string, token: string | null, body?: unknown): Promise<T> => {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  let response: Response;
+  try {
+    response = await fetch(`${getBaseUrl()}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch (e) {
+    throw new ApiError(0, e instanceof Error ? e.message : "The server is not reachable.");
+  }
+  const text = await response.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!response.ok) throw new ApiError(response.status, (data && data.error) || `The request failed (${response.status}).`);
+  return data as T;
+};
+
+export const guestApi = {
+  start: (app: string, form: string, email: string, website: string): Promise<{ message: string }> =>
+    guestFetch(`/guest/${encodeURIComponent(app)}/${encodeURIComponent(form)}/start`, "POST", null, { email, website }),
+  verify: (token: string): Promise<{ token: string; app: string; form: string }> => guestFetch("/guest/verify", "POST", null, { token }),
+  stop: (token: string): Promise<{ message: string }> => guestFetch("/guest/stop", "POST", null, { token }),
+  overview: (s: GuestSession): Promise<GuestOverview> => guestFetch(`/guest/${encodeURIComponent(s.app)}/${encodeURIComponent(s.form)}`, "GET", s.token),
+  create: (s: GuestSession, data: Record<string, unknown>): Promise<{ record: GuestRecord; success_message?: string }> =>
+    guestFetch(`/guest/${encodeURIComponent(s.app)}/${encodeURIComponent(s.form)}/records`, "POST", s.token, { data }),
+  update: (s: GuestSession, id: string, version: number, data: Record<string, unknown>): Promise<{ record: GuestRecord }> =>
+    guestFetch(`/guest/${encodeURIComponent(s.app)}/${encodeURIComponent(s.form)}/records/${encodeURIComponent(id)}`, "PUT", s.token, { version, data }),
+};

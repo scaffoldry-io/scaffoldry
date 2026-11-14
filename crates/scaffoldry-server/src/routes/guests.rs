@@ -15,6 +15,8 @@ use serde_json::Value;
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/guest/verify", post(verify))
+        .route("/guest/stop", post(stop))
+        .route("/guest/{app}/{form}", get(overview))
         .route("/guest/{app}/{form}/start", post(start))
         .route("/guest/{app}/{form}/records", post(create_record))
         .route("/guest/{app}/{form}/records/{id}", get(get_record).put(update_record))
@@ -74,5 +76,16 @@ async fn start(State(state): State<SharedState>, headers: HeaderMap, Path((app, 
 async fn verify(State(state): State<SharedState>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
     let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
     let made = tokio::task::spawn_blocking(move || guests::verify(&state, &body)).await.map_err(|_| ServiceError::Internal("The request stopped".to_string()))??;
+    Ok(Json(made))
+}
+
+async fn overview(State(state): State<SharedState>, headers: HeaderMap, Path((app, form)): Path<(String, String)>) -> Result<impl IntoResponse, ServiceError> {
+    let made = tokio::task::spawn_blocking(move || guest_forms::overview(&guest_forms::context(&state, &headers, &app, &form)?, &state)).await.map_err(join_error)??;
+    Ok(Json(made))
+}
+
+async fn stop(State(state): State<SharedState>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    let made = tokio::task::spawn_blocking(move || guest_forms::stop(&state, &body)).await.map_err(join_error)??;
     Ok(Json(made))
 }
