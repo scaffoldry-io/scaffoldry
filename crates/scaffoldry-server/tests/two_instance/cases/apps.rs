@@ -59,6 +59,7 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/guest/{app}/{form}/records".into(), case!(guest_record_create));
     m.insert("PUT /api/v1/guest/{app}/{form}/records/{id}".into(), case!(guest_record_update));
     m.insert("POST /api/v1/guest/{app}/{form}/files".into(), case!(guest_file_upload));
+    m.insert("POST /api/v1/guest/stop".into(), case!(guest_stop));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/shares".into(), case!(share_create));
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}/shares/{share}".into(), case!(share_revoke));
     m.insert("POST /api/v1/admin/shares/revoke".into(), case!(admin_shares_revoke));
@@ -596,7 +597,7 @@ async fn guest_proposed(w: &World) -> Result<(String, String, String), String> {
     status(w.wa("PUT", "/api/v1/settings/platform.base_url", ADMIN, Some(json!("https://desk.state.edu"))).await, StatusCode::OK, "set the base address")?;
     let slug = make_app(w).await?;
     let made = status(
-        w.wa("POST", &format!("/api/v1/apps/{slug}/views"), OWNER, Some(json!({ "name": unique("p8form"), "kind": "form", "ownership": "collaborative", "table_id": "apps", "config": { "form_fields": [{ "name": "name" }] } }))).await,
+        w.wa("POST", &format!("/api/v1/apps/{slug}/views"), OWNER, Some(json!({ "name": unique("p8form"), "kind": "form", "ownership": "collaborative", "table_id": "apps", "config": { "form_fields": [{ "name": "name" }], "status_field": "name" } }))).await,
         StatusCode::CREATED,
         "make a form",
     )?;
@@ -655,6 +656,24 @@ async fn guest_record_update(w: World) -> Outcome {
     status(World::call_with(&w.a, "PUT", &format!("/api/v1/guest/{slug}/{form}/records/{id}"), &token, Some(json!({ "version": version, "data": { "name": "Ada Lovelace" } }))).await, StatusCode::OK, "A changes it")?;
     let seen = status(World::call_with(&w.b, "GET", &format!("/api/v1/guest/{slug}/{form}/records/{id}"), &token, None).await, StatusCode::OK, "B reads it back")?;
     ensure(seen["record"]["data"]["name"] == "Ada Lovelace", format!("B shows the change A made: {seen}"))
+}
+
+async fn guest_stop(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    let made = status(World::call_with(&w.a, "POST", &format!("/api/v1/guest/{slug}/{form}/records"), &token, Some(json!({ "data": { "name": "Ada" } }))).await, StatusCode::CREATED, "A takes a submission")?;
+    let (id, version) = (made["record"]["id"].as_str().ok_or("a record id")?.to_string(), made["record"]["version"].clone());
+    // The form's status field is its name here. A member changes it through A, and the guest is mailed once.
+    let saved = status(w.wa("PATCH", &format!("/api/v1/apps/{slug}/records/{id}"), OWNER, Some(json!({ "version": version, "data": { "_table_id": "apps", "name": "Ada L" } }))).await, StatusCode::OK, "A changes the status")?;
+    let sent: Vec<String> = w.db.run(|c| c.query("SELECT body FROM email_outbox WHERE subject = 'An update on your request'", &[]).unwrap().iter().map(|r| r.get(0)).collect());
+    let mail = sent.into_iter().next_back().ok_or("a mail for the change")?;
+    let at = mail.find("/g/stop/").ok_or("a stop link in the mail")?;
+    let stop: String = mail[at + "/g/stop/".len()..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    status(w.wa("POST", "/api/v1/guest/stop", ADMIN, Some(json!({ "token": stop }))).await, StatusCode::OK, "A stops the mail")?;
+    // B, which did not take the stop, still holds back the next mail, because the choice is in the database.
+    let before: i64 = w.db.run(|c| c.query_one("SELECT count(*) FROM email_outbox WHERE subject = 'An update on your request'", &[]).unwrap().get(0));
+    status(w.rb("PATCH", &format!("/api/v1/apps/{slug}/records/{id}"), OWNER, Some(json!({ "version": saved["version"], "data": { "_table_id": "apps", "name": "Ada Lovelace" } }))).await, StatusCode::OK, "B changes the status")?;
+    let after: i64 = w.db.run(|c| c.query_one("SELECT count(*) FROM email_outbox WHERE subject = 'An update on your request'", &[]).unwrap().get(0));
+    ensure(before == after, format!("B sends nothing to a guest who stopped: {before} {after}"))
 }
 
 async fn guest_file_upload(w: World) -> Outcome {

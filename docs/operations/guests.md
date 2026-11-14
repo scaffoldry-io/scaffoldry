@@ -105,3 +105,23 @@ The `429` for the per-day limit names the number. The total limit answers `409` 
 ### Other places that take an address
 
 A guest address is refused as the holder of a grant and as a delegate, as it is for a workspace.
+
+## What the guest sees afterward
+
+The web page is `/g/{app}/{form}`. It is deliberately plain. It has no menu, no navigation and no link, so nothing in it leads to the rest of the product. Every control is a native button or field, so the keyboard reaches all of it.
+
+- `/g/{link}` trades the link from the mail for a session, keeps the session for the browser tab, and moves to the page. A link that was used or has expired says so in words.
+- `/g/{app}/{form}` lists the guest's own requests, newest first. Each has a plain sentence for where it stands, such as `Where it stands: Received.`, and the form's fields and read-only fields. `Edit` shows while the request is open. `Add another` shows while the guest is within the limits, and a sentence says so when they are not. A page with no session, or an expired one, asks for an email address and sends a link.
+- `/g/stop/{link}` stops mail. It does nothing until the guest presses `Stop these mails`, so a mail scanner that opens the link changes nothing.
+
+The server side is `GET /guest/{app}/{form}`. It answers the form's fields, the guest's own records (at most 100) each with `standing` and `editable`, `can_add` and `remaining_today`. It is the one list a guest has, and it holds only what the guest made.
+
+### Mail to guests
+
+A status change tells the guest, once, by mail. The status is the form's `status_field`, else the field `locks_when` reads, else the first read-only field. A save that does not change it sends nothing. A save by a member, an automation or the guest counts.
+
+The mail is a title and two links, never a value: one to `/g/{app}/{form}`, which asks for sign-in again, and one to `/g/stop/{link}`. The stop link is made for each mail, and only its hash is kept.
+
+Stopping sets `notification_prefs` to `off` for the guest's address and the kind `guest_status`. It covers every form of that guest, not one form. Stopping twice is fine. A guest who is disabled, or whose address was never verified, is sent nothing. The 50 mails an hour per address still apply.
+
+A process step tells a guest through the status field it sets, the same way a member's save does. There is no separate path.

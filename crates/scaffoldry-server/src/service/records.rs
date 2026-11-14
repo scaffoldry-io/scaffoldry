@@ -1150,6 +1150,8 @@ pub fn update_record(
         &mut applied_rule_ids,
     );
 
+    // A guest who made this record is told, by mail with no value in it, when its status changes (guests phase 3).
+    crate::service::guest_forms::on_saved(app_slug, &current, &updated_rec, state);
     let final_rec = fetch_record(caller, app_slug, id, state).unwrap_or(updated_rec);
     tell_assigned(caller, app_slug, &table, id, Some(&current.data), &final_rec.data, state);
     crate::service::clients::note_usage(caller, state, 0, 0, 1);
