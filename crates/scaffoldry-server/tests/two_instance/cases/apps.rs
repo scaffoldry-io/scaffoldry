@@ -54,6 +54,11 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/apps/{slug}/views/{id}/submit".into(), case!(form_submit));
     m.insert("POST /api/v1/guest/{app}/{form}/start".into(), case!(guest_start));
     m.insert("POST /api/v1/guest/verify".into(), case!(guest_verify));
+    m.insert("POST /api/v1/apps/{slug}/views/{id}/guest-exposure".into(), case!(guest_exposure_propose));
+    m.insert("POST /api/v1/apps/{slug}/views/{id}/guest-exposure/{xid}/decide".into(), case!(guest_exposure_decide));
+    m.insert("POST /api/v1/guest/{app}/{form}/records".into(), case!(guest_record_create));
+    m.insert("PUT /api/v1/guest/{app}/{form}/records/{id}".into(), case!(guest_record_update));
+    m.insert("POST /api/v1/guest/{app}/{form}/files".into(), case!(guest_file_upload));
     m.insert("POST /api/v1/apps/{slug}/views/{id}/shares".into(), case!(share_create));
     m.insert("DELETE /api/v1/apps/{slug}/views/{id}/shares/{share}".into(), case!(share_revoke));
     m.insert("POST /api/v1/admin/shares/revoke".into(), case!(admin_shares_revoke));
@@ -582,19 +587,84 @@ async fn form_submit(w: World) -> Outcome {
 
 // --- guests ----------------------------------------------------------------------------------------------------------------
 
-/// Turns guests on, and mail with a base address, through A. Makes an app and a form that is open to guests.
-async fn guest_setup(w: &World) -> Result<(String, String), String> {
+/// Turns guests on, and mail with a base address, through A. Makes an app and a members form, and proposes it for guests as its
+/// owner. The proposal is not decided here.
+async fn guest_proposed(w: &World) -> Result<(String, String, String), String> {
     status(w.wa("PUT", "/api/v1/settings/guests.enabled", ADMIN, Some(json!(true))).await, StatusCode::OK, "turn guests on")?;
     status(w.wa("PUT", "/api/v1/settings/mail.enabled", ADMIN, Some(json!(true))).await, StatusCode::OK, "turn mail on")?;
     status(w.wa("PUT", "/api/v1/settings/mail.smtp", ADMIN, Some(json!({ "host": "mail.test", "port": 587, "security": "starttls", "from": "desk@state.edu", "username": "desk", "secret": "smtp_password" }))).await, StatusCode::OK, "set the mail server")?;
     status(w.wa("PUT", "/api/v1/settings/platform.base_url", ADMIN, Some(json!("https://desk.state.edu"))).await, StatusCode::OK, "set the base address")?;
     let slug = make_app(w).await?;
     let made = status(
-        w.wa("POST", &format!("/api/v1/apps/{slug}/views"), OWNER, Some(json!({ "name": unique("p8form"), "kind": "form", "ownership": "collaborative", "table_id": "apps", "config": { "audience": "Guests", "form_fields": [{ "name": "name" }] } }))).await,
+        w.wa("POST", &format!("/api/v1/apps/{slug}/views"), OWNER, Some(json!({ "name": unique("p8form"), "kind": "form", "ownership": "collaborative", "table_id": "apps", "config": { "form_fields": [{ "name": "name" }] } }))).await,
         StatusCode::CREATED,
-        "make a guest form",
+        "make a form",
     )?;
-    Ok((slug, made["id"].as_str().ok_or("a view id")?.to_string()))
+    let form = made["id"].as_str().ok_or("a view id")?.to_string();
+    let proposed = status(w.wa("POST", &format!("/api/v1/apps/{slug}/views/{form}/guest-exposure"), OWNER, Some(json!({}))).await, StatusCode::CREATED, "propose it for guests")?;
+    Ok((slug, form, proposed["id"].as_str().ok_or("a proposal id")?.to_string()))
+}
+
+/// `guest_proposed`, then a second person approves it on A. The form is open to guests.
+async fn guest_setup(w: &World) -> Result<(String, String), String> {
+    let (slug, form, proposal) = guest_proposed(w).await?;
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/views/{form}/guest-exposure/{proposal}/decide"), ADMIN, Some(json!({ "decision": "approve", "rationale": "Applicants are outside the directory." }))).await, StatusCode::OK, "approve it")?;
+    Ok((slug, form))
+}
+
+/// A guest session on A, for a form that is open.
+async fn guest_session(w: &World) -> Result<(String, String, String), String> {
+    let (slug, form) = guest_setup(w).await?;
+    let email = format!("{}@example.org", unique("guest"));
+    status(w.wa("POST", &format!("/api/v1/guest/{slug}/{form}/start"), ADMIN, Some(json!({ "email": email }))).await, StatusCode::OK, "ask for a link")?;
+    let mail: String = w.db.run(move |c| c.query_one("SELECT body FROM email_outbox WHERE to_address = $1", &[&email]).unwrap().get(0));
+    let at = mail.find("/g/").ok_or("a link in the mail")?;
+    let link: String = mail[at + 3..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    let session = status(w.wa("POST", "/api/v1/guest/verify", ADMIN, Some(json!({ "token": link }))).await, StatusCode::OK, "take the link")?;
+    Ok((slug, form, session["token"].as_str().ok_or("a session token")?.to_string()))
+}
+
+async fn guest_exposure_propose(w: World) -> Outcome {
+    let (slug, form, proposal) = guest_proposed(&w).await?;
+    // B, a second server on the same database, lists the proposal A made.
+    let seen = status(w.rb("GET", &format!("/api/v1/apps/{slug}/views/{form}/guest-exposure"), OWNER, None).await, StatusCode::OK, "B lists the proposals")?;
+    ensure(has(&seen, &proposal), format!("B lists the proposal A made: {seen}"))
+}
+
+async fn guest_exposure_decide(w: World) -> Outcome {
+    let (slug, form, proposal) = guest_proposed(&w).await?;
+    // The proposal waits. B decides it, and A, which did not, sees the form open to guests and refuses a second decision.
+    status(w.rb("POST", &format!("/api/v1/apps/{slug}/views/{form}/guest-exposure/{proposal}/decide"), ADMIN, Some(json!({ "decision": "approve", "rationale": "Applicants are outside the directory." }))).await, StatusCode::OK, "B approves")?;
+    let (s, body) = w.wa("POST", &format!("/api/v1/apps/{slug}/views/{form}/guest-exposure/{proposal}/decide"), ADMIN, Some(json!({ "decision": "approve", "rationale": "again" }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("A sees it already decided: {s} {body}"))
+}
+
+async fn guest_record_create(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    let made = status(World::call_with(&w.a, "POST", &format!("/api/v1/guest/{slug}/{form}/records"), &token, Some(json!({ "data": { "name": "Ada" } }))).await, StatusCode::CREATED, "A takes a submission")?;
+    let id = made["record"]["id"].as_str().ok_or("a record id")?.to_string();
+    // B accepts the session A made and shows the guest what they sent.
+    let seen = status(World::call_with(&w.b, "GET", &format!("/api/v1/guest/{slug}/{form}/records/{id}"), &token, None).await, StatusCode::OK, "B reads it back")?;
+    ensure(seen["record"]["data"]["name"] == "Ada", format!("B shows the guest their record: {seen}"))
+}
+
+async fn guest_record_update(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    let made = status(World::call_with(&w.a, "POST", &format!("/api/v1/guest/{slug}/{form}/records"), &token, Some(json!({ "data": { "name": "Ada" } }))).await, StatusCode::CREATED, "A takes a submission")?;
+    let (id, version) = (made["record"]["id"].as_str().ok_or("a record id")?.to_string(), made["record"]["version"].clone());
+    status(World::call_with(&w.a, "PUT", &format!("/api/v1/guest/{slug}/{form}/records/{id}"), &token, Some(json!({ "version": version, "data": { "name": "Ada Lovelace" } }))).await, StatusCode::OK, "A changes it")?;
+    let seen = status(World::call_with(&w.b, "GET", &format!("/api/v1/guest/{slug}/{form}/records/{id}"), &token, None).await, StatusCode::OK, "B reads it back")?;
+    ensure(seen["record"]["data"]["name"] == "Ada Lovelace", format!("B shows the change A made: {seen}"))
+}
+
+async fn guest_file_upload(w: World) -> Outcome {
+    let (slug, form, token) = guest_session(&w).await?;
+    // A file over the guest limit is refused whichever server takes it, and the limit is the same setting on both.
+    status(w.wa("PUT", "/api/v1/settings/guests.max_file_mb", ADMIN, Some(json!(1))).await, StatusCode::OK, "set the guest file limit")?;
+    for (name, sent) in [("A", World::call_with(&w.a, "POST", &format!("/api/v1/guest/{slug}/{form}/files"), &token, None).await), ("B", World::call_with(&w.b, "POST", &format!("/api/v1/guest/{slug}/{form}/files"), &token, None).await)] {
+        ensure(sent.0 == StatusCode::BAD_REQUEST || sent.0 == StatusCode::PAYLOAD_TOO_LARGE, format!("{name} refuses a file with no length: {} {}", sent.0, sent.1))?;
+    }
+    Ok(())
 }
 
 async fn guest_start(w: World) -> Outcome {

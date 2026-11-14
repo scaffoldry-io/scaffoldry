@@ -45,6 +45,7 @@ impl Drop for Cleanup {
                 let _ = c.execute("DELETE FROM jobs WHERE payload->>'app_slug' LIKE $1", &[&like]);
                 let _ = c.execute("DELETE FROM index_status WHERE app_slug LIKE $1", &[&like]);
                 let _ = c.execute("DELETE FROM record_index WHERE app_slug LIKE $1", &[&like]);
+                let _ = c.execute("DELETE FROM form_exposures WHERE app_slug LIKE $1", &[&like]);
                 let _ = c.execute("DELETE FROM app_views WHERE app_slug LIKE $1", &[&like]);
                 let _ = c.execute("DELETE FROM workspace_collaborators WHERE workspace_id = $1 AND eppn LIKE $2", &[&WORKSPACE, &like]);
                 let _ = c.execute("DELETE FROM record_history WHERE app_slug LIKE $1", &[&like]);
@@ -220,12 +221,18 @@ async fn setting(w: &World, key: &str, value: Value) {
     assert_eq!(s, StatusCode::OK, "{key}: {v}");
 }
 
-/// A form view that is open to guests.
+/// A form view that is open to guests: made as a members form, then opened by a proposal a second person approves.
 async fn guest_form(w: &World) -> String {
-    let config = json!({ "audience": "Guests", "form_fields": [{ "name": "kind" }, { "name": "amount" }], "success_message": "Thanks." });
+    let config = json!({ "form_fields": [{ "name": "kind" }, { "name": "amount" }], "success_message": "Thanks." });
     let (s, v) = send(&w.app, "POST", &views_path(w), &w.admin, Some(json!({ "name": "Ask for help", "kind": "form", "ownership": "collaborative", "table_id": "requests", "config": config }))).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
-    v["id"].as_str().or_else(|| v["view"]["id"].as_str()).unwrap().to_string()
+    let id = v["id"].as_str().or_else(|| v["view"]["id"].as_str()).unwrap().to_string();
+    let (s, v) = send(&w.app, "POST", &format!("{}/{id}/guest-exposure", views_path(w)), &w.admin, Some(json!({}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let xid = v["id"].as_str().unwrap().to_string();
+    let (s, v) = send(&w.app, "POST", &format!("{}/{id}/guest-exposure/{xid}/decide", views_path(w)), &w.platform, Some(json!({ "decision": "approve", "rationale": "Applicants are outside the directory." }))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    id
 }
 
 async fn start_with(w: &World, form: &str, body: Value, address: Option<&str>) -> (StatusCode, Value) {

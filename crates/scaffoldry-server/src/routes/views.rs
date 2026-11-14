@@ -19,6 +19,8 @@ pub fn router() -> Router<SharedState> {
         .route("/apps/{slug}/views/{id}/duplicate", post(duplicate_view))
         .route("/apps/{slug}/views/{id}/data", get(view_data))
         .route("/apps/{slug}/views/{id}/submit", post(submit_form))
+        .route("/apps/{slug}/views/{id}/guest-exposure", get(list_exposures).post(propose_exposure))
+        .route("/apps/{slug}/views/{id}/guest-exposure/{xid}/decide", post(decide_exposure))
         .route("/apps/{slug}/views/{id}/widgets/{widget_id}", get(widget_data))
 }
 
@@ -168,4 +170,25 @@ async fn submit_form(
         .await
         .map_err(|_| ServiceError::Internal("The submit stopped".to_string()))??;
     Ok((StatusCode::CREATED, Json(made)))
+}
+
+async fn list_exposures(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let id = view_id(&id)?;
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_forms::list(&caller, &slug, id, &state)).await.map_err(|_| ServiceError::Internal("The request stopped".to_string()))??))
+}
+
+async fn propose_exposure(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let id = view_id(&id)?;
+    let made = tokio::task::spawn_blocking(move || crate::service::guest_forms::propose(&caller, &slug, id, &state)).await.map_err(|_| ServiceError::Internal("The request stopped".to_string()))??;
+    Ok((StatusCode::CREATED, Json(made)))
+}
+
+async fn decide_exposure(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path((slug, id, xid)): Path<(String, String, String)>, body: Option<Json<serde_json::Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let id = view_id(&id)?;
+    let xid = Uuid::parse_str(&xid).map_err(|_| ServiceError::NotFound("Proposal not found".to_string()))?;
+    let body = body.map(|Json(b)| b).unwrap_or(serde_json::Value::Null);
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::guest_forms::decide(&caller, &slug, id, xid, &body, &state)).await.map_err(|_| ServiceError::Internal("The request stopped".to_string()))??))
 }

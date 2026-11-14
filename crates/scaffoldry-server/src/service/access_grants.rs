@@ -258,6 +258,8 @@ fn check_holder(state: &SharedState, g: &NewGrant) -> Result<(), ServiceError> {
                 }
             } else if !g.holder_id.contains('@') {
                 return Err(bad("a person holder is an address"));
+            } else if crate::service::guests::is_guest_address(&g.holder_id) {
+                return Err(bad("a guest cannot hold a grant. A guest fills one form and sees what they made"));
             }
         }
         HolderKind::Position => {

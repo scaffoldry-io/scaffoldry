@@ -142,11 +142,38 @@ pub fn check_runnable(caller: &AuthUser, app_slug: &str, view: &scaffoldry_engin
 }
 
 /// A form view names fields of its table, and its conditions name fields above them.
-fn check_form(app_slug: &str, table: Option<&str>, config: &Value, state: &SharedState) -> Result<(), ServiceError> {
+fn check_form(app_slug: &str, table: Option<&str>, config: &Value, current: Option<&Value>, state: &SharedState) -> Result<(), ServiceError> {
+    use crate::service::forms::{audience, exposure_shape};
     let table = table.ok_or_else(|| ServiceError::BadRequest("A form is over a table".to_string()))?;
     let (fields, _) = records::table_fields_lenient(app_slug, table, state);
     let names: Vec<String> = fields.into_iter().map(|f| f.name).collect();
-    crate::service::forms::validate(config, &names)
+    crate::service::forms::validate(config, &names)?;
+    // The audience is not a setting a save can change to `Guests`. Opening a form to people outside the institution is a proposal
+    // a second person decides (guests phase 2), and a form that is open keeps the fields that were approved.
+    let (was, now) = (current.map(audience).unwrap_or("Members"), audience(config));
+    let by_proposal = "Opening a form to guests is a proposal a second person approves. Use POST /apps/{slug}/views/{id}/guest-exposure.";
+    if now == "Guests" && was != "Guests" {
+        return Err(ServiceError::BadRequest(by_proposal.to_string()));
+    }
+    if now == "Guests" && current.is_some_and(|c| exposure_shape(c) != exposure_shape(config)) {
+        return Err(ServiceError::BadRequest(format!("The fields of a form that is open to guests were approved as they are. {by_proposal} Set the audience back to Members first.")));
+    }
+    Ok(())
+}
+
+/// Sets a form's audience once a second person has approved it, or closes the form to guests.
+pub(crate) fn set_audience(app_slug: &str, id: Uuid, audience: &str, actor: &str, state: &SharedState) -> Result<(), ServiceError> {
+    let current = repo(state)?.get_app_view(app_slug, id).map_err(internal)?.ok_or_else(not_found)?;
+    let mut config = current.config.clone();
+    config["audience"] = Value::String(audience.to_string());
+    let mut candidate = current.clone();
+    candidate.config = config.clone();
+    let plan = plan(state, app_slug, &Change::Upsert(Box::new(candidate)))?;
+    match repo(state)?.update_app_view(app_slug, id, current.name.clone(), config, current.version, actor, plan.index.clone()).map_err(internal)? {
+        Saved::Done(saved) => apply(state, app_slug, saved.id, Some(&saved)),
+        Saved::Stale(_) => Err(ServiceError::Conflict("Someone changed the form while it was being approved. Try again.".to_string())),
+        Saved::Missing => Err(not_found()),
+    }
 }
 
 fn valid_config(config: &Value) -> Result<(), ServiceError> {
@@ -310,7 +337,7 @@ pub fn create(caller: &AuthUser, app_slug: &str, body: CreateBody, state: &Share
         crate::service::dashboards::validate(caller, app_slug, &config, ownership != "personal", state)?;
     }
     if body.kind == "form" {
-        check_form(app_slug, body.table_id.as_deref(), &config, state)?;
+        check_form(app_slug, body.table_id.as_deref(), &config, None, state)?;
     }
     let table_id = body.table_id.as_deref().map(|t| canonical_table(&runtime_manifest(state, app_slug)?, t)).transpose()?;
     if let Some(table) = &table_id {
@@ -375,7 +402,7 @@ pub fn update(caller: &AuthUser, app_slug: &str, id: Uuid, body: UpdateBody, sta
         crate::service::dashboards::validate(caller, app_slug, &body.config, current.ownership != "personal", state)?;
     }
     if current.kind == "form" {
-        check_form(app_slug, current.table_id.as_deref(), &body.config, state)?;
+        check_form(app_slug, current.table_id.as_deref(), &body.config, Some(&current.config), state)?;
     }
     if let Some(table) = &current.table_id {
         check_visible(caller, app_slug, table, &body.config, state)?;

@@ -44,6 +44,7 @@ pub mod flow_chains;
 pub mod buttons;
 pub mod dashboards;
 pub mod forms;
+pub mod guest_forms;
 pub mod guests;
 pub mod pages;
 pub mod rate_limit;
