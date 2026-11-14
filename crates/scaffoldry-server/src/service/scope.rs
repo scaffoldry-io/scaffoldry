@@ -183,6 +183,10 @@ pub fn scope_of(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state
 }
 
 fn scope_for(caller: &AuthUser, app_slug: &str, table: &str, op: RowOp, state: &SharedState) -> RowScope {
+    // A guest is shown no rows by any query. The guest routes read one record at a time through `allows_data`.
+    if caller.affiliation == "guest" {
+        return RowScope::DenyAll;
+    }
     // An app the engine does not hold, such as one whose stored manifest no longer validates, shows no rows.
     let Some(rules) = rules_loaded(app_slug, state) else { return RowScope::DenyAll };
     let by_rules = if rules.is_empty() {
@@ -274,6 +278,11 @@ pub fn allows(caller: &AuthUser, app_slug: &str, record: &DatasetRecord, op: Row
 
 /// The same check for record data that is not stored yet, such as a record about to be created.
 pub fn allows_data(caller: &AuthUser, app_slug: &str, table: &str, data: &Value, op: RowOp, state: &SharedState) -> bool {
+    // The built-in row rule for a guest (guests phase 2): `_submitter` is the guest, whatever the table's own rules say. A guest
+    // deletes nothing. Nothing here asks the app's rules, so there is nothing for an author to forget.
+    if caller.affiliation == "guest" {
+        return op != RowOp::Delete && data.get("_submitter").and_then(Value::as_str) == Some(caller.eppn.as_str());
+    }
     match scope_of(caller, app_slug, table, op, state) {
         RowScope::AllowAll => true,
         RowScope::DenyAll => false,

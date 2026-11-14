@@ -294,7 +294,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 173 | [views.md](views.md) | 6 | Shared links, off until enabled, never including sensitive fields | **COMPLETED** |
 | 174 | [views.md](views.md) | 7 | Forms with conditions, boards, calendars, and galleries | **COMPLETED** |
 | 175 | [guests.md](guests.md) | 1 | A guest proves an email address with a one-time link | **COMPLETED** |
-| 176 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule |
+| 176 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule | **COMPLETED** |
 | 177 | [guests.md](guests.md) | 3 | A plain status page for the guest |
 | 178 | [guests.md](guests.md) | 4 | Operating guests: closing forms, erasing, abuse signals |
 | 179 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens |

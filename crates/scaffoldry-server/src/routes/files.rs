@@ -37,6 +37,20 @@ async fn upload(
     body: Body,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers).ok_or_else(|| pair(ServiceError::unauthorized("Unauthorized")))?;
+    upload_for(&state, &headers, &slug, &user, body, false).await
+}
+
+/// An upload for a person already known. `guest` is a guest's (guests phase 2): the guest limit applies before anything is read,
+/// and a scan is needed whatever `files.require_scan` says.
+pub(crate) async fn upload_for(
+    state: &SharedState,
+    headers: &HeaderMap,
+    slug: &str,
+    user: &crate::state::AuthUser,
+    body: Body,
+    guest: bool,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let (state, headers, slug, user) = (state.clone(), headers.clone(), slug.to_string(), user.clone());
     authorize_app(&user, &slug, AppAction::WriteRecords, &state).map_err(pair)?;
     crate::guard::origin(&state, &headers).map_err(pair)?;
     let repo = &*state.repository;
@@ -51,12 +65,17 @@ async fn upload(
     if files::blocked_name(&name) {
         return Err(pair(ServiceError::FileTypeBlocked(format!("'{name}' is a program or a web page. Programs and web pages cannot be uploaded."))));
     }
+    let limit = if guest { crate::service::guest_forms::file_limit(&state) } else { files::max_bytes(&state) };
+    let too_large = || ServiceError::FileTooLarge(format!("That file is over the limit of {} MB.", limit / 1024 / 1024));
+    if guest && declared > limit {
+        return Err(pair(too_large()));
+    }
     // With `files.require_scan` an upload needs a scanner that answers, checked before any bytes are kept.
     let scanner = {
         let settings = state.settings.read().map_err(|e| pair(ServiceError::Internal(e.to_string())))?;
         crate::scan::Scanner::from_setting(settings.get("files.scanner"))
     };
-    let require_scan = state.settings.read().ok().and_then(|s| s.get("files.require_scan").and_then(Value::as_bool)).unwrap_or(false);
+    let require_scan = guest || state.settings.read().ok().and_then(|s| s.get("files.require_scan").and_then(Value::as_bool)).unwrap_or(false);
     if require_scan {
         let answers = match scanner.clone() {
             Some(s) => tokio::task::spawn_blocking(move || s.ping()).await.unwrap_or(false),
@@ -66,8 +85,6 @@ async fn upload(
             return Err(pair(ServiceError::ScannerUnavailable("Files cannot be uploaded now. The virus scanner is not answering.".to_string())));
         }
     }
-    let limit = files::max_bytes(&state);
-    let too_large = || ServiceError::FileTooLarge(format!("That file is over the limit of {} MB.", limit / 1024 / 1024));
     if declared > limit {
         return Err(pair(too_large()));
     }

@@ -92,6 +92,8 @@ pub enum DecisionType {
     ConnectionChanged,
     /// Views phase 6: someone shared a view by a link, or revoked one, or a Platform Admin revoked an app's links.
     ShareChanged,
+    /// Guests phase 2: a form was proposed for guests, or a second person decided it.
+    GuestExposureChanged,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -162,6 +164,7 @@ impl DecisionType {
         DecisionType::WebhookChanged,
         DecisionType::ConnectionChanged,
         DecisionType::ShareChanged,
+        DecisionType::GuestExposureChanged,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -231,6 +234,7 @@ impl DecisionType {
             DecisionType::WebhookChanged => "WebhookChanged",
             DecisionType::ConnectionChanged => "ConnectionChanged",
             DecisionType::ShareChanged => "ShareChanged",
+            DecisionType::GuestExposureChanged => "GuestExposureChanged",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",

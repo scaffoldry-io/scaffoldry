@@ -45,7 +45,7 @@ pub fn is_guest_address(address: &str) -> bool {
     address.trim().to_lowercase().ends_with(&format!("@{DOMAIN}"))
 }
 
-fn setting_bool(state: &SharedState, key: &str) -> bool {
+pub(crate) fn setting_bool(state: &SharedState, key: &str) -> bool {
     state.settings.read().ok().and_then(|s| s.get(key).and_then(Value::as_bool)).unwrap_or(false)
 }
 
@@ -81,7 +81,7 @@ fn clean_email(v: Option<&Value>) -> Option<String> {
 }
 
 /// Whether a form accepts guests: it is a form view of this app, its audience is `Guests`, and nobody closed it.
-fn open_form(state: &SharedState, app: &str, form: Uuid) -> bool {
+pub(crate) fn open_form(state: &SharedState, app: &str, form: Uuid) -> bool {
     use scaffoldry_engine::HostRouter;
     if closed_forms(state).contains(&form.to_string()) || state.engine.read().ok().and_then(|e| e.resolve_by_slug(app).map(|_| ())).is_none() {
         return false;

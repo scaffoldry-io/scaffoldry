@@ -703,6 +703,9 @@ fn format_actor_value(actor: &str, kind: crate::repository::ActorKind, token_lab
     })
 }
 
+/// The keys the server sets on a record made through a guest form: the guest, and the form.
+const GUEST_KEYS: [&str; 2] = ["_submitter", "_form"];
+
 pub fn create_record(
     caller: &AuthUser,
     origin: &Origin,
@@ -749,6 +752,14 @@ pub fn create_record_skipping(
 
     let data_payload = data.get("data").unwrap_or(data);
     let mut cleaned = strip_lookups(app_slug, data_payload, state);
+    // Only a guest form sets these, and it sets them itself. Anyone else who sends them is not believed.
+    if caller.affiliation != "guest" {
+        if let Some(map) = cleaned.as_object_mut() {
+            for key in GUEST_KEYS {
+                map.remove(key);
+            }
+        }
+    }
     let table = cleaned.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     apply_defaults_and_set_on_create(app_slug, &table, &mut cleaned, state);
     validate_known_fields_and_types(app_slug, &table, &cleaned, state)?;
@@ -1012,6 +1023,16 @@ pub fn update_record(
     }
     if let (Some(tid), Some(map)) = (current.data.get("_table_id").cloned(), new_data.as_object_mut()) {
         map.entry("_table_id".to_string()).or_insert(tid);
+    }
+    // Who made a record through a guest form is the server's to say. A save by anyone keeps it as it was, so editing a guest's
+    // record in the grid cannot cut the guest off from it, and nobody can hand a record to a guest.
+    if let (Some(from), Some(map)) = (current.data.as_object(), new_data.as_object_mut()) {
+        for key in GUEST_KEYS {
+            match from.get(key) {
+                Some(v) => map.insert(key.to_string(), v.clone()),
+                None => map.remove(key),
+            };
+        }
     }
 
     let mut new_data = strip_lookups(app_slug, &new_data, state);

@@ -117,6 +117,9 @@ fn create_now(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<Va
     if delegate.eq_ignore_ascii_case(&caller.eppn) {
         return Err(ServiceError::bad_request("You cannot delegate to yourself"));
     }
+    if crate::service::guests::is_guest_address(&delegate) {
+        return Err(ServiceError::bad_request("A guest cannot be a delegate. A guest fills one form and decides nothing"));
+    }
     // The caller must hold what they hand on: that position, or any position at all.
     let held = state.repository.roles_of_people(std::slice::from_ref(&caller.eppn)).map_err(storage)?;
     let holds = match &position {

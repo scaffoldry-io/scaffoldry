@@ -534,6 +534,11 @@ pub fn authorize_app_with_role(
             Err(ServiceError::forbidden("A shared link reads only the view it was made for"))
         };
     }
+    // A guest reads and writes records of the one app its session names. The guest routes check the session's app and form, and
+    // the guard keeps a guest session off every other route. Nothing else is open to a guest.
+    if caller.affiliation == "guest" && crate::service::guests::is_guest_address(&caller.eppn) {
+        return if matches!(action, AppAction::Read | AppAction::WriteRecords) { Ok(()) } else { Err(ServiceError::forbidden("A guest can fill one form and nothing else")) };
+    }
     let app = {
         let engine = state
             .engine
