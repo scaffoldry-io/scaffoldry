@@ -14,7 +14,6 @@ const dataset = (id: string, name: string, department: string, rows: number) => 
   herm_capability_id: "X",
   record_count: rows,
   published_at: "2026-10-01T00:00:00Z",
-  relationship_count: 0,
   fields: [{ name: "code", label: "Code", field_type: "Text", required: true, ferpa_sensitive: false }],
 });
 
@@ -33,7 +32,7 @@ describe("the Datasets screen", () => {
   it("shows the datasets the server holds, with its counts, and none of the built-in samples", async () => {
     serve((p) => {
       if (p === "/datasets") return { body: { total: 2, datasets: [dataset("rooms", "Room Inventory", "Facilities", 17), dataset("fleet", "Vehicle Fleet", "Transport", 4)] } };
-      return { body: { relationships: [] } };
+      return { body: {} };
     });
     render(<DatasetExplorer />);
     expect((await screen.findAllByText("Room Inventory")).length).toBeGreaterThan(0);
@@ -47,7 +46,7 @@ describe("the Datasets screen", () => {
   });
 
   it("shows no rows in the catalog, and says where the rows are read (connections phase 1)", async () => {
-    serve((p) => (p === "/datasets" ? { body: { total: 1, datasets: [dataset("rooms", "Room Inventory", "Facilities", 17)] } } : { body: { relationships: [] } }));
+    serve((p) => (p === "/datasets" ? { body: { total: 1, datasets: [dataset("rooms", "Room Inventory", "Facilities", 17)] } } : { body: {} }));
     render(<DatasetExplorer />);
     const note = await screen.findByTestId("dataset-records-note");
     expect(note.textContent).toContain("17 rows, read-only");
@@ -56,6 +55,23 @@ describe("the Datasets screen", () => {
     // No table of rows, and no sample value such as `rooms-001`.
     expect(document.querySelector("tbody")).toBeNull();
     expect(screen.queryByText("rooms-001")).toBeNull();
+  });
+
+  // The catalog's by-value relationships are gone. A link to a dataset is a link field of an app.
+  it("asks the server for the datasets only, and offers no relationships tab or lattice view", async () => {
+    const asked: string[] = [];
+    serve((p) => {
+      asked.push(p);
+      return { body: { total: 1, datasets: [dataset("rooms", "Room Inventory", "Facilities", 17)] } };
+    });
+    render(<DatasetExplorer />);
+    await screen.findAllByText("Room Inventory");
+    expect(asked).toEqual(["/datasets"]);
+    expect(screen.queryByText(/Relationships/i)).toBeNull();
+    expect(screen.queryByText(/Relational Lattice/i)).toBeNull();
+    expect(screen.queryByText(/relation/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /Records \(17\)/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Schema/ })).toBeTruthy();
   });
 
   it("says so when the server holds no datasets", async () => {
@@ -68,7 +84,7 @@ describe("the Datasets screen", () => {
     let up = false;
     serve((p) => {
       if (!up) return { status: 500, body: { error: "down" } };
-      return p === "/datasets" ? { body: { total: 1, datasets: [dataset("rooms", "Room Inventory", "Facilities", 17)] } } : { body: { relationships: [] } };
+      return p === "/datasets" ? { body: { total: 1, datasets: [dataset("rooms", "Room Inventory", "Facilities", 17)] } } : { body: {} };
     });
     render(<DatasetExplorer />);
     expect(await screen.findByRole("alert")).toBeTruthy();

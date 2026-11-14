@@ -1,4 +1,4 @@
-//! Stateless server phase 3: units, position types, workspaces, guards, datasets, and relationships are read through
+//! Stateless server phase 3: units, position types, workspaces, guards, and datasets are read through
 //! the cache mechanism. A change through one instance is read through another on the next request.
 //!
 //! `labels` is on the closed list but has no table and no writer yet, so nothing can be cached or tested for it.
@@ -145,47 +145,6 @@ async fn a_dataset_published_through_one_instance_is_read_by_the_other() {
     assert_eq!(s, StatusCode::CREATED, "{body}");
     let (s, got) = send(&b, "GET", "/api/v1/datasets/p3_courses", ADMIN, None).await;
     assert_eq!(s, StatusCode::OK, "B reads the dataset A published: {got}");
-}
-
-// 1e. A dataset relationship made through A is read by B.
-#[tokio::test]
-async fn a_relationship_made_through_one_instance_is_read_by_the_other() {
-    let db = TestDb::new();
-    let (a, b) = (db.app(), db.second_app());
-    for id in ["p3_left", "p3_right"] {
-        let (s, body) = send(
-            &a,
-            "POST",
-            "/api/v1/datasets",
-            ADMIN,
-            Some(json!({ "id": id, "name": id, "department": "biology" })),
-        )
-        .await;
-        assert_eq!(s, StatusCode::CREATED, "{body}");
-    }
-    let (_, _) = send(
-        &b,
-        "GET",
-        "/api/v1/datasets/p3_left/relationships",
-        ADMIN,
-        None,
-    )
-    .await;
-    let (s, body) = send(&a, "POST", "/api/v1/datasets/p3_left/relationships", ADMIN, Some(json!({ "id": "p3_rel", "target_dataset_id": "p3_right", "source_field": "id", "target_field": "id" }))).await;
-    assert_eq!(s, StatusCode::CREATED, "{body}");
-    let (s, listed) = send(
-        &b,
-        "GET",
-        "/api/v1/datasets/p3_left/relationships",
-        ADMIN,
-        None,
-    )
-    .await;
-    assert_eq!(s, StatusCode::OK, "{listed}");
-    assert!(
-        listed.to_string().contains("p3_rel"),
-        "B lists the relationship A made: {listed}"
-    );
 }
 
 // 2. A guard added through A denies the next matching request through B. B started after the workspace and its member

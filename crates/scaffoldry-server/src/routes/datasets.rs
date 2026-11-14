@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use scaffoldry_core::{DatasetField, DatasetRelationship, PublishedDataset, RelationshipType};
+use scaffoldry_core::{DatasetField, PublishedDataset};
 use serde_json::{json, Value};
 use crate::service::ServiceError;
 
@@ -16,10 +16,6 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/datasets", get(list_datasets).post(publish_dataset))
         .route("/datasets/{id}", get(get_dataset))
-        .route(
-            "/datasets/{id}/relationships",
-            get(list_relationships).post(create_relationship),
-        )
 }
 
 async fn list_datasets(
@@ -30,15 +26,9 @@ async fn list_datasets(
     session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     let datasets = state.datasets.read().map_err(|_| lock_err())?;
-    let rels = state.relationships.read().map_err(|_| lock_err())?;
 
     let mut list = Vec::new();
     for ds in datasets.values() {
-        let rel_count = rels
-            .values()
-            .filter(|r| r.source_dataset_id == ds.id || r.target_dataset_id == ds.id)
-            .count();
-
         let item = json!({
             "id": ds.id,
             "name": ds.name,
@@ -50,7 +40,6 @@ async fn list_datasets(
             "fields": ds.fields,
             "record_count": ds.record_count,
             "published_at": ds.published_at,
-            "relationship_count": rel_count,
         });
 
         list.push(item);
@@ -71,13 +60,6 @@ async fn get_dataset(
 
     let datasets = state.datasets.read().map_err(|_| lock_err())?;
     let ds = datasets.get(&id).ok_or(ServiceError::not_found("Dataset not found").into_pair())?;
-    let rels = state.relationships.read().map_err(|_| lock_err())?;
-
-    let related_rels: Vec<DatasetRelationship> = rels
-        .values()
-        .filter(|r| r.source_dataset_id == id || r.target_dataset_id == id)
-        .cloned()
-        .collect();
 
     let doc = json!({
         "id": ds.id,
@@ -90,7 +72,6 @@ async fn get_dataset(
         "fields": ds.fields,
         "record_count": ds.record_count,
         "published_at": ds.published_at,
-        "relationships": related_rels,
     });
 
     Ok(Json(doc))
@@ -179,85 +160,4 @@ async fn publish_dataset(
 
     state.persist_dataset(dataset.clone()).map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
     Ok((StatusCode::CREATED, Json(dataset)))
-}
-
-async fn list_relationships(
-    State(state): State<SharedState>,
-    Path(id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
-    let rels = state.relationships.read().map_err(|_| lock_err())?;
-    let matching: Vec<DatasetRelationship> = rels
-        .values()
-        .filter(|r| r.source_dataset_id == id || r.target_dataset_id == id)
-        .cloned()
-        .collect();
-
-    Ok(Json(json!({
-        "dataset_id": id,
-        "total": matching.len(),
-        "relationships": matching
-    })))
-}
-
-async fn create_relationship(
-    State(state): State<SharedState>,
-    Path(source_id): Path<String>,
-    Json(payload): Json<Value>,
-) -> Result<(StatusCode, Json<DatasetRelationship>), (StatusCode, Json<Value>)> {
-    let target_dataset_id = payload["target_dataset_id"]
-        .as_str()
-        .ok_or_else(|| ServiceError::bad_request("target_dataset_id is required").into_pair())?
-        .to_string();
-
-    let source_field = payload["source_field"]
-        .as_str()
-        .ok_or_else(|| ServiceError::bad_request("source_field is required").into_pair())?
-        .to_string();
-
-    let target_field = payload["target_field"]
-        .as_str()
-        .ok_or_else(|| ServiceError::bad_request("target_field is required").into_pair())?
-        .to_string();
-
-    let name = payload
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Relational Lookup")
-        .to_string();
-
-    let display_field = payload
-        .get("display_field")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&target_field)
-        .to_string();
-
-    let rel_type_str = payload
-        .get("relationship_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("OneToMany");
-
-    let rel_type = match rel_type_str {
-        "OneToOne" => RelationshipType::OneToOne,
-        "ManyToMany" => RelationshipType::ManyToMany,
-        _ => RelationshipType::OneToMany,
-    };
-
-    let id = payload
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("rel_{}_{}_{}", source_id, target_dataset_id, source_field));
-    let rel = DatasetRelationship {
-        id: id.clone(),
-        name,
-        source_dataset_id: source_id,
-        target_dataset_id,
-        source_field,
-        target_field,
-        relationship_type: rel_type,
-        display_field,
-    };
-
-    state.persist_relationship(rel.clone()).map_err(|e| ServiceError::internal(e.to_string()).into_pair())?;
-    Ok((StatusCode::CREATED, Json(rel)))
 }

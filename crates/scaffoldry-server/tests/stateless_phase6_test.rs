@@ -181,8 +181,6 @@ async fn a_restarted_instance_answers_every_cached_read_as_before() {
     assert_eq!(s, StatusCode::CREATED, "{b}");
     let (s, b) = send(&first, "POST", "/api/v1/datasets", Some(ADMIN), Some(json!({ "id": "p6_b", "name": "B", "department": "biology" }))).await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
-    let (s, b) = send(&first, "POST", "/api/v1/datasets/p6_a/relationships", Some(ADMIN), Some(json!({ "id": "p6_rel", "target_dataset_id": "p6_b", "source_field": "id", "target_field": "id" }))).await;
-    assert_eq!(s, StatusCode::CREATED, "{b}");
     let (s, b) = send(&first, "PUT", &format!("/api/v1/workspaces/{ws_id}/guards"), Some(ADMIN), Some(json!({ "rules": [{ "template": "deny_access_outside_units", "unit_ids": ["00000000-0000-0000-0000-000000000001"] }], "reason": "Units only" }))).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     let (s, b) = send(&first, "PUT", "/api/v1/settings/process.stale_days", Some(ADMIN), Some(json!(21))).await;
@@ -211,7 +209,6 @@ async fn a_restarted_instance_answers_every_cached_read_as_before() {
         ("workspaces", format!("/api/v1/workspaces/{ws_id}"), ADMIN),
         ("guards", format!("/api/v1/workspaces/{ws_id}/guards"), ADMIN),
         ("datasets", "/api/v1/datasets/p6_a".into(), ADMIN),
-        ("relationships", "/api/v1/datasets/p6_a/relationships".into(), ADMIN),
         ("manifests (and labels, read through the schema)", format!("/api/v1/apps/{slug}/schema"), OWNER),
         ("rules", format!("/api/v1/apps/{slug}/automations"), OWNER),
         ("policy", "/api/v1/policies".into(), ADMIN),

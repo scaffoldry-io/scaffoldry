@@ -123,7 +123,7 @@ export interface AdminJobDetail extends AdminJobRow {
   finished_at?: string | null;
 }
 
-import { Collaborator, DatasetRelationship, LedgerEntryItem, OrganizationNode, OrgRole, PublishedDataset, Workspace } from "./types";
+import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, PublishedDataset, Workspace } from "./types";
 export type { OrganizationNode };
 
 export interface PolicyRef {
@@ -2220,13 +2220,6 @@ export const apiClient = {
     const res = await request<{ datasets: PublishedDataset[] }>("/datasets");
     if (!res || !Array.isArray(res.datasets)) throw new ApiError(0, "The server's dataset list was not in the expected form.");
     return res.datasets;
-  },
-
-  /** The relationships that start or end at one dataset. */
-  listDatasetRelationships: async (id: string): Promise<DatasetRelationship[]> => {
-    const res = await request<{ relationships: DatasetRelationship[] }>(`/datasets/${encodeURIComponent(id)}/relationships`);
-    if (!res || !Array.isArray(res.relationships)) throw new ApiError(0, "The server's relationship list was not in the expected form.");
-    return res.relationships;
   },
 
   /** Creates an app in a workspace. 201 means it is live. 202 means it is a proposal waiting for approval. */

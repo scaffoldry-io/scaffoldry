@@ -21,7 +21,6 @@ async fn reset_test_db() {
                 TRUNCATE TABLE app_views CASCADE;
                 TRUNCATE TABLE dataset_records CASCADE;
                 TRUNCATE TABLE published_datasets CASCADE;
-                TRUNCATE TABLE dataset_relationships CASCADE;
                 TRUNCATE TABLE workflow_automations CASCADE;
                 TRUNCATE TABLE process_instances CASCADE;
                 TRUNCATE TABLE scim_users CASCADE;
@@ -476,7 +475,7 @@ async fn test_cedar_policy_and_governance_endpoints() {
 }
 
 #[tokio::test]
-async fn test_published_datasets_and_relationships_api() {
+async fn test_published_datasets_api() {
     let _db = common::TestDb::new();
     let state = std::sync::Arc::new(ServerState::new().expect("Failed to initialize state"));
     state.seed_demo().expect("Failed to seed demo data");
@@ -498,7 +497,7 @@ async fn test_published_datasets_and_relationships_api() {
     let list: Value = serde_json::from_slice(&body).unwrap();
     assert!(list["total"].as_u64().unwrap() >= 4);
 
-    // 2. Query Specific Dataset with Pre-configured Relationships
+    // 2. Query a Specific Dataset
     let resp = app
         .clone()
         .oneshot(
@@ -513,7 +512,9 @@ async fn test_published_datasets_and_relationships_api() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let course_ds: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(course_ds["name"], "University Course Catalog");
-    assert!(course_ds["relationships"].as_array().unwrap().len() >= 2);
+    // The catalog holds no by-value relationships any more. A link to a dataset is a link field of an app.
+    assert!(course_ds.get("relationships").is_none(), "{course_ds}");
+    assert!(list["datasets"][0].get("relationship_count").is_none(), "{list}");
 
     // 3. Publish a New Departmental Dataset
     let new_ds = json!({
@@ -544,47 +545,22 @@ async fn test_published_datasets_and_relationships_api() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    // 4. Create Cross-Dataset Relationship (physics_laboratories.supervisor_eppn -> faculty.eppn)
-    let rel_payload = json!({
-        "name": "Laboratory Faculty Supervisor",
-        "target_dataset_id": "faculty",
-        "source_field": "supervisor_eppn",
-        "target_field": "eppn",
-        "display_field": "full_name",
-        "relationship_type": "OneToMany"
-    });
-    let resp = app
-        .clone()
-        .oneshot(
-            authed_req()
-                .method("POST")
-                .uri("/api/v1/datasets/physics_laboratories/relationships")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&rel_payload).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED);
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let created_rel: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(created_rel["target_dataset_id"], "faculty");
-
-    // 5. Query Relationships for physics_laboratories
-    let resp = app
-        .clone()
-        .oneshot(
-            authed_req()
-                .uri("/api/v1/datasets/physics_laboratories/relationships")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let rel_query: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(rel_query["total"], 1);
+    // 4. The routes that made and listed catalog relationships are gone.
+    for method in ["GET", "POST"] {
+        let resp = app
+            .clone()
+            .oneshot(
+                authed_req()
+                    .method(method)
+                    .uri("/api/v1/datasets/physics_laboratories/relationships")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{method}");
+    }
 }
 
 #[tokio::test]

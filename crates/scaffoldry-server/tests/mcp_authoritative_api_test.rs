@@ -21,7 +21,6 @@ async fn reset_test_db() {
                 TRUNCATE TABLE app_views CASCADE;
                 TRUNCATE TABLE dataset_records CASCADE;
                 TRUNCATE TABLE published_datasets CASCADE;
-                TRUNCATE TABLE dataset_relationships CASCADE;
                 TRUNCATE TABLE workflow_automations CASCADE;
                 TRUNCATE TABLE process_instances CASCADE;
                 TRUNCATE TABLE scim_users CASCADE;

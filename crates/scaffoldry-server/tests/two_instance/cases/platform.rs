@@ -112,7 +112,6 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/admin/users/{id}/revoke-tokens".into(), case!(user_revoke_tokens));
 
     m.insert("POST /api/v1/datasets".into(), case!(dataset_create));
-    m.insert("POST /api/v1/datasets/{id}/relationships".into(), case!(relationship_create));
     m.insert("PUT /api/v1/settings/{key}".into(), case!(setting_put));
     m.insert("POST /api/v1/apps/{slug}/webhooks/{id}/enable".into(), case!(webhook_enable));
     m.insert("PUT /api/v1/admin/egress/allow".into(), case!(egress_allow));
@@ -532,21 +531,6 @@ async fn dataset_create(w: World) -> Outcome {
     status(w.wa("POST", "/api/v1/datasets", ADMIN, Some(json!({ "id": id, "name": id, "department": "biology" }))).await, StatusCode::CREATED, "publish")?;
     let seen = status(w.rb("GET", &format!("/api/v1/datasets/{id}"), ADMIN, None).await, StatusCode::OK, "B reads it")?;
     ensure(has(&seen, &id), format!("B shows the dataset A published: {seen}"))
-}
-
-async fn relationship_create(w: World) -> Outcome {
-    let (left, right) = (unique("p6l").replace('-', "_"), unique("p6r").replace('-', "_"));
-    for id in [&left, &right] {
-        status(w.wa("POST", "/api/v1/datasets", ADMIN, Some(json!({ "id": id, "name": id, "department": "biology" }))).await, StatusCode::CREATED, "publish")?;
-    }
-    let rel = unique("p6rel").replace('-', "_");
-    status(
-        w.wa("POST", &format!("/api/v1/datasets/{left}/relationships"), ADMIN, Some(json!({ "id": rel, "target_dataset_id": right, "source_field": "id", "target_field": "id" }))).await,
-        StatusCode::CREATED,
-        "relate",
-    )?;
-    let seen = status(w.rb("GET", &format!("/api/v1/datasets/{left}/relationships"), ADMIN, None).await, StatusCode::OK, "B lists them")?;
-    ensure(has(&seen, &rel), format!("B lists the relationship A made: {seen}"))
 }
 
 async fn setting_put(w: World) -> Outcome {

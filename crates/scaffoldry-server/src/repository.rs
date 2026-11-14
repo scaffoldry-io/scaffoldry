@@ -16,7 +16,7 @@ use crate::state::{
 use chrono::Utc;
 use postgres::{Client, NoTls};
 use scaffoldry_core::{
-    AutomationRule, DatasetRelationship, DecisionType, LedgerEntry, LedgerError, ProcessInstance,
+    AutomationRule, DecisionType, LedgerEntry, LedgerError, ProcessInstance,
     ProcessStatus, PublishedDataset, GENESIS_PREVIOUS_HASH,
 };
 use scaffoldry_engine::AppManifest;
@@ -108,6 +108,7 @@ const SCHEMA_0101: &str = include_str!("../../scaffoldry-core/migrations/0101_co
 const SCHEMA_0102: &str = include_str!("../../scaffoldry-core/migrations/0102_connection_drift.sql");
 const SCHEMA_0103: &str = include_str!("../../scaffoldry-core/migrations/0103_view_shares.sql");
 const SCHEMA_0104: &str = include_str!("../../scaffoldry-core/migrations/0104_guests.sql");
+const SCHEMA_0105: &str = include_str!("../../scaffoldry-core/migrations/0105_drop_dataset_relationships.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1216,6 +1217,7 @@ impl PostgresRepository {
                             ("0102_connection_drift.sql", SCHEMA_0102),
                             ("0103_view_shares.sql", SCHEMA_0103),
                             ("0104_guests.sql", SCHEMA_0104),
+                            ("0105_drop_dataset_relationships.sql", SCHEMA_0105),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -2759,63 +2761,6 @@ impl PostgresRepository {
                 ],
             )?;
             crate::cache::bump(&mut tx, "datasets")?;
-            tx.commit()?;
-            Ok(())
-        })
-    }
-
-    // -------------------------------------------------------------------------
-    // DATASET RELATIONSHIPS
-    // -------------------------------------------------------------------------
-
-    pub fn list_dataset_relationships(&self) -> Result<Vec<DatasetRelationship>, RepositoryError> {
-        self.with_client(|client| {
-            let rows = client.query("SELECT payload FROM dataset_relationships", &[])?;
-            let mut rels = Vec::new();
-            for r in rows {
-                let val: Value = r.get(0);
-                let rel: DatasetRelationship = serde_json::from_value(val)?;
-                rels.push(rel);
-            }
-            Ok(rels)
-        })
-    }
-
-    pub fn upsert_dataset_relationship(
-        &self,
-        rel: &DatasetRelationship,
-    ) -> Result<(), RepositoryError> {
-        let rel = rel.clone();
-        self.with_client(move |client| {
-            let mut tx = client.transaction()?;
-            let payload_json = serde_json::to_value(&rel)?;
-            let rel_type = format!("{:?}", rel.relationship_type);
-            tx.execute(
-                "INSERT INTO dataset_relationships (id, name, source_dataset_id, target_dataset_id, \
-                        source_field, target_field, relationship_type, display_field, payload) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-                 ON CONFLICT (id) DO UPDATE SET \
-                    name = EXCLUDED.name, \
-                    source_dataset_id = EXCLUDED.source_dataset_id, \
-                    target_dataset_id = EXCLUDED.target_dataset_id, \
-                    source_field = EXCLUDED.source_field, \
-                    target_field = EXCLUDED.target_field, \
-                    relationship_type = EXCLUDED.relationship_type, \
-                    display_field = EXCLUDED.display_field, \
-                    payload = EXCLUDED.payload",
-                &[
-                    &rel.id,
-                    &rel.name,
-                    &rel.source_dataset_id,
-                    &rel.target_dataset_id,
-                    &rel.source_field,
-                    &rel.target_field,
-                    &rel_type,
-                    &rel.display_field,
-                    &payload_json,
-                ],
-            )?;
-            crate::cache::bump(&mut tx, "relationships")?;
             tx.commit()?;
             Ok(())
         })
