@@ -18,6 +18,8 @@ pub const RECORD_READERS: &[&str] = &[
     "get_record",
     // The body of `get_record`, without the count an outside app's panel keeps. It applies the scope and returns the record.
     "fetch_record",
+    // A guest's one record (guests phase 2). It returns the record only when `_submitter` is the guest, which is the guest's built-in row rule.
+    "own",
     "list_page",
     "page",
     "app_history",

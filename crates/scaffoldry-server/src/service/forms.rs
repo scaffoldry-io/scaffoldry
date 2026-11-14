@@ -123,7 +123,8 @@ pub fn exposure_shape(config: &Value) -> Value {
 /// The `guest_exposure` check of a form that is about to be open to guests. A listed link fails validation, because a guest
 /// must never be a way into another table or a dataset. A sensitive field a guest is asked for fails the check unless the form
 /// marks it as something the person gives about themself (`own_data`), and sensitive fields the form leaves out are a warning.
-pub fn check_exposure(config: &Value, fields: &[scaffoldry_engine::FieldSpec]) -> Result<Value, ServiceError> {
+/// `sensitive` is the table's effective-sensitive fields (label and category included).
+pub fn check_exposure(config: &Value, fields: &[scaffoldry_engine::FieldSpec], sensitive: &[String]) -> Result<Value, ServiceError> {
     use scaffoldry_engine::FieldType;
     let listed: Vec<(&str, bool)> = config["form_fields"].as_array().into_iter().flatten().filter_map(|f| Some((f.get("name")?.as_str()?, f.get("own_data").and_then(Value::as_bool).unwrap_or(false)))).collect();
     let spec = |n: &str| fields.iter().find(|f| f.name == n);
@@ -133,16 +134,16 @@ pub fn check_exposure(config: &Value, fields: &[scaffoldry_engine::FieldSpec]) -
     }
     let mut fails = Vec::new();
     for (name, own) in &listed {
-        if spec(name).is_some_and(|f| f.ferpa_sensitive) && !own {
+        if sensitive.iter().any(|n| n == name) && !own {
             fails.push(format!("'{name}' is sensitive. Mark it as something the person gives about themself, or take it off the form."));
         }
     }
     for name in config.get("read_only_fields").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-        if spec(name).is_some_and(|f| f.ferpa_sensitive) {
+        if sensitive.iter().any(|n| n == name) {
             fails.push(format!("'{name}' is sensitive and would be shown to guests. A sensitive field cannot be shown read-only."));
         }
     }
-    let unlisted: Vec<String> = fields.iter().filter(|f| f.ferpa_sensitive && !shown.contains(&f.name.as_str())).map(|f| f.name.clone()).collect();
+    let unlisted: Vec<String> = sensitive.iter().filter(|n| !shown.contains(&n.as_str())).cloned().collect();
     let (outcome, messages) = if !fails.is_empty() {
         ("fail", fails)
     } else if !unlisted.is_empty() {

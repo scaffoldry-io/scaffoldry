@@ -85,7 +85,7 @@ pub fn propose(caller: &AuthUser, app: &str, form: Uuid, state: &SharedState) ->
     }
     let table = stored.table_id.clone().ok_or_else(|| bad("This form is not over a table"))?;
     let (fields, name) = records::table_fields_lenient(app, &table, state);
-    let check = forms::check_exposure(&stored.config, &fields)?;
+    let check = forms::check_exposure(&stored.config, &fields, &records::sensitive_fields_of(app, &table, state))?;
     let (id, app_s, digest_s, change, by) = (Uuid::new_v4(), app.to_string(), digest(&stored.config), forms::exposure_sentence(&name), caller.eppn.clone());
     let checks = json!([check]);
     let made = state
