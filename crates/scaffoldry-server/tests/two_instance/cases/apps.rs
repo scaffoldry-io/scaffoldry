@@ -60,6 +60,8 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/guest/{app}/{form}/records/{id}".into(), case!(guest_record_update));
     m.insert("POST /api/v1/guest/{app}/{form}/files".into(), case!(guest_file_upload));
     m.insert("POST /api/v1/guest/stop".into(), case!(guest_stop));
+    m.insert("PUT /api/v1/admin/labels".into(), case!(label_put));
+    m.insert("PUT /api/v1/admin/datasets/{id}/classification".into(), case!(dataset_classify));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
     m.insert("POST /api/v1/admin/guests/{id}/disable".into(), case!(guest_disable));
@@ -714,6 +716,25 @@ async fn guest_erase(w: World) -> Outcome {
     ensure(s == StatusCode::UNAUTHORIZED, format!("B stops the erased guest's session: {s} {body}"))?;
     let shown = status(w.rb("GET", "/api/v1/admin/guests", ADMIN, None).await, StatusCode::OK, "B lists the guests")?;
     ensure(has(&shown, "Former applicant"), format!("B shows a former applicant: {shown}"))
+}
+
+async fn label_put(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let first = status(w.wa("GET", &format!("/api/v1/admin/fields?app={slug}&sensitive=true"), ADMIN, None).await, StatusCode::OK, "A lists the sensitive fields")?;
+    ensure(first["fields"].as_array().is_some_and(|l| l.is_empty()), format!("nothing is sensitive yet: {first}"))?;
+    status(w.wa("PUT", "/api/v1/admin/labels", ADMIN, Some(json!({ "changes": [{ "app_slug": slug, "table_id": "apps", "field": "name", "ferpa_sensitive": true }], "reason": "Names are protected." }))).await, StatusCode::OK, "A raises a label")?;
+    // B reads the label table through the counter, and has never been asked about it.
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/fields?app={slug}&sensitive=true"), ADMIN, None).await, StatusCode::OK, "B lists the sensitive fields")?;
+    ensure(has(&seen, "name"), format!("B sees the label A set: {seen}"))
+}
+
+async fn dataset_classify(w: World) -> Outcome {
+    let listed = status(w.wa("GET", "/api/v1/admin/datasets", ADMIN, None).await, StatusCode::OK, "A lists the datasets")?;
+    let id = listed["datasets"][0]["id"].as_str().ok_or("a dataset")?.to_string();
+    status(w.wa("PUT", &format!("/api/v1/admin/datasets/{id}/classification"), ADMIN, Some(json!({ "sensitivity_level": "Internal", "reason": "Reviewed." }))).await, StatusCode::OK, "A classifies it")?;
+    let seen = status(w.rb("GET", "/api/v1/admin/datasets", ADMIN, None).await, StatusCode::OK, "B lists the datasets")?;
+    let row = seen["datasets"].as_array().and_then(|l| l.iter().find(|d| d["id"] == id.as_str())).ok_or("the dataset on B")?;
+    ensure(row["sensitivity_level"] == "Internal", format!("B shows the level A set: {row}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {

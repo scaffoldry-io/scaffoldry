@@ -53,6 +53,7 @@ pub mod import_jobs;
 pub mod import_preset;
 pub mod export_jobs;
 pub mod repository_imports;
+pub mod repository_labels;
 pub mod repository_views;
 pub mod routes;
 pub mod scan;

@@ -1434,6 +1434,18 @@ impl ManifestEngine {
             }
         }
 
+        // A field of the record's table counts whether or not a view lists it. A sensitive field no view shows is still sensitive. The test
+        // for a value is the one the stored flag is set again with when a label changes: not null, not empty text, not an empty list.
+        if let Some(table) = record_table_id.and_then(|t| manifest.tables.iter().find(|x| x.id == t || x.slug == t)) {
+            for field in &table.fields {
+                let held = payload.get(&field.name).is_some_and(|v| !v.is_null() && v.as_str() != Some("") && v.as_array().is_none_or(|a| !a.is_empty()));
+                let key = (app_slug.to_string(), table.id.clone(), field.name.clone());
+                if held && effective_ferpa_sensitive(field, labels.get(&key), categories).is_protected() {
+                    is_ferpa_sensitive = true;
+                }
+            }
+        }
+
         Ok(SubmittedRecord {
             id: Uuid::new_v4(),
             app_slug: app_slug.to_string(),

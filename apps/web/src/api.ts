@@ -2447,6 +2447,19 @@ export const apiClient = {
     const res = await request<{ revoked: number }>("/admin/shares/revoke", { method: "POST", body: JSON.stringify({ app, reason }) });
     return res.revoked;
   },
+  /** Data governance (admin console phase 4). Every field of every app, with its sensitivity and where it is used. */
+  adminFields: async (query: Record<string, string> = {}): Promise<AdminFieldsPage> => {
+    const q = new URLSearchParams(Object.entries(query).filter(([, v]) => v !== ""));
+    const qs = q.toString();
+    return request<AdminFieldsPage>(`/admin/fields${qs ? `?${qs}` : ""}`);
+  },
+  /** Sets or removes labels. `ferpa_sensitive: null` removes one. The whole request is refused if one field is unknown. */
+  putLabels: async (changes: AdminLabelChange[], reason: string): Promise<{ changed: number }> =>
+    request<{ changed: number }>("/admin/labels", { method: "PUT", body: JSON.stringify({ changes, reason }) }),
+  adminDatasets: async (): Promise<{ datasets: AdminDataset[]; levels: string[] }> => request<{ datasets: AdminDataset[]; levels: string[] }>("/admin/datasets"),
+  classifyDataset: async (id: string, sensitivity_level: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/datasets/${encodeURIComponent(id)}/classification`, { method: "PUT", body: JSON.stringify({ sensitivity_level, reason }) });
+  },
   /** The Guests panel: forms open to guests, the guests, and signs of abuse. A Platform Admin only. */
   adminGuests: async (): Promise<AdminGuests> => request<AdminGuests>("/admin/guests"),
   closeGuestForm: async (formId: string, reason: string): Promise<void> => {
@@ -2695,4 +2708,42 @@ export interface AdminGuests {
   forms: AdminGuestForm[];
   guests: AdminGuest[];
   abuse: { bounces: { address: string; bounces: number }[]; networks: { network: string; hits: number }[] };
+}
+
+export interface AdminFieldRow {
+  app: string;
+  app_title: string;
+  table: string;
+  field: string;
+  label: string;
+  type: string;
+  manifest_flag: boolean;
+  overlay_flag: boolean;
+  overlay_note: string | null;
+  effective: boolean;
+  ceds_code: string | null;
+  suggested: boolean;
+  used_in: number;
+  used_in_parts: { views: number; formulas: number; pages: number; rules: number };
+}
+
+export interface AdminFieldsPage {
+  fields: AdminFieldRow[];
+  total: number;
+  next_cursor: string | null;
+}
+
+export interface AdminLabelChange {
+  app_slug: string;
+  table_id: string;
+  field: string;
+  ferpa_sensitive: boolean | null;
+}
+
+export interface AdminDataset {
+  id: string;
+  name: string;
+  department: string;
+  sensitivity_level: string;
+  record_count: number;
 }
