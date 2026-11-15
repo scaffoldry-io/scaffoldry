@@ -43,6 +43,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::TooLarge("Big".into()), "too_large", StatusCode::PAYLOAD_TOO_LARGE),
         (ServiceError::FileTooLarge("Too big".into()), "file_too_large", StatusCode::PAYLOAD_TOO_LARGE),
         (ServiceError::FileTypeBlocked("Blocked".into()), "file_type_blocked", StatusCode::BAD_REQUEST),
+        (ServiceError::SensitiveContentBlocked("Blocked".into()), "sensitive_content_blocked", StatusCode::UNPROCESSABLE_ENTITY),
         (ServiceError::ScannerUnavailable("No scanner".into()), "scanner_unavailable", StatusCode::SERVICE_UNAVAILABLE),
         (ServiceError::StorageUnavailable("No database".into()), "storage_unavailable", StatusCode::SERVICE_UNAVAILABLE),
         (ServiceError::IndexBuilding("Preparing".into()), "index_building", StatusCode::CONFLICT),
@@ -118,6 +119,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::TooLarge(_)
             | ServiceError::FileTooLarge(_)
             | ServiceError::FileTypeBlocked(_)
+            | ServiceError::SensitiveContentBlocked(_)
             | ServiceError::ScannerUnavailable(_)
             | ServiceError::StorageUnavailable(_)
             | ServiceError::IndexBuilding(_)

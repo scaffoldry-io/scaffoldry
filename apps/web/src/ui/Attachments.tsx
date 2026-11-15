@@ -33,6 +33,17 @@ function ScanMarker({ state }: { state: string | undefined }) {
   );
 }
 
+/** Whether a file's text was read for sensitive content. A file that was not read is said so, and is never shown as clean. */
+function ContentMarker({ state }: { state: string | undefined }) {
+  if (state !== "unsupported") return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400" data-testid="content-scan-unsupported">
+      <span aria-hidden="true">○</span>
+      <span>Content not scanned</span>
+    </span>
+  );
+}
+
 /** Files as chips: name and size, as text. For a grid cell. */
 export function AttachmentChips({ value }: { value: AttachedFile[] }) {
   if (!value.length) return null;
@@ -103,6 +114,7 @@ export function AttachmentField({ appSlug, recordId, fieldName, label, value, on
   latest.current = value;
   const [readable, setReadable] = useState<boolean | null>(null);
   const [scan, setScan] = useState<Record<string, string>>({});
+  const [contentScan, setContentScan] = useState<Record<string, string>>({});
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [problems, setProblems] = useState<{ name: string; message: string; next?: string }[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -115,6 +127,7 @@ export function AttachmentField({ appSlug, recordId, fieldName, label, value, on
         if (!current) return;
         setReadable(r.fields.includes(fieldName));
         setScan((prev) => ({ ...Object.fromEntries(r.files.map((f: RecordFile) => [f.ref_id, f.scan_state])), ...prev }));
+        setContentScan(Object.fromEntries(r.files.map((f: RecordFile) => [f.ref_id, f.content_scan_state ?? ""])));
       })
       .catch((e) => {
         if (!current) return;
@@ -209,6 +222,7 @@ export function AttachmentField({ appSlug, recordId, fieldName, label, value, on
               <span className="text-slate-500">{formatBytes(f.size)}</span>
               <span className="text-slate-500">{f.media_type}</span>
               <ScanMarker state={scan[f.ref_id]} />
+              <ContentMarker state={contentScan[f.ref_id]} />
               {!readOnly && (
                 <button type="button" className="ml-auto text-slate-600 hover:text-red-600" aria-label={`Remove ${f.name}`} onClick={() => onChange(value.filter((x) => x.ref_id !== f.ref_id))}>
                   Remove

@@ -109,6 +109,7 @@ pub const ERROR_CODES: &[&str] = &[
     "forbidden",
     "not_found",
     "bad_request",
+    "sensitive_content_blocked",
     "version_conflict",
     "no_approver",
     "position_full",
@@ -183,6 +184,8 @@ pub enum ServiceError {
     FileTooLarge(String),
     /// An upload is an executable, a script, or a page, by its bytes or by its name.
     FileTypeBlocked(String),
+    /// A detector the organization set to `block` matched a field of a write (sensitive content phase 3).
+    SensitiveContentBlocked(String),
     /// Uploads need a scan and no scanner answers.
     ScannerUnavailable(String),
     /// The database cannot be read, so nothing the server holds can be trusted.
@@ -288,6 +291,7 @@ impl ServiceError {
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) | Self::ShareNotAllowed(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::SensitiveContentBlocked(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::FlowGrantExceeded(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) | Self::ReadOnlySource(_) => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::TooLarge(_) | Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
@@ -308,6 +312,7 @@ impl ServiceError {
             Self::TooLarge(_) => "too_large",
             Self::FileTooLarge(_) => "file_too_large",
             Self::FileTypeBlocked(_) => "file_type_blocked",
+            Self::SensitiveContentBlocked(_) => "sensitive_content_blocked",
             Self::ScannerUnavailable(_) => "scanner_unavailable",
             Self::StorageUnavailable(_) => "storage_unavailable",
             Self::IndexBuilding(_) => "index_building",
@@ -351,6 +356,7 @@ impl ServiceError {
             | Self::TooLarge(msg)
             | Self::FileTooLarge(msg)
             | Self::FileTypeBlocked(msg)
+            | Self::SensitiveContentBlocked(msg)
             | Self::ScannerUnavailable(msg)
             | Self::StorageUnavailable(msg)
             | Self::IndexBuilding(msg)

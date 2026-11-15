@@ -57,6 +57,16 @@ All are for a Platform Admin or a compliance officer.
 
 The Overview has `sensitive_content`: the open findings and the matches expected inside authorized stores.
 
+## New writes, imports, and files
+
+Every detector has an action: `flag`, `warn`, or `block`. The organization chooses it in `sensitivity.detectors`.
+
+- **A write.** Only the fields the write changed are read. A field named as an authorized store for the detector's category is never a finding. `flag` records a finding after the write. `warn` also puts `sensitive_content` (field, detector, category, never the value) in the REST response. `block` refuses the write with `422` and the code `sensitive_content_blocked`. The message names the field, the detector, and the authorized stores for the category.
+- **An import.** The dry run reports `sensitive_content` as column, field, detector, category, rows, and action. Rows that hit a `block` detector are errors. The run records one finding for each field and detector, with counts and without sample record ids.
+- **A file.** After the antivirus result, a file a record holds is read once if it is `.txt`, `.csv`, `.json`, or `.md`, up to 4 MB. Findings have the source `file`. `content_scan_state` is `clean`, `found`, `unsupported`, or `skipped` (not yet read). A file that cannot be read says `Content not scanned` on the record. It is never shown as clean.
+
+A write over 64 KB in one field is read only up to 64 KB, and the finding says so in its `note`.
+
 ## What a scan costs
 
 Measured on a runner like CI's, in release mode, on a table of 1,000,000 rows with one in a thousand holding a Social Security number:
