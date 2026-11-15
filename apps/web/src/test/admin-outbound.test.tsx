@@ -159,3 +159,21 @@ describe("the Overview's outbound card", () => {
     expect(within(card).getByTestId("overview-deliveries-dead")).toHaveTextContent("7");
   });
 });
+
+describe("the Overview's sensitive content card", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it("shows the open findings, the oldest, the last scan, the tables never scanned, and the expected matches", async () => {
+    vi.spyOn(apiClient, "getAdminOverview").mockResolvedValue({
+      ...overview(undefined),
+      sensitive_content: { open: 3, oldest_open: "2026-11-01T10:00:00Z", last_scan: null, tables_never_scanned: 4, expected: 12 },
+    });
+    render(<Overview />);
+    const card = await screen.findByTestId("admin-overview-sensitive-content-card");
+    expect(within(card).getByTestId("overview-sensitive-open")).toHaveTextContent("3");
+    expect(within(card).getByTestId("overview-sensitive-oldest")).toHaveTextContent("2026-11-01T10:00:00Z");
+    expect(within(card).getByTestId("overview-sensitive-last-scan")).toHaveTextContent("never");
+    expect(within(card).getByTestId("overview-sensitive-never")).toHaveTextContent("4");
+    expect(within(card).getByTestId("overview-sensitive-expected")).toHaveTextContent("12");
+  });
+});

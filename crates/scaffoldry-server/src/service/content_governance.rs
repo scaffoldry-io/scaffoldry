@@ -217,10 +217,18 @@ pub fn stats(caller: &AuthUser, state: &SharedState) -> Result<Value, ServiceErr
     Ok(json!({ "detectors": state.repository.detector_stats().map_err(storage)? }))
 }
 
-/// For the Overview: the findings waiting for a person, and the matches the scans expected inside authorized stores.
+/// For the Overview: the findings waiting for a person, the oldest of them, the last finished scan, the tables no scan has covered, and the
+/// matches the scans expected inside authorized stores.
 pub fn counts(state: &SharedState) -> Value {
     let (open, expected) = state.repository.content_counts().unwrap_or((0, 0));
-    json!({ "open": open, "expected": expected })
+    let (oldest, last_scan, scanned) = state.repository.content_coverage().unwrap_or_default();
+    let tables: Vec<(String, String)> = state
+        .engine
+        .read()
+        .map(|e| e.list_manifests().into_iter().flat_map(|m| m.tables.iter().map(|t| (m.slug.clone(), t.id.clone())).collect::<Vec<_>>()).collect())
+        .unwrap_or_default();
+    let never = tables.iter().filter(|t| !scanned.contains(*t)).count();
+    json!({ "open": open, "oldest_open": oldest, "last_scan": last_scan, "tables_never_scanned": never, "expected": expected })
 }
 
 /// A detector or a category was saved. Every detector that changed has its dismissals set aside, because the reason for a dismissal may

@@ -67,6 +67,24 @@ Every detector has an action: `flag`, `warn`, or `block`. The organization choos
 
 A write over 64 KB in one field is read only up to 64 KB, and the finding says so in its `note`.
 
+## What is detected, and what is not
+
+Detected: United States Social Security numbers and payment card numbers, in the text of fields and in the text of `.txt`, `.csv`, `.json` and `.md` files. The organization may add detectors and switch categories on.
+
+Not detected:
+
+- **PDFs and Office files.** They are not read. The record shows `Content not scanned`. A PDF with a Social Security number in it raises no finding.
+- **Pictures, scans and other binary files.**
+- **Values split across fields,** and values written in words.
+- **Text past the read limits:** 64 KB in one field, and the first 4 MB of a file. The finding says when only part was read.
+- **Anything before the first scan.** The Overview shows the tables no scan has covered.
+
+A clean result means no detector matched in what was read. It does not mean the data holds nothing sensitive.
+
+## History, exports, and the Overview
+
+A confirmed label masks old versions in record history at read time. An export or snapshot that includes a confirmed field needs the export permission and writes one disclosure and one ledger entry. No export code knows the category: the label is enough. Findings are removed with their app. The Overview shows the open findings, the oldest, the last finished scan, the tables never scanned, and the matches expected inside authorized stores.
+
 ## What a scan costs
 
 Measured on a runner like CI's, in release mode, on a table of 1,000,000 rows with one in a thousand holding a Social Security number:

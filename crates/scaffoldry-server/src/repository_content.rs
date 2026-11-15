@@ -68,6 +68,9 @@ fn label_with_category(tx: &mut postgres::Transaction<'_>, l: &CategoryLabel, ca
     Ok(())
 }
 
+/// The oldest open finding, the last finished scan, and the (app, table) pairs a finished scan has covered.
+pub type Coverage = (Option<String>, Option<String>, std::collections::BTreeSet<(String, String)>);
+
 impl PostgresRepository {
     /// A page of findings, newest seen first, and how many there are in all.
     pub fn list_findings(&self, f: FindingFilter, offset: i64, limit: i64) -> Result<(Vec<Value>, i64), RepositoryError> {
@@ -205,6 +208,21 @@ impl PostgresRepository {
             let open: i64 = c.query_one("SELECT count(*) FROM content_findings WHERE status = 'open'", &[])?.get(0);
             let expected: i64 = c.query_one("SELECT COALESCE(sum(matches), 0)::bigint FROM content_expected", &[])?.get(0);
             Ok((open, expected))
+        })
+    }
+
+    /// The oldest open finding, the last finished scan, and the tables a finished scan has covered. For the Overview.
+    pub fn content_coverage(&self) -> Result<Coverage, RepositoryError> {
+        self.with_client(|c| {
+            let iso = "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'";
+            let oldest: Option<String> = c.query_one(&format!("SELECT to_char(min(first_seen) AT TIME ZONE 'UTC', {iso}) FROM content_findings WHERE status = 'open'"), &[])?.get(0);
+            let last: Option<String> = c.query_one(&format!("SELECT to_char(max(finished_at) AT TIME ZONE 'UTC', {iso}) FROM jobs WHERE kind = 'scan_records' AND state = 'done'"), &[])?.get(0);
+            let scanned = c
+                .query("SELECT DISTINCT payload->>'app_slug', payload->>'table_id' FROM jobs WHERE kind = 'scan_records' AND state = 'done'", &[])?
+                .iter()
+                .filter_map(|r| Some((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)))
+                .collect();
+            Ok((oldest, last, scanned))
         })
     }
 

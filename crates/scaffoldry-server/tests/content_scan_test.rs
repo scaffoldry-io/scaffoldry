@@ -4,7 +4,7 @@
 mod common;
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use scaffoldry_engine::{AppManifest, AppTable, FieldSpec, FieldType};
@@ -557,4 +557,129 @@ async fn no_planted_value_is_anywhere_after_a_scan_a_confirm_and_a_designation()
     for value in [SSN, SSN_B, "4111 1111 1111 1111", "4111111111111111"] {
         assert!(!seen.contains(value), "{value} was stored");
     }
+}
+
+// Phase 4. 1. After `Confirm`, an old version that held the value shows `changed: true` and no value to a viewer who may not see the field.
+#[tokio::test]
+async fn a_confirmed_label_masks_an_old_version_in_history() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let (s, made) = send(&w.app, "POST", &format!("/api/v1/apps/{}/records", w.slug), &w.editor, Some(json!({ "data": { "_table_id": "notes", "title": "a", "body": format!("ssn {SSN}") } }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_str().unwrap().to_string();
+    let (s, v) = send(&w.app, "PATCH", &format!("/api/v1/apps/{}/records/{id}", w.slug), &w.editor, Some(json!({ "data": { "body": "removed" }, "version": 1 }))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    scan(&w, "notes").await;
+    let hist = |token: String| {
+        let (app, slug, id) = (w.app.clone(), w.slug.clone(), id.clone());
+        async move { send(&app, "GET", &format!("/api/v1/apps/{slug}/records/{id}/history"), &token, None).await }
+    };
+    // Before a person decides, nothing is hidden: the field is not labeled.
+    let (s, before) = hist(w.viewer.clone()).await;
+    assert_eq!(s, StatusCode::OK, "{before}");
+    assert!(before.to_string().contains(SSN), "before Confirm the old value is in history: {before}");
+    let finding = finding_of(&findings(&w, "status=open").await, "body")["id"].as_str().unwrap().to_string();
+    assert_eq!(decide(&w, &finding, "confirm").await.0, StatusCode::OK);
+    let (s, after) = hist(w.viewer.clone()).await;
+    assert_eq!(s, StatusCode::OK, "{after}");
+    assert!(!after.to_string().contains(SSN), "after Confirm the old value is not shown: {after}");
+    assert!(after.to_string().contains("\"changed\":true"), "it says the field changed: {after}");
+}
+
+// 2. An export that includes a confirmed field writes one disclosure and one ledger entry. Nothing in the export code knew of the category.
+#[tokio::test]
+async fn an_export_of_a_confirmed_field_writes_one_disclosure_and_one_ledger_entry() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    put(&w, "notes", 1, json!({ "title": "a", "body": format!("ssn {SSN}") }));
+    let dir = std::env::temp_dir().join(format!("scaffoldry-files-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("SCAFFOLDRY_FILES_DIR", &dir);
+    // The export route reads the stored app definition.
+    let stored = w.state.engine.read().unwrap().list_manifests().into_iter().find(|m| m.slug == w.slug).unwrap();
+    w.state.repository.upsert_app_manifest(&stored).unwrap();
+    scan(&w, "notes").await;
+    let slug = w.slug.clone();
+    let count = move |sql: &'static str| -> i64 {
+        let slug = slug.clone();
+        db(move |c| c.query_one(sql, &[&slug]).unwrap().get(0))
+    };
+    let disclosures = |c: &dyn Fn(&'static str) -> i64| c("SELECT count(*) FROM disclosure_log WHERE app_slug = $1");
+    let ledger = |c: &dyn Fn(&'static str) -> i64| c("SELECT count(*) FROM governance_ledger WHERE app_slug = $1 AND decision_type = 'DataExported'");
+    let export = |token: String| {
+        let (app, slug, state) = (w.app.clone(), w.slug.clone(), w.state.clone());
+        async move {
+            let (s, v) = send(&app, "POST", &format!("/api/v1/apps/{slug}/exports"), &token, Some(json!({ "table_id": "notes", "format": "csv" }))).await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+            let job: uuid::Uuid = v["job_id"].as_str().unwrap().parse().unwrap();
+            let runner = JobRunner::start(&state.repository, JOB_KINDS, JobConfig { poll_ms: 10, ..JobConfig::default() }).unwrap();
+            for _ in 0..500 {
+                if get_job(&state.repository, job).unwrap().is_some_and(|j| j.state == "done") {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            runner.stop();
+            let done = get_job(&state.repository, job).unwrap().unwrap();
+            assert_eq!(done.state, "done", "{:?}", done.error);
+            let req = Request::get(format!("/api/v1/apps/{slug}/exports/{}/download", v["export_id"].as_str().unwrap())).header(header::AUTHORIZATION, format!("Bearer {token}")).body(Body::empty()).unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            String::from_utf8(resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap()
+        }
+    };
+    export(w.editor.clone()).await;
+    assert_eq!((disclosures(&count), ledger(&count)), (0, 0), "an unlabeled field is not a disclosure");
+    let finding = finding_of(&findings(&w, "status=open").await, "body")["id"].as_str().unwrap().to_string();
+    assert_eq!(decide(&w, &finding, "confirm").await.0, StatusCode::OK);
+    export(w.editor.clone()).await;
+    assert_eq!((disclosures(&count), ledger(&count)), (1, 1), "a confirmed field is one disclosure and one ledger entry");
+}
+
+// 3. The old name is gone from the code.
+#[test]
+fn the_old_function_name_is_gone() {
+    fn walk(dir: &std::path::Path, hits: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().is_some_and(|n| n == "target") {
+                    continue;
+                }
+                walk(&p, hits);
+            } else if p.extension().is_some_and(|x| x == "rs") && std::fs::read_to_string(&p).is_ok_and(|t| t.contains(concat!("effective_", "ferpa_sensitive"))) {
+                hits.push(p.display().to_string());
+            }
+        }
+    }
+    let mut hits = Vec::new();
+    walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".."), &mut hits);
+    assert!(hits.is_empty(), "the old name is still in: {hits:?}");
+}
+
+// 4. The Overview counts match the findings table. 5. Deleting an app removes its findings.
+#[tokio::test]
+async fn the_overview_counts_match_the_findings_and_a_deleted_app_takes_them_with_it() {
+    let _db = common::TestDb::new();
+    let w = world().await;
+    let (s, o) = send(&w.app, "GET", "/api/v1/admin/overview", &w.compliance, None).await;
+    assert_eq!(s, StatusCode::OK, "{o}");
+    assert!(o["sensitive_content"]["oldest_open"].is_null() && o["sensitive_content"]["last_scan"].is_null(), "{o}");
+    let never_before = o["sensitive_content"]["tables_never_scanned"].as_i64().unwrap();
+    put(&w, "notes", 1, json!({ "title": "a", "body": format!("ssn {SSN}") }));
+    put(&w, "notes", 2, json!({ "title": "b", "body": format!("card {CARD}") }));
+    scan(&w, "notes").await;
+    let rows = findings(&w, "status=open").await;
+    let (_, o) = send(&w.app, "GET", "/api/v1/admin/overview", &w.compliance, None).await;
+    let c = &o["sensitive_content"];
+    assert_eq!(c["open"].as_i64().unwrap(), rows.len() as i64, "{o}");
+    assert!(c["oldest_open"].is_string() && c["last_scan"].is_string(), "{o}");
+    assert_eq!(c["tables_never_scanned"].as_i64().unwrap(), never_before - 1, "one table was scanned: {o}");
+    // An app is deleted the way a trial's app is, with what it held. The workspace named is not one that exists.
+    let repo = scaffoldry_server::repository::PostgresRepository::connect(None).unwrap();
+    let trial = scaffoldry_server::repository_trials::TrialRow { id: Uuid::new_v4(), proposal_id: Uuid::new_v4(), owner: "nobody@state.edu".into(), app_slug: w.slug.clone(), workspace_id: "ws-none".into(), records: 0, created_at: String::new(), last_opened_at: String::new() };
+    repo.destroy_trial(&trial).unwrap();
+    let slug = w.slug.clone();
+    let left: i64 = db(move |c| c.query_one("SELECT count(*) FROM content_findings WHERE app_slug = $1", &[&slug]).unwrap().get(0));
+    assert_eq!(left, 0, "the findings went with the app");
 }

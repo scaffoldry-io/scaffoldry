@@ -583,7 +583,7 @@ pub const LEGACY_FLAG_CATEGORY: &str = "ferpa";
 /// category and protects it. Otherwise a field is protected when any category it carries is marked
 /// protected in settings. A label of `false` never lowers anything. Every read of a field's
 /// sensitivity calls this.
-pub fn effective_ferpa_sensitive(
+pub fn effective_sensitivity(
     field: &FieldSpec,
     label: Option<&DataLabel>,
     categories: &[sensitivity::Category],
@@ -606,7 +606,7 @@ pub fn effective_ferpa_sensitive(
 /// What a reader who is not cleared for the field sees of it when the field names no mask: the strongest default among the
 /// categories it carries. A category that settings do not list, and a field with none, give `hide`.
 pub fn default_mask(field: &FieldSpec, categories: &[sensitivity::Category]) -> scaffoldry_core::mask::Mask {
-    effective_ferpa_sensitive(field, None, categories)
+    effective_sensitivity(field, None, categories)
         .categories
         .iter()
         .map(|id| categories.iter().find(|c| &c.id == id).map_or(scaffoldry_core::mask::Mask::Hide, |c| c.default_mask))
@@ -1433,7 +1433,7 @@ impl ManifestEngine {
                     view.table_id.clone().unwrap_or_default(),
                     field.name.clone(),
                 );
-                if val.is_some() && effective_ferpa_sensitive(field, labels.get(&key), categories).is_protected() {
+                if val.is_some() && effective_sensitivity(field, labels.get(&key), categories).is_protected() {
                     is_ferpa_sensitive = true;
                 }
 
@@ -1449,7 +1449,7 @@ impl ManifestEngine {
             for field in &table.fields {
                 let held = payload.get(&field.name).is_some_and(|v| !v.is_null() && v.as_str() != Some("") && v.as_array().is_none_or(|a| !a.is_empty()));
                 let key = (app_slug.to_string(), table.id.clone(), field.name.clone());
-                if held && effective_ferpa_sensitive(field, labels.get(&key), categories).is_protected() {
+                if held && effective_sensitivity(field, labels.get(&key), categories).is_protected() {
                     is_ferpa_sensitive = true;
                 }
             }

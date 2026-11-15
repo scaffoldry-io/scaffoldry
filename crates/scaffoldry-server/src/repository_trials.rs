@@ -39,6 +39,10 @@ const APP_TABLES: &[&str] = &[
     "app_imports",
     "workflow_automations",
     "process_instances",
+    "content_findings",
+    "content_expected",
+    "authorized_stores",
+    "data_labels",
     "dataset_records",
 ];
 
