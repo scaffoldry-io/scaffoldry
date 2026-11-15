@@ -79,7 +79,7 @@ async fn a_label_raises_the_flag_of_a_record_that_holds_the_field() {
     // A label on one field raises the records that hold it, and only those.
     state.labels.write().unwrap().insert(
         (slug.clone(), String::new(), "advisor_notes".to_string()),
-        DataLabel { ferpa_sensitive: true, note: "Advisor notes name students".into(), set_by: "compliance@state.edu".into() },
+        DataLabel { ferpa_sensitive: true, note: "Advisor notes name students".into(), set_by: "compliance@state.edu".into(), categories: Vec::new() },
     );
     let raised = create(&app, &token, &slug, json!({ "title": "B", "advisor_notes": "n" })).await;
     assert_eq!(raised["is_ferpa_sensitive"], true);

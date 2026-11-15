@@ -96,6 +96,8 @@ pub enum DecisionType {
     GuestExposureChanged,
     /// Guests phase 4: a Platform Admin closed or opened a form to guests, or disabled, enabled or erased a guest.
     GuestChanged,
+    /// Sensitive content phase 2: a compliance officer confirmed or dismissed a finding of the content scan.
+    ContentFindingDecided,
     /// A Platform Admin sent a test mail to themself (notifications phase 2).
     MailTested,
     ClientProposed,
@@ -168,6 +170,7 @@ impl DecisionType {
         DecisionType::ShareChanged,
         DecisionType::GuestExposureChanged,
         DecisionType::GuestChanged,
+        DecisionType::ContentFindingDecided,
         DecisionType::MailTested,
         DecisionType::ClientProposed,
         DecisionType::ClientDecided,
@@ -239,6 +242,7 @@ impl DecisionType {
             DecisionType::ShareChanged => "ShareChanged",
             DecisionType::GuestExposureChanged => "GuestExposureChanged",
             DecisionType::GuestChanged => "GuestChanged",
+            DecisionType::ContentFindingDecided => "ContentFindingDecided",
             DecisionType::MailTested => "MailTested",
             DecisionType::ClientProposed => "ClientProposed",
             DecisionType::ClientDecided => "ClientDecided",

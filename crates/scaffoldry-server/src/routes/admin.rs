@@ -158,6 +158,7 @@ async fn get_overview(State(state): State<SharedState>, headers: HeaderMap) -> i
             ),
             "outbound": crate::service::outbound::counts(&state),
             "connections": crate::service::connections::counts(&state),
+            "sensitive_content": crate::service::content_governance::counts(&state),
             "jobs": {
                 "queue_depth": jobs_overview.queue_depth,
                 "oldest_queued_age_secs": jobs_overview.oldest_queued_age_secs,

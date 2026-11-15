@@ -9,6 +9,7 @@ import { Connections } from "./Connections";
 import { Shares } from "./Shares";
 import { Guests } from "./Guests";
 import { DataGovernance } from "./DataGovernance";
+import { SensitiveContent } from "./SensitiveContent";
 import { Webhooks } from "./Webhooks";
 import { PolicyLibrary } from "./PolicyLibrary";
 import { People } from "./People";
@@ -29,8 +30,8 @@ export interface AdminConsoleProps {
   navigateTo?: (path: string) => void;
   /** The path the console is showing, for sections with views of their own. */
   currentPath?: string;
-  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -68,7 +69,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -157,6 +158,8 @@ export function AdminConsole({
         <Guests />
       ) : currentTab === "governance" ? (
         <DataGovernance />
+      ) : currentTab === "content" ? (
+        <SensitiveContent />
       ) : currentTab === "webhooks" ? (
         <Webhooks />
       ) : currentTab === "library" ? (

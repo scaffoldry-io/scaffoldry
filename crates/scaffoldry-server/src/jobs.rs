@@ -220,6 +220,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::notifications::purge_job,
     },
     JobKind {
+        name: "scan_records",
+        title: "Scanning records for sensitive content",
+        description: "Reads one table in batches and records where the organization's detectors match, as counts and record ids and never a value.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::content_scan::scan_job,
+    },
+    JobKind {
         name: "purge_guests",
         title: "Removing unused guests",
         description: "Removes guests who made no record and have not been seen for 90 days.",

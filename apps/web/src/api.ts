@@ -1414,8 +1414,8 @@ export const apiClient = {
     return request<{ settings: Record<string, any> }>("/settings");
   },
 
-  updateSetting: async (key: string, value: any) => {
-    return request<{ key: string; value: any }>(`/settings/${key}`, {
+  updateSetting: async (key: string, value: any, reason?: string) => {
+    return request<{ key: string; value: any }>(`/settings/${key}${reason?.trim() ? `?reason=${encodeURIComponent(reason.trim())}` : ""}`, {
       method: "PUT",
       body: JSON.stringify(value),
     });
@@ -2447,6 +2447,31 @@ export const apiClient = {
     const res = await request<{ revoked: number }>("/admin/shares/revoke", { method: "POST", body: JSON.stringify({ app, reason }) });
     return res.revoked;
   },
+  /** Sensitive content (phase 2): the findings of the scans, and who decided what. */
+  contentFindings: async (query: Record<string, string> = {}): Promise<{ findings: ContentFinding[]; total: number; next_cursor: string | null }> => {
+    const q = new URLSearchParams(Object.entries(query).filter(([, v]) => v !== ""));
+    const qs = q.toString();
+    return request(`/admin/content-findings${qs ? `?${qs}` : ""}`);
+  },
+  decideFinding: async (id: string, decision: "confirm" | "dismiss", reason: string): Promise<void> => {
+    await request<unknown>(`/admin/content-findings/${encodeURIComponent(id)}/decide`, { method: "POST", body: JSON.stringify({ decision, reason }) });
+  },
+  /** Queues a scan of one table, or of every table. */
+  scanContent: async (target: { app_slug: string; table_id: string } | { all: true }): Promise<void> => {
+    await request<unknown>("/admin/content-scans", { method: "POST", body: JSON.stringify(target) });
+  },
+  authorizedStores: async (): Promise<AuthorizedStore[]> => (await request<{ stores: AuthorizedStore[] }>("/admin/authorized-stores")).stores,
+  putAuthorizedStore: async (store: AuthorizedStoreBody, reason: string): Promise<void> => {
+    await request<unknown>("/admin/authorized-stores", { method: "PUT", body: JSON.stringify({ ...store, reason }) });
+  },
+  removeAuthorizedStore: async (store: AuthorizedStoreBody, reason: string): Promise<void> => {
+    await request<unknown>("/admin/authorized-stores", { method: "DELETE", body: JSON.stringify({ ...store, reason }) });
+  },
+  detectorStats: async (): Promise<DetectorStat[]> => (await request<{ detectors: DetectorStat[] }>("/admin/detector-stats")).detectors,
+  sensitivitySettings: async (): Promise<SensitivitySettings> => request<SensitivitySettings>("/admin/sensitivity-settings"),
+  enableSensitivityPreset: async (id: string): Promise<void> => {
+    await request<unknown>(`/settings/sensitivity/presets/${encodeURIComponent(id)}`, { method: "POST" });
+  },
   /** Data governance (admin console phase 4). Every field of every app, with its sensitivity and where it is used. */
   adminFields: async (query: Record<string, string> = {}): Promise<AdminFieldsPage> => {
     const q = new URLSearchParams(Object.entries(query).filter(([, v]) => v !== ""));
@@ -2746,4 +2771,60 @@ export interface AdminDataset {
   department: string;
   sensitivity_level: string;
   record_count: number;
+}
+
+export interface ContentFinding {
+  id: string;
+  app_slug: string;
+  table_id: string;
+  field: string;
+  detector_id: string;
+  category: string;
+  source: string;
+  match_count: number;
+  record_count: number;
+  sample_record_ids: string[];
+  status: "open" | "confirmed" | "dismissed";
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface AuthorizedStoreBody {
+  category: string;
+  scope: "workspace" | "app" | "table" | "field";
+  workspace_id?: string;
+  app_slug?: string;
+  table_id?: string;
+  field?: string;
+}
+
+export interface AuthorizedStore extends Required<AuthorizedStoreBody> {
+  reason: string;
+  set_by: string;
+  set_at: string;
+}
+
+export interface DetectorStat {
+  detector_id: string;
+  findings: number;
+  confirmed: number;
+  dismissed: number;
+  dismissed_share: number;
+}
+
+export interface SensitivityDetector {
+  id: string;
+  kind: string;
+  action: "flag" | "warn" | "block";
+  enabled: boolean;
+  [more: string]: unknown;
+}
+
+export interface SensitivitySettings {
+  categories: { id: string; name: string; source: string; protected: boolean; detectors: string[] }[];
+  detectors: SensitivityDetector[];
+  presets: { id: string; name: string; switched_on: boolean }[];
 }

@@ -446,7 +446,7 @@ async fn test_export_logs_a_field_a_label_made_sensitive() {
     let f = fixture().await;
     f.state.labels.write().unwrap().insert(
         (f.slug.clone(), "items".to_string(), "amount".to_string()),
-        scaffoldry_engine::DataLabel { ferpa_sensitive: true, note: String::new(), set_by: USER.to_string() },
+        scaffoldry_engine::DataLabel { ferpa_sensitive: true, note: String::new(), set_by: USER.to_string(), categories: Vec::new() },
     );
     insert_record_via_api(&f, json!({ "title": "Study", "amount": 7500 })).await;
 

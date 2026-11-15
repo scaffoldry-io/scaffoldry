@@ -221,6 +221,20 @@ pub fn fields(caller: &AuthUser, q: &std::collections::HashMap<String, String>, 
     Ok(json!({ "fields": page, "total": total, "next_cursor": next }))
 }
 
+/// For each touched table, the names of its effective sensitive fields under the labels as they will be. The records' stored flags are set
+/// again from these.
+pub(crate) fn flag_tables(state: &SharedState, manifests: &[AppManifest], touched: &BTreeSet<(String, String)>, after: &LabelSet) -> Vec<FlagTable> {
+    let categories = state.sensitivity_categories();
+    touched
+        .iter()
+        .filter_map(|(app, table)| {
+            let t = manifests.iter().find(|m| &m.slug == app)?.tables.iter().find(|t| &t.id == table)?;
+            let names = t.fields.iter().filter(|f| effective_ferpa_sensitive(f, label_for(after, app, table, &f.name), &categories).protected).map(|f| f.name.clone()).collect();
+            Some(FlagTable { app_slug: app.clone(), table_id: table.clone(), names })
+        })
+        .collect()
+}
+
 /// `PUT /admin/labels`: sets or removes labels in a batch. Every field must exist in its manifest, or the whole request is refused. The
 /// labels, the records' flags, the cache counter and one ledger entry commit together.
 pub fn put_labels(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -258,23 +272,17 @@ pub fn put_labels(caller: &AuthUser, body: &Value, state: &SharedState) -> Resul
         let key = (ch.app_slug.clone(), ch.table_id.clone(), ch.field.clone());
         match ch.sensitive {
             Some(v) => {
-                after.insert(key, DataLabel { ferpa_sensitive: v, note: reason.clone(), set_by: caller.eppn.clone() });
+                // Setting the flag leaves the categories a label already carries.
+                let categories = after.get(&key).map(|l| l.categories.clone()).unwrap_or_default();
+                after.insert(key, DataLabel { ferpa_sensitive: v, note: reason.clone(), set_by: caller.eppn.clone(), categories });
             }
             None => {
                 after.remove(&key);
             }
         }
     }
-    let categories = state.sensitivity_categories();
     let touched: BTreeSet<(String, String)> = changes.iter().map(|c| (c.app_slug.clone(), c.table_id.clone())).collect();
-    let flags: Vec<FlagTable> = touched
-        .into_iter()
-        .filter_map(|(app, table)| {
-            let t = manifests.iter().find(|m| m.slug == app)?.tables.iter().find(|t| t.id == table)?;
-            let names = t.fields.iter().filter(|f| effective_ferpa_sensitive(f, label_for(&after, &app, &table, &f.name), &categories).protected).map(|f| f.name.clone()).collect();
-            Some(FlagTable { app_slug: app, table_id: table, names })
-        })
-        .collect();
+    let flags = flag_tables(state, &manifests, &touched, &after);
 
     let summary: Vec<Value> = changes.iter().map(|c| json!({ "app": c.app_slug, "table": c.table_id, "field": c.field, "ferpa_sensitive": c.sensitive })).collect();
     let ledger = AppendDecisionParams {

@@ -566,6 +566,9 @@ pub struct DataLabel {
     pub ferpa_sensitive: bool,
     pub note: String,
     pub set_by: String,
+    /// Categories the label puts on the field (sensitive content phase 2). A label that names any is protected only through them.
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 /// Labels by `(app_slug, table_id, field)`. The table id is `""` for an untabled view. The set
@@ -585,8 +588,14 @@ pub fn effective_ferpa_sensitive(
     label: Option<&DataLabel>,
     categories: &[sensitivity::Category],
 ) -> sensitivity::Sensitivity {
-    let legacy = field.ferpa_sensitive || label.is_some_and(|l| l.ferpa_sensitive);
-    let mut carried: std::collections::BTreeSet<String> = field.categories.iter().cloned().collect();
+    // A label that names categories adds them and is protected only through them. A label with none is the flag it always was.
+    let (label_legacy, label_categories): (bool, &[String]) = match label {
+        Some(l) if !l.categories.is_empty() => (false, &l.categories),
+        Some(l) => (l.ferpa_sensitive, &[]),
+        None => (false, &[]),
+    };
+    let legacy = field.ferpa_sensitive || label_legacy;
+    let mut carried: std::collections::BTreeSet<String> = field.categories.iter().chain(label_categories.iter()).cloned().collect();
     if legacy {
         carried.insert(LEGACY_FLAG_CATEGORY.to_string());
     }
