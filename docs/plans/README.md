@@ -305,7 +305,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 184 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |
 | 185 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
 | 186 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
-| 187 | [workflows.md](workflows.md) | 11 | Console panel for flows |
+| 187 | [workflows.md](workflows.md) | 11 | Console panel for flows | **COMPLETED** |
 | 188 | [live-data.md](live-data.md) | 3 | Moved to Wave 1c as 1c-1. The desk reads records and the directory from the API |
 | 189 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
 | 190 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |

@@ -40,6 +40,8 @@ export interface AdminOverviewData {
   outbound?: { webhooks_failing: number; webhooks_disabled: number; deliveries_dead_last_day: number };
   /** Sensitive content phase 4: open findings, the oldest, the last finished scan, tables no scan has covered, and matches inside authorized stores. */
   sensitive_content?: { open: number; oldest_open: string | null; last_scan: string | null; tables_never_scanned: number; expected: number };
+  /** Workflows phase 11: the number of flows, those that cross workspaces, tripped flows, and the work items the last nightly reconcile repaired. */
+  flows?: { total: number; cross_workspace: number; tripped: number; work_drift_repaired: number | null };
   /** Connections phase 6: data connections by health, and the age of the oldest successful sync of one that is on. */
   connections?: { healthy: number; failing: number; needs_review: number; disabled: number; oldest_success_age_secs: number | null };
   files?: {
@@ -2489,6 +2491,18 @@ export const apiClient = {
   classifyDataset: async (id: string, sensitivity_level: string, reason: string): Promise<void> => {
     await request<unknown>(`/admin/datasets/${encodeURIComponent(id)}/classification`, { method: "PUT", body: JSON.stringify({ sensitivity_level, reason }) });
   },
+  /** The Flows panel (workflows phase 11). `crosses_workspaces` and `reads_sensitive` are the two filters. A Platform Admin only. */
+  adminFlows: async (filters: { crosses_workspaces?: boolean; reads_sensitive?: boolean } = {}): Promise<AdminFlows> => {
+    const q = new URLSearchParams();
+    if (filters.crosses_workspaces) q.set("crosses_workspaces", "true");
+    if (filters.reads_sensitive) q.set("reads_sensitive", "true");
+    const qs = q.toString();
+    return request<AdminFlows>(`/admin/flows${qs ? `?${qs}` : ""}`);
+  },
+  /** Turns a flow off or on again. The reason is kept in the ledger. */
+  setFlowDisabled: async (ruleId: string, disabled: boolean, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/flows/${encodeURIComponent(ruleId)}/${disabled ? "disable" : "enable"}`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
   /** The Guests panel: forms open to guests, the guests, and signs of abuse. A Platform Admin only. */
   adminGuests: async (): Promise<AdminGuests> => request<AdminGuests>("/admin/guests"),
   closeGuestForm: async (formId: string, reason: string): Promise<void> => {
@@ -2731,6 +2745,28 @@ export interface AdminGuest {
   last_seen: string | null;
   submissions: number;
   forms_used: number;
+}
+
+/** One flow in the Flows panel. */
+export interface AdminFlow {
+  rule_id: string;
+  name: string;
+  app_slug: string;
+  version: number;
+  home_workspace: string;
+  home_workspace_name: string;
+  crosses_workspaces: boolean;
+  reads_sensitive: boolean;
+  parties: { workspace_id: string; name: string; approved_by: string | null; approved_at: string | null }[];
+  grants: string;
+  last_run: { at: string; status: string | null } | null;
+  runs_last_7_days: number;
+  failures_last_7_days: number;
+  state: "Active" | "Disabled" | "Tripped";
+}
+
+export interface AdminFlows {
+  flows: AdminFlow[];
 }
 
 export interface AdminGuests {

@@ -8,6 +8,7 @@ import { OutboundAccess } from "./OutboundAccess";
 import { Connections } from "./Connections";
 import { Shares } from "./Shares";
 import { Guests } from "./Guests";
+import { Flows } from "./Flows";
 import { DataGovernance } from "./DataGovernance";
 import { SensitiveContent } from "./SensitiveContent";
 import { Webhooks } from "./Webhooks";
@@ -30,8 +31,8 @@ export interface AdminConsoleProps {
   navigateTo?: (path: string) => void;
   /** The path the console is showing, for sections with views of their own. */
   currentPath?: string;
-  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   sourceRules?: SourceRule[];
   simAction?: "read" | "write" | "export";
@@ -69,7 +70,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -156,6 +157,8 @@ export function AdminConsole({
         <Shares />
       ) : currentTab === "guests" ? (
         <Guests />
+      ) : currentTab === "flows" ? (
+        <Flows />
       ) : currentTab === "governance" ? (
         <DataGovernance />
       ) : currentTab === "content" ? (

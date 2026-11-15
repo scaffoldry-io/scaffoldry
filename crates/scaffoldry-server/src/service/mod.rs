@@ -39,6 +39,7 @@ pub mod flow_parties;
 pub mod flow_validate;
 pub mod flow_test_run;
 pub mod flow_runs;
+pub mod flows_admin;
 pub mod date_triggers;
 pub mod flow_chains;
 pub mod buttons;

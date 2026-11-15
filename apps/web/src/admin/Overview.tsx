@@ -276,6 +276,35 @@ export function Overview() {
           </div>
         )}
 
+        {/* FLOWS CARD */}
+        {data.flows && (
+          <div
+            data-testid="admin-overview-flows-card"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+          >
+            <div className="mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Flows</span>
+            </div>
+            <div className="space-y-2 mt-4">
+              {(
+                [
+                  ["Flows", String(data.flows.total), "overview-flows-total"],
+                  ["Cross workspaces", String(data.flows.cross_workspace), "overview-flows-cross"],
+                  ["Tripped", String(data.flows.tripped), "overview-flows-tripped"],
+                  ["Work items repaired by the last reconcile", data.flows.work_drift_repaired === null ? "none yet" : String(data.flows.work_drift_repaired), "overview-flows-drift"],
+                ] as const
+              ).map(([label, value, id]) => (
+                <div key={id} className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 dark:text-slate-400">{label}</span>
+                  <span className="font-mono font-semibold text-slate-900 dark:text-slate-100" data-testid={id}>
+                    {value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* SENSITIVE CONTENT CARD */}
         {data.sensitive_content && (
           <div

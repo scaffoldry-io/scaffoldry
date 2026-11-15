@@ -302,6 +302,53 @@ impl PostgresRepository {
         })
     }
 
+    /// For the Flows panel: each flow's last run and its runs since `since`, from the run index, and no more than the ids asked for.
+    pub fn flow_panel_runs(&self, ids: &[String], since: &str) -> Result<Vec<FlowPanelRuns>, RepositoryError> {
+        let (ids, since) = (ids.to_vec(), since.to_string());
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT r.id, l.started, l.status, COALESCE(w.runs, 0), COALESCE(w.failed, 0) FROM unnest($1::text[]) AS r(id) \
+                 LEFT JOIN LATERAL (SELECT instance_json->>'started_at' AS started, status FROM process_instances WHERE rule_id = r.id ORDER BY instance_json->>'started_at' DESC, id DESC LIMIT 1) l ON TRUE \
+                 LEFT JOIN LATERAL (SELECT count(*) AS runs, count(*) FILTER (WHERE status = 'Failed') AS failed FROM process_instances WHERE rule_id = r.id AND instance_json->>'started_at' >= $2) w ON TRUE",
+                &[&ids, &since],
+            )?;
+            Ok(rows.iter().map(|r| FlowPanelRuns { rule_id: r.get(0), last_started: r.get(1), last_status: r.get(2), runs: r.get(3), failed: r.get(4) }).collect())
+        })
+    }
+
+    /// Which of these flows the breaker has turned off.
+    pub fn flows_tripped(&self, ids: &[String]) -> Result<Vec<String>, RepositoryError> {
+        let ids = ids.to_vec();
+        self.with_client(move |c| Ok(c.query("SELECT flow_id FROM flow_state WHERE flow_id = ANY($1) AND disabled_at IS NOT NULL", &[&ids])?.iter().map(|r| r.get(0)).collect()))
+    }
+
+    /// Who approved the current version of each flow for each workspace, and when. `(rule id, workspace, person, time)`.
+    pub fn flow_approvals(&self, versions: &[(String, i32)]) -> Result<Vec<(String, String, String, String)>, RepositoryError> {
+        let ids: Vec<String> = versions.iter().map(|v| v.0.clone()).collect();
+        let nums: Vec<i32> = versions.iter().map(|v| v.1).collect();
+        self.with_client(move |c| {
+            let rows = c.query(
+                "SELECT v.rule_id, x.ws, x.who, x.at FROM unnest($1::text[], $2::int[]) AS q(id, ver) \
+                 JOIN workflow_rule_versions v ON v.rule_id = q.id AND v.version = q.ver \
+                 CROSS JOIN LATERAL ( \
+                   SELECT a.workspace_id::text AS ws, a.decided_by::text AS who, to_char(a.at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS at \
+                     FROM proposal_approvals a WHERE a.proposal_id::text = v.proposal_id::text AND a.decision = 'approve' AND a.decided_by IS NOT NULL \
+                   UNION ALL \
+                   SELECT p.workspace_id::text, p.decided_by::text, to_char(p.decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
+                     FROM app_proposals p WHERE p.id::text = v.proposal_id::text AND p.decided_by IS NOT NULL \
+                      AND NOT EXISTS (SELECT 1 FROM proposal_approvals a WHERE a.proposal_id = p.id AND a.workspace_id = p.workspace_id AND a.decision = 'approve') \
+                 ) x ORDER BY x.at",
+                &[&ids, &nums],
+            )?;
+            Ok(rows.iter().map(|r| (r.get(0), r.get(1), r.get(2), r.get::<_, Option<String>>(3).unwrap_or_default())).collect())
+        })
+    }
+
+    /// How many work items the last finished nightly reconcile repaired.
+    pub fn last_reconcile_repairs(&self) -> Result<Option<i64>, RepositoryError> {
+        self.with_client(|c| Ok(c.query_opt("SELECT result->>'repairs' FROM jobs WHERE kind = 'reconcile_work' AND state = 'done' ORDER BY finished_at DESC LIMIT 1", &[])?.and_then(|r| r.get::<_, Option<String>>(0)).and_then(|n| n.parse().ok())))
+    }
+
     /// A flow's failures in a row, and whether its breaker has turned it off.
     pub fn flow_breaker(&self, flow_id: &str) -> Result<(i32, bool), RepositoryError> {
         let id = flow_id.to_string();
@@ -1243,6 +1290,15 @@ pub fn build_aggregate_sql(p: &AggregatePlan) -> (String, Vec<SqlParam>) {
 
 /// One event of an instance: kind, step, detail and time.
 pub type InstanceEvent = (String, Option<String>, serde_json::Value, chrono::DateTime<chrono::Utc>);
+
+/// What the Flows panel shows of a flow's runs.
+pub struct FlowPanelRuns {
+    pub rule_id: String,
+    pub last_started: Option<String>,
+    pub last_status: Option<String>,
+    pub runs: i64,
+    pub failed: i64,
+}
 
 /// One row of a flow's run history.
 pub struct FlowRunRow {
