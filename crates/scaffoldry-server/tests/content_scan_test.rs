@@ -473,7 +473,7 @@ async fn the_detector_stats_count_confirmed_and_dismissed() {
     let _db = common::TestDb::new();
     let w = world().await;
     put(&w, "notes", 1, json!({ "title": format!("id {SSN}"), "body": format!("ssn {SSN_B}") }));
-    put(&w, "cards", 1, json!({ "holder": format!("{SSN_C}"), "card": "none" }));
+    put(&w, "cards", 1, json!({ "holder": SSN_C, "card": "none" }));
     scan(&w, "notes").await;
     scan(&w, "cards").await;
     let rows = findings(&w, "").await;
