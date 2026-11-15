@@ -112,6 +112,7 @@ const SCHEMA_0105: &str = include_str!("../../scaffoldry-core/migrations/0105_dr
 const SCHEMA_0106: &str = include_str!("../../scaffoldry-core/migrations/0106_form_exposures.sql");
 const SCHEMA_0107: &str = include_str!("../../scaffoldry-core/migrations/0107_guest_stops.sql");
 const SCHEMA_0108: &str = include_str!("../../scaffoldry-core/migrations/0108_guest_operations.sql");
+const SCHEMA_0109: &str = include_str!("../../scaffoldry-core/migrations/0109_data_labels.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1224,6 +1225,7 @@ impl PostgresRepository {
                             ("0106_form_exposures.sql", SCHEMA_0106),
                             ("0107_guest_stops.sql", SCHEMA_0107),
                             ("0108_guest_operations.sql", SCHEMA_0108),
+                            ("0109_data_labels.sql", SCHEMA_0109),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -3478,6 +3480,19 @@ impl PostgresRepository {
             Ok(())
         })
     }
+}
+
+/// Sets the stored sensitivity flag of every record of one table from the names of its effective sensitive fields: a record is flagged when it
+/// holds a value (not `null`, not empty text, not an empty list) in any of them. It changes no data and no version, so it writes no history.
+/// Records are written only in this file, so this statement lives here.
+pub(crate) fn reflag_table(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &str, names: &[String]) -> Result<u64, postgres::Error> {
+    tx.execute(
+        "UPDATE dataset_records SET is_ferpa_sensitive = EXISTS ( \
+             SELECT 1 FROM unnest($3::text[]) AS f(name) \
+             WHERE data->f.name IS NOT NULL AND data->f.name NOT IN ('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb)) \
+         WHERE app_slug = $1 AND table_id = $2",
+        &[&app_slug, &table_id, &names],
+    )
 }
 
 #[derive(Debug, Clone)]

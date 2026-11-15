@@ -297,7 +297,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 176 | [guests.md](guests.md) | 2 | A form open to guests, with a built-in own-records rule | **COMPLETED** |
 | 177 | [guests.md](guests.md) | 3 | A plain status page for the guest | **COMPLETED** |
 | 178 | [guests.md](guests.md) | 4 | Operating guests: closing forms, erasing, abuse signals | **COMPLETED** |
-| 179 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens |
+| 179 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens | **COMPLETED** |
 | 180 | [sensitive-content.md](sensitive-content.md) | 2 | Stored records are scanned as a job. A compliance officer reviews findings and designates authorized stores |
 | 181 | [sensitive-content.md](sensitive-content.md) | 3 | New writes, imports, and plain-text files are checked. Each detector flags, warns, or blocks, as the organization chooses |
 | 182 | [sensitive-content.md](sensitive-content.md) | 4 | History, exports, and snapshots honor the categories. The old flag name is gone |

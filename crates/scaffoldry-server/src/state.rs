@@ -273,7 +273,6 @@ pub struct ServerState {
     pub tree: RwLock<scaffoldry_core::tree::OrgTree>,
     pub position_types: RwLock<HashMap<String, PositionType>>,
     /// Sensitivity labels by `(app, table, field)`. They can only raise a field's sensitivity.
-    /// Empty until the label table exists (admin console phase 4, later part).
     pub labels: RwLock<scaffoldry_engine::LabelSet>,
     pub settings: RwLock<HashMap<String, serde_json::Value>>,
     /// The archived apps and workspaces (lifecycle phase 2): `("app", slug)` and `("workspace", id)`.
@@ -418,6 +417,10 @@ impl ServerState {
                     .write()
                     .unwrap_or_else(|p| p.into_inner())
                     .clear();
+            }
+            "labels" => {
+                let all = self.repository.list_labels()?;
+                *self.labels.write().unwrap_or_else(|p| p.into_inner()) = all;
             }
             "datasets" => {
                 let all: HashMap<String, PublishedDataset> = self

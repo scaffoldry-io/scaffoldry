@@ -16,6 +16,7 @@ pub mod receipts;
 pub mod admin_workspaces;
 pub mod apps;
 pub mod auth;
+pub mod data_governance;
 pub mod datasets;
 pub mod discovery;
 pub mod comments;
@@ -103,6 +104,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(shares::router())
         .merge(guests::router())
         .merge(guests::admin_router())
+        .merge(data_governance::router())
         .merge(link_options::router())
         .merge(lifecycle::router())
         .merge(retention::router())
