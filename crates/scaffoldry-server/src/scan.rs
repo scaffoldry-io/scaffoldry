@@ -121,6 +121,8 @@ pub fn scan_file(repo: &PostgresRepository, ref_id: Uuid) -> Result<String, Stri
     match verdict {
         Ok(Verdict::Clean) => {
             repo.set_scan_state(ref_id, "clean").map_err(|e| e.to_string())?;
+            // The antivirus result is in, so the file's text may be read for sensitive content.
+            crate::content_scan::enqueue_file(repo, ref_id);
             Ok("clean".to_string())
         }
         Ok(Verdict::Infected(signature)) => {

@@ -535,7 +535,7 @@ pub fn record_files(caller: &AuthUser, app_slug: &str, id: &str, state: &SharedS
         .filter(|r| !r.deleted && r.record_id.as_deref() == Some(id))
         .filter_map(|r| {
             let field = r.field.as_ref().filter(|f| names.contains(f))?;
-            Some(json!({ "ref_id": r.id, "field": field, "name": r.name, "size": r.size, "media_type": r.media_type, "scan_state": r.scan_state }))
+            Some(json!({ "ref_id": r.id, "field": field, "name": r.name, "size": r.size, "media_type": r.media_type, "scan_state": r.scan_state, "content_scan_state": r.content_scan_state }))
         })
         .collect();
     Ok(json!({ "fields": names, "files": files }))
@@ -546,6 +546,10 @@ fn attach_attachments(app_slug: &str, table_id: &str, record_id: &str, attachmen
     let repo = &state.repository;
     for (field, ids) in attachments {
         repo.attach_file_refs(app_slug, table_id, record_id, field, ids).map_err(|e| ServiceError::Internal(format!("Files could not be attached: {e}")))?;
+        // A file a record holds is read for sensitive content once the antivirus scan is past. The job checks that, and reads each file once.
+        for id in ids {
+            crate::content_scan::enqueue_file(repo, *id);
+        }
     }
     Ok(())
 }
@@ -703,6 +707,54 @@ fn format_actor_value(actor: &str, kind: crate::repository::ActorKind, token_lab
     })
 }
 
+/// What the detectors made of the fields a write changed, held until the write has been stored.
+struct Guarded {
+    flags: Vec<crate::content_scan::Hit>,
+    warns: Vec<crate::content_scan::Hit>,
+}
+
+impl Guarded {
+    /// The write was stored. Flagged matches leave findings, and warned ones go back to the writer as notes. Neither holds a value. A failure to
+    /// leave a finding does not undo the write.
+    fn settle(self, app_slug: &str, table: &str, record_id: &str, state: &SharedState) -> Vec<Value> {
+        let scope = crate::content_scan::Scope { app_slug: app_slug.to_string(), table_id: table.to_string() };
+        let _ = crate::content_scan::record_hits(&state.repository, &scope, &self.flags, Some(record_id), "write");
+        self.warns.iter().map(|h| json!({ "field": h.field, "detector": h.detector_id, "category": h.category })).collect()
+    }
+}
+
+/// Reads the fields a write changed with the organization's detectors. A field that was not changed is not read. A `block` detector refuses the
+/// write, naming the field, the detector and where the category may live, and never the value.
+fn guard_content(app_slug: &str, table: &str, new_data: &Value, stored: Option<&Value>, state: &SharedState) -> Result<Guarded, ServiceError> {
+    use scaffoldry_engine::detect::Action;
+    let scope = crate::content_scan::Scope { app_slug: app_slug.to_string(), table_id: table.to_string() };
+    let Ok(plan) = crate::content_scan::plan(state, &scope) else { return Ok(Guarded { flags: Vec::new(), warns: Vec::new() }) };
+    let changed: serde_json::Map<String, Value> = new_data
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(k, v)| !k.starts_with('_') && stored.and_then(|s| s.get(*k)) != Some(*v))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let hits = plan.check(&changed);
+    if let Some(h) = hits.iter().find(|h| h.action == Action::Block) {
+        let places = crate::content_scan::stores_in_words(state, &h.category);
+        let where_ = if places.is_empty() { "No place is designated for it yet. Ask a compliance officer.".to_string() } else { format!("It may be kept in: {}.", places.join("; ")) };
+        return Err(ServiceError::SensitiveContentBlocked(format!(
+            "'{}' looks like it holds data of the kind '{}' (found by the detector '{}'). This institution does not allow that here. {where_}",
+            h.field, h.category, h.detector_id
+        )));
+    }
+    let (mut flags, mut warns) = (Vec::new(), Vec::new());
+    for h in hits {
+        match h.action {
+            Action::Warn => warns.push(h),
+            _ => flags.push(h),
+        }
+    }
+    Ok(Guarded { flags, warns })
+}
+
 /// The keys the server sets on a record made through a guest form: the guest, and the form.
 const GUEST_KEYS: [&str; 2] = ["_submitter", "_form"];
 
@@ -726,6 +778,19 @@ pub fn create_record_skipping(
     skip_required: &[String],
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
+    create_record_noted(caller, origin, app_slug, data, skip_required, state).map(|(record, _)| record)
+}
+
+/// `create_record_skipping`, with what the detectors said of the write. A `warn` detector is a note for the writer: the field, the detector
+/// and the category, never the value. A `block` detector refuses the write with `sensitive_content_blocked`, and a `flag` detector leaves a finding.
+pub fn create_record_noted(
+    caller: &AuthUser,
+    origin: &Origin,
+    app_slug: &str,
+    data: &Value,
+    skip_required: &[String],
+    state: &SharedState,
+) -> Result<(DatasetRecord, Vec<Value>), ServiceError> {
     authorize_app(caller, app_slug, AppAction::WriteRecords, state)?;
     crate::service::connections::ensure_writable(app_slug, state)?;
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
@@ -766,6 +831,7 @@ pub fn create_record_skipping(
     validate_record_constraints(app_slug, &table, &cleaned, skip_required, state)?;
     let data_payload = &cleaned;
     validate_links(caller, app_slug, None, None, data_payload, state)?;
+    let guarded = guard_content(app_slug, &table, data_payload, None, state)?;
 
     let mut submitted = {
         let engine = state
@@ -832,6 +898,7 @@ pub fn create_record_skipping(
             other => ServiceError::Internal(format!("Failed to store the record: {other}")),
         })?;
     attach_attachments(app_slug, &table, &record.id, &attachments, state)?;
+    let notes = guarded.settle(app_slug, &table, &record.id, state);
 
     let mut record_val = record.data.clone();
     if let Some(map) = record_val.as_object_mut() {
@@ -853,7 +920,7 @@ pub fn create_record_skipping(
     tell_assigned(caller, app_slug, &table, &final_record.id, None, &final_record.data, state);
 
     crate::service::clients::note_usage(caller, state, 0, 0, 1);
-    Ok(final_record)
+    Ok((final_record, notes))
 }
 
 /// A field the caller cannot see or change keeps its stored value when the write leaves it out. A write that sends a
@@ -968,6 +1035,18 @@ pub fn update_record(
     payload: &Value,
     state: &SharedState,
 ) -> Result<DatasetRecord, ServiceError> {
+    update_record_noted(caller, origin, app_slug, id, payload, state).map(|(record, _)| record)
+}
+
+/// `update_record`, with what the detectors said of the fields the write changed. A field it left as it was is not read.
+pub fn update_record_noted(
+    caller: &AuthUser,
+    origin: &Origin,
+    app_slug: &str,
+    id: &str,
+    payload: &Value,
+    state: &SharedState,
+) -> Result<(DatasetRecord, Vec<Value>), ServiceError> {
     // Workflows phase 4: a person without the right to write may still fill the fields an open task grant lists, on that
     // one record.
     let task = match authorize_app(caller, app_slug, AppAction::WriteRecords, state).and_then(|()| crate::service::connections::ensure_writable(app_slug, state)) {
@@ -1074,6 +1153,7 @@ pub fn update_record(
         check_read_only(caller, app_slug, &table, &new_data, Some(&current.data), state)?;
     }
     validate_links(caller, app_slug, Some(id), Some(&current.data), &new_data, state)?;
+    let guarded = guard_content(app_slug, &table, &new_data, Some(&current.data), state)?;
 
     let (fields, _) = table_fields_lenient(app_slug, &table, state);
     let mut final_new_data = new_data;
@@ -1115,6 +1195,7 @@ pub fn update_record(
         _ => return Err(ServiceError::NotFound(format!("Record '{id}' not found"))),
     };
     attach_attachments(app_slug, &table, id, &attachments, state)?;
+    let notes = guarded.settle(app_slug, &table, id, state);
 
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,
@@ -1155,7 +1236,7 @@ pub fn update_record(
     let final_rec = fetch_record(caller, app_slug, id, state).unwrap_or(updated_rec);
     tell_assigned(caller, app_slug, &table, id, Some(&current.data), &final_rec.data, state);
     crate::service::clients::note_usage(caller, state, 0, 0, 1);
-    Ok(final_rec)
+    Ok((final_rec, notes))
 }
 
 pub fn delete_record(

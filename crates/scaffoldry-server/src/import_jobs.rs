@@ -454,6 +454,9 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
         .ok_or_else(|| JobError::Permanent(format!("Table {} not found in app", target_table_id)))?;
 
     let upsert_key = mapping.get("upsert_key").and_then(|v| v.as_str());
+    // The organization's detectors, read once. A row that holds what a `block` detector looks for is refused, and the rest are reported.
+    let guard = crate::content_scan::plan_from_repo(repo, &crate::content_scan::Scope { app_slug: app_slug.to_string(), table_id: table.id.clone() }).ok();
+    let mut content_report: std::collections::BTreeMap<(String, String, String, String), i64> = std::collections::BTreeMap::new();
 
     let mut field_map: HashMap<String, String> = HashMap::new();
     if let Some(col_map) = mapping.get("fields").or_else(|| mapping.get("column_mappings")).or_else(|| mapping.get("columns")).and_then(|v| v.as_object()) {
@@ -642,6 +645,26 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
             preview.push(Value::Object(row_data.clone()));
         }
 
+        // What the detectors make of the row. A match is counted for its column and detector, and never kept. A `block` detector refuses the row.
+        if !row_has_error {
+            if let Some(g) = &guard {
+                for h in g.check(&row_data) {
+                    let column = field_map.iter().find(|(_, f)| **f == h.field).map(|(c, _)| c.clone()).unwrap_or_else(|| h.field.clone());
+                    *content_report.entry((column.clone(), h.field.clone(), h.detector_id.clone(), h.category.clone())).or_default() += 1;
+                    if h.action == scaffoldry_engine::detect::Action::Block {
+                        row_has_error = true;
+                        if errors.len() < 100 {
+                            errors.push(json!({
+                                "row": row_num,
+                                "column": column,
+                                "message": format!("Row {}: '{}' looks like it holds data of the kind '{}' (detector '{}'), which this institution does not allow here", row_num, h.field, h.category, h.detector_id),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
         if !row_has_error && !rules.is_empty() {
             if let Some(ref p) = person {
                 let scope = row_scope(p, None, false, &rules, &table.id, RowOp::Create);
@@ -708,6 +731,19 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
         "errors": errors,
         "proposed_options": proposed_options,
     });
+    // For each column, the detectors that matched and how many rows. Never a value.
+    let actions: HashMap<(String, String), &'static str> = guard
+        .as_ref()
+        .map(|g| g.armed_actions().into_iter().map(|(id, cat, a)| ((id, cat), a)).collect())
+        .unwrap_or_default();
+    result["sensitive_content"] = Value::Array(
+        content_report
+            .iter()
+            .map(|((column, field, detector, category), rows)| {
+                json!({ "column": column, "field": field, "detector": detector, "category": category, "rows": rows, "action": actions.get(&(detector.clone(), category.clone())).copied().unwrap_or("flag") })
+            })
+            .collect(),
+    );
     if let Some(plan) = &preset_plan {
         result["decisions"] = plan.to_json();
         result["preview"] = Value::Array(preview);
@@ -837,6 +873,9 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
     let mut rejected_rows: Vec<(Vec<String>, String)> = Vec::new();
 
     const BATCH_SIZE: usize = 1000;
+    // The detectors the organization set. `block` refuses a row. `flag` leaves a finding, with the counts and no value.
+    let content_scope = crate::content_scan::Scope { app_slug: app_slug.to_string(), table_id: table.id.clone() };
+    let content_guard = crate::content_scan::plan_from_repo(repo, &content_scope).ok();
 
     while processed_rows < total_rows {
         if ctx.cancelled()? {
@@ -862,12 +901,14 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         let b_rules = rules.clone();
         let b_person = person.clone();
         let b_preset = preset_plan.clone();
+        let b_guard = content_guard.clone();
 
-        let (batch_created, batch_updated, batch_rejected) = repo.with_client(move |c| {
+        let (batch_created, batch_updated, batch_rejected, batch_hits) = repo.with_client(move |c| {
             let mut tx = c.transaction()?;
             let mut created = 0;
             let mut updated = 0;
             let mut rejected = Vec::new();
+            let mut flagged: Vec<crate::content_scan::Hit> = Vec::new();
 
             for (offset, row) in batch_slice.iter().enumerate() {
                 let row_num = b_processed_offset + offset + 1;
@@ -978,6 +1019,17 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
                     }
                 }
 
+                if row_has_error.is_none() {
+                    if let Some(g) = &b_guard {
+                        let hits = g.check(&row_data);
+                        if let Some(h) = hits.iter().find(|h| h.action == scaffoldry_engine::detect::Action::Block) {
+                            row_has_error = Some(format!("'{}' looks like it holds data of the kind '{}' (detector '{}'), which this institution does not allow here", h.field, h.category, h.detector_id));
+                        } else {
+                            flagged.extend(hits.into_iter().filter(|h| h.action == scaffoldry_engine::detect::Action::Flag));
+                        }
+                    }
+                }
+
                 if let Some(err_msg) = row_has_error {
                     if !b_accept_errors {
                         return Err(crate::repository::RepositoryError::Conflict(format!("Row {}: {}", row_num, err_msg)));
@@ -1023,9 +1075,13 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
             }
 
             tx.commit()?;
-            Ok((created, updated, rejected))
+            Ok((created, updated, rejected, flagged))
         }).map_err(|e| JobError::Retry(e.to_string()))?;
 
+        // Findings for what the batch held that a `flag` detector looks for. A failure to leave one does not undo the import.
+        if let Err(e) = crate::content_scan::record_aggregate(repo, &content_scope, &crate::content_scan::merge_hits(&batch_hits), &[], "import") {
+            ctx.log(&format!("The findings of this batch could not be saved: {e}"))?;
+        }
         created_count += batch_created;
         updated_count += batch_updated;
         rejected_rows.extend(batch_rejected);

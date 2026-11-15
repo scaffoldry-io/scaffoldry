@@ -19,6 +19,7 @@ const FIELD_COLLECTION: &[(&str, &str)] = &[
     ("tree", "organizations"),
     ("position_types", "position_types"),
     ("labels", "labels"),
+    ("authorized_stores", "labels"),
     ("settings", "settings"),
     ("archives", "archives"),
 ];

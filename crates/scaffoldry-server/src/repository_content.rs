@@ -44,7 +44,7 @@ pub struct FindingFilter {
 
 const FINDING_COLUMNS: &str = "id, app_slug, table_id, field, detector_id, category, source, match_count, record_count, sample_record_ids, status, decided_by, \
     to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), reason, \
-    to_char(first_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
+    to_char(first_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), to_char(last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), note";
 
 fn finding_json(r: &postgres::Row) -> Value {
     json!({
@@ -52,7 +52,7 @@ fn finding_json(r: &postgres::Row) -> Value {
         "detector_id": r.get::<_, String>(4), "category": r.get::<_, String>(5), "source": r.get::<_, String>(6),
         "match_count": r.get::<_, i64>(7), "record_count": r.get::<_, i64>(8), "sample_record_ids": r.get::<_, Vec<String>>(9),
         "status": r.get::<_, String>(10), "decided_by": r.get::<_, Option<String>>(11), "decided_at": r.get::<_, Option<String>>(12),
-        "reason": r.get::<_, Option<String>>(13), "first_seen": r.get::<_, String>(14), "last_seen": r.get::<_, String>(15),
+        "reason": r.get::<_, Option<String>>(13), "first_seen": r.get::<_, String>(14), "last_seen": r.get::<_, String>(15), "note": r.get::<_, Option<String>>(16),
     })
 }
 
@@ -205,6 +205,16 @@ impl PostgresRepository {
             let open: i64 = c.query_one("SELECT count(*) FROM content_findings WHERE status = 'open'", &[])?.get(0);
             let expected: i64 = c.query_one("SELECT COALESCE(sum(matches), 0)::bigint FROM content_expected", &[])?.get(0);
             Ok((open, expected))
+        })
+    }
+
+    /// Every designation, as the scan and the write check read them.
+    pub fn store_rows(&self) -> Result<Vec<crate::content_scan::Store>, RepositoryError> {
+        self.with_client(|c| {
+            Ok(c.query("SELECT category, scope, app_slug, table_id, field, workspace_id FROM authorized_stores", &[])?
+                .iter()
+                .map(|r| crate::content_scan::Store { category: r.get(0), scope: r.get(1), app_slug: r.get(2), table_id: r.get(3), field: r.get(4), workspace_id: r.get(5) })
+                .collect())
         })
     }
 

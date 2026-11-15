@@ -535,6 +535,8 @@ export interface StoredFile {
 export interface RecordFile extends StoredFile {
   field: string;
   scan_state: "pending" | "clean" | "infected" | "error" | "skipped" | string;
+  /** Whether the text was read for sensitive content: `clean`, `found`, `unsupported`, or `skipped` for not yet. */
+  content_scan_state?: "clean" | "found" | "unsupported" | "skipped" | string;
 }
 
 /** The files of a record. `fields` names the attachment fields the person may read, and no others. */

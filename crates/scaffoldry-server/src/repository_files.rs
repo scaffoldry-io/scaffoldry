@@ -19,10 +19,12 @@ pub struct FileRef {
     pub attached: bool,
     pub deleted: bool,
     pub scan_state: String,
+    /// Whether the text of a plain-text file was read for sensitive content (`clean`, `found`, `unsupported`, or `skipped` for not yet).
+    pub content_scan_state: String,
 }
 
 const REF_COLUMNS: &str = "r.id, r.sha256, f.size, f.media_type, r.app_slug, r.table_id, r.record_id, r.field, r.name, r.uploaded_by, \
-    r.attached_at IS NOT NULL, r.deleted_at IS NOT NULL, r.scan_state";
+    r.attached_at IS NOT NULL, r.deleted_at IS NOT NULL, r.scan_state, r.content_scan_state";
 
 fn ref_of(r: &postgres::Row) -> FileRef {
     FileRef {
@@ -39,6 +41,7 @@ fn ref_of(r: &postgres::Row) -> FileRef {
         attached: r.get(10),
         deleted: r.get(11),
         scan_state: r.get(12),
+        content_scan_state: r.get(13),
     }
 }
 
@@ -164,6 +167,15 @@ impl PostgresRepository {
         let state = state.to_string();
         self.with_client(move |c| {
             c.execute("UPDATE file_refs SET scan_state = $2, scanned_at = NOW() WHERE id = $1 AND scan_state = 'pending'", &[&id, &state])?;
+            Ok(())
+        })
+    }
+
+    /// Records what the content scan made of a file.
+    pub fn set_content_scan_state(&self, id: Uuid, state: &str) -> Result<(), RepositoryError> {
+        let state = state.to_string();
+        self.with_client(move |c| {
+            c.execute("UPDATE file_refs SET content_scan_state = $2 WHERE id = $1", &[&id, &state])?;
             Ok(())
         })
     }

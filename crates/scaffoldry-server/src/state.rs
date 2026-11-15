@@ -274,6 +274,8 @@ pub struct ServerState {
     pub position_types: RwLock<HashMap<String, PositionType>>,
     /// Sensitivity labels by `(app, table, field)`. They can only raise a field's sensitivity.
     pub labels: RwLock<scaffoldry_engine::LabelSet>,
+    /// The places a category may live (sensitive content phase 2). They change with the labels, and a write is checked against them.
+    pub authorized_stores: RwLock<Vec<crate::content_scan::Store>>,
     pub settings: RwLock<HashMap<String, serde_json::Value>>,
     /// The archived apps and workspaces (lifecycle phase 2): `("app", slug)` and `("workspace", id)`.
     pub archives: RwLock<std::collections::HashSet<crate::repository_archives::ArchiveKey>>,
@@ -420,7 +422,9 @@ impl ServerState {
             }
             "labels" => {
                 let all = self.repository.list_labels()?;
+                let stores = self.repository.store_rows()?;
                 *self.labels.write().unwrap_or_else(|p| p.into_inner()) = all;
+                *self.authorized_stores.write().unwrap_or_else(|p| p.into_inner()) = stores;
             }
             "datasets" => {
                 let all: HashMap<String, PublishedDataset> = self
@@ -743,6 +747,7 @@ impl ServerState {
             tree: RwLock::new(tree),
             position_types: RwLock::new(position_types),
             labels: RwLock::new(scaffoldry_engine::LabelSet::new()),
+            authorized_stores: RwLock::new(Vec::new()),
             archives: RwLock::new(archives),
             settings: RwLock::new(settings_map),
             formula_rate_limits: RwLock::new(HashMap::new()),

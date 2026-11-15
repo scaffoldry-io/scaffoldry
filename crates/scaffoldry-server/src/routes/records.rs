@@ -304,7 +304,7 @@ async fn create_table_record(
     headers: HeaderMap,
     Path((slug, table_id)): Path<(String, String)>,
     Json(payload): Json<Value>,
-) -> Result<(StatusCode, Json<DatasetRecord>), (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let mut modified_payload = payload.clone();
     if let Value::Object(ref mut map) = modified_payload {
         if let Some(Value::Object(ref mut data_map)) = map.get_mut("data") {
@@ -333,7 +333,7 @@ async fn update_table_record(
     headers: HeaderMap,
     Path((slug, _table_id, id)): Path<(String, String, String)>,
     Json(payload): Json<Value>,
-) -> Result<Json<DatasetRecord>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     update_record(State(state), headers, Path((slug, id)), Json(payload)).await
 }
 
@@ -379,7 +379,7 @@ async fn create_record(
     headers: HeaderMap,
     Path(slug): Path<String>,
     Json(payload): Json<Value>,
-) -> Result<(StatusCode, Json<DatasetRecord>), (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
@@ -387,9 +387,18 @@ async fn create_record(
         .map_err(ServiceError::into_pair)?;
 
     let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
-    crate::service::records::create_record(&user, &origin, &slug, &payload, &state)
-        .map(|rec| (StatusCode::CREATED, Json(rec)))
+    crate::service::records::create_record_noted(&user, &origin, &slug, &payload, &[], &state)
+        .map(|(rec, notes)| (StatusCode::CREATED, Json(with_notes(&rec, notes))))
         .map_err(ServiceError::into_pair)
+}
+
+/// The record, and when a detector the organization set to `warn` matched, `sensitive_content`: the field, the detector and the category, never a value.
+fn with_notes(rec: &DatasetRecord, notes: Vec<Value>) -> Value {
+    let mut v = serde_json::to_value(rec).unwrap_or(Value::Null);
+    if !notes.is_empty() {
+        v["sensitive_content"] = Value::Array(notes);
+    }
+    v
 }
 
 async fn get_record(
@@ -410,14 +419,14 @@ async fn update_record(
     headers: HeaderMap,
     Path((slug, id)): Path<(String, String)>,
     Json(payload): Json<Value>,
-) -> Result<Json<DatasetRecord>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = session_user(&state, &headers)
         .ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
 
     // The service checks the app write, and, without it, a task grant on this one record (workflows phase 4).
     let origin = crate::guard::origin(&state, &headers).map_err(ServiceError::into_pair)?;
-    crate::service::records::update_record(&user, &origin, &slug, &id, &payload, &state)
-        .map(Json)
+    crate::service::records::update_record_noted(&user, &origin, &slug, &id, &payload, &state)
+        .map(|(rec, notes)| Json(with_notes(&rec, notes)))
         .map_err(ServiceError::into_pair)
 }
 

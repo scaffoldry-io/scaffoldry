@@ -299,7 +299,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 178 | [guests.md](guests.md) | 4 | Operating guests: closing forms, erasing, abuse signals | **COMPLETED** |
 | 179 | [admin-console.md](admin-console.md) | 4 | The rest: labels, routes, dataset classification, and screens | **COMPLETED** |
 | 180 | [sensitive-content.md](sensitive-content.md) | 2 | Stored records are scanned as a job. A compliance officer reviews findings and designates authorized stores | **COMPLETED** |
-| 181 | [sensitive-content.md](sensitive-content.md) | 3 | New writes, imports, and plain-text files are checked. Each detector flags, warns, or blocks, as the organization chooses |
+| 181 | [sensitive-content.md](sensitive-content.md) | 3 | New writes, imports, and plain-text files are checked. Each detector flags, warns, or blocks, as the organization chooses | **COMPLETED** |
 | 182 | [sensitive-content.md](sensitive-content.md) | 4 | History, exports, and snapshots honor the categories. The old flag name is gone |
 | 183 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Needs files from Johann |
 | 184 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |

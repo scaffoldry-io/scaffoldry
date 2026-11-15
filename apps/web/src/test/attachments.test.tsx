@@ -116,6 +116,16 @@ describe("AttachmentField", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("says a file whose text was not read is not scanned, and says nothing of one that was", async () => {
+    vi.mocked(api.listRecordFiles).mockResolvedValue({
+      fields: ["doc"],
+      files: [meta({ ref_id: "p", name: "p.png", content_scan_state: "unsupported" }), meta({ ref_id: "c", name: "c.csv", content_scan_state: "clean" })],
+    });
+    render(<Harness initial={[{ ref_id: "p", name: "p.png", size: 2048, media_type: "image/png" }, { ref_id: "c", name: "c.csv", size: 10, media_type: "text/csv" }]} />);
+    await screen.findByText("Content not scanned");
+    expect(screen.getAllByTestId("content-scan-unsupported")).toHaveLength(1);
+  });
+
   it("downloads through the authorized route", async () => {
     vi.mocked(api.listRecordFiles).mockResolvedValue({ fields: ["doc"], files: [meta({ scan_state: "clean" })] });
     const fetchFile = vi.spyOn(api, "fetchRecordFile").mockResolvedValue(new Blob(["x"], { type: "image/png" }));

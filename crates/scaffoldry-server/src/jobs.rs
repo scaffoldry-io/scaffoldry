@@ -228,6 +228,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::content_scan::scan_job,
     },
     JobKind {
+        name: "scan_file_content",
+        title: "Reading a file for sensitive content",
+        description: "Reads the text of a plain-text attachment after the antivirus scan and records where the organization's detectors match, as counts and never a value.",
+        max_attempts: 3,
+        max_concurrent: 2,
+        run: crate::content_scan::file_job,
+    },
+    JobKind {
         name: "purge_guests",
         title: "Removing unused guests",
         description: "Removes guests who made no record and have not been seen for 90 days.",

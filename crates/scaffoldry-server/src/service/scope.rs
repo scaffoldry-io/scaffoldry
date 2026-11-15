@@ -40,6 +40,7 @@ pub const RECORD_INTERNALS: &[&str] = &[
     // Writes. Each checks the create, update, or delete predicate on the stored and the new record.
     "create_record",
     "update_record",
+    "update_record_noted",
     "delete_record",
     "delete_record_checked",
     "restore_record",
