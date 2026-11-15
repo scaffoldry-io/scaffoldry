@@ -5,7 +5,7 @@
 use scaffoldry_core::standards::eduperson::EduPersonIdentity;
 use scaffoldry_engine::sensitivity::{validate_categories, validate_detectors, Category};
 use scaffoldry_engine::{
-    effective_ferpa_sensitive, AppManifest, AppView, DataLabel, FieldSpec, FieldType, LabelSet,
+    effective_sensitivity, AppManifest, AppView, DataLabel, FieldSpec, FieldType, LabelSet,
     ManifestEngine, ViewType,
 };
 use serde_json::json;
@@ -31,41 +31,41 @@ fn category(id: &str, protected: bool) -> Category {
 
 #[test]
 fn with_no_label_or_category_the_manifest_flag_decides() {
-    assert!(!effective_ferpa_sensitive(&field("a", false), None, &[]).is_protected());
-    assert!(effective_ferpa_sensitive(&field("a", true), None, &[]).is_protected());
+    assert!(!effective_sensitivity(&field("a", false), None, &[]).is_protected());
+    assert!(effective_sensitivity(&field("a", true), None, &[]).is_protected());
 }
 
 #[test]
 fn a_label_can_raise_a_field_the_manifest_did_not_flag() {
-    assert!(effective_ferpa_sensitive(&field("a", false), Some(&label(true)), &[]).is_protected());
+    assert!(effective_sensitivity(&field("a", false), Some(&label(true)), &[]).is_protected());
 }
 
 #[test]
 fn a_label_of_false_never_lowers_a_flagged_field() {
-    assert!(effective_ferpa_sensitive(&field("a", true), Some(&label(false)), &[]).is_protected());
-    assert!(!effective_ferpa_sensitive(&field("a", false), Some(&label(false)), &[]).is_protected());
+    assert!(effective_sensitivity(&field("a", true), Some(&label(false)), &[]).is_protected());
+    assert!(!effective_sensitivity(&field("a", false), Some(&label(false)), &[]).is_protected());
 }
 
 // 7. The legacy flag is the category ferpa and is protected. A category marked unprotected is not.
 #[test]
 fn the_legacy_flag_is_the_category_ferpa_and_is_protected() {
-    let s = effective_ferpa_sensitive(&field("a", true), None, &[]);
+    let s = effective_sensitivity(&field("a", true), None, &[]);
     assert!(s.is_protected());
     assert!(s.categories.contains("ferpa"));
 
     // Even when the organization has no ferpa category, or marks it unprotected.
-    let s = effective_ferpa_sensitive(&field("a", true), None, &[category("ferpa", false)]);
+    let s = effective_sensitivity(&field("a", true), None, &[category("ferpa", false)]);
     assert!(s.is_protected(), "the legacy flag protects on its own");
 }
 
 #[test]
 fn a_field_is_protected_when_any_of_its_categories_is_protected() {
     let cats = [category("pci", true), category("pii", false)];
-    let s = effective_ferpa_sensitive(&field_in("card", &["pci"]), None, &cats);
+    let s = effective_sensitivity(&field_in("card", &["pci"]), None, &cats);
     assert!(s.is_protected());
     assert!(s.categories.contains("pci"));
 
-    let both = effective_ferpa_sensitive(&field_in("x", &["pii", "pci"]), None, &cats);
+    let both = effective_sensitivity(&field_in("x", &["pii", "pci"]), None, &cats);
     assert!(both.is_protected(), "one protected category is enough");
     assert_eq!(both.categories.len(), 2);
 }
@@ -73,11 +73,11 @@ fn a_field_is_protected_when_any_of_its_categories_is_protected() {
 #[test]
 fn a_field_whose_only_category_is_not_protected_is_not_protected() {
     let cats = [category("pii", false)];
-    let s = effective_ferpa_sensitive(&field_in("email", &["pii"]), None, &cats);
+    let s = effective_sensitivity(&field_in("email", &["pii"]), None, &cats);
     assert!(!s.is_protected());
     assert!(s.categories.contains("pii"), "it still carries the category");
 
-    let unknown = effective_ferpa_sensitive(&field_in("x", &["not-defined"]), None, &cats);
+    let unknown = effective_sensitivity(&field_in("x", &["not-defined"]), None, &cats);
     assert!(!unknown.is_protected(), "a category the organization has not defined protects nothing");
 }
 
@@ -222,14 +222,14 @@ fn all_sources() -> Vec<PathBuf> {
     files
 }
 
-/// Every read of a field spec's flag goes through `effective_ferpa_sensitive`. A direct
+/// Every read of a field spec's flag goes through `effective_sensitivity`. A direct
 /// `.ferpa_sensitive` read anywhere else in the source is a bypass of a label or a category.
 #[test]
 fn no_source_file_reads_a_field_flag_outside_the_one_function() {
     let mut hits = Vec::new();
     for f in &all_sources() {
         let text = std::fs::read_to_string(f).unwrap();
-        let exempt = text.find("pub fn effective_ferpa_sensitive").map(|start| {
+        let exempt = text.find("pub fn effective_sensitivity").map(|start| {
             let end = text[start..].find("\n}\n").map(|e| start + e + 3).unwrap_or(text.len());
             (start, end)
         });
@@ -272,17 +272,17 @@ fn a_label_with_categories_is_protected_only_through_a_protected_one() {
     let mut named = label(false);
     named.categories = vec!["pci".to_string()];
     let f = field("a", false);
-    let s = effective_ferpa_sensitive(&f, Some(&named), &[category("pci", true)]);
+    let s = effective_sensitivity(&f, Some(&named), &[category("pci", true)]);
     assert!(s.is_protected(), "the label's category is protected");
     assert!(s.categories.contains("pci"));
-    let s = effective_ferpa_sensitive(&f, Some(&named), &[category("pci", false)]);
+    let s = effective_sensitivity(&f, Some(&named), &[category("pci", false)]);
     assert!(!s.is_protected(), "a category marked unprotected protects nothing");
     assert!(s.categories.contains("pci"), "but the field still carries it");
-    assert!(!effective_ferpa_sensitive(&f, Some(&named), &[]).is_protected(), "a category the settings do not list protects nothing");
+    assert!(!effective_sensitivity(&f, Some(&named), &[]).is_protected(), "a category the settings do not list protects nothing");
     // A label that names categories ignores its own flag: it is protected through them or not at all.
     let mut flagged = label(true);
     flagged.categories = vec!["pci".to_string()];
-    assert!(!effective_ferpa_sensitive(&f, Some(&flagged), &[category("pci", false)]).is_protected());
+    assert!(!effective_sensitivity(&f, Some(&flagged), &[category("pci", false)]).is_protected());
     // The manifest flag protects on its own, whatever the label says.
-    assert!(effective_ferpa_sensitive(&field("a", true), Some(&named), &[category("pci", false)]).is_protected());
+    assert!(effective_sensitivity(&field("a", true), Some(&named), &[category("pci", false)]).is_protected());
 }

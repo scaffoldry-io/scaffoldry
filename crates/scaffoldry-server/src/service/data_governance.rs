@@ -11,7 +11,7 @@ use crate::service::ServiceError;
 use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::ledger::DecisionType;
 use scaffoldry_core::standards::ceds::CedsElement;
-use scaffoldry_engine::{effective_ferpa_sensitive, AppManifest, DataLabel, FieldSpec, LabelSet, PageKind};
+use scaffoldry_engine::{effective_sensitivity, AppManifest, DataLabel, FieldSpec, LabelSet, PageKind};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
@@ -145,13 +145,13 @@ fn label_for<'a>(labels: &'a LabelSet, app: &str, table: &str, field: &str) -> O
 
 /// Whether the manifest itself flags the field. With no label and no categories, the one function answers from the flag alone.
 fn manifest_flag(f: &FieldSpec) -> bool {
-    effective_ferpa_sensitive(f, None, &[]).protected
+    effective_sensitivity(f, None, &[]).protected
 }
 
 /// Whether the label raises the field. A blank field has no flag of its own, so the answer is the label's.
 fn overlay_flag(label: Option<&DataLabel>) -> bool {
     let blank = FieldSpec::simple("x", "x", scaffoldry_engine::FieldType::Text, false, false);
-    effective_ferpa_sensitive(&blank, label, &[]).protected
+    effective_sensitivity(&blank, label, &[]).protected
 }
 
 fn type_name(f: &FieldSpec) -> String {
@@ -187,7 +187,7 @@ pub fn fields(caller: &AuthUser, q: &std::collections::HashMap<String, String>, 
             }
             for f in &t.fields {
                 let label = label_for(&labels, &m.slug, &t.id, &f.name);
-                let effective = effective_ferpa_sensitive(f, label, &categories).protected;
+                let effective = effective_sensitivity(f, label, &categories).protected;
                 let ceds = m.ceds_mappings.get(&f.name).cloned();
                 let protected_by_standard = ceds.as_deref().and_then(CedsElement::from_code).is_some_and(|e| e.is_ferpa_sensitive());
                 let is_suggested = protected_by_standard && !effective;
@@ -229,7 +229,7 @@ pub(crate) fn flag_tables(state: &SharedState, manifests: &[AppManifest], touche
         .iter()
         .filter_map(|(app, table)| {
             let t = manifests.iter().find(|m| &m.slug == app)?.tables.iter().find(|t| &t.id == table)?;
-            let names = t.fields.iter().filter(|f| effective_ferpa_sensitive(f, label_for(after, app, table, &f.name), &categories).protected).map(|f| f.name.clone()).collect();
+            let names = t.fields.iter().filter(|f| effective_sensitivity(f, label_for(after, app, table, &f.name), &categories).protected).map(|f| f.name.clone()).collect();
             Some(FlagTable { app_slug: app.clone(), table_id: table.clone(), names })
         })
         .collect()

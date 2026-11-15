@@ -388,7 +388,7 @@ fn app_sensitivity(
     for table in &app.tables {
         for f in &table.fields {
             let label = labels.get(&(app.slug.clone(), table.id.clone(), f.name.clone()));
-            let s = scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories);
+            let s = scaffoldry_engine::effective_sensitivity(f, label, &categories);
             protected |= s.protected;
             carried.extend(s.categories);
         }

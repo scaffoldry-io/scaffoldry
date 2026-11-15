@@ -1678,7 +1678,7 @@ pub(crate) fn sensitive_fields_of(app_slug: &str, table: &str, state: &SharedSta
         .iter()
         .filter(|f| {
             let label = labels.get(&(app_slug.to_string(), canonical.clone(), f.name.clone()));
-            scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected
+            scaffoldry_engine::effective_sensitivity(f, label, &categories).protected
         })
         .map(|f| f.name.clone())
         .collect()
@@ -1713,7 +1713,7 @@ fn withheld_on(caller: &AuthUser, app_slug: &str, table: &str, fields: &[FieldSp
         let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
         fields
             .iter()
-            .filter(|f| scaffoldry_engine::effective_ferpa_sensitive(f, labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone())), &categories).protected)
+            .filter(|f| scaffoldry_engine::effective_sensitivity(f, labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone())), &categories).protected)
             .map(|f| (f.name.clone(), scaffoldry_engine::effective_mask(f, &categories)))
             .collect()
     };
@@ -1811,7 +1811,7 @@ pub fn redact_records(caller: &AuthUser, app_slug: &str, mut rows: Vec<DatasetRe
             let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
             fields
                 .iter()
-                .filter(|f| scaffoldry_engine::effective_ferpa_sensitive(f, labels.get(&(app_slug.to_string(), canonical.clone(), f.name.clone())), &categories).protected)
+                .filter(|f| scaffoldry_engine::effective_sensitivity(f, labels.get(&(app_slug.to_string(), canonical.clone(), f.name.clone())), &categories).protected)
                 .map(|f| f.name.clone())
                 .filter(|n| !withheld.contains_key(n))
                 .collect()
@@ -2039,7 +2039,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
             fields.iter().any(|f| {
                 let label = labels.get(&(app_slug.to_string(), table.to_string(), f.name.clone()));
-                scaffoldry_engine::effective_ferpa_sensitive(f, label, &categories).protected
+                scaffoldry_engine::effective_sensitivity(f, label, &categories).protected
             })
         };
         if sensitive_hidden {

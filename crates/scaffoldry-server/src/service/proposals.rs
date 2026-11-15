@@ -9,7 +9,7 @@ use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::standards::ceds::CedsElement;
 use scaffoldry_core::workflow::describe_rule;
 use scaffoldry_core::{AutomationRule, StepKind};
-use scaffoldry_engine::{effective_ferpa_sensitive, validate_manifest, AppManifest, FieldSpec, FieldType, HostRouter, PageKind};
+use scaffoldry_engine::{effective_sensitivity, validate_manifest, AppManifest, FieldSpec, FieldType, HostRouter, PageKind};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -98,7 +98,7 @@ pub(crate) fn sensitive_fields(m: &AppManifest, state: &SharedState) -> BTreeSet
                 .get(&f.name)
                 .and_then(|code| CedsElement::from_code(code))
                 .is_some_and(|e| e.is_ferpa_sensitive());
-            if effective_ferpa_sensitive(f, label, &categories).protected || by_ceds {
+            if effective_sensitivity(f, label, &categories).protected || by_ceds {
                 out.insert((table.id.clone(), f.name.clone()));
             }
         }

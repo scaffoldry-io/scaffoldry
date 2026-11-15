@@ -38,6 +38,8 @@ export interface AdminOverviewData {
   retention?: { placeholder: boolean };
   /** Integrations phase 5: webhooks that are failing or off, and deliveries that ended dead in the last day. */
   outbound?: { webhooks_failing: number; webhooks_disabled: number; deliveries_dead_last_day: number };
+  /** Sensitive content phase 4: open findings, the oldest, the last finished scan, tables no scan has covered, and matches inside authorized stores. */
+  sensitive_content?: { open: number; oldest_open: string | null; last_scan: string | null; tables_never_scanned: number; expected: number };
   /** Connections phase 6: data connections by health, and the age of the oldest successful sync of one that is on. */
   connections?: { healthy: number; failing: number; needs_review: number; disabled: number; oldest_success_age_secs: number | null };
   files?: {

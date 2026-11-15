@@ -276,6 +276,36 @@ export function Overview() {
           </div>
         )}
 
+        {/* SENSITIVE CONTENT CARD */}
+        {data.sensitive_content && (
+          <div
+            data-testid="admin-overview-sensitive-content-card"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+          >
+            <div className="mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Sensitive content</span>
+            </div>
+            <div className="space-y-2 mt-4">
+              {(
+                [
+                  ["Open findings", String(data.sensitive_content.open), "overview-sensitive-open"],
+                  ["Oldest open", data.sensitive_content.oldest_open ?? "none", "overview-sensitive-oldest"],
+                  ["Last scan", data.sensitive_content.last_scan ?? "never", "overview-sensitive-last-scan"],
+                  ["Tables never scanned", String(data.sensitive_content.tables_never_scanned), "overview-sensitive-never"],
+                  ["Expected in authorized stores", String(data.sensitive_content.expected), "overview-sensitive-expected"],
+                ] as const
+              ).map(([label, value, id]) => (
+                <div key={id} className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 dark:text-slate-400">{label}</span>
+                  <span className="font-mono font-semibold text-slate-900 dark:text-slate-100" data-testid={id}>
+                    {value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* JOBS TELEMETRY CARD */}
         {data.outbound && (
           <div

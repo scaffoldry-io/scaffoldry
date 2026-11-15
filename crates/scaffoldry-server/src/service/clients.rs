@@ -10,7 +10,7 @@ use crate::service::identity::hash_token;
 use crate::service::ServiceError;
 use crate::state::{AuthUser, RecordDecisionInput, SharedState};
 use scaffoldry_core::DecisionType;
-use scaffoldry_engine::{effective_ferpa_sensitive, AppManifest, HostRouter};
+use scaffoldry_engine::{effective_sensitivity, AppManifest, HostRouter};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -165,7 +165,7 @@ fn check_ceiling(ceiling: &Ceiling, state: &SharedState) -> Result<(), ServiceEr
                     .find(|f| &f.name == name)
                     .ok_or_else(|| ServiceError::bad_request(format!("The table '{}' has no field '{name}'", t.table_id)))?;
                 let label = labels.get(&(app.app_slug.clone(), table.id.clone(), name.clone()));
-                if effective_ferpa_sensitive(field, label, &categories).is_protected() {
+                if effective_sensitivity(field, label, &categories).is_protected() {
                     return Err(ServiceError::ClientSensitiveField(format!(
                         "The field '{name}' of '{}' is sensitive. An outside app cannot be given a sensitive field.",
                         table.name

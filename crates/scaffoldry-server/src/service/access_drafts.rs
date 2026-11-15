@@ -261,7 +261,7 @@ fn unmasked_fields(state: &SharedState, scope: &Scope, out: &mut Vec<Value>) {
         }
         for t in &m.tables {
             for f in &t.fields {
-                let s = scaffoldry_engine::effective_ferpa_sensitive(f, None, &categories);
+                let s = scaffoldry_engine::effective_sensitivity(f, None, &categories);
                 if s.protected && f.mask.is_none() {
                     out.push(json!({
                         "kind": "field_unmasked", "app_slug": m.slug, "table_id": t.id, "field": f.name,
