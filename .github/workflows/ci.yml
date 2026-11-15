@@ -259,7 +259,7 @@ jobs:
   # nightly, and by hand. A skipped run still reports success, so `validate` does not wait on it.
   million-rows:
     runs-on: ubuntu-latest
-    # Two proofs seed 1,000,000 rows each. The pair took 28 minutes on a runner with the old limit of 30.
+    # Three proofs seed 1,000,000 rows each. The first pair took 28 minutes on a runner with the old limit of 30, and the content scan adds about 4.
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -274,7 +274,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$EVENT" != "pull_request" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          paths='^(crates/scaffoldry-core/migrations/|crates/scaffoldry-server/src/repository|crates/scaffoldry-server/src/service/(records|scope|access)\.rs|crates/scaffoldry-engine/src/access\.rs|crates/scaffoldry-server/tests/(million_rows|decide_benchmark)_test\.rs|crates/scaffoldry-core/src/reach\.rs|Cargo\.lock$|\.github/workflows/ci\.yml$)'
+          paths='^(crates/scaffoldry-core/migrations/|crates/scaffoldry-server/src/repository|crates/scaffoldry-server/src/service/(records|scope|access)\.rs|crates/scaffoldry-engine/src/access\.rs|crates/scaffoldry-server/tests/(million_rows|decide_benchmark|content_scan_scale)_test\.rs|crates/scaffoldry-server/src/content_scan\.rs|crates/scaffoldry-core/src/reach\.rs|Cargo\.lock$|\.github/workflows/ci\.yml$)'
           if git diff --name-only "$BASE"...HEAD | grep -Eq "$paths"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -312,6 +312,10 @@ jobs:
       - name: Hard Gate - One decision on a large institution
         if: steps.scope.outputs.run == 'true'
         run: cargo test --release -p scaffoldry-server --test decide_benchmark_test -- --ignored --nocapture
+
+      - name: Hard Gate - Content scan of a million rows
+        if: steps.scope.outputs.run == 'true'
+        run: cargo test --release -p scaffoldry-server --test content_scan_scale_test -- --ignored --nocapture
 
       - name: Drop this repository's own build output before the cache is saved
         if: steps.scope.outputs.run == 'true'

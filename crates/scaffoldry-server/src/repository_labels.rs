@@ -28,9 +28,9 @@ impl PostgresRepository {
     /// Every label. The set holds exceptions only.
     pub fn list_labels(&self) -> Result<LabelSet, RepositoryError> {
         self.with_client(|c| {
-            Ok(c.query("SELECT app_slug, table_id, field, ferpa_sensitive, note, set_by FROM data_labels", &[])?
+            Ok(c.query("SELECT app_slug, table_id, field, ferpa_sensitive, note, set_by, categories FROM data_labels", &[])?
                 .iter()
-                .map(|r| ((r.get::<_, String>(0), r.get::<_, String>(1), r.get::<_, String>(2)), DataLabel { ferpa_sensitive: r.get(3), note: r.get(4), set_by: r.get(5) }))
+                .map(|r| ((r.get::<_, String>(0), r.get::<_, String>(1), r.get::<_, String>(2)), DataLabel { ferpa_sensitive: r.get(3), note: r.get(4), set_by: r.get(5), categories: r.get(6) }))
                 .collect())
         })
     }

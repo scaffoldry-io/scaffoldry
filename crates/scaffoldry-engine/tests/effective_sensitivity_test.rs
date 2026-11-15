@@ -22,7 +22,7 @@ fn field_in(name: &str, categories: &[&str]) -> FieldSpec {
 }
 
 fn label(sensitive: bool) -> DataLabel {
-    DataLabel { ferpa_sensitive: sensitive, note: "test".to_string(), set_by: "compliance@state.edu".to_string() }
+    DataLabel { ferpa_sensitive: sensitive, note: "test".to_string(), set_by: "compliance@state.edu".to_string(), categories: Vec::new() }
 }
 
 fn category(id: &str, protected: bool) -> Category {
@@ -263,4 +263,26 @@ fn the_category_name_ferpa_appears_in_source_only_as_the_legacy_mapping() {
     println!("grep '\"ferpa\"' over crates/*/src:\n{}", hits.join("\n"));
     assert_eq!(hits.len(), 1, "only the legacy mapping may name the category:\n{}", hits.join("\n"));
     assert!(hits[0].contains("LEGACY_FLAG_CATEGORY"), "{}", hits[0]);
+}
+
+// Sensitive content phase 2: a label can carry categories. Such a label is protected only if one of them is marked protected, and a
+// manifest flag still protects on its own.
+#[test]
+fn a_label_with_categories_is_protected_only_through_a_protected_one() {
+    let mut named = label(false);
+    named.categories = vec!["pci".to_string()];
+    let f = field("a", false);
+    let s = effective_ferpa_sensitive(&f, Some(&named), &[category("pci", true)]);
+    assert!(s.is_protected(), "the label's category is protected");
+    assert!(s.categories.contains("pci"));
+    let s = effective_ferpa_sensitive(&f, Some(&named), &[category("pci", false)]);
+    assert!(!s.is_protected(), "a category marked unprotected protects nothing");
+    assert!(s.categories.contains("pci"), "but the field still carries it");
+    assert!(!effective_ferpa_sensitive(&f, Some(&named), &[]).is_protected(), "a category the settings do not list protects nothing");
+    // A label that names categories ignores its own flag: it is protected through them or not at all.
+    let mut flagged = label(true);
+    flagged.categories = vec!["pci".to_string()];
+    assert!(!effective_ferpa_sensitive(&f, Some(&flagged), &[category("pci", false)]).is_protected());
+    // The manifest flag protects on its own, whatever the label says.
+    assert!(effective_ferpa_sensitive(&field("a", true), Some(&named), &[category("pci", false)]).is_protected());
 }

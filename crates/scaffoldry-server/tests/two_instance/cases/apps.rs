@@ -61,6 +61,10 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/guest/{app}/{form}/files".into(), case!(guest_file_upload));
     m.insert("POST /api/v1/guest/stop".into(), case!(guest_stop));
     m.insert("PUT /api/v1/admin/labels".into(), case!(label_put));
+    m.insert("POST /api/v1/admin/content-scans".into(), case!(content_scan_queue));
+    m.insert("POST /api/v1/admin/content-findings/{id}/decide".into(), case!(content_finding_decide));
+    m.insert("PUT /api/v1/admin/authorized-stores".into(), case!(authorized_store_put));
+    m.insert("DELETE /api/v1/admin/authorized-stores".into(), case!(authorized_store_delete));
     m.insert("PUT /api/v1/admin/datasets/{id}/classification".into(), case!(dataset_classify));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
@@ -716,6 +720,63 @@ async fn guest_erase(w: World) -> Outcome {
     ensure(s == StatusCode::UNAUTHORIZED, format!("B stops the erased guest's session: {s} {body}"))?;
     let shown = status(w.rb("GET", "/api/v1/admin/guests", ADMIN, None).await, StatusCode::OK, "B lists the guests")?;
     ensure(has(&shown, "Former applicant"), format!("B shows a former applicant: {shown}"))
+}
+
+async fn content_scan_queue(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let made = status(w.wa("POST", "/api/v1/admin/content-scans", ADMIN, Some(json!({ "app_slug": slug, "table_id": "apps" }))).await, StatusCode::ACCEPTED, "A queues a scan")?;
+    let id = made["job_id"].as_str().ok_or("a job id")?.to_string();
+    // The queue is the database. B asks for the same table and is told of the job that is already waiting.
+    let again = status(w.rb("POST", "/api/v1/admin/content-scans", ADMIN, Some(json!({ "app_slug": slug, "table_id": "apps" }))).await, StatusCode::ACCEPTED, "B asks for the same scan")?;
+    ensure(again["job_id"] == id.as_str(), format!("B is given A's job: {again}"))
+}
+
+/// A finding made as a scan makes it, through the database both servers share.
+fn plant_finding(w: &World, slug: &str) -> String {
+    let (slug, id) = (slug.to_string(), uuid::Uuid::new_v4());
+    w.db.run(move |c| {
+        c.execute(
+            "INSERT INTO content_findings (id, app_slug, table_id, field, detector_id, category, source, match_count, record_count) VALUES ($1, $2, 'apps', 'name', 'us_ssn', 'pii', 'scan', 2, 1)",
+            &[&id, &slug],
+        )
+        .unwrap();
+    });
+    id.to_string()
+}
+
+async fn content_finding_decide(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let id = plant_finding(&w, &slug);
+    status(w.wa("POST", &format!("/api/v1/admin/content-findings/{id}/decide"), ADMIN, Some(json!({ "decision": "confirm", "reason": "It holds ids." }))).await, StatusCode::OK, "A confirms")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/content-findings?app_slug={slug}&status=confirmed"), ADMIN, None).await, StatusCode::OK, "B lists the confirmed findings")?;
+    ensure(has(&seen, &id), format!("B sees the decision A made: {seen}"))?;
+    let fields = status(w.rb("GET", &format!("/api/v1/admin/fields?app={slug}&sensitive=true"), ADMIN, None).await, StatusCode::OK, "B lists the sensitive fields")?;
+    ensure(has(&fields, "name"), format!("B reads the label A raised: {fields}"))?;
+    let (s, body) = w.rb("POST", &format!("/api/v1/admin/content-findings/{id}/decide"), ADMIN, Some(json!({ "decision": "dismiss", "reason": "again" }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("B refuses a second decision: {s} {body}"))
+}
+
+fn store_body(slug: &str) -> Value {
+    json!({ "category": "pci", "scope": "field", "app_slug": slug, "table_id": "apps", "field": "name", "reason": "Payments." })
+}
+
+async fn authorized_store_put(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    status(w.wa("PUT", "/api/v1/admin/authorized-stores", ADMIN, Some(store_body(&slug))).await, StatusCode::OK, "A designates a store")?;
+    let listed = status(w.rb("GET", "/api/v1/admin/authorized-stores", ADMIN, None).await, StatusCode::OK, "B lists the stores")?;
+    ensure(has(&listed, &slug), format!("B lists the store A made: {listed}"))?;
+    let fields = status(w.rb("GET", &format!("/api/v1/admin/fields?app={slug}&sensitive=true"), ADMIN, None).await, StatusCode::OK, "B lists the sensitive fields")?;
+    ensure(has(&fields, "name"), format!("B reads the label the designation made: {fields}"))
+}
+
+async fn authorized_store_delete(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    status(w.wa("PUT", "/api/v1/admin/authorized-stores", ADMIN, Some(store_body(&slug))).await, StatusCode::OK, "A designates a store")?;
+    status(w.rb("DELETE", "/api/v1/admin/authorized-stores", ADMIN, Some(store_body(&slug))).await, StatusCode::OK, "B removes it")?;
+    let listed = status(w.wa("GET", "/api/v1/admin/authorized-stores", ADMIN, None).await, StatusCode::OK, "A lists the stores")?;
+    ensure(!has(&listed, &slug), format!("the store is gone on A: {listed}"))?;
+    let fields = status(w.wa("GET", &format!("/api/v1/admin/fields?app={slug}&sensitive=true"), ADMIN, None).await, StatusCode::OK, "A lists the sensitive fields")?;
+    ensure(has(&fields, "name"), format!("the label stays: {fields}"))
 }
 
 async fn label_put(w: World) -> Outcome {

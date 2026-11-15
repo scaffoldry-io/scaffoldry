@@ -175,6 +175,7 @@ async fn get_settings(
 async fn put_setting(
     State(state): State<SharedState>,
     Path(key): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
@@ -213,6 +214,7 @@ async fn put_setting(
         let _ = write!(val_hash, "{:02x}", b);
     }
 
+    let was = state.settings.read().ok().and_then(|s| s.get(&key).cloned());
     // The row, the counter, and the ledger entry commit together. Then this instance reloads, as every other will.
     match state.repository.put_platform_setting(
         &key,
@@ -224,7 +226,10 @@ async fn put_setting(
             app_slug: None,
             decision_type: scaffoldry_core::ledger::DecisionType::PolicyRevision,
             oscal_control_id: "AC-03".to_string(),
-            rationale: format!("Platform setting '{}' updated by {}", key, user.eppn),
+            rationale: match query.get("reason").map(|r| r.trim()).filter(|r| !r.is_empty() && r.chars().count() <= 500) {
+                Some(reason) => format!("Platform setting '{}' updated by {}. Reason: {reason}", key, user.eppn),
+                None => format!("Platform setting '{}' updated by {}", key, user.eppn),
+            },
             payload: json!({ "key": key, "value_sha256": val_hash }),
         },
     ) {
@@ -233,6 +238,11 @@ async fn put_setting(
     };
     if let Err(e) = state.refresh() {
         return ServiceError::StorageUnavailable(format!("The setting was saved, but this server could not reload: {e}")).into_response();
+    }
+
+    // A changed detector or category scans every table again, and sets aside what was dismissed for a detector that changed.
+    if key == "sensitivity.detectors" || key == "sensitivity.categories" {
+        crate::service::content_governance::settings_changed(&state, &key, was.as_ref(), &payload, &user.eppn);
     }
 
     if key == "platform.timezone" {
