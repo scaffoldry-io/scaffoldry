@@ -9,6 +9,8 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/apps/{slug}/pages/{id}/call".into(), case!(page_call_route));
     m.insert("POST /api/v1/apps/{slug}/automations".into(), case!(automation_create));
     m.insert("POST /api/v1/flows/runs/{instance_id}/retry".into(), case!(flow_retry));
+    m.insert("POST /api/v1/admin/flows/{rule_id}/disable".into(), case!(flow_disable));
+    m.insert("POST /api/v1/admin/flows/{rule_id}/enable".into(), case!(flow_enable));
     exempt(m, "POST /api/v1/apps/{slug}/automations/simulate", "runs a rule against a sample and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/access/preview", "asks what a person could see and stores nothing");
     exempt(m, "POST /api/v1/apps/{slug}/fields/convert-preview", "reports what a field conversion would do and stores nothing");
@@ -181,6 +183,39 @@ async fn flow_retry(w: World) -> Outcome {
     // The limit goes back to its default whatever happened, so later cases are not affected.
     let _ = w.wa("PUT", "/api/v1/settings/flows.max_writes_per_run", ADMIN, Some(json!(1000))).await;
     outcome
+}
+
+/// A flow in a new app, made on A.
+async fn made_flow(w: &World) -> Result<String, String> {
+    let slug = make_app(w).await?;
+    let id = unique("p11flow");
+    let rule = json!({
+        "id": id, "name": format!("Console {id}"), "enabled": true, "trigger": "RecordCreated",
+        "steps": [{ "id": "one", "when": [], "kind": { "Service": { "action": { "UpdateRecord": { "target": "Trigger", "fields": [["status", "\"one\""]] } } } } }]
+    });
+    status(w.wa("POST", &format!("/api/v1/apps/{slug}/automations"), OWNER, Some(rule)).await, StatusCode::CREATED, "create the flow")?;
+    Ok(id)
+}
+
+fn flow_state(listed: &Value, id: &str) -> String {
+    listed["flows"].as_array().and_then(|l| l.iter().find(|f| f["rule_id"] == id)).and_then(|f| f["state"].as_str()).unwrap_or("missing").to_string()
+}
+
+/// Workflows phase 11: A turns a flow off, and B shows it as `Disabled` on its next request.
+async fn flow_disable(w: World) -> Outcome {
+    let id = made_flow(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/admin/flows/{id}/disable"), ADMIN, Some(json!({ "reason": "A pause." }))).await, StatusCode::OK, "A disables")?;
+    let seen = status(w.rb("GET", "/api/v1/admin/flows", ADMIN, None).await, StatusCode::OK, "B lists the flows")?;
+    ensure(flow_state(&seen, &id) == "Disabled", format!("B shows the flow A turned off: {seen}"))
+}
+
+/// A turns a flow off, B turns it on again, and A shows it as `Active`.
+async fn flow_enable(w: World) -> Outcome {
+    let id = made_flow(&w).await?;
+    status(w.wa("POST", &format!("/api/v1/admin/flows/{id}/disable"), ADMIN, Some(json!({ "reason": "A pause." }))).await, StatusCode::OK, "A disables")?;
+    status(w.rb("POST", &format!("/api/v1/admin/flows/{id}/enable"), ADMIN, Some(json!({ "reason": "The pause is over." }))).await, StatusCode::OK, "B enables")?;
+    let seen = status(w.wa("GET", "/api/v1/admin/flows", ADMIN, None).await, StatusCode::OK, "A lists the flows")?;
+    ensure(flow_state(&seen, &id) == "Active", format!("A shows the flow B turned on: {seen}"))
 }
 
 async fn proposal_decide(w: World) -> Outcome {

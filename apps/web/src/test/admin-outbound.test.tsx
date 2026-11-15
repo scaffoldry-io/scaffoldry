@@ -177,3 +177,17 @@ describe("the Overview's sensitive content card", () => {
     expect(within(card).getByTestId("overview-sensitive-expected")).toHaveTextContent("12");
   });
 });
+
+describe("the Overview's flows card", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it("shows the flows, those that cross workspaces, the tripped ones, and the work items repaired", async () => {
+    vi.spyOn(apiClient, "getAdminOverview").mockResolvedValue({ ...overview(undefined), flows: { total: 5, cross_workspace: 2, tripped: 1, work_drift_repaired: null } });
+    render(<Overview />);
+    const card = await screen.findByTestId("admin-overview-flows-card");
+    expect(within(card).getByTestId("overview-flows-total")).toHaveTextContent("5");
+    expect(within(card).getByTestId("overview-flows-cross")).toHaveTextContent("2");
+    expect(within(card).getByTestId("overview-flows-tripped")).toHaveTextContent("1");
+    expect(within(card).getByTestId("overview-flows-drift")).toHaveTextContent("none yet");
+  });
+});

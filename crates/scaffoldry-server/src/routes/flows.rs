@@ -21,6 +21,27 @@ pub fn router() -> Router<SharedState> {
         .route("/flows/runs/{instance_id}/retry", post(retry))
         .route("/flows/{id}/versions", get(versions))
         .route("/flows/{id}/versions/compare", get(compare))
+        // Workflows phase 11: the console panel.
+        .route("/admin/flows", get(admin_list))
+        .route("/admin/flows/{rule_id}/disable", post(admin_disable))
+        .route("/admin/flows/{rule_id}/enable", post(admin_enable))
+}
+
+async fn admin_list(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let caller = caller(user, &headers, &state)?;
+    blocking(move || crate::service::flows_admin::list(&caller, &q, &state)).await
+}
+
+async fn admin_disable(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    blocking(move || crate::service::flows_admin::set_disabled(&caller, &id, true, &body, &state)).await
+}
+
+async fn admin_enable(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    blocking(move || crate::service::flows_admin::set_disabled(&caller, &id, false, &body, &state)).await
 }
 
 async fn blocking(f: impl FnOnce() -> Result<Value, ServiceError> + Send + 'static) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
