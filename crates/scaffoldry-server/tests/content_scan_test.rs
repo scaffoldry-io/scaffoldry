@@ -415,8 +415,8 @@ async fn changing_a_detector_reopens_what_was_dismissed_and_scans_again() {
     detectors[other]["action"] = json!("warn");
     assert_eq!(send(&w.app, "PUT", "/api/v1/settings/sensitivity.detectors", &w.platform, Some(detectors.clone())).await.0, StatusCode::OK);
     assert_eq!(findings(&w, "status=dismissed").await.len(), 1, "the SSN detector did not change");
-    let ssn = detectors.as_array().unwrap().iter().position(|d| d["id"] == "us_ssn").unwrap();
-    detectors[ssn]["action"] = json!("warn");
+    let changing = detectors.as_array().unwrap().iter().position(|d| d["id"] == "us_ssn").unwrap();
+    detectors[changing]["action"] = json!("warn");
     assert_eq!(send(&w.app, "PUT", "/api/v1/settings/sensitivity.detectors", &w.platform, Some(detectors)).await.0, StatusCode::OK);
     assert_eq!(findings(&w, "status=open").await.len(), 1, "a changed detector sets its dismissals aside");
     let queued: i64 = db(|c| c.query_one("SELECT count(*) FROM jobs WHERE kind = 'scan_records'", &[]).unwrap().get(0));
@@ -482,9 +482,9 @@ async fn the_detector_stats_count_confirmed_and_dismissed() {
     decide(&w, finding_of(&rows, "body")["id"].as_str().unwrap(), "dismiss").await;
     let (s, v) = send(&w.app, "GET", "/api/v1/admin/detector-stats", &w.compliance, None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    let ssn = v["detectors"].as_array().unwrap().iter().find(|d| d["detector_id"] == "us_ssn").unwrap();
-    assert_eq!((ssn["findings"].as_i64(), ssn["confirmed"].as_i64(), ssn["dismissed"].as_i64()), (Some(3), Some(1), Some(1)), "{ssn}");
-    assert_eq!(ssn["dismissed_share"], 0.5, "a half of the decided findings were dismissed: {ssn}");
+    let stat = v["detectors"].as_array().unwrap().iter().find(|d| d["detector_id"] == "us_ssn").unwrap();
+    assert_eq!((stat["findings"].as_i64(), stat["confirmed"].as_i64(), stat["dismissed"].as_i64()), (Some(3), Some(1), Some(1)), "{stat}");
+    assert_eq!(stat["dismissed_share"], 0.5, "a half of the decided findings were dismissed: {stat}");
 }
 
 // The categories, the detectors and the presets, read by a compliance officer.
