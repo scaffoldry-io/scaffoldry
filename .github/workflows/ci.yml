@@ -243,6 +243,17 @@ jobs:
           test -f "$OSCAL_CATALOG_OUT" || { echo "No test wrote the catalog to $OSCAL_CATALOG_OUT"; exit 1; }
           python3 governance/scripts/validate-oscal.py "$OSCAL_CATALOG_OUT"
 
+      - name: Hard Gate - Slim NIST Catalog Schema
+        run: |
+          python3 -m pip install jsonschema
+          python3 - <<'PY'
+          import json, jsonschema
+          schema = json.load(open("governance/schema/catalog-slim.schema.json"))
+          for name in ("sp800-53r5.slim.json", "sp800-171r3.slim.json", "baselines.json"):
+              jsonschema.Draft202012Validator(schema).validate(json.load(open("governance/catalog/" + name)))
+              print("valid:", name)
+          PY
+
       - name: Hard Gate - Rust Doc Tests
         run: cargo test --workspace --doc -- --test-threads=1
 

@@ -1,0 +1,44 @@
+{
+  "repository": "https://github.com/usnistgov/oscal-content",
+  "tag": "v1.6.0",
+  "commit": "f0de6d8d8c059d374f15e0ae07508d82e370fc1d",
+  "retrieved": "2026-11-18",
+  "retrieved_by": "agent session, reviewed by Johann",
+  "files": [
+    {
+      "name": "NIST_SP-800-53_rev5_catalog.json",
+      "sha256": "64ca6b4161de51ab6af098a7d101d326f14c95e1abf721396cd8a049e8115eeb",
+      "bytes": 10448237,
+      "version": "5.2.0",
+      "source_url": "https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d8c059d374f15e0ae07508d82e370fc1d/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json"
+    },
+    {
+      "name": "NIST_SP-800-53_rev5_LOW-baseline_profile.json",
+      "sha256": "cfd4f5d9a192eb42dc04b745d82f95a85926a2a85a45418034a380a42bda9424",
+      "bytes": 7234,
+      "version": "5.2.0",
+      "source_url": "https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d8c059d374f15e0ae07508d82e370fc1d/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_LOW-baseline_profile.json"
+    },
+    {
+      "name": "NIST_SP-800-53_rev5_MODERATE-baseline_profile.json",
+      "sha256": "e3a0f11237cfaac24dfcf1586e07683f17423757fd84208deb33196b12e8f590",
+      "bytes": 10498,
+      "version": "5.2.0",
+      "source_url": "https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d8c059d374f15e0ae07508d82e370fc1d/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_MODERATE-baseline_profile.json"
+    },
+    {
+      "name": "NIST_SP-800-53_rev5_HIGH-baseline_profile.json",
+      "sha256": "d2ef340986b9f1ee820ad866a0f964d9a9d1088b24080c74b795ddb0148b9f83",
+      "bytes": 12492,
+      "version": "5.2.0",
+      "source_url": "https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d8c059d374f15e0ae07508d82e370fc1d/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_HIGH-baseline_profile.json"
+    },
+    {
+      "name": "NIST_SP800-171_rev3_catalog.json",
+      "sha256": "fd68bad4c1fee98dd1b2511884b585fb1f14265d4c5693d0492a25dd66e73dde",
+      "bytes": 905717,
+      "version": "1.1.0",
+      "source_url": "https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d8c059d374f15e0ae07508d82e370fc1d/nist.gov/SP800-171/rev3/json/NIST_SP800-171_rev3_catalog.json"
+    }
+  ]
+}
