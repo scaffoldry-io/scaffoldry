@@ -1,22 +1,25 @@
 import React, { useState } from "react";
 import { LedgerEntryItem } from "./types";
+import { apiClient } from "./api";
+import { ErrorState, Skeleton, useAsync } from "./ui";
 
 interface Props {
-  entries: LedgerEntryItem[];
-  onVerifyChain?: () => void;
   onDownloadOscal?: () => void;
 }
 
-export const DecisionLedgerView: React.FC<Props> = ({
-  entries,
-  onVerifyChain,
-  onDownloadOscal,
-}) => {
+/** What the server said when it last checked the chain. `null` until someone asks. */
+type Verification = { verified: boolean; status: string } | null;
+
+// The decision ledger, read from the server each time it opens. The count is the server's total, and the chain is
+// called valid only after the server has checked it and said so.
+export const DecisionLedgerView: React.FC<Props> = ({ onDownloadOscal }) => {
+  const ledger = useAsync(() => apiClient.getGovernanceLedger());
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>("all");
   const [selectedEntry, setSelectedEntry] = useState<LedgerEntryItem | null>(null);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
-  const [verificationPassed, setVerificationPassed] = useState<boolean>(true);
+  const [verification, setVerification] = useState<Verification>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const handleCopy = (hash: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -25,16 +28,25 @@ export const DecisionLedgerView: React.FC<Props> = ({
     setTimeout(() => setCopiedHash(null), 2000);
   };
 
-  const handleRunVerify = () => {
+  const handleRunVerify = async () => {
     setIsVerifying(true);
-    setTimeout(() => {
+    setVerifyError(null);
+    try {
+      const result = await apiClient.verifyGovernanceLedger();
+      setVerification({ verified: result.verified, status: result.verification_status });
+    } catch (e) {
+      setVerification(null);
+      setVerifyError(e instanceof Error ? e.message : String(e));
+    } finally {
       setIsVerifying(false);
-      setVerificationPassed(true);
-      if (onVerifyChain) {
-        onVerifyChain();
-      }
-    }, 450);
+    }
   };
+
+  if (ledger.error) return <ErrorState error={ledger.error} onRetry={() => void ledger.reload()} />;
+  if (!ledger.data) return <Skeleton rows={3} />;
+  // The server sends the newest page first. The view reads the chain oldest first.
+  const entries: LedgerEntryItem[] = [...ledger.data.entries].reverse();
+  const total = ledger.data.total_entries;
 
   const filteredEntries = entries.filter((e) => {
     if (filterType === "all") return true;
@@ -95,13 +107,19 @@ export const DecisionLedgerView: React.FC<Props> = ({
         <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Verification Status</span>
-            <span className={`font-semibold ${verificationPassed ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
-              {verificationPassed ? "Zero Tampering (Valid)" : "Verification Failed"}
-            </span>
+            {verification === null ? (
+              <span className="font-semibold text-slate-600 dark:text-slate-300">{verifyError ? "Could not check" : "Not checked yet"}</span>
+            ) : (
+              <span className={`font-semibold ${verification.verified ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
+                {verification.verified ? "Zero Tampering (Valid)" : "Verification Failed"}
+              </span>
+            )}
+            {verification && !verification.verified && <span className="block text-[11px] text-red-500">{verification.status}</span>}
+            {verifyError && <span className="block text-[11px] text-red-500">{verifyError}</span>}
           </div>
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Total Blocks</span>
-            <span className="font-semibold text-slate-800 dark:text-slate-200">{entries.length} Blocks Recorded</span>
+            <span className="font-semibold text-slate-800 dark:text-slate-200">{total} Blocks Recorded</span>
           </div>
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Genesis Prev Hash</span>
@@ -109,8 +127,8 @@ export const DecisionLedgerView: React.FC<Props> = ({
           </div>
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Head Block Hash</span>
-            <span className="font-mono text-[11px] text-blue-600 dark:text-blue-400 truncate block" title={entries.length > 0 ? entries[entries.length - 1].entry_hash : undefined}>
-              {entries.length > 0 ? entries[entries.length - 1].entry_hash.slice(0, 16) + "..." : "None"}
+            <span className="font-mono text-[11px] text-blue-600 dark:text-blue-400 truncate block" title={ledger.data.head_hash || undefined}>
+              {ledger.data.head_hash ? ledger.data.head_hash.slice(0, 16) + "..." : "None"}
             </span>
           </div>
         </div>
@@ -126,7 +144,7 @@ export const DecisionLedgerView: React.FC<Props> = ({
               onChange={(e) => setFilterType(e.target.value)}
               className="text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 text-slate-700 dark:text-slate-200 focus:outline-hidden"
             >
-              <option value="all">All Decisions ({entries.length})</option>
+              <option value="all">All Decisions ({total})</option>
               <option value="AppPublished">App Published</option>
               <option value="VanityDnsBound">Vanity DNS Bound</option>
               <option value="WorkflowRuleApproved">Workflow Rule Approved</option>
@@ -134,7 +152,7 @@ export const DecisionLedgerView: React.FC<Props> = ({
             </select>
           </div>
           <span className="text-xs text-slate-500">
-            Showing {filteredEntries.length} of {entries.length} entries
+            Showing {filteredEntries.length} of {total} entries{entries.length < total ? ", the newest first" : ""}
           </span>
         </div>
 
