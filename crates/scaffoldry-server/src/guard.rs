@@ -272,6 +272,20 @@ fn serves_web_file(req: &Request) -> bool {
         && is_web_path(req.uri().path())
 }
 
+/// A browser opening a page: a read outside /api, /scim, /.well-known and /oauth, with no token, whose `Accept` lists
+/// `text/html` first. The web client always sends a token and never asks for HTML, so its calls are not touched.
+pub fn is_browser_navigation(req: &Request) -> bool {
+    matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD)
+        && is_web_path(req.uri().path())
+        && !req.uri().path().starts_with("/oauth/")
+        && !req.headers().contains_key(header::AUTHORIZATION)
+        && req
+            .headers()
+            .get(header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.trim_start().starts_with("text/html"))
+}
+
 /// A path the web app may own: anything outside /api, /scim and /.well-known.
 pub fn is_web_path(path: &str) -> bool {
     !["/api", "/scim", "/.well-known"].iter().any(|p| path == *p || path.starts_with(&format!("{p}/")))
