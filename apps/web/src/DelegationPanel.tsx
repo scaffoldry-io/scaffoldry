@@ -219,16 +219,18 @@ export function DelegationPanel() {
 /** On the desk: `You are deciding for Dr. Rivera until 14 Oct.` for each delegation in force that the person received. */
 export function DelegationBanner() {
   const [active, setActive] = useState<DelegationRow[]>([]);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
     apiClient
       .listMyDelegations()
       .then((d) => alive && setActive(d.received.filter((r) => r.state === "active")))
-      .catch(() => {});
+      .catch(() => alive && setFailed(true));
     return () => {
       alive = false;
     };
   }, []);
+  if (failed) return <Banner kind="error">Your delegations could not be loaded. You may be deciding for someone without seeing it here.</Banner>;
   if (active.length === 0) return null;
   return (
     <div className="space-y-1">

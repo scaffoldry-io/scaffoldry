@@ -14,8 +14,9 @@ export function useAsync<T>(fn: () => Promise<T>, immediate = true) {
       return result;
     } catch (err: unknown) {
       const e = err instanceof Error ? err : new Error(String(err));
+      // The failure is in `error`, so a screen shows it. It is not thrown again.
       setError(e);
-      throw e;
+      return undefined;
     } finally {
       setLoading(false);
     }
@@ -23,7 +24,7 @@ export function useAsync<T>(fn: () => Promise<T>, immediate = true) {
 
   useEffect(() => {
     if (immediate) {
-      reload().catch(() => {});
+      void reload();
     }
   }, [immediate, reload]);
 

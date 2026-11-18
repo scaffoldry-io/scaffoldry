@@ -309,7 +309,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 188 | [live-data.md](live-data.md) | 3 | Moved to Wave 1c as 1c-1. The desk reads records and the directory from the API |
 | 189 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
 | 190 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |
-| 191 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both |
+| 191 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both | **COMPLETED** |
 | 192 | [data-grid-parity.md](data-grid-parity.md) | open phases | Grid work on the web desk. Last, because the agent is the primary surface |
 
 Foundation phases 10 and 11 depend on nothing after phase 9. Run them earlier if a pilot date appears.

@@ -33,3 +33,26 @@ A reviewer verifies and ticks this checklist for every new screen and modified v
 - [ ] **No Sample Data:** No hardcoded mocks masquerade as live enterprise state. Unavailable endpoints fail visibly.
 - [ ] **No Native Browser Dialogs:** No `window.alert()`, `window.confirm()`, or `window.prompt()`. All interactions employ kit components (`ConfirmAction`, `Drawer`, `Toast`).
 - [ ] **Dark Mode Harmony:** Elements utilize Tailwind dark theme tokens (`dark:*`). Contrast passes WCAG 2.2 Level AA requirements across all tones and backgrounds.
+
+---
+
+## Results: screens moved onto the kit (ux-standards phase 3)
+
+Checked by automated test in `apps/web/src/test/ui-kit-migration.test.tsx` and by the architecture audit. Nobody has yet checked these with a screen reader or in dark mode, so those boxes above stay unticked.
+
+| Screen | Panel | Browser dialog | Errors shown | Notes |
+| --- | --- | --- | --- | --- |
+| Workspace settings | `Drawer` modal. Focus enters, Escape closes, focus returns | Pass. Two `alert` calls became an error `Toast` | Pass | The ledger entry is still built locally when the server write fails. That failure is not yet shown |
+| App studio (co-builder) | `Drawer` modal | Pass | Pass. A failed dataset list shows a warning `Banner` | |
+| Add saved view | `Drawer` modal | Pass | Pass | |
+| Create table | `Drawer` modal | Pass | Pass | |
+| Linked field | `Drawer` modal | Pass | Pass | |
+| CSV import | `Drawer` modal. The wizard's own Escape handler was removed | Pass | Pass | |
+| App builder | Not a panel | Pass. The `alert` for the primary field was dead code and is gone. The menu button is already disabled | Pass. A failed account check shows a warning `Banner` | |
+| Desk (`AdminDesk`) | Not a panel | Pass | Pass. A failed workspace or ledger load shows a sample-data `Banner`. A failed pin save shows a toast | A failed read of saved pins starts the list empty |
+| Data grid | Not a panel | Pass | Pass. A failed copy says so | |
+| Trash, People, Unit positions | Not a panel | Pass | Pass. `useAsync` keeps the error in state and no longer rethrows it | |
+| Process desk, Proposals, Delegation banner, Authority, Access grants | Not a panel | Pass | Pass. Each failed load now shows a message | |
+| Live presence (`useAppRecords`) | Not a panel | Pass | Pass. A failed presence ping stops and shows a notice | |
+
+Known gap: the audit rule matches a handler with nothing in it. A handler that holds only a comment, such as `catch { // best effort }`, is not matched. Some remain in `api.ts`, `realtime.ts`, `WorkspaceRulesTab.tsx`, `UserSettingsModal.tsx`, `NotificationBell.tsx`, `AdminConsoleView.tsx` and `DataGrid.tsx`.

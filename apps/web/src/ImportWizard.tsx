@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
+import { Drawer } from "./ui";
 import { AppTable } from "./types";
 
 export interface ImportWizardProps {
@@ -131,7 +132,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
   const [rejectedRows, setRejectedRows] = useState<Record<string, string>[]>([]);
   const [statusMessage, setStatusMessage] = useState<string>("Choose a file to start.");
 
-  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Sync external text
   useEffect(() => {
@@ -171,19 +171,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
     setMapping(initialMap);
     if (setCsvFieldMapping) setCsvFieldMapping(initialMap);
   };
-
-  // Keyboard navigation & accessibility
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -358,34 +345,23 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
   };
 
   return (
-    <div
-      data-testid="csv-import-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+    <Drawer
+      open={isOpen}
+      onClose={onClose}
+      title={`Import CSV into ${activeTable.name}`}
+      variant="modal"
+      size="xl"
+      testId="csv-import-modal"
+      closeTestId="csv-modal-close-btn"
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="import-wizard-title"
-        tabIndex={-1}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4 focus:outline-none"
-      >
+      <div className="space-y-4">
         {/* ARIA Live Region for screen-reader announcements */}
         <div role="status" aria-live="polite" className="sr-only">
           {statusMessage}
         </div>
 
-        {/* Header & Steps Indicator */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-          <div>
-            <h3
-              id="import-wizard-title"
-              className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2"
-            >
-              <span>📥</span>
-              <span>Import CSV into {activeTable.name}</span>
-            </h3>
-            <div className="flex items-center gap-3 mt-2 text-xs font-medium">
+        {/* Steps Indicator */}
+        <div className="flex items-center gap-3 text-xs font-medium pb-3 border-b border-slate-100 dark:border-slate-800">
               <span
                 className={`flex items-center gap-1 ${
                   step === "file" ? "text-blue-600 dark:text-blue-400 font-bold" : "text-slate-400"
@@ -417,17 +393,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
               >
                 4. Import
               </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            data-testid="csv-modal-close-btn"
-            onClick={onClose}
-            aria-label="Close dialog"
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-white font-bold cursor-pointer p-1"
-          >
-            ✕
-          </button>
         </div>
 
         {/* STEP 1: CHOOSE A FILE */}
@@ -840,6 +805,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
           </div>
         )}
       </div>
-    </div>
+    </Drawer>
   );
 };

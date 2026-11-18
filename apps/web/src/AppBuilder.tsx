@@ -26,6 +26,7 @@ import { DataShapingToolbar } from "./DataShapingToolbar";
 import { RecordDetailDrawer } from "./RecordDetailDrawer";
 import { AttachmentCover, type AttachedFile } from "./ui/Attachments";
 import { CsvImportModal } from "./CsvImportModal";
+import { Banner } from "./ui";
 import { AddViewModal } from "./AddViewModal";
 import { CreateTableModal } from "./CreateTableModal";
 import { AccessRulesTab } from "./AccessRulesTab";
@@ -58,6 +59,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "insights" | "settings" | "access">("pages");
   // The Studio is for the app's owners and admins, so its record drawer shows them every tab. The server checks again.
   const [studioViewer, setStudioViewer] = useState<{ eppn: string; role: "admin"; compliance: boolean } | undefined>(undefined);
+  const [viewerFailed, setViewerFailed] = useState(false);
   useEffect(() => {
     let live = true;
     apiClient
@@ -66,7 +68,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
         const eppn = me?.user?.eppn;
         if (live && typeof eppn === "string") setStudioViewer({ eppn, role: "admin", compliance: me.user?.affiliation === "compliance" });
       })
-      .catch(() => undefined);
+      .catch(() => live && setViewerFailed(true));
     return () => {
       live = false;
     };
@@ -624,10 +626,8 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
 
   const handleDeleteField = (fieldName: string) => {
     const isPrimary = fieldName === (activeTable.primary_field || activeTable.fields[0]?.name);
-    if (isPrimary) {
-      alert("Cannot delete primary field");
-      return;
-    }
+    // The menu button is disabled for the primary field, so this is a second guard.
+    if (isPrimary) return;
     setTables((prev) =>
       prev.map((t) => {
         if (t.id !== activeTable.id) return t;
@@ -1124,6 +1124,9 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
       </header>
 
       {/* Primary Builder Tabs Navigation */}
+      {viewerFailed && (
+        <Banner kind="warning">Your account could not be checked, so the record panel may hide some tabs. Reload the page to try again.</Banner>
+      )}
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 flex items-center justify-between">
         <div className="flex items-center gap-6 text-xs font-semibold">
           <button

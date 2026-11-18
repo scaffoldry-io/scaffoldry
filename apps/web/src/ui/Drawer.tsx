@@ -6,9 +6,27 @@ export interface DrawerProps {
   title: string;
   actions?: ReactNode;
   children: ReactNode;
+  /** `modal` centres the panel. The focus handling is the same. */
+  variant?: "drawer" | "modal";
+  /** Width of the panel. */
+  size?: "md" | "lg" | "xl";
+  testId?: string;
+  closeTestId?: string;
 }
 
-export function Drawer({ open, onClose, title, actions, children }: DrawerProps) {
+const WIDTH = { md: "max-w-md", lg: "max-w-lg", xl: "max-w-4xl" } as const;
+
+export function Drawer({
+  open,
+  onClose,
+  title,
+  actions,
+  children,
+  variant = "drawer",
+  size = "lg",
+  testId,
+  closeTestId,
+}: DrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedElement = useRef<HTMLElement | null>(null);
 
@@ -23,8 +41,8 @@ export function Drawer({ open, onClose, title, actions, children }: DrawerProps)
       } else {
         drawerRef.current?.focus();
       }
-    } else if (previouslyFocusedElement.current) {
-      previouslyFocusedElement.current.focus();
+      // Give focus back to the opener when the panel closes or goes away.
+      return () => previouslyFocusedElement.current?.focus();
     }
   }, [open]);
 
@@ -69,14 +87,21 @@ export function Drawer({ open, onClose, title, actions, children }: DrawerProps)
   const titleId = "drawer-title-" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/40 backdrop-blur-xs">
+    <div
+      data-testid={testId}
+      className={`fixed inset-0 z-40 flex bg-black/40 backdrop-blur-xs ${
+        variant === "modal" ? "items-center justify-center p-4" : "justify-end"
+      }`}
+    >
       <div
         ref={drawerRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="w-full max-w-lg h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-xl flex flex-col focus:outline-none"
+        className={`w-full ${WIDTH[variant === "modal" ? size : "lg"]} bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-xl flex flex-col focus:outline-none ${
+          variant === "modal" ? "max-h-[90vh] rounded-xl border" : "h-full border-l"
+        }`}
       >
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
           <h2
@@ -90,6 +115,7 @@ export function Drawer({ open, onClose, title, actions, children }: DrawerProps)
             <button
               type="button"
               onClick={onClose}
+              data-testid={closeTestId}
               aria-label="Close panel"
               className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
             >

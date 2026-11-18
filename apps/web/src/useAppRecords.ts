@@ -159,7 +159,13 @@ export function useAppRecords(slug: string | null) {
   useEffect(() => {
     const stream = presence.stream;
     if (!slug || !stream) return;
-    const timer = setInterval(() => void apiClient.pingPresence(slug, stream).catch(() => {}), PRESENCE_PING_MS);
+    const timer = setInterval(() => {
+      apiClient.pingPresence(slug, stream).catch(() => {
+        // Stop pinging, and say so. Others may stop seeing this person.
+        clearInterval(timer);
+        setLiveNotice("Others may no longer see that you have this app open. Reload the page to reconnect.");
+      });
+    }, PRESENCE_PING_MS);
     return () => clearInterval(timer);
   }, [slug, presence.stream]);
 

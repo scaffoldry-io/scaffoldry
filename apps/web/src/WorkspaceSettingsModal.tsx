@@ -3,6 +3,7 @@ import { Collaborator, LedgerEntryItem, Persona, Workspace } from "./types";
 import { apiClient, computeSha256, type ProposalRow, type ProposalTrial } from "./api";
 import { WorkspaceRulesTab } from "./WorkspaceRulesTab";
 import { Proposals } from "./Proposals";
+import { Drawer, Toast } from "./ui";
 
 interface WorkspaceSettingsModalProps {
   workspace: Workspace;
@@ -41,6 +42,9 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
   const [dataClassification, setDataClassification] = useState(workspace.data_classification || "Level 3 Internal");
   const [collaborators, setCollaborators] = useState<Collaborator[]>(workspace.collaborators || []);
 
+  // A refusal the person must read. It stays until they dismiss it.
+  const [notice, setNotice] = useState<string | null>(null);
+
   // Add Member State
   const [selectedDirectoryEppn, setSelectedDirectoryEppn] = useState<string>(allPersonas[0]?.eppn || "");
   const [newMemberRole, setNewMemberRole] = useState<"owner" | "admin" | "editor" | "viewer">("editor");
@@ -57,7 +61,7 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
     if (!selectedDirectoryEppn) return;
 
     if (collaborators.some((c) => c.eppn === selectedDirectoryEppn)) {
-      alert("This user is already a member of this workspace.");
+      setNotice("This user is already a member of this workspace.");
       return;
     }
 
@@ -185,7 +189,7 @@ export const WorkspaceSettingsModal: React.FC<WorkspaceSettingsModalProps> = ({
     if (target.role === "owner") {
       const ownerCount = collaborators.filter((c) => c.role === "owner").length;
       if (ownerCount <= 1) {
-        alert("Cannot remove the only workspace owner. Assign another owner before removing.");
+        setNotice("Cannot remove the only workspace owner. Assign another owner before removing.");
         return;
       }
     }
@@ -334,37 +338,29 @@ when {
   );
 
   return (
-    <div
-      data-testid="workspace-settings-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in"
+    <Drawer
+      open={isOpen}
+      onClose={onClose}
+      title="Workspace Security & Configuration"
+      variant="modal"
+      size="xl"
+      testId="workspace-settings-modal"
+      closeTestId="ws-settings-close-btn"
     >
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl p-2 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800">
-              {icon}
+      <div className="flex flex-col">
+        {notice && <Toast tone="error" message={notice} onClose={() => setNotice(null)} />}
+        <div className="pb-3 flex items-center gap-3">
+          <span className="text-2xl p-2 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800">
+            {icon}
+          </span>
+          <div>
+            <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">
+              {workspace.id}
             </span>
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>Workspace Security &amp; Configuration</span>
-                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">
-                  {workspace.id}
-                </span>
-              </h2>
-              <p className="text-xs text-slate-500">
-                Governance, collaborator roles, and Cedar ABAC sharing boundaries (OSCAL AC-02, AC-03).
-              </p>
-            </div>
+            <p className="text-xs text-slate-500">
+              Governance, collaborator roles, and Cedar ABAC sharing boundaries (OSCAL AC-02, AC-03).
+            </p>
           </div>
-          <button
-            type="button"
-            data-testid="ws-settings-close-btn"
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            ✕
-          </button>
         </div>
 
         {/* Tab Navigation */}
@@ -764,6 +760,6 @@ when {
           </button>
         </div>
       </div>
-    </div>
+    </Drawer>
   );
 };

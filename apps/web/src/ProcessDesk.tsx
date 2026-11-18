@@ -50,7 +50,7 @@ const CommitteeVote: React.FC<{ inst: ProcessInstance; me: string }> = ({ inst, 
         setMine(own ? own.vote : null);
         if (body.tally) setTally(body.tally);
       })
-      .catch(() => {});
+      .catch(() => live && setError("The votes could not be loaded. Reload the page to try again."));
     return () => {
       live = false;
     };

@@ -234,7 +234,7 @@ function GrantForm({ onProposed }: { onProposed: () => void }) {
 
   useEffect(() => {
     let live = true;
-    apiClient.accessGrantAnchors().then((a) => live && setAnchors(a)).catch(() => undefined);
+    apiClient.accessGrantAnchors().then((a) => live && setAnchors(a)).catch((e) => live && setError(e));
     return () => {
       live = false;
     };
