@@ -120,6 +120,7 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
         ]);
 
     let mut router = routes::api_router(state.clone());
+    let mut web_index = None;
     // One image: when SCAFFOLDRY_WEB_DIR is set, any path no route answers gets a built web file, or the index for
     // a page the browser routes itself. The guard lets those requests through and still guards every API path.
     if let Some(dir) = std::env::var_os("SCAFFOLDRY_WEB_DIR") {
@@ -136,6 +137,7 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
             },
         ));
         router = router.fallback_service(web);
+        web_index = Some(std::path::Path::new(&dir).join("index.html"));
     }
     let router = router
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::require_session))
@@ -144,6 +146,23 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
         .layer(cors)
         .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .layer(tower_http::trace::TraceLayer::new_for_http());
+    // A browser navigation to a console page (/admin/jobs) gets the index even where an API route shares the path.
+    // The web client calls /api/v1 with a token, so it never matches. Outermost, so it answers before any guard runs.
+    let router = match web_index {
+        Some(index) => router.layer(axum::middleware::from_fn(move |req: axum::extract::Request, next: axum::middleware::Next| {
+            let index = index.clone();
+            async move {
+                if guard::is_browser_navigation(&req) {
+                    return match tower_http::services::ServeFile::new(index).try_call(req).await {
+                        Ok(served) => served.map(axum::body::Body::new).into_response(),
+                        Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
+                    };
+                }
+                next.run(req).await
+            }
+        })),
+        None => router,
+    };
     Ok(router)
 }
 

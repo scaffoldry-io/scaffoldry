@@ -213,3 +213,18 @@ async fn an_app_save_is_versioned_in_the_same_way() {
     let (_, after) = call(&app, "GET", &format!("/api/v1/apps/{SLUG}"), &token, None).await;
     assert_eq!(after["description"], "Saved by the first builder", "the JSON is not merged");
 }
+
+/// A seeded app must be usable: "+ Add Record" needs a table with fields to show.
+#[test]
+fn every_seeded_app_has_a_table_with_fields() {
+    let state = new_state();
+    state.seed_demo().expect("seed");
+    state.seed_demo().expect("seed again");
+    let apps = state.repository.list_app_manifests().unwrap();
+    assert!(apps.iter().any(|a| a.slug == "physics-admissions-review"));
+    for app in &apps {
+        assert!(app.tables.iter().any(|t| !t.fields.is_empty()), "app {} has no table with a field", app.slug);
+    }
+    let physics = apps.iter().find(|a| a.slug == "physics-admissions-review").unwrap();
+    assert_eq!(physics.tables.len(), 1, "seeding twice must not add a second table");
+}
