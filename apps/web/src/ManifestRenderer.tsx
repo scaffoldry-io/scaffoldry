@@ -4,13 +4,17 @@ import { AppManifest, FieldSpec } from "./types";
 interface Props {
   manifest: AppManifest;
   onSubmitRecord?: (data: Record<string, unknown>) => void;
+  /** The fields to ask for. Without it, the first view's fields, or else the first table's. */
+  fields?: FieldSpec[];
 }
 
-export const ManifestRenderer: React.FC<Props> = ({ manifest, onSubmitRecord }) => {
+export const ManifestRenderer: React.FC<Props> = ({ manifest, onSubmitRecord, fields }) => {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [submitted, setSubmitted] = useState(false);
 
-  const activeView = manifest.views[0];
+  const first = manifest.views[0];
+  const shownFields = fields ?? first?.fields ?? manifest.tables?.[0]?.fields ?? [];
+  const activeView = first ?? (shownFields.length > 0 ? { title: manifest.tables?.[0]?.name ?? manifest.title, fields: shownFields } : undefined);
 
   const handleInputChange = (fieldName: string, value: unknown) => {
     setFormData((prev) => ({ ...prev, [fieldName]: value }));
@@ -71,7 +75,7 @@ export const ManifestRenderer: React.FC<Props> = ({ manifest, onSubmitRecord }) 
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              {(activeView.fields || []).map((field: FieldSpec) => (
+              {shownFields.map((field: FieldSpec) => (
                 <div key={field.name} className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-medium text-slate-700 dark:text-slate-300">

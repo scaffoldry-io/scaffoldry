@@ -10,7 +10,7 @@ import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow, type ProposalTrial } from "./api";
 import { MyApps } from "./MyApps";
 import { Policies } from "./library/Policies";
-import { Banner, BackgroundWork, PreviewBanner, Toast, ViewAsBanner } from "./ui";
+import { Banner, BackgroundWork, Skeleton, PreviewBanner, Toast, ViewAsBanner } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
@@ -1182,6 +1182,27 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
   // Applications & Policy Data
   const [apps, setApps] = useState<RegisteredApp[]>(INITIAL_APPS);
+  // A direct load of /builder/:slug. The app named in the address comes from the server, never from a built-in sample.
+  const builderSlug = isBuilderPath ? currentPath.replace("/builder/", "").replace("/builder", "").split("/")[0] : "";
+  const [directApp, setDirectApp] = useState<{ app: RegisteredApp | null; failed: boolean } | null>(null);
+  const needsDirect = !!builderSlug && appsStatus === "server" && !apps.some((a) => a.slug === builderSlug) && activeStudioApp?.slug !== builderSlug;
+  useEffect(() => {
+    if (!needsDirect) return;
+    let live = true;
+    setDirectApp(null);
+    apiClient
+      .getApp(builderSlug)
+      .then((m) => {
+        if (!live) return;
+        const x = m as any;
+        const mine = { slug: builderSlug, title: x?.title ?? builderSlug, description: x?.description ?? "", department: x?.department ?? "", workspace_id: x?.workspace_id ?? "", scope: "workspace" } as MyApp;
+        setDirectApp({ app: registeredAppOf(mine, m), failed: false });
+      })
+      .catch(() => live && setDirectApp({ app: null, failed: true }));
+    return () => {
+      live = false;
+    };
+  }, [needsDirect, builderSlug]);
   const [sourceRules] = useState<SourceRule[]>(INITIAL_SOURCE_RULES);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -1675,8 +1696,30 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
   // Dedicated Full-Page App Builder Route (/builder/:slug)
   if (isBuilderPath) {
-    const slug = currentPath.replace("/builder/", "").replace("/builder", "").split("/")[0] || apps[0]?.slug;
-    const targetApp = apps.find((a) => a.slug === slug) || activeStudioApp || apps[0];
+    const slug = builderSlug || apps[0]?.slug;
+    // The sample apps are only a fallback when the server's list never arrived. They are never shown for an address.
+    const waiting = !!builderSlug && activeStudioApp?.slug !== builderSlug && (appsStatus === "loading" || (needsDirect && !directApp));
+    if (waiting) {
+      return (
+        <div data-testid="builder-loading" role="status" aria-label="Loading the app" className="p-8 max-w-3xl mx-auto space-y-3">
+          <Skeleton className="h-6 w-1/3" />
+          <Skeleton rows={4} className="h-10 w-full" />
+        </div>
+      );
+    }
+    if (needsDirect && directApp?.failed) {
+      return (
+        <div className="p-8 max-w-xl mx-auto my-12 text-center space-y-3">
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">This app could not be opened</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">The studio could not load {builderSlug}. It may not exist, or you may not have access.</p>
+          <button type="button" onClick={() => navigateTo("/")} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold cursor-pointer">Back to the desk</button>
+        </div>
+      );
+    }
+    const targetApp = builderSlug
+      ? apps.find((a) => a.slug === slug) || (activeStudioApp?.slug === slug ? activeStudioApp : undefined) || (needsDirect ? directApp?.app ?? undefined : undefined)
+      : apps[0];
+    if (!targetApp) return null;
     const targetWs =
       workspaces.find((w) => w.id === targetApp?.workspaceId) ||
       INITIAL_WORKSPACES.find((w) => w.id === targetApp?.workspaceId) ||
@@ -1717,6 +1760,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     return (
       <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading App Builder...</div>}>
         <AppBuilder
+          key={targetApp.slug}
+          routeSlug={builderSlug || undefined}
           app={targetApp}
           onBack={() => navigateTo("/")}
           onOpenPublishedApp={(s) => navigateTo(`/app/${s}`)}
@@ -1932,7 +1977,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       {/* TOP COMMAND BAR */}
       <header className="sticky top-0 z-40 min-h-14 py-1 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between shadow-xs">
         {/* Left: Brand & Workspace Selector */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
             onClick={() => setNavRailExpanded(!navRailExpanded)}
@@ -1964,7 +2009,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
               Institutional Platform
             </span>
             {isAdminPath && (
-              <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+              <span className="hidden sm:inline-block text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                 /admin console
               </span>
             )}
@@ -2045,7 +2090,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         </div>
 
         {/* Right: Actions, Theme & User Badge */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <NotificationBell navigate={navigateTo} />
 
           {!isAdminPath && (
@@ -2166,7 +2211,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                       data-testid="menu-impersonation-hub-btn"
                       onClick={() => {
                         setUserMenuOpen(false);
-                        navigateTo("/admin");
+                        navigateTo("/admin/impersonation");
                         setAdminTab("impersonation");
                         showToast("Opened Identity & Impersonation Hub");
                       }}
@@ -2261,7 +2306,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 <nav className="space-y-1">
                   <button
                     type="button"
-                    onClick={() => setAdminTab("org")}
+                    onClick={() => { setAdminTab("org"); navigateTo("/admin/org"); }}
                     data-testid="admin-org-tab-btn"
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "org"
@@ -2277,7 +2322,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
                   <button
                     type="button"
-                    onClick={() => setAdminTab("policy")}
+                    onClick={() => { setAdminTab("policy"); navigateTo("/admin/policy"); }}
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "policy"
                         ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
@@ -2292,7 +2337,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
                   <button
                     type="button"
-                    onClick={() => setAdminTab("ledger")}
+                    onClick={() => { setAdminTab("ledger"); navigateTo("/admin/ledger"); }}
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "ledger"
                         ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
@@ -2347,7 +2392,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                     <button
                       type="button"
                       data-testid="admin-settings-tab-btn"
-                      onClick={() => setAdminTab("settings")}
+                      onClick={() => { setAdminTab("settings"); navigateTo("/admin/settings"); }}
                       className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                         adminTab === "settings"
                           ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
@@ -2365,7 +2410,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                   <button
                     type="button"
                     data-testid="admin-positions-tab-btn"
-                    onClick={() => setAdminTab("positions")}
+                    onClick={() => { setAdminTab("positions"); navigateTo("/admin/positions"); }}
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "positions"
                         ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
@@ -2703,7 +2748,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                   <button
                     type="button"
                     data-testid="admin-people-tab-btn"
-                    onClick={() => setAdminTab("people")}
+                    onClick={() => { setAdminTab("people"); navigateTo("/admin/people"); }}
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "people"
                         ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
@@ -2719,7 +2764,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                   <button
                     type="button"
                     data-testid="admin-impersonation-tab-btn"
-                    onClick={() => setAdminTab("impersonation")}
+                    onClick={() => { setAdminTab("impersonation"); navigateTo("/admin/impersonation"); }}
                     className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                       adminTab === "impersonation"
                         ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
@@ -3313,14 +3358,14 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
 
               {/* Status Filter Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-slate-400 text-[11px] font-medium">Filter by Status:</span>
+                <div className="flex items-center gap-1.5 max-w-full overflow-x-auto">
+                  <span className="text-slate-400 text-[11px] font-medium whitespace-nowrap shrink-0">Filter by Status:</span>
                   {(["all", "Published", "Collaborating", "Draft"] as const).map((s) => (
                     <button
                       key={s}
                       type="button"
                       onClick={() => setStatusFilter(s)}
-                      className={`px-2.5 py-1 rounded-md capitalize transition-colors cursor-pointer ${
+                      className={`shrink-0 px-2.5 py-1 rounded-md capitalize transition-colors cursor-pointer ${
                         statusFilter === s
                           ? "bg-slate-200 dark:bg-slate-800 text-blue-600 dark:text-blue-400 font-bold"
                           : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
