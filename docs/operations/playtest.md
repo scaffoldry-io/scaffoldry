@@ -42,11 +42,11 @@ A new `setup-token` revokes the one before it. To start again, drop the `playtes
 
 ## What to try
 
-1. **The core loop.** On the desk, choose "Co-Build New App". Open the app and choose "+ Add Record". Fill in the required field and save. Reload the page: the record is still there. Open it and edit it, then open its history.
+1. **The core loop.** On the desk, choose "Co-Build New App". Open the app and choose "+ Add Record". Fill in the required field and save. Reload the page: the record is still there. Double-click a cell to edit it, then choose "Open" on the row to see its history.
 2. **The intake form.** Open the app's Intake Form tab and submit it. The confirmation shows the record id the server stored. The record appears in the grid.
-3. **The studio.** Choose "Configure in Studio". Add a plain field, such as a Date, and rename the app. Save. Reload: both changes are kept.
-4. **The demo app.** Open `physics-admissions-review` and add an application.
-5. **The admin console.** Open each section from the navigation. Try a change that asks for a reason: disable and enable a data connection, or change a platform setting.
+3. **The studio.** Choose "Configure in Studio", or open `/builder/<slug>` directly. Add a plain field, such as a Date, and rename the app. Save. Reload: both changes are kept.
+4. **The demo app.** Open `physics-admissions-review` and add an application. It shows in the grid.
+5. **The admin console.** Open each section from the navigation, and refresh any page: it stays on that page. Try a change that asks for a reason: disable and enable a data connection, or change a platform setting. On the Decision Ledger, choose "Verify Chain Integrity": the answer comes from the server.
 6. **A phone.** Narrow the window to about 390 px. The navigation starts collapsed and wide tables scroll inside their box.
 
 ## Known gaps
