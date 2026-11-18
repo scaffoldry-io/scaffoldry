@@ -226,6 +226,28 @@ impl TestDb {
             "ALTER DATABASE {name} ALLOW_CONNECTIONS false; \
              SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{name}' AND pid <> pg_backend_pid();"
         ));
+        // `pg_terminate_backend` only signals, and a connection that was being opened as the database closed can get in
+        // after the list was read. So keep ending what is left until nothing is, as a real outage would.
+        let (url, name) = (admin_url(), self.name.clone());
+        std::thread::spawn(move || {
+            let mut c = postgres::Client::connect(&url, postgres::NoTls).expect("the test server");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let left: i64 = c
+                    .query_one("SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()", &[&name])
+                    .expect("count the connections")
+                    .get(0);
+                if left == 0 {
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline, "{left} connections to {name} outlived the cut-off");
+                c.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()", &[&name])
+                    .expect("end the connections that are left");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })
+        .join()
+        .expect("the database thread");
     }
 
     /// Lets connections in again after `cut_off`.
