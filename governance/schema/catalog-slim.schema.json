@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "catalog-slim.schema.json",
+  "title": "Slim NIST catalog and baselines",
+  "description": "The slim files written by governance/scripts/slim-catalog.py. A file is either a catalog or the baselines.",
+  "oneOf": [{"$ref": "#/$defs/catalog"}, {"$ref": "#/$defs/baselines"}],
+  "$defs": {
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "family_id", "family_title", "statement"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "family_id": {"type": "string", "minLength": 1},
+        "family_title": {"type": "string", "minLength": 1},
+        "parent_id": {"type": "string", "minLength": 1},
+        "statement": {"type": "string", "minLength": 1, "not": {"pattern": "\\{\\{"}}
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalog", "version", "controls"],
+      "properties": {
+        "catalog": {"enum": ["sp800-53r5", "sp800-171r3"]},
+        "version": {"type": "string", "minLength": 1},
+        "controls": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/control"}}
+      }
+    },
+    "baselines": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalog", "version", "baselines"],
+      "properties": {
+        "catalog": {"const": "sp800-53r5"},
+        "version": {"type": "string", "minLength": 1},
+        "baselines": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["low", "moderate", "high"],
+          "properties": {
+            "low": {"$ref": "#/$defs/ids"},
+            "moderate": {"$ref": "#/$defs/ids"},
+            "high": {"$ref": "#/$defs/ids"}
+          }
+        }
+      }
+    },
+    "ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  }
+}

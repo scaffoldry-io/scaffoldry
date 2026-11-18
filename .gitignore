@@ -34,3 +34,6 @@ dist/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# NIST source files (fetched pinned, see governance/catalog/PROVENANCE.json)
+governance/catalog/source/

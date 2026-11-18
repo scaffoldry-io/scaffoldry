@@ -6,6 +6,7 @@ pub mod conflicts;
 pub mod coordinates;
 pub mod approver;
 pub mod authority;
+pub mod catalog;
 pub mod dataset;
 pub mod guards;
 pub mod ledger;

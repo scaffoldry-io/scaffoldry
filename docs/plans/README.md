@@ -301,7 +301,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 180 | [sensitive-content.md](sensitive-content.md) | 2 | Stored records are scanned as a job. A compliance officer reviews findings and designates authorized stores | **COMPLETED** |
 | 181 | [sensitive-content.md](sensitive-content.md) | 3 | New writes, imports, and plain-text files are checked. Each detector flags, warns, or blocks, as the organization chooses | **COMPLETED** |
 | 182 | [sensitive-content.md](sensitive-content.md) | 4 | History, exports, and snapshots honor the categories. The old flag name is gone | **COMPLETED** |
-| 183 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Needs files from Johann |
+| 183 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Sources fetched pinned, with provenance | **COMPLETED** |
 | 184 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |
 | 185 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
 | 186 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
@@ -422,7 +422,7 @@ Open decisions. These are Johann's. Do not settle them in a session.
 | The crate still waiting in the master brief: a PostgreSQL TLS connector | A phase that needs it stops until Johann says yes and the license audit passes |
 | Adding `axe-core` (MPL-2.0) as a dev-only test dependency | Not added. Accessibility is tested with role, name, and keyboard tests |
 | Running ClamAV as a separate daemon for upload scanning | Files show as not scanned. An operator can require a scanner |
-| Who supplies the NIST catalog files, and the 800-171 revision CMMC requires | `oscal-catalog.md` stops until `governance/catalog/source/` and `PROVENANCE.json` exist |
+| SP 800-171 Rev 2 in OSCAL, which CMMC Level 2 cites. NIST publishes only Rev 3 | The catalog is `sp800-171r3`. It is not a CMMC mapping |
 | MCP tools for templates (`list_templates`, `instantiate_template`). The tool list has about 10 bytes of room under its 24,000-byte budget, so a tool needs either shorter descriptions elsewhere or a higher budget with a stated reason | Templates are reachable through REST and the desk. No MCP tool |
 | Snapshot expiry. Snapshots carry `expires_at` and nothing purges them. Retention (`purge.rs`) and legal holds (`is_held`) now exist, so the expiry can be one more path in `purge.rs` that skips a held app's snapshots. No brief phase asks for it yet | Snapshots are kept until someone removes them. `import-export.md` phase 5 test 5 is not built |
 | The import wizard offering `This file came from another tool`. The desk's `ImportWizard` reads and checks the file in the browser and never calls the server's import routes, so the preset (`preset: "other_tool"` in the import mapping) has no screen. The wizard must move onto the server import flow first | The preset is reachable through the import routes. The wizard does not offer it |

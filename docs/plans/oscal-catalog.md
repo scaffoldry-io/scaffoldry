@@ -16,21 +16,24 @@ NIST publishes its controls as OSCAL catalogs and its baselines as OSCAL profile
 | --- | --- |
 | NIST SP 800-53 Rev 5 catalog | The control list and prose |
 | NIST SP 800-53 Rev 5 Low, Moderate, and High baseline profiles | Which controls a baseline selects |
-| NIST SP 800-171 Rev 2 catalog | CUI controls. CMMC Level 2 is built on this revision. Check the revision CMMC uses when building, and say so in the session output |
+| NIST SP 800-171 Rev 3 catalog | CUI controls. CMMC Level 2 cites Rev 2, which NIST has not published in OSCAL, so this is not a CMMC mapping |
 
 FERPA and HIPAA are statutes. They are not NIST catalogs and they are not OSCAL baselines. They stay as `@source` annotations on Cedar policies. The documents stop calling them baselines.
 
-## Prerequisite from Johann
+## Sources
 
-Do not download anything in the session. Johann places these files in `governance/catalog/source/`:
+Decided by Johann, 2026-11-18.
+
+1. The agent fetches the NIST files, pinned, instead of Johann placing them. They come from `usnistgov/oscal-content` tag `v1.6.0`, commit `f0de6d8d8c059d374f15e0ae07508d82e370fc1d`. `governance/catalog/PROVENANCE.json` records, for each file, the name, SHA-256, upstream `metadata.version`, source URL, and date retrieved. The script checks each hash before it reads a file and stops if one differs. The five source files are in `governance/catalog/source/`, which is in `.gitignore`. They are not committed.
+2. NIST has never published SP 800-171 Rev 2 in OSCAL. Only Rev 3 exists. The slim catalog is `sp800-171r3` (file `sp800-171r3.slim.json`). CMMC Level 2 cites SP 800-171 Rev 2, so this catalog is not a CMMC mapping. Say so plainly wherever the catalog is described.
+
+The files are:
 
 - `NIST_SP-800-53_rev5_catalog.json`
 - `NIST_SP-800-53_rev5_LOW-baseline_profile.json`
 - `NIST_SP-800-53_rev5_MODERATE-baseline_profile.json`
 - `NIST_SP-800-53_rev5_HIGH-baseline_profile.json`
-- `NIST_SP800-171_rev2_catalog.json`
-
-and writes `governance/catalog/PROVENANCE.json`: for each file, the name, its SHA-256, the upstream `metadata.version`, the source URL, and the date retrieved. If a file or the provenance is missing, stop and say so. Add `governance/catalog/source/` to `.gitignore`. The sources are large and are not committed.
+- `NIST_SP800-171_rev3_catalog.json`
 
 ## Out of scope
 
@@ -46,14 +49,16 @@ and writes `governance/catalog/PROVENANCE.json`: for each file, the name, its SH
 2. Do not add a dependency. The script uses the Python standard library. CI already installs `jsonschema`.
 3. A control id is shown with its title wherever it appears. A bare id is never the label.
 
-## Phase 1 — a slim, validated catalog
+## Phase 1 — a slim, validated catalog [COMPLETED]
 
-1. `governance/scripts/slim-catalog.py`, standard library only. It reads the files in `governance/catalog/source/` and writes, to `governance/catalog/`: `sp800-53r5.slim.json`, `sp800-171r2.slim.json`, and `baselines.json`.
+Profile files have one `imports` entry whose `include-controls[].with-ids` is a flat list of control ids. A withdrawn control carries the property `status` with value `withdrawn`. A param with no `label` (a selection) shows as its id.
+
+1. `governance/scripts/slim-catalog.py`, standard library only. It reads the files in `governance/catalog/source/` and writes, to `governance/catalog/`: `sp800-53r5.slim.json`, `sp800-171r3.slim.json`, and `baselines.json`.
 2. Slim catalog format, with a schema at `governance/schema/catalog-slim.schema.json`:
 
    | Field | Meaning |
    | --- | --- |
-   | `catalog` | `sp800-53r5` or `sp800-171r2` |
+   | `catalog` | `sp800-53r5` or `sp800-171r3` |
    | `version` | The upstream `metadata.version` |
    | `controls[]` | `id` (OSCAL form, `ac-2`, `ac-2.1`), `title`, `family_id`, `family_title`, `parent_id` (for an enhancement), `statement` |
 
@@ -111,8 +116,8 @@ Tests.
 Read docs/plans/oscal-catalog.md and docs/plans/README.md.
 Implement phase N only.
 Write the failing test first and run it.
-Do not add a dependency. Do not download files.
-Stop and report if governance/catalog/source/ or PROVENANCE.json is missing.
+Do not add a dependency.
+Stop and report if governance/catalog/source/ or PROVENANCE.json is missing, or a hash differs.
 Do not show a control id without its title.
 Stop when the tests listed for phase N pass, and paste the command output.
 ```
@@ -122,7 +127,7 @@ Stop when the tests listed for phase N pass, and paste the command output.
 | Objection | Answer |
 | --- | --- |
 | The catalog will go out of date when NIST revises it. | The provenance file records the version and the hash. Updating is one script run and a diff of the slim files. The product never claims a newer revision than the file. |
-| FERPA and CMMC are promised in the documents and absent here. | The documents are corrected. FERPA and HIPAA are the source of policies. CMMC Level 2 rests on the 800-171 catalog, which is loaded. |
+| FERPA and CMMC are promised in the documents and absent here. | The documents are corrected. FERPA and HIPAA are the source of policies. The 800-171 catalog is loaded as Rev 3. CMMC Level 2 cites Rev 2, so it is not a CMMC mapping. |
 | A compliance officer will mark a control implemented without evidence. | Status is the officer's claim. Evidence is the ledger count, shown beside it. A control marked implemented with zero evidence is visible in the table. |
 | The slim files lose NIST's wording. | They keep the title and the statement text. They lose parameter values and guidance, and say so. The source file and its hash are recorded. |
 | The embedded catalog bloats the binary. | The session records the size. The statement text is the bulk. If it is too large, drop `statement` from the embedded copy and keep titles. |
