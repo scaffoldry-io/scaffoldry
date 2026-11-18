@@ -7,6 +7,7 @@ import { Banner } from "./ui/Banner";
 import { Toast } from "./ui/Toast";
 import { AppActivity } from "./RecordHistory";
 import { PresenceAvatars } from "./ui/PresenceAvatars";
+import { NewRecordDrawer, requiredFields } from "./NewRecordDrawer";
 
 interface Props {
   app: RegisteredApp;
@@ -71,12 +72,20 @@ export const MultiViewWorkspace: React.FC<Props> = ({
     run(save(recordId, { ...current.data, [fieldName]: value }));
   };
 
-  // Add a blank record on the server
+  // The fields a new record cannot be stored without. The table's own list is the full one.
+  const [newRecordOpen, setNewRecordOpen] = useState(false);
+  const tableFields = app.manifest.tables?.find((t) => t.id === tableId)?.fields ?? fields;
+  const needed = requiredFields(tableFields);
+
+  const storeNewRecord = (values: Record<string, unknown>) => create({ _table_id: tableId, ...values });
+
+  // A table with required fields asks for them first. Without any, the record is stored directly.
   const handleAddNewRecord = () => {
-    const blank = Object.fromEntries(
-      fields.map((f) => [f.name, f.field_type === "Number" ? 0 : f.field_type === "Boolean" ? false : ""])
-    );
-    run(create({ _table_id: tableId, ...blank }));
+    if (needed.length > 0) {
+      setNewRecordOpen(true);
+      return;
+    }
+    run(storeNewRecord({}));
   };
 
   // Handle Form View submission
@@ -123,6 +132,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden">
+      <NewRecordDrawer open={newRecordOpen} onClose={() => setNewRecordOpen(false)} fields={needed} onSubmit={storeNewRecord} />
       {/* Top Application Bar */}
       <header className="px-6 py-3.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-xs">
         <div className="flex items-center gap-3">
@@ -143,16 +153,17 @@ export const MultiViewWorkspace: React.FC<Props> = ({
               <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                 {app.department}
               </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                ✓ Governed
-              </span>
               <PresenceAvatars present={present} />
             </div>
             <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              <span className="font-mono text-[11px] text-blue-600 dark:text-blue-400">
-                🔗 {app.customDomain}
-              </span>
-              <span>·</span>
+              {app.customDomain && (
+                <>
+                  <span className="font-mono text-[11px] text-blue-600 dark:text-blue-400">
+                    🔗 {app.customDomain}
+                  </span>
+                  <span>·</span>
+                </>
+              )}
               <span>
                 {filteredRecords.length} records · {fields.length} schema fields
               </span>

@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { AppTable, FieldSpec, RegisteredApp } from "./types";
+import { apiClient } from "./api";
+import { sayStoreError } from "./NewRecordDrawer";
 
 interface StandaloneIntakeFormProps {
   app: RegisteredApp;
@@ -22,13 +24,10 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
       ? app.manifest.tables
       : [
           {
-            id: "tbl-proposals",
-            name: "Research Proposals",
-            slug: "proposals",
-            fields: app.manifest.views[0]?.fields || [
-              { name: "title", label: "Proposal Title", field_type: "Text", required: true, ferpa_sensitive: false },
-              { name: "budget", label: "Budget", field_type: "Number", required: true, ferpa_sensitive: false },
-            ],
+            id: app.manifest.views[0]?.table_id ?? "main",
+            name: app.title,
+            slug: app.slug,
+            fields: app.manifest.views[0]?.fields ?? [],
           },
         ];
 
@@ -46,7 +45,8 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [submittedRecordId, setSubmittedRecordId] = useState<string | null>(null);
-  const [attestationHash, setAttestationHash] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   // Compute target table records for Relation fields
@@ -80,7 +80,7 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
     handleInputChange(fieldName, updated);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Validate required fields
@@ -109,37 +109,26 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
       return;
     }
 
-    const newId = `REC-${Date.now().toString().slice(-6)}`;
-    const recordPayload = {
-      id: newId,
-      _table_id: activeTable.id,
-      ...formData,
-      submitted_at: new Date().toISOString(),
-    };
-
-    // Generate mock SHA-256 attestation hash
-    const rawPayloadString = JSON.stringify(recordPayload);
-    let hashNum = 0;
-    for (let i = 0; i < rawPayloadString.length; i++) {
-      hashNum = (hashNum << 5) - hashNum + rawPayloadString.charCodeAt(i);
-      hashNum |= 0;
+    // The record is stored by the server. What is shown afterwards is what the server answered.
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const stored = await apiClient.createRecord(app.slug, { _table_id: activeTable.id, ...formData });
+      const { _table_id: _ignored, ...values } = stored.data ?? {};
+      onRecordSubmitted?.(activeTable.id, { id: stored.id, ...values });
+      setSubmittedRecordId(stored.id);
+    } catch (err) {
+      setSubmitError(sayStoreError(err));
+    } finally {
+      setSubmitting(false);
     }
-    const hexHash = Math.abs(hashNum).toString(16).padStart(8, "0") + "f9e4a8b72c01d93e";
-    const fullAttestation = `sha256:${hexHash}`;
-
-    if (onRecordSubmitted) {
-      onRecordSubmitted(activeTable.id, recordPayload);
-    }
-
-    setSubmittedRecordId(newId);
-    setAttestationHash(fullAttestation);
   };
 
   const handleReset = () => {
     setFormData({});
     setValidationErrors({});
+    setSubmitError(null);
     setSubmittedRecordId(null);
-    setAttestationHash(null);
   };
 
   const handleCopyLink = () => {
@@ -221,12 +210,11 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-                Submission Received and Attested
+                Record saved
               </h2>
               <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                Your entry has been committed to the sovereign dataset for{" "}
-                <span className="font-semibold text-slate-700 dark:text-slate-300">{activeTable.name}</span>{" "}
-                and verified by institutional Cedar ABAC policy rules.
+                Your entry was saved to{" "}
+                <span className="font-semibold text-slate-700 dark:text-slate-300">{activeTable.name}</span>.
               </p>
             </div>
 
@@ -238,12 +226,6 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
               <div className="flex justify-between items-center text-slate-500">
                 <span>Table:</span>
                 <span className="text-slate-800 dark:text-slate-200">{activeTable.name} ({activeTable.slug})</span>
-              </div>
-              <div className="flex justify-between items-center text-slate-500">
-                <span>Ledger Attestation:</span>
-                <span className="text-emerald-600 dark:text-emerald-400 truncate max-w-[240px]">
-                  {attestationHash}
-                </span>
               </div>
             </div>
 
@@ -310,6 +292,12 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
             {Object.keys(validationErrors).length > 0 && (
               <div className="mx-8 mt-6 p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-xs">
                 Please complete all required fields indicated below before submitting.
+              </div>
+            )}
+
+            {submitError && (
+              <div role="alert" className="mx-8 mt-6 p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 text-xs">
+                The record was not saved. {submitError}
               </div>
             )}
 
@@ -535,6 +523,7 @@ export const StandaloneIntakeForm: React.FC<StandaloneIntakeFormProps> = ({
                 <button
                   type="submit"
                   data-testid="submit-intake-form-btn"
+                  disabled={submitting}
                   className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md transition-all cursor-pointer"
                 >
                   Submit Form
