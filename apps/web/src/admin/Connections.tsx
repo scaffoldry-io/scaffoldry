@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient, type DataConnection, type DataConnectionMapping, type DataConnectionRun } from "../api";
 import { ConfirmAction, EmptyState, ErrorState, PageHeader, Skeleton } from "../ui";
 
-const buttonClass = "px-3 py-1.5 text-sm font-medium rounded border border-gray-300 dark:border-gray-700 disabled:opacity-50";
+const buttonClass = "px-2 py-1 text-xs font-medium whitespace-nowrap rounded border border-gray-300 dark:border-gray-700 disabled:opacity-50";
 
 function when(iso: string | null, none: string): string {
   if (!iso) return none;
@@ -175,7 +175,8 @@ export function Connections() {
                 <th className="pr-3">Last success</th>
                 <th className="pr-3">Last result</th>
                 <th className="pr-3">State</th>
-                <th>Next run</th>
+                <th className="pr-3">Next run</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -194,7 +195,7 @@ function ConnectionRow({ r, open, running, toggle, runNow, done }: { r: DataConn
   const shrank = r.last_run?.state === "failed" && (r.last_run.error ?? "").startsWith("source_shrank");
   return (
     <>
-      <tr className="border-t border-gray-200 dark:border-gray-800 align-top">
+      <tr className="border-t border-gray-200 dark:border-gray-800 align-middle">
         <td className="pr-3 py-2 font-semibold">{r.name}</td>
         <td className="pr-3 font-mono text-xs">{r.kind}</td>
         <td className="pr-3">{r.dataset_app}</td>
@@ -204,55 +205,59 @@ function ConnectionRow({ r, open, running, toggle, runNow, done }: { r: DataConn
           {r.review_note && <div className="text-amber-700 dark:text-amber-400">{r.review_note}</div>}
         </td>
         <td className={`pr-3 text-xs font-semibold ${tone[r.state]}`}>{r.state}</td>
-        <td className="text-xs" data-testid={`next-run-${r.id}`}>
+        <td className="pr-3 text-xs" data-testid={`next-run-${r.id}`}>
           <span data-testid="next-run">{when(r.next_run, "none")}</span>
         </td>
-      </tr>
-      <tr>
-        <td colSpan={7} className="pb-3">
-          {open === "switch" ? (
-            <ConfirmAction
-              verb={r.enabled ? "Disable" : "Enable"}
-              target={r.name}
-              consequence={r.enabled ? "The schedule stops running this connection. The dataset keeps what it has." : "The schedule runs this connection again."}
-              onConfirm={(reason) => apiClient.setDataConnectionEnabled(r.id, !r.enabled, reason)}
-              onSuccess={done}
-            />
-          ) : open === "shrink" ? (
-            <ConfirmAction
-              verb="Run with the smaller file"
-              target={r.name}
-              consequence="The file has fewer than half the rows of the last run. Running it removes the rows that are gone. They go to trash and can be restored."
-              onConfirm={async (reason) => {
-                await apiClient.runDataConnection(r.id, { reason });
-              }}
-              onSuccess={done}
-            />
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className={buttonClass} aria-label={`Run now ${r.name}`} disabled={running} onClick={() => runNow(r.id)}>
-                Run now
+        <td>
+          <div className="flex flex-wrap gap-1">
+            <button type="button" className={buttonClass} aria-label={`Run now ${r.name}`} disabled={running} onClick={() => runNow(r.id)}>
+              Run now
+            </button>
+            <button type="button" className={buttonClass} aria-label={`Runs of ${r.name}`} onClick={() => toggle(r.id, "runs")}>
+              Runs
+            </button>
+            <button type="button" className={buttonClass} aria-label={`Edit mapping of ${r.name}`} onClick={() => toggle(r.id, "mapping")}>
+              Edit mapping
+            </button>
+            <button type="button" className={buttonClass} aria-label={`${r.enabled ? "Disable" : "Enable"} ${r.name}`} onClick={() => toggle(r.id, "switch")}>
+              {r.enabled ? "Disable" : "Enable"}
+            </button>
+            {shrank && (
+              <button type="button" className={buttonClass} aria-label={`Approve the smaller file for ${r.name}`} onClick={() => toggle(r.id, "shrink")}>
+                Approve smaller file
               </button>
-              <button type="button" className={buttonClass} aria-label={`Runs of ${r.name}`} onClick={() => toggle(r.id, "runs")}>
-                Runs
-              </button>
-              <button type="button" className={buttonClass} aria-label={`Edit mapping of ${r.name}`} onClick={() => toggle(r.id, "mapping")}>
-                Edit mapping
-              </button>
-              <button type="button" className={buttonClass} aria-label={`${r.enabled ? "Disable" : "Enable"} ${r.name}`} onClick={() => toggle(r.id, "switch")}>
-                {r.enabled ? "Disable" : "Enable"}
-              </button>
-              {shrank && (
-                <button type="button" className={buttonClass} aria-label={`Approve the smaller file for ${r.name}`} onClick={() => toggle(r.id, "shrink")}>
-                  Approve smaller file
-                </button>
-              )}
-            </div>
-          )}
-          {open === "runs" && <History id={r.id} />}
-          {open === "mapping" && <Mapping id={r.id} />}
+            )}
+          </div>
         </td>
       </tr>
+      {open !== null && (
+        <tr>
+          <td colSpan={8} className="pb-3">
+            {open === "switch" && (
+              <ConfirmAction
+                verb={r.enabled ? "Disable" : "Enable"}
+                target={r.name}
+                consequence={r.enabled ? "The schedule stops running this connection. The dataset keeps what it has." : "The schedule runs this connection again."}
+                onConfirm={(reason) => apiClient.setDataConnectionEnabled(r.id, !r.enabled, reason)}
+                onSuccess={done}
+              />
+            )}
+            {open === "shrink" && (
+              <ConfirmAction
+                verb="Run with the smaller file"
+                target={r.name}
+                consequence="The file has fewer than half the rows of the last run. Running it removes the rows that are gone. They go to trash and can be restored."
+                onConfirm={async (reason) => {
+                  await apiClient.runDataConnection(r.id, { reason });
+                }}
+                onSuccess={done}
+              />
+            )}
+            {open === "runs" && <History id={r.id} />}
+            {open === "mapping" && <Mapping id={r.id} />}
+          </td>
+        </tr>
+      )}
     </>
   );
 }

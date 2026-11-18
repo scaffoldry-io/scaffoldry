@@ -10,7 +10,7 @@ import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow, type ProposalTrial } from "./api";
 import { MyApps } from "./MyApps";
 import { Policies } from "./library/Policies";
-import { Banner, BackgroundWork, PreviewBanner, ViewAsBanner } from "./ui";
+import { Banner, BackgroundWork, PreviewBanner, Toast, ViewAsBanner } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
@@ -656,7 +656,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     workspaceId: string;
   } | null>(null);
   const [isWorkspaceSettingsOpen, setIsWorkspaceSettingsOpen] = useState<boolean>(false);
-  const [navRailExpanded, setNavRailExpanded] = useState<boolean>(true);
+  const [navRailExpanded, setNavRailExpanded] = useState<boolean>(() => typeof window === "undefined" || window.innerWidth >= 768);
   const [userMenuOpen, setUserMenuOpen] = useState<boolean>(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -906,6 +906,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     }
   };
   const [notificationToast, setNotificationToast] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
 
   // A link from a mail is /n/{id} and carries no token. Once there is a session, the desk asks where it leads and goes.
   useEffect(() => {
@@ -1872,6 +1873,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         </div>
       )}
 
+      {errorToast && <Toast tone="error" message={errorToast} onClose={() => setErrorToast(null)} />}
+
       {/* A delegation in force that this person received: whom they decide for, and until when. */}
       {authToken && (
         <div className="fixed top-16 right-6 z-40 max-w-sm">
@@ -1926,7 +1929,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       )}
 
       {/* TOP COMMAND BAR */}
-      <header className="sticky top-0 z-40 h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between shadow-xs">
+      <header className="sticky top-0 z-40 min-h-14 py-1 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between shadow-xs">
         {/* Left: Brand & Workspace Selector */}
         <div className="flex items-center gap-3">
           <button
@@ -1951,12 +1954,12 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 alt="Scaffoldry"
                 className="h-7 w-auto object-contain shrink-0"
               />
-              <span className="font-extrabold text-base tracking-wider text-slate-900 dark:text-white uppercase font-sans">
+              <span className="font-extrabold text-base tracking-wider whitespace-nowrap text-slate-900 dark:text-white uppercase font-sans">
                 SCAFFOLDRY
               </span>
             </button>
             <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 hidden sm:inline">
+            <span className="text-xs font-semibold whitespace-nowrap text-slate-500 dark:text-slate-400 hidden xl:inline">
               Institutional Platform
             </span>
             {isAdminPath && (
@@ -3118,7 +3121,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
         </aside>
 
         {/* MAIN CANVAS */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100/50 dark:bg-slate-950">
+        <main className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 bg-slate-100/50 dark:bg-slate-950">
           {appsStatus === "built-in" && (
             <div data-testid="offline-sample-banner" role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               The server's app list did not load. These are built-in sample apps, and nothing done with them is saved.
@@ -3151,6 +3154,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 simResult={simResult}
                 ledger={ledger}
                 setNotificationToast={setNotificationToast}
+                setErrorToast={setErrorToast}
                 handleDownloadOscal={handleDownloadOscal}
                 personas={PERSONAS}
                 handleStartImpersonation={handleStartImpersonation}
@@ -3373,7 +3377,7 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                       {/* Fields Count & CEDS tags */}
                       <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
                         <div>Fields: <strong>{app.manifest.views[0]?.fields?.length || 0} inputs</strong></div>
-                        <div>HERM: <span className="text-slate-600 dark:text-slate-300">{app.hermCapability}</span></div>
+                        {app.hermCapability && <div>HERM: <span className="text-slate-600 dark:text-slate-300">{app.hermCapability}</span></div>}
                       </div>
                     </div>
 

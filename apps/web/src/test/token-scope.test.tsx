@@ -13,7 +13,7 @@ function mockServer(listed: any[] = [], onCreate: (body: any) => void = () => {}
     const u = String(url);
     const get = !options || !options.method || options.method === "GET";
     const reply = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-    if (u.endsWith("/settings") && get) return reply({ settings: { "tokens.agent_enabled": true, "tokens.max_days": 90 } });
+    if (u.endsWith("/settings") && get) return reply({ "tokens.agent_enabled": true, "tokens.max_days": 90 });
     if (u.endsWith("/auth/tokens") && get) return reply(listed);
     if (u.endsWith("/auth/tokens") && options?.method === "POST") {
       const body = JSON.parse(options.body as string);

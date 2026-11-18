@@ -128,7 +128,7 @@ describe("External apps phase 2: connected apps", () => {
         connected = [];
         return reply({ status: "disconnected" });
       }
-      if (url.endsWith("/settings")) return reply({ settings: { "tokens.agent_enabled": true, "tokens.max_days": 90 } });
+      if (url.endsWith("/settings")) return reply({ "tokens.agent_enabled": true, "tokens.max_days": 90 });
       if (url.endsWith("/auth/tokens")) return reply([]);
       return reply({});
     });

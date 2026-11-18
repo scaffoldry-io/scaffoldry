@@ -49,7 +49,7 @@ export interface RecordHistoryProps {
 /** A record's history as sentences, newest first, each with `Restore this value` for editors and above. */
 export function RecordHistory({ appSlug, recordId, fields, canRestore }: RecordHistoryProps) {
   const load = useCallback(() => apiClient.getRecordHistory(appSlug, recordId), [appSlug, recordId]);
-  const { data, error, loading, reload } = useAsync(load);
+  const { data, error, loading, reload } = useAsync(load, true, [load]);
   const [restoring, setRestoring] = useState<{ id: number; field: string } | null>(null);
 
   if (loading && !data) return <Skeleton rows={3} />;
@@ -97,7 +97,7 @@ export function RecordHistory({ appSlug, recordId, fields, canRestore }: RecordH
 /** The app-wide activity feed, for owners and admins: the same sentences, every record. */
 export function AppActivity({ appSlug, fields }: { appSlug: string; fields: FieldSpec[] }) {
   const load = useCallback(() => apiClient.getAppHistory(appSlug), [appSlug]);
-  const { data, error, loading, reload } = useAsync(load);
+  const { data, error, loading, reload } = useAsync(load, true, [load]);
   if (loading && !data) return <Skeleton rows={5} />;
   if (error) return <ErrorState error={error} onRetry={() => void reload()} />;
   if (!data || data.entries.length === 0) return <EmptyState title="No activity yet" description="Changes to this app's records will be listed here." />;

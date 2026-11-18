@@ -10,7 +10,7 @@ export function timeLeft(days: number): string {
 /** The trash of an app. Each row has Restore. */
 export function Trash({ appSlug }: { appSlug: string }) {
   const load = useCallback(() => listTrash(appSlug), [appSlug]);
-  const { data, error, loading, reload } = useAsync(load);
+  const { data, error, loading, reload } = useAsync(load, true, [load]);
   const [failure, setFailure] = useState<unknown>(null);
 
   const restore = async (entry: TrashEntry) => {

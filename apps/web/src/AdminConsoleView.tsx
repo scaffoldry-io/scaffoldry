@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { ConfirmAction, PageHeader } from "./ui";
 import { NotificationDefaultsEditor } from "./NotificationPrefs";
 import { DecisionLedgerView } from "./DecisionLedgerView";
 import { UnitPositions } from "./admin/UnitPositions";
@@ -21,10 +22,20 @@ export interface AdminConsoleViewProps {
   simResult: { decision: string; reason: string; rule: string };
   ledger: LedgerEntryItem[];
   setNotificationToast: React.Dispatch<React.SetStateAction<string | null>>;
+  /** Shows a failure. Without it a failure goes to `setNotificationToast`. */
+  setErrorToast?: (message: string) => void;
   handleDownloadOscal: () => void;
   personas: Persona[];
   handleStartImpersonation: (user: Persona) => void;
 }
+
+const PAGE_TITLES: Record<AdminConsoleViewProps["adminTab"], { title: string; description: string }> = {
+  org: { title: "Organization", description: "Institutional hierarchical scope tree and sovereign administrative unit governance." },
+  policy: { title: "Policy & OSCAL Lattice", description: "Source rules, the access simulator and the OSCAL component definition." },
+  ledger: { title: "Decision Ledger", description: "Every decision, chained so that any change to the record shows." },
+  impersonation: { title: "Impersonation", description: "Act as another person for support, with every action recorded." },
+  settings: { title: "Platform Settings", description: "Authoritative configuration stored in PostgreSQL. Every edit is audited in the cryptographic ledger." },
+};
 
 export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
   activePersona,
@@ -42,6 +53,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
   simResult,
   ledger,
   setNotificationToast,
+  setErrorToast,
   handleDownloadOscal,
   personas,
   handleStartImpersonation,
@@ -57,13 +69,14 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
   const [platformSettings, setPlatformSettings] = useState<Record<string, any>>({});
   const [settingsInputs, setSettingsInputs] = useState<Record<string, any>>({});
   const [scimSecret, setScimSecret] = useState<string | null>(null);
+  const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
 
   const loadPlatformSettings = async () => {
     try {
       const res = await apiClient.getSettings();
-      if (res?.settings) {
-        setPlatformSettings(res.settings);
-        setSettingsInputs({ ...res.settings });
+      if (res) {
+        setPlatformSettings(res);
+        setSettingsInputs({ ...res });
       }
     } catch (e: any) {
       console.error("Failed to load platform settings:", e);
@@ -76,7 +89,9 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
     }
   }, [adminTab]);
 
-  const handleSaveSetting = async (key: string) => {
+  const showError = (message: string) => (setErrorToast ?? setNotificationToast)(message);
+
+  const handleSaveSetting = async (key: string, reason: string) => {
     try {
       let val = settingsInputs[key];
       if (key === "tokens.max_days" || key === "process.stale_days" || key === "access.agent_session_hours" || key === "preview.trials_per_person" || key === "preview.trial_records" || key === "preview.trial_days") {
@@ -92,11 +107,12 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
           val = val.split(",").map((s: string) => s.trim()).filter(Boolean);
         }
       }
-      await apiClient.updateSetting(key, val);
+      await apiClient.updateSetting(key, val, reason);
       setNotificationToast(`Setting "${key}" updated successfully`);
       loadPlatformSettings();
     } catch (e: any) {
-      setNotificationToast(`Failed to update "${key}": ${e.message}`);
+      showError(`Failed to update "${key}": ${e.message}`);
+      throw e;
     }
   };
 
@@ -109,7 +125,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
       setScimSecret(res.token);
       setNotificationToast("SCIM token minted successfully");
     } catch (e: any) {
-      setNotificationToast(`Failed to mint SCIM token: ${e.message}`);
+      showError(`Failed to mint SCIM token: ${e.message}`);
     }
   };
 
@@ -172,7 +188,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
       setNewOrgCode("");
       setNotificationToast(`Created unit ${created.name}`);
     } catch (err: any) {
-      setNotificationToast(err.message || "Failed to create unit");
+      showError(err.message || "Failed to create unit");
     }
   };
 
@@ -188,7 +204,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
       loadMembers(selectedOrgId);
       setNotificationToast(`Appointed ${appointEppn} as Org Unit Admin`);
     } catch (err: any) {
-      setNotificationToast(err.message || "Failed to appoint admin");
+      showError(err.message || "Failed to appoint admin");
     }
   };
 
@@ -245,30 +261,32 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto animate-fade-in">
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center gap-3">
-          <img src="/logo-mark.png" alt="Scaffoldry" className="h-8 w-auto object-contain shrink-0" />
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-              <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
-                Institutional Administrative Console
-              </h1>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Discreet governance and operations center:{" "}
-              <code className="font-mono text-amber-600 dark:text-amber-400">/admin</code>.
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => navigateTo("/")}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 shadow-xs cursor-pointer transition-colors"
-        >
-          ← Exit to Workspace (/)
-        </button>
-      </div>
+      <PageHeader
+        title={PAGE_TITLES[adminTab].title}
+        description={PAGE_TITLES[adminTab].description}
+        actions={
+          <>
+            {adminTab === "settings" && (
+              <button
+                type="button"
+                data-testid="mint-scim-token-btn"
+                onClick={handleMintScimToken}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold cursor-pointer shadow-xs transition-colors flex items-center gap-2"
+              >
+                <span>🔑</span>
+                <span>Mint SCIM token</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => navigateTo("/")}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 shadow-xs cursor-pointer transition-colors"
+            >
+              ← Exit to Workspace (/)
+            </button>
+          </>
+        }
+      />
 
       {/* ADMIN TAB 1: ORGANIZATION & REALMS */}
       {adminTab === "org" && (
@@ -699,24 +717,6 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
       )}
       {adminTab === "settings" && (
         <div className="space-y-6 animate-fade-in">
-          <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Institutional Platform Settings</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Authoritative configuration stored in PostgreSQL. Every edit is audited in the cryptographic ledger.
-              </p>
-            </div>
-            <button
-              type="button"
-              data-testid="mint-scim-token-btn"
-              onClick={handleMintScimToken}
-              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs transition-colors flex items-center gap-2"
-            >
-              <span>🔑</span>
-              <span>Mint SCIM token</span>
-            </button>
-          </div>
-
           <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
             <NotificationDefaultsEditor />
           </div>
@@ -776,7 +776,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
               }
 
               return (
-                <div key={key} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div key={key} className="p-4 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between gap-4">
                   <div className="md:w-1/3">
                     <div className="font-mono text-xs font-bold text-slate-900 dark:text-white">{key}</div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400">{desc}</div>
@@ -828,12 +828,23 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
                       type="button"
                       data-testid={`setting-save-${key}`}
                       disabled={isSaveDisabled}
-                      onClick={() => handleSaveSetting(key)}
+                      onClick={() => setConfirmingKey(confirmingKey === key ? null : key)}
                       className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold cursor-pointer shrink-0 transition-colors"
                     >
                       Save
                     </button>
                   </div>
+                  {confirmingKey === key && (
+                    <div className="md:basis-full">
+                      <ConfirmAction
+                        verb="Save"
+                        target={key}
+                        consequence={`Changes ${key} for the whole platform.`}
+                        onConfirm={(reason) => handleSaveSetting(key, reason)}
+                        onSuccess={() => setConfirmingKey(null)}
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}
