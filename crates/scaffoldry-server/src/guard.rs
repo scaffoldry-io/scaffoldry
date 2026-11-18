@@ -263,6 +263,20 @@ pub fn as_client_refusal(refusal: ServiceError, client: bool) -> ServiceError {
     }
 }
 
+/// A page or built file of the web app. Only when SCAFFOLDRY_WEB_DIR is set, only for a read, only for a path no
+/// route matched (a route outside /api, such as /admin/..., stays guarded), and never under /api, /scim or /.well-known.
+fn serves_web_file(req: &Request) -> bool {
+    std::env::var_os("SCAFFOLDRY_WEB_DIR").is_some()
+        && matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD)
+        && req.extensions().get::<axum::extract::MatchedPath>().is_none()
+        && is_web_path(req.uri().path())
+}
+
+/// A path the web app may own: anything outside /api, /scim and /.well-known.
+pub fn is_web_path(path: &str) -> bool {
+    !["/api", "/scim", "/.well-known"].iter().any(|p| path == *p || path.starts_with(&format!("{p}/")))
+}
+
 pub async fn require_session(
     State(state): State<SharedState>,
     mut req: Request,
@@ -272,6 +286,9 @@ pub async fn require_session(
     // A shared link opens without a session when it is public. The route checks the token, the scope and the rate limit, and
     // asks for a session itself when the link is for the institution.
     if PUBLIC_PATHS.contains(&path) || path.starts_with("/scim/v2/") || path.starts_with("/api/v1/shared/") || path.starts_with("/api/v1/guest/") {
+        return next.run(req).await;
+    }
+    if serves_web_file(&req) {
         return next.run(req).await;
     }
     match session_user(&state, req.headers()) {

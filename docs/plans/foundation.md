@@ -414,7 +414,7 @@ Tests in `oidc_auth_test.rs`, with an RSA key pair generated in the test and its
 4. A token with a claim `affiliation: "central_admin"` cannot open `POST /api/v1/orgs`.
 5. Replace `oidc.jwks` with a second key through the settings route. A token signed by the first key is 401 on the next request, with no restart.
 
-## Phase 11 — one image [OPEN]
+## Phase 11 — one image [COMPLETED]
 
 The API server serves the built web files. Enable the `fs` feature of `tower-http`, which is already a dependency. In `build_app_with_state`, fall back to `ServeDir` on `SCAFFOLDRY_WEB_DIR` with `index.html` as the not-found file, when that variable is set. The guard treats any path outside `/api`, `/scim`, and `/.well-known` as public.
 
