@@ -17,6 +17,8 @@ import {
   groupRecordsByField,
 } from "../computedFields";
 
+import { sampleTables, sampleRelationships, sampleViews, samplePages } from "./fixtures/studio-sample";
+
 const mockApp: RegisteredApp = {
   slug: "physics-grants",
   title: "Physics Department Research Grants",
@@ -61,6 +63,19 @@ const mockApp: RegisteredApp = {
   },
 };
 
+// A rich app for the studio tests: three tables, relationships, saved views, and pages. The studio no longer
+// carries this content itself. It shows only what the app has.
+const studioApp: RegisteredApp = {
+  ...mockApp,
+  manifest: {
+    ...mockApp.manifest,
+    tables: sampleTables,
+    relationships: sampleRelationships,
+    views: sampleViews,
+    pages: samplePages,
+  },
+};
+
 describe("AppBuilder Usability & Interactive Component Canvas", () => {
   it("renders full-page builder with top bar and switches between tabs", () => {
     const handleBack = vi.fn();
@@ -68,7 +83,7 @@ describe("AppBuilder Usability & Interactive Component Canvas", () => {
 
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={handleBack}
         onOpenPublishedApp={handleOpenPublished}
       />
@@ -103,7 +118,7 @@ describe("AppBuilder Usability & Interactive Component Canvas", () => {
   it("selects a component on canvas and updates properties via flyout inspector", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -130,7 +145,7 @@ describe("AppBuilder Usability & Interactive Component Canvas", () => {
   it("supports multiple tables per app and foreign key relational lookups in Data tab", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -242,7 +257,7 @@ describe("Milestone 1: Rich Field Types & Computed Field Engine Usability", () =
   it("renders rich field types and computed cells inside AppBuilder Data Workspace", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -328,7 +343,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
   it("switches between Grid, Kanban, and Gallery views interactively in AppBuilder", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -366,7 +381,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
   it("opens filter popover, toggles conjunction, and applies row density presets", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -406,7 +421,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
   it("opens record detail drawer on row expand, edits properties, and closes drawer", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -439,7 +454,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
   it("renders reverse relational sub-tables in detail drawer and creates linked record", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -461,10 +476,10 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     expect(screen.getByText("3 records")).toBeInTheDocument();
   });
 
-  it("adds rows inline and through toolbar, duplicates and deletes records", () => {
+  it("offers no row creation, and duplicates and deletes records", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -472,14 +487,9 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
 
     fireEvent.click(screen.getByTestId("tab-btn-data"));
 
-    // Inline Add Row
-    const inlineAddRowBtn = screen.getByTestId("grid-add-row-btn");
-    fireEvent.click(inlineAddRowBtn);
-    expect(screen.getAllByText(/New Research Proposals Record/i).length).toBeGreaterThan(0);
-
-    // Toolbar Add Record
-    const toolbarAddBtn = screen.getByTestId("toolbar-add-record-btn");
-    fireEvent.click(toolbarAddBtn);
+    // The studio does not create rows. They are stored from the app's grid.
+    expect(screen.queryByTestId("grid-add-row-btn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("toolbar-add-record-btn")).not.toBeInTheDocument();
 
     // Duplicate record APP-001
     const duplicateBtn = screen.getByTestId("row-duplicate-btn-APP-001");
@@ -495,7 +505,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
   it("supports bulk selection, batch duplication, and batch deletion", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -521,10 +531,10 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     expect(screen.queryByTestId("batch-action-bar")).not.toBeInTheDocument();
   });
 
-  it("handles CSV export and CSV import modal with column mapping", () => {
+  it("offers CSV export and no CSV import", () => {
     render(
       <AppBuilder
-        app={mockApp}
+        app={studioApp}
         onBack={vi.fn()}
         onOpenPublishedApp={vi.fn()}
       />
@@ -532,37 +542,18 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
 
     fireEvent.click(screen.getByTestId("tab-btn-data"));
 
-    // Open CSV Import modal
-    const importCsvBtn = screen.getByTestId("toolbar-import-csv-btn");
-    fireEvent.click(importCsvBtn);
-
-    expect(screen.getByTestId("csv-import-modal")).toBeInTheDocument();
-    expect(screen.getByText(/Import CSV into Research Proposals/i)).toBeInTheDocument();
-
-    // Enter CSV text
-    const textarea = screen.getByTestId("csv-textarea-input");
-    fireEvent.change(textarea, {
-      target: {
-        value: `title,budget,status\n"Laser Interferometry Gravity",950000,Approved`,
-      },
-    });
-
-    // Verify mapping interface rendered
-    expect(screen.getByText(/1 rows found/i)).toBeInTheDocument();
-    expect(screen.getByTestId("csv-map-select-title")).toHaveValue("title");
-    expect(screen.getByTestId("csv-map-select-budget")).toHaveValue("budget");
-
-    // Execute Import
-    const executeBtn = screen.getByTestId("csv-execute-import-btn");
-    fireEvent.click(executeBtn);
-
-    // Modal closed and new record present in grid
-    expect(screen.queryByTestId("csv-import-modal")).not.toBeInTheDocument();
-    expect(screen.getByText("Laser Interferometry Gravity")).toBeInTheDocument();
+    // Export stays. Import is not offered here, because the studio stores no rows.
+    expect(screen.getByTestId("toolbar-export-csv-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("toolbar-import-csv-btn")).not.toBeInTheDocument();
   });
 
   describe("Milestone 5: Standalone Public Intake Forms & Full-Screen UI/UX Usability", () => {
-    it("renders full-screen StandaloneIntakeForm, switches tables, and validates required fields", () => {
+    it("renders full-screen StandaloneIntakeForm, switches tables, and validates required fields", async () => {
+      vi.spyOn(apiClient, "createRecord").mockImplementation(async (_slug, data) => ({
+        id: "srv-rec-1",
+        version: 1,
+        data,
+      } as any));
       const mockRichApp: RegisteredApp = {
         ...mockApp,
         manifest: {
@@ -623,10 +614,9 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       // Submit valid form
       fireEvent.click(submitBtn);
 
-      // Confirmation card should be rendered
-      expect(screen.getByTestId("intake-confirmation-card")).toBeInTheDocument();
-      expect(screen.getByText(/Submission Received and Attested/i)).toBeInTheDocument();
-      expect(screen.getByText(/sha256:/i)).toBeInTheDocument();
+      // Confirmation card shows the record the server stored, and no invented hash
+      expect(await screen.findByTestId("intake-confirmation-card")).toHaveTextContent("srv-rec-1");
+      expect(screen.queryByText(/sha256:/i)).not.toBeInTheDocument();
       expect(onRecordSubmitted).toHaveBeenCalledWith(
         "tbl-proposals",
         expect.objectContaining({
@@ -656,7 +646,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       const mockOpenIntake = vi.fn();
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
           onOpenIntakeForm={mockOpenIntake}
@@ -973,7 +963,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     it("inserts a field via header menu in builder data-tab grid", () => {
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
         />
@@ -1007,7 +997,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
 
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
         />
@@ -1057,7 +1047,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     it("renames field, preserving key when data exists and updating key when empty", () => {
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
         />
@@ -1079,7 +1069,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     it("changes field type and clears stored records when changing to Formula", () => {
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
         />
@@ -1099,7 +1089,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       const alertMock = vi.spyOn(window, "alert").mockImplementation(() => {});
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
         />
@@ -1130,7 +1120,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     it("adds a linked field via + Add Field button with Airtable-style link characteristics", () => {
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
         />
@@ -1141,6 +1131,9 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
       const addFieldBtn = screen.getByTestId("add-column-header-btn");
       expect(addFieldBtn).toBeInTheDocument();
       fireEvent.click(addFieldBtn);
+
+      // The field drawer offers plain types, and a way on to the link form
+      fireEvent.click(screen.getByRole("button", { name: /Link a field from another table instead/i }));
 
       // Link characteristics modal opens
       expect(screen.getByTestId("link-characteristics-modal")).toBeInTheDocument();
@@ -1188,7 +1181,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
     it("opens link characteristics configuration modal from column menu for existing relation field", () => {
       render(
         <AppBuilder
-          app={mockApp}
+          app={studioApp}
           onBack={vi.fn()}
           onOpenPublishedApp={vi.fn()}
         />

@@ -90,7 +90,8 @@ const PERSONAS: Persona[] = [
 ];
 
 // An app from the server, as the desk holds it. The definition comes from GET /apps/{slug}. Without it the app has no tables.
-function registeredAppOf(mine: MyApp, manifest: any | null): RegisteredApp {
+/** An app the server listed, as the desk holds it. An app is a draft until it has a status or a domain. */
+export function registeredAppOf(mine: MyApp, manifest: any | null): RegisteredApp {
   const m = manifest ?? {};
   return {
     slug: mine.slug,
@@ -101,7 +102,7 @@ function registeredAppOf(mine: MyApp, manifest: any | null): RegisteredApp {
     verified: !!m.custom_domain_verified,
     hermCapability: m.herm_capability_id ?? "",
     cedsDomain: "",
-    status: m.status ?? "Published",
+    status: m.status ?? (m.custom_domain ? "Published" : "Draft"),
     updatedAt: "",
     recordsCount: 0,
     workspaceId: mine.workspace_id,
