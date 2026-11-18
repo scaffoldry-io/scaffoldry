@@ -26,7 +26,8 @@ import { DataShapingToolbar } from "./DataShapingToolbar";
 import { RecordDetailDrawer } from "./RecordDetailDrawer";
 import { AttachmentCover, type AttachedFile } from "./ui/Attachments";
 import { CsvImportModal } from "./CsvImportModal";
-import { Banner } from "./ui";
+import { Banner, EmptyState, explainError } from "./ui";
+import { AddFieldDrawer } from "./AddFieldDrawer";
 import { AddViewModal } from "./AddViewModal";
 import { CreateTableModal } from "./CreateTableModal";
 import { AccessRulesTab } from "./AccessRulesTab";
@@ -75,137 +76,36 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   }, []);
   const [settingsTab, setSettingsTab] = useState<"general" | "access">("general");
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [activePageId, setActivePageId] = useState<string>("page-overview");
+  const [activePageId, setActivePageId] = useState<string>("");
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [isFlyoutOpen, setIsFlyoutOpen] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [appTitle, setAppTitle] = useState<string>(app.title);
+  const [isAddFieldOpen, setIsAddFieldOpen] = useState<boolean>(false);
 
-  // Multi-Table State & Relational Schema
-  const defaultTables: AppTable[] = app.manifest.tables && app.manifest.tables.length > 0
-    ? app.manifest.tables
-    : [
-        {
-          id: "tbl-proposals",
-          name: "Research Proposals",
-          slug: "proposals",
-          icon: "📑",
-          primary_field: "title",
-          description: "Active grant proposals and board evaluations",
-          fields: [
-            { name: "id", label: "Proposal ID", field_type: "Text", required: true, ferpa_sensitive: false },
-            { name: "title", label: "Proposal Title", field_type: "Text", required: true, ferpa_sensitive: false },
-            { name: "department", label: "Department", field_type: "Text", required: true, ferpa_sensitive: false },
-            {
-              name: "lead_investigator_id",
-              label: "Lead Investigator",
-              field_type: "Relation",
-              required: true,
-              ferpa_sensitive: false,
-              target_table_id: "tbl-investigators",
-              target_display_field: "name",
-            },
-            { name: "status", label: "Review Status", field_type: "Select", required: true, ferpa_sensitive: false },
-            { name: "budget", label: "Budget ($)", field_type: "Number", required: true, ferpa_sensitive: false },
-            { name: "submitted_at", label: "Submitted", field_type: "Date", required: true, ferpa_sensitive: false },
-            { name: "ethics_approved", label: "Ethics Approved", field_type: "Checkbox", required: false, ferpa_sensitive: false },
-            { name: "tags", label: "Research Tags", field_type: "MultiSelect", required: false, ferpa_sensitive: false, select_options: ["StemCell", "Quantum", "DOE-Grant", "Catalyst", "HighPriority"] },
-            { name: "rating", label: "Review Rating", field_type: "Rating", required: false, ferpa_sensitive: false },
-            { name: "lead_pi_email", label: "PI Email", field_type: "Lookup", required: false, ferpa_sensitive: false, target_table_id: "tbl-investigators", target_display_field: "email" },
-            { name: "total_allocations", label: "Total Disbursed", field_type: "Rollup", required: false, ferpa_sensitive: false, target_table_id: "tbl-allocations", target_display_field: "allocated_amount", rollup_function: "sum" },
-            { name: "allocations_count", label: "Disbursement Count", field_type: "Count", required: false, ferpa_sensitive: false, target_table_id: "tbl-allocations" },
-            { name: "indirect_cost", label: "Indirect Cost (20%)", field_type: "Formula", required: false, ferpa_sensitive: false, formula_expression: "{budget} * 0.20" },
-          ],
-          records: [
-            { id: "APP-001", title: "Quantum Optomechanics Qubit Study", department: "Physics", lead_investigator_id: "INV-01", status: "Under Review", budget: 450000, submitted_at: "2026-10-02", ethics_approved: true, tags: ["Quantum", "HighPriority"], rating: 5, indirect_cost: 90000 },
-            { id: "APP-002", title: "Neural Stem Cell Regeneration", department: "Bioengineering", lead_investigator_id: "INV-02", status: "Approved", budget: 820000, submitted_at: "2026-09-28", ethics_approved: true, tags: ["StemCell", "DOE-Grant"], rating: 4, indirect_cost: 164000 },
-            { id: "APP-003", title: "Edge Sensor Fusion Lattice", department: "Computer Science", lead_investigator_id: "INV-02", status: "Funded", budget: 640000, submitted_at: "2026-09-15", ethics_approved: false, tags: ["Quantum"], rating: 3, indirect_cost: 128000 },
-            { id: "APP-004", title: "High-Entropy Alloy Catalyst Synthesis", department: "Materials Science", lead_investigator_id: "INV-03", status: "Under Review", budget: 380000, submitted_at: "2026-10-01", ethics_approved: true, tags: ["Catalyst"], rating: 4, indirect_cost: 76000 },
-          ],
-        },
-        {
-          id: "tbl-investigators",
-          name: "Principal Investigators",
-          slug: "investigators",
-          icon: "👥",
-          primary_field: "name",
-          description: "Tenured and tenure-track faculty research leaders",
-          fields: [
-            { name: "id", label: "Investigator ID", field_type: "Text", required: true, ferpa_sensitive: false },
-            { name: "name", label: "Faculty Name", field_type: "Text", required: true, ferpa_sensitive: false },
-            { name: "email", label: "Academic Email", field_type: "Text", required: true, ferpa_sensitive: false },
-            { name: "department", label: "Department", field_type: "Text", required: true, ferpa_sensitive: false },
-            { name: "specialty", label: "Specialty", field_type: "Text", required: false, ferpa_sensitive: false },
-            { name: "active_grants_count", label: "Active Grants", field_type: "Number", required: false, ferpa_sensitive: false },
-          ],
-          records: [
-            { id: "INV-01", name: "Dr. Marie Curie", email: "curie@science.state.edu", department: "Physics", specialty: "Radioactive & Quantum Matter", active_grants_count: 3 },
-            { id: "INV-02", name: "Dr. Alan Turing", email: "turing@science.state.edu", department: "Computer Science", specialty: "Automata & Cryptography", active_grants_count: 2 },
-            { id: "INV-03", name: "Dr. Barbara McClintock", email: "barbara@science.state.edu", department: "Bioengineering", specialty: "Transposable Genetics", active_grants_count: 4 },
-          ],
-        },
-        {
-          id: "tbl-allocations",
-          name: "Budget Allocations",
-          slug: "allocations",
-          icon: "💰",
-          primary_field: "id",
-          description: "Grant expenditure allocations and quarterly disbursement tranches",
-          fields: [
-            { name: "id", label: "Allocation ID", field_type: "Text", required: true, ferpa_sensitive: false },
-            {
-              name: "proposal_id",
-              label: "Linked Proposal",
-              field_type: "Relation",
-              required: true,
-              ferpa_sensitive: false,
-              target_table_id: "tbl-proposals",
-              target_display_field: "title",
-            },
-            { name: "fiscal_quarter", label: "Fiscal Quarter", field_type: "Text", required: true, ferpa_sensitive: false },
-            { name: "allocated_amount", label: "Disbursed Amount ($)", field_type: "Number", required: true, ferpa_sensitive: false },
-            { name: "disbursement_status", label: "Status", field_type: "Select", required: true, ferpa_sensitive: false },
-          ],
-          records: [
-            { id: "ALC-101", proposal_id: "APP-001", fiscal_quarter: "Q1-2026", allocated_amount: 150000, disbursement_status: "Disbursed" },
-            { id: "ALC-102", proposal_id: "APP-001", fiscal_quarter: "Q2-2026", allocated_amount: 300000, disbursement_status: "Approved" },
-            { id: "ALC-103", proposal_id: "APP-002", fiscal_quarter: "Q1-2026", allocated_amount: 400000, disbursement_status: "Disbursed" },
-            { id: "ALC-104", proposal_id: "APP-002", fiscal_quarter: "Q2-2026", allocated_amount: 420000, disbursement_status: "Pending Review" },
-          ],
-        },
-      ];
+  // The app's own tables, relationships, and pages. Nothing is made up: an app that has none shows an empty state.
+  const viewFields = app.manifest.views[0]?.fields;
+  const startTables: AppTable[] =
+    app.manifest.tables && app.manifest.tables.length > 0
+      ? app.manifest.tables
+      : viewFields
+      ? [{ id: app.manifest.views[0].table_id ?? "main", name: app.title, slug: app.slug, fields: viewFields }]
+      : [];
+  const startRelationships: TableRelationship[] = app.manifest.relationships ?? [];
 
-  const defaultRelationships: TableRelationship[] = app.manifest.relationships && app.manifest.relationships.length > 0
-    ? app.manifest.relationships
-    : [
-        {
-          id: "rel-1",
-          name: "Proposal Lead Investigator",
-          source_table_id: "tbl-proposals",
-          target_table_id: "tbl-investigators",
-          source_field: "lead_investigator_id",
-          target_field: "id",
-          relationship_type: "ManyToOne",
-          display_field: "name",
-        },
-        {
-          id: "rel-2",
-          name: "Allocation Proposal Binding",
-          source_table_id: "tbl-allocations",
-          target_table_id: "tbl-proposals",
-          source_field: "proposal_id",
-          target_field: "id",
-          relationship_type: "ManyToOne",
-          display_field: "title",
-        },
-      ];
-
-  const [tables, setTables] = useState<AppTable[]>(defaultTables);
-  const [relationships] = useState<TableRelationship[]>(defaultRelationships);
-  const [activeTableId, setActiveTableId] = useState<string>("tbl-proposals");
+  const [tables, setTables] = useState<AppTable[]>(startTables);
+  const [relationships] = useState<TableRelationship[]>(startRelationships);
+  const [activeTableId, setActiveTableId] = useState<string>(startTables[0]?.id ?? "");
   const [tableSearchFilter, setTableSearchFilter] = useState<string>("");
   const [isAddTableModalOpen, setIsAddTableModalOpen] = useState<boolean>(false);
   const [isLinkedFieldModalOpen, setIsLinkedFieldModalOpen] = useState<boolean>(false);
   const [editingLinkField, setEditingLinkField] = useState<FieldSpec | null>(null);
+
+  // A plain field joins the open table. It is stored when the app is saved.
+  const handleAddPlainField = (field: FieldSpec) => {
+    setTables((prev) => prev.map((t) => (t.id === activeTable.id ? { ...t, fields: [...t.fields, field] } : t)));
+  };
 
   const handleOpenAddLinkedField = () => {
     setEditingLinkField(null);
@@ -236,54 +136,20 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const [newTableName, setNewTableName] = useState<string>("");
   const [newTableIcon, setNewTableIcon] = useState<string>("📋");
 
-  const activeTable = tables.find((t) => t.id === activeTableId) || tables[0];
+  // An app with no tables has an empty stand-in, so the screens below never read from nothing.
+  const NO_TABLE: AppTable = { id: "", name: "", slug: "", fields: [], records: [] };
+  const activeTable = tables.find((t) => t.id === activeTableId) || tables[0] || NO_TABLE;
 
-  const defaultSavedViews: AppView[] = [
-    {
-      id: "view-proposals-grid",
-      table_id: "tbl-proposals",
-      title: "All Proposals",
-      view_type: "Grid",
-      row_density: "medium",
-    },
-    {
-      id: "view-proposals-kanban",
-      table_id: "tbl-proposals",
-      title: "Status Kanban",
-      view_type: "Kanban",
-      kanban_column_field: "status",
-    },
-    {
-      id: "view-proposals-calendar",
-      table_id: "tbl-proposals",
-      title: "Submission Timeline",
-      view_type: "Calendar",
-      calendar_date_field: "submitted_at",
-    },
-    {
-      id: "view-proposals-gallery",
-      table_id: "tbl-proposals",
-      title: "Grant Showcase",
-      view_type: "Gallery",
-    },
-    {
-      id: "view-investigators-grid",
-      table_id: "tbl-investigators",
-      title: "Faculty Grid",
-      view_type: "Grid",
-      row_density: "medium",
-    },
-    {
-      id: "view-allocations-grid",
-      table_id: "tbl-allocations",
-      title: "Allocations Grid",
-      view_type: "Grid",
-      row_density: "medium",
-    },
-  ];
+  // The app's saved views. A table with none gets one plain grid view of its records.
+  const defaultSavedViews: AppView[] =
+    app.manifest.views.length > 0
+      ? app.manifest.views.map((v) => ({ ...v, table_id: v.table_id ?? startTables[0]?.id }))
+      : startTables.length > 0
+      ? [{ id: "view-default-grid", table_id: startTables[0].id, title: "All records", view_type: "Grid", row_density: "medium" }]
+      : [];
 
   const [savedViews, setSavedViews] = useState<AppView[]>(defaultSavedViews);
-  const [activeViewId, setActiveViewId] = useState<string>("view-proposals-grid");
+  const [activeViewId, setActiveViewId] = useState<string>(defaultSavedViews[0]?.id ?? "");
   const [compoundFilter, setCompoundFilter] = useState<CompoundFilter>({
     conjunction: "AND",
     clauses: [],
@@ -307,13 +173,13 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const [csvFieldMapping, setCsvFieldMapping] = useState<Record<string, string>>({});
 
   const currentTableViews = savedViews.filter(
-    (v) => (v.table_id || "tbl-proposals") === activeTable.id
+    (v) => (v.table_id || tables[0]?.id) === activeTable.id
   );
 
-  const activeView =
+  const activeView: AppView =
     currentTableViews.find((v) => v.id === activeViewId) ||
     currentTableViews[0] ||
-    savedViews[0];
+    savedViews[0] || { id: "view-default-grid", table_id: activeTable.id, title: "All records", view_type: "Grid" };
 
   const handleAddFilterClause = () => {
     const firstField = activeTable.fields[0]?.name || "id";
@@ -401,32 +267,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
     );
   };
 
-  // Direct Row Mutations
-  const handleAddRow = () => {
-    const newId = `REC-${Date.now().toString().slice(-4)}`;
-    const primaryKey = activeTable.primary_field || "name";
-    const newRecord: Record<string, any> = { id: newId };
-    newRecord[primaryKey] = `New ${activeTable.name} Record`;
-    for (const f of activeTable.fields) {
-      if (f.name === "id" || f.name === primaryKey) continue;
-      if (f.field_type === "Number" || f.field_type === "Currency") newRecord[f.name] = 0;
-      else if (f.field_type === "Checkbox") newRecord[f.name] = false;
-      else if (f.field_type === "Date") newRecord[f.name] = "2026-10-06";
-      else if (f.field_type === "Select" && f.select_options && f.select_options.length > 0) {
-        const opt0 = f.select_options[0];
-        newRecord[f.name] = typeof opt0 === "string" ? opt0 : opt0.id;
-      }
-      else if (f.field_type === "Rating") newRecord[f.name] = 3;
-      else if (!["Formula", "Lookup", "Count", "Rollup"].includes(f.field_type))
-        newRecord[f.name] = "";
-    }
-    setTables((prev) =>
-      prev.map((t) =>
-        t.id === activeTable.id ? { ...t, records: [...(t.records || []), newRecord] } : t
-      )
-    );
-  };
-
+  // Rows are stored by the app's grid. The studio does not create them.
   const handleDuplicateRecord = (recordId: string) => {
     const rec = (activeTable.records || []).find((r) => r.id === recordId);
     if (!rec) return;
@@ -707,14 +548,6 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const handleOpenCsvModal = () => {
-    setCsvRawText("");
-    setCsvParsedHeaders([]);
-    setCsvParsedRows([]);
-    setCsvFieldMapping({});
-    setIsCsvModalOpen(true);
-  };
-
   const handleParseCsvText = (text: string) => {
     setCsvRawText(text);
     const parsed = parseCsv(text);
@@ -763,23 +596,17 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
     e.preventDefault();
     if (!newTableName.trim()) return;
 
-    const newSlug = newTableName.toLowerCase().replace(/\s+/g, "-");
-    const newId = `tbl-${Date.now().toString().slice(-4)}`;
+    const newSlug = newTableName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "table";
+    const newId = tables.some((t) => t.id === newSlug) ? `${newSlug}-${tables.length + 1}` : newSlug;
     const created: AppTable = {
       id: newId,
       name: newTableName.trim(),
       slug: newSlug,
       icon: newTableIcon,
       primary_field: "name",
-      description: `User-defined table for ${newTableName.trim()}`,
-      fields: [
-        { name: "id", label: "Record ID", field_type: "Text", required: true, ferpa_sensitive: false },
-        { name: "name", label: "Name / Title", field_type: "Text", required: true, ferpa_sensitive: false },
-        { name: "created_at", label: "Created Date", field_type: "Date", required: true, ferpa_sensitive: false },
-      ],
-      records: [
-        { id: `REC-01`, name: `Sample ${newTableName.trim()} Record`, created_at: "2026-10-04" },
-      ],
+      description: "",
+      fields: [{ name: "name", label: "Name / Title", field_type: "Text", required: true, ferpa_sensitive: false }],
+      records: [],
     };
 
     setTables((prev) => [...prev, created]);
@@ -790,136 +617,18 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
 
   const [automationRules, setAutomationRules] = useState<WorkflowAutomationRule[]>([]);
 
-  // Default pages hierarchy
-  const defaultPages: AppPage[] = app.manifest.pages && app.manifest.pages.length > 0
-    ? app.manifest.pages
-    : [
-        {
-          id: "page-overview",
-          slug: "overview",
-          title: "Executive Dashboard",
-          icon: "📊",
-          description: "High-level metrics and active records queue",
-          components: [
-            {
-              id: "comp-banner-1",
-              type: "rich-banner",
-              title: "Institutional Review Board Notice",
-              slot: "header",
-              layout: { width: "full", order: 0 },
-              config: {
-                variant: "info",
-                content: "All proposals submitted under this cycle are subject to 2 CFR 200 uniform guidance and university conflict-of-interest review.",
-              },
-            },
-            {
-              id: "comp-stat-1",
-              type: "stat-metric",
-              title: "Active Proposals",
-              slot: "main",
-              layout: { width: "third", order: 1 },
-              config: {
-                subtitle: "Fiscal Year 2026",
-                aggregation: "count",
-                trend_text: "+14% vs FY25",
-                accent_color: "blue",
-                source_table_id: "tbl-proposals",
-              },
-            },
-            {
-              id: "comp-stat-2",
-              type: "stat-metric",
-              title: "Total Requested Budget",
-              slot: "main",
-              layout: { width: "third", order: 2 },
-              config: {
-                subtitle: "Across all departments",
-                aggregation: "sum",
-                target_field: "budget",
-                trend_text: "$3.4M cumulative",
-                accent_color: "emerald",
-                source_table_id: "tbl-proposals",
-              },
-            },
-            {
-              id: "comp-stat-3",
-              type: "stat-metric",
-              title: "Under Review Queue",
-              slot: "main",
-              layout: { width: "third", order: 3 },
-              config: {
-                subtitle: "Faculty committee",
-                aggregation: "count",
-                filter_status: "Under Review",
-                trend_text: "Target 14 days",
-                accent_color: "amber",
-                source_table_id: "tbl-proposals",
-              },
-            },
-            {
-              id: "comp-grid-1",
-              type: "tabular-grid",
-              title: "Governed Proposals Registry",
-              slot: "main",
-              layout: { width: "full", order: 4 },
-              config: {
-                source_table_id: "tbl-proposals",
-                visible_columns: ["id", "title", "department", "lead_investigator_id", "status", "budget", "submitted_at"],
-                rollup_type: "sum",
-                enable_search: true,
-                enable_inline_edit: true,
-              },
-            },
-          ],
-        },
-        {
-          id: "page-stages",
-          slug: "stages",
-          title: "Workflow Kanban",
-          icon: "📋",
-          description: "Stage progression and approval board",
-          components: [
-            {
-              id: "comp-kanban-1",
-              type: "kanban-stage",
-              title: "Proposal Evaluation Stages",
-              slot: "main",
-              layout: { width: "full", order: 0 },
-              config: {
-                source_table_id: "tbl-proposals",
-                stage_field: "status",
-                card_title_field: "title",
-              },
-            },
-          ],
-        },
-        {
-          id: "page-investigators",
-          slug: "faculty",
-          title: "Investigators Directory",
-          icon: "👥",
-          description: "Principal investigators and research faculty directory",
-          components: [
-            {
-              id: "comp-grid-inv",
-              type: "tabular-grid",
-              title: "Principal Investigators Table",
-              slot: "main",
-              layout: { width: "full", order: 0 },
-              config: {
-                source_table_id: "tbl-investigators",
-                visible_columns: ["id", "name", "email", "department", "specialty", "active_grants_count"],
-                rollup_type: "count",
-                enable_search: true,
-              },
-            },
-          ],
-        },
-      ];
+  // The app's pages. A page the server holds without a canvas shows as an empty page with its title.
+  const startPages: AppPage[] = (app.manifest.pages ?? []).map((p) => {
+    const raw = p as unknown as Record<string, unknown>;
+    if (Array.isArray(raw.components)) return p;
+    const id = String(raw.id ?? "");
+    return { id, slug: id, title: String(raw.title ?? id), icon: "📄", description: "", components: [] } as AppPage;
+  });
 
-  const [pages, setPages] = useState<AppPage[]>(defaultPages);
+  const [pages, setPages] = useState<AppPage[]>(startPages);
 
-  const activePage = pages.find((p) => p.id === activePageId) || pages[0];
+  const NO_PAGE: AppPage = { id: "", slug: "", title: "", icon: "", description: "", components: [] };
+  const activePage = pages.find((p) => p.id === activePageId) || pages[0] || NO_PAGE;
   const selectedComponent =
     activePage.components.find((c) => c.id === selectedComponentId) || null;
 
@@ -978,6 +687,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   };
 
   const handleAddComponent = (type: GovernedComponentType) => {
+    if (pages.length === 0) return;
     const newId = `comp-${type}-${Date.now().toString().slice(-4)}`;
     const newComp: GovernedComponentSpec = {
       id: newId,
@@ -1022,23 +732,59 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
     setActivePageId(newId);
   };
 
-  const handleSave = () => {
-    const updatedManifest: AppManifest = {
-      ...app.manifest,
-      tables,
-      relationships,
-      pages,
-    };
-    const updatedApp: RegisteredApp = {
-      ...app,
-      manifest: updatedManifest,
-      updatedAt: "Just now",
-    };
-    if (onSaveApp) {
-      onSaveApp(updatedApp);
+  // The views the grid reads. A field added here joins the views of its table, and a table with no view gets a grid view.
+  const viewsToSave = (): AppView[] => {
+    const original = new Set(startTables.flatMap((t) => t.fields.map((f) => `${t.id}.${f.name}`)));
+    const views = (app.manifest.views ?? []).map((v) => {
+      const table = tables.find((t) => t.id === v.table_id);
+      if (!table || !v.fields) return v;
+      const kept = v.fields.flatMap((f) => table.fields.filter((x) => x.name === f.name));
+      const added = table.fields.filter((f) => !original.has(`${table.id}.${f.name}`) && !v.fields!.some((x) => x.name === f.name));
+      return { ...v, fields: [...kept, ...added] };
+    });
+    const missing = tables.filter((t) => !views.some((v) => v.table_id === t.id));
+    return [
+      ...views,
+      ...missing.map((t) => ({ id: `view-${t.id}`, table_id: t.id, title: `All ${t.name}`, view_type: "Grid" as ViewType, fields: t.fields })),
+    ];
+  };
+
+  // Saves the app's definition to the server. Nothing is said to be saved until the server has answered.
+  const handleSave = async () => {
+    setSaveError(null);
+    setSaveStatus(null);
+    try {
+      const known = (app.manifest as AppManifest & { version?: number }).version;
+      const version = typeof known === "number" ? known : (await apiClient.getApp(app.slug))?.version;
+      const body = {
+        ...app.manifest,
+        title: appTitle.trim() || app.title,
+        tables: tables.map((t) => ({ ...t, records: undefined })),
+        relationships,
+        views: viewsToSave(),
+        // The server keeps its own page model. The canvas does not change it.
+        pages: app.manifest.pages ?? [],
+        version,
+      };
+      const { status, data } = await apiClient.updateApp(app.slug, body);
+      if (status === 202) {
+        setSaveStatus("Submitted for approval. The app is not live until someone approves it.");
+        return;
+      }
+      const saved: RegisteredApp = {
+        ...app,
+        title: body.title,
+        manifest: { ...app.manifest, ...(data ?? body) } as AppManifest,
+        updatedAt: "Just now",
+      };
+      if (onSaveApp) onSaveApp(saved);
+      const canvasChanged = JSON.stringify(pages) !== JSON.stringify(startPages);
+      setSaveStatus(canvasChanged ? "Saved. Page layout changes on the canvas are not stored yet." : "Saved");
+      setTimeout(() => setSaveStatus(null), 5000);
+    } catch (e) {
+      const x = explainError(e);
+      setSaveError(`Not saved. ${[x.message, x.next].filter(Boolean).join(" ")}`);
     }
-    setSaveStatus("Saved to Sovereign Manifest");
-    setTimeout(() => setSaveStatus(null), 3000);
   };
 
   return (
@@ -1075,6 +821,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          {saveError && (
+            <span role="alert" className="text-xs text-red-600 dark:text-red-400 font-medium max-w-md truncate" title={saveError}>
+              {saveError}
+            </span>
+          )}
           {saveStatus && (
             <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium animate-fade-in">
               ✓ {saveStatus}
@@ -1265,15 +1016,18 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-400">Active Relationships:</span>
-                  <span className="font-mono font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">
-                    {relationships.length} Linked Foreign Keys
-                  </span>
-                </div>
+                {relationships.length > 0 && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-400">Active Relationships:</span>
+                    <span className="font-mono font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                      {relationships.length} Linked Foreign Keys
+                    </span>
+                  </div>
+                )}
               </div>
 
-              {/* RELATIONSHIP LATTICE OVERVIEW BANNER */}
+              {/* RELATIONSHIP LATTICE OVERVIEW BANNER. Shown only when the app has relationships. */}
+              {relationships.length > 0 && (
               <div className="bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/80 rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -1307,6 +1061,11 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   })}
                 </div>
               </div>
+              )}
+
+              {tables.length === 0 && (
+                <EmptyState title="No tables yet" description="Add a table to start designing the data this app keeps." />
+              )}
 
               {/* ACTIVE TABLE SCHEMA & RECORDS GRID */}
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs space-y-4">
@@ -1393,9 +1152,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   setRowDensity={setRowDensity}
                   tableSearchFilter={tableSearchFilter}
                   setTableSearchFilter={setTableSearchFilter}
-                  onOpenCsvModal={handleOpenCsvModal}
                   onExportCsv={handleExportCsv}
-                  onAddRow={handleAddRow}
                 />
 
                 {/* COMPUTED DATA SHAPING */}
@@ -1897,9 +1654,9 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                               <button
                                 type="button"
                                 data-testid="add-column-header-btn"
-                                onClick={handleOpenAddLinkedField}
+                                onClick={() => setIsAddFieldOpen(true)}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-500 hover:text-purple-600 dark:text-slate-400 dark:hover:text-purple-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-dashed border-slate-300 dark:border-slate-700"
-                                title="Add a new linked field to another record"
+                                title="Add a field to this table"
                               >
                                 <span>+ Add Field</span>
                               </button>
@@ -2227,21 +1984,12 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                           </React.Fragment>
                         ))}
 
-                        {/* INLINE ADD ROW BUTTON */}
                         <tr>
                           <td
                             colSpan={activeTable.fields.length + 2}
-                            className="py-2.5 px-4 bg-slate-50/50 dark:bg-slate-800/30 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 transition-colors"
+                            className="py-2.5 px-4 bg-slate-50/50 dark:bg-slate-800/30 text-xs text-slate-500 dark:text-slate-400"
                           >
-                            <button
-                              type="button"
-                              data-testid="grid-add-row-btn"
-                              onClick={handleAddRow}
-                              className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
-                            >
-                              <span className="text-base leading-none font-bold">+</span>
-                              <span>Add Row</span>
-                            </button>
+                            Add records in the app&apos;s grid. This screen designs the app and does not store records.
                           </td>
                         </tr>
                       </tbody>
@@ -2331,6 +2079,14 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   onCreateNewView={handleCreateNewView}
                 />
 
+                <AddFieldDrawer
+                  open={isAddFieldOpen}
+                  onClose={() => setIsAddFieldOpen(false)}
+                  existingNames={activeTable.fields.map((f) => f.name)}
+                  onAdd={handleAddPlainField}
+                  onAddLinked={handleOpenAddLinkedField}
+                />
+
                 <LinkedFieldModal
                   isOpen={isLinkedFieldModalOpen}
                   onClose={() => setIsLinkedFieldModalOpen(false)}
@@ -2396,7 +2152,19 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
             {/* Visual Component Canvas */}
             <main className="flex-1 overflow-y-auto p-6 bg-slate-100/60 dark:bg-slate-950/40">
               <div className="max-w-6xl mx-auto space-y-6">
+                {pages.length === 0 && (
+                  <EmptyState
+                    title="No pages yet"
+                    description="Add a page to lay out what people see when they open this app."
+                    action={
+                      <button type="button" onClick={handleAddPage} className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer">
+                        + Page
+                      </button>
+                    }
+                  />
+                )}
                 {/* Active Page Header Banner */}
+                {pages.length > 0 && (
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">
@@ -2414,6 +2182,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                     Click any widget below to open configuration flyout
                   </div>
                 </div>
+                )}
 
                 {/* Canvas Grid */}
                 <div className="grid grid-cols-6 gap-5">
@@ -2429,7 +2198,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                         : "col-span-6";
 
                     // Determine bound table for this component
-                    const boundTable = tables.find((t) => t.id === comp.config.source_table_id) || tables[0];
+                    const boundTable = tables.find((t) => t.id === comp.config.source_table_id) || activeTable;
 
                     return (
                       <div
@@ -2456,7 +2225,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                             </span>
                             <div className="flex items-baseline justify-between mt-2">
                               <span className="text-2xl font-black text-slate-900 dark:text-white">
-                                {comp.config.aggregation === "sum" ? "$3,450,000" : (boundTable.records || []).length}
+                                {"—"}
                               </span>
                               {comp.config.trend_text && (
                                 <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
@@ -2467,6 +2236,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                             {comp.config.subtitle && (
                               <p className="text-[11px] text-slate-400 mt-1">{comp.config.subtitle}</p>
                             )}
+                            <p className="text-[11px] text-slate-400 mt-1">The figure is worked out from the stored records when the app opens.</p>
                           </div>
                         )}
 
@@ -2505,12 +2275,10 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                                         .slice(0, 5)
                                         .map((col: string) => (
                                           <td key={col} className="py-2 text-slate-700 dark:text-slate-300">
-                                            {col === "lead_investigator_id" ? (
+                                            {boundTable.fields.find((f) => f.name === col)?.target_table_id ? (
                                               <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-semibold text-[10px]">
-                                                👥 {resolveLinkedDisplay("tbl-investigators", rec[col], "name")}
+                                                👥 {resolveLinkedDisplay(boundTable.fields.find((f) => f.name === col)!.target_table_id!, rec[col], boundTable.fields.find((f) => f.name === col)!.target_display_field || "name")}
                                               </span>
-                                            ) : col === "budget" ? (
-                                              <span className="font-mono">${Number(rec[col]).toLocaleString()}</span>
                                             ) : (
                                               <span>{String(rec[col] ?? "")}</span>
                                             )}
@@ -2760,6 +2528,17 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                       Multi-Table Storage &amp; Vanity Routing
                     </h3>
+                    <div className="text-xs">
+                      <label htmlFor="app-name-input" className="font-semibold text-slate-600 dark:text-slate-300">App name</label>
+                      <input
+                        id="app-name-input"
+                        type="text"
+                        value={appTitle}
+                        onChange={(e) => setAppTitle(e.target.value)}
+                        className="mt-1 w-full px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                      />
+                      <p className="mt-1 text-slate-400">The new name is stored when you choose Save Changes.</p>
+                    </div>
                     <div className="grid grid-cols-2 gap-4 text-xs">
                       <div>
                         <label className="font-semibold text-slate-600 dark:text-slate-300">Custom Domain Host</label>

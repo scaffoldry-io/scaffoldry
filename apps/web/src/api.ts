@@ -2239,6 +2239,15 @@ export const apiClient = {
     return request<any>(`/apps/${encodeURIComponent(slug)}`);
   },
 
+  /**
+   * Saves an app's definition. The body is the whole manifest and names the version that was read.
+   * 200 means the change is live and the body is the saved manifest with its new version.
+   * 202 means it is a proposal waiting for approval.
+   */
+  updateApp: async (slug: string, manifest: Record<string, unknown>): Promise<{ status: number; data: any }> => {
+    return requestFull<any>(`/apps/${encodeURIComponent(slug)}`, { method: "PUT", body: JSON.stringify(manifest) });
+  },
+
   getWorkspace: async (id: string): Promise<{ workspace: Workspace; collaborators: Collaborator[] }> => {
     return request<{ workspace: Workspace; collaborators: Collaborator[] }>(`/workspaces/${encodeURIComponent(id)}`);
   },

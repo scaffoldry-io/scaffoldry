@@ -23,9 +23,11 @@ export interface DataShapingToolbarProps {
   setRowDensity: (d: RowDensity) => void;
   tableSearchFilter: string;
   setTableSearchFilter: (s: string) => void;
-  onOpenCsvModal: () => void;
+  /** Leave out where a CSV cannot be stored. The button is then not shown. */
+  onOpenCsvModal?: () => void;
   onExportCsv: (records: Record<string, any>[]) => void;
-  onAddRow: () => void;
+  /** Leave out where a new row cannot be stored. The button is then not shown. */
+  onAddRow?: () => void;
 }
 
 export const DataShapingToolbar: React.FC<DataShapingToolbarProps> = ({
@@ -371,16 +373,18 @@ export const DataShapingToolbar: React.FC<DataShapingToolbarProps> = ({
 
       {/* CSV & RECORD ACTIONS */}
       <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          data-testid="toolbar-import-csv-btn"
-          onClick={onOpenCsvModal}
-          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer flex items-center gap-1 transition-colors"
-          title="Import records from CSV"
-        >
-          <span>📥</span>
-          <span>Import CSV</span>
-        </button>
+        {onOpenCsvModal && (
+          <button
+            type="button"
+            data-testid="toolbar-import-csv-btn"
+            onClick={onOpenCsvModal}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer flex items-center gap-1 transition-colors"
+            title="Import records from CSV"
+          >
+            <span>📥</span>
+            <span>Import CSV</span>
+          </button>
+        )}
 
         <button
           type="button"
@@ -393,15 +397,17 @@ export const DataShapingToolbar: React.FC<DataShapingToolbarProps> = ({
           <span>Export CSV</span>
         </button>
 
-        <button
-          type="button"
-          data-testid="toolbar-add-record-btn"
-          onClick={onAddRow}
-          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center gap-1 shadow-xs transition-colors"
-        >
-          <span className="font-bold">+</span>
-          <span>Add Record</span>
-        </button>
+        {onAddRow && (
+          <button
+            type="button"
+            data-testid="toolbar-add-record-btn"
+            onClick={onAddRow}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center gap-1 shadow-xs transition-colors"
+          >
+            <span className="font-bold">+</span>
+            <span>Add Record</span>
+          </button>
+        )}
       </div>
     </div>
   );
