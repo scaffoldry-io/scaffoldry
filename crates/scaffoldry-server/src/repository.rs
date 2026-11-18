@@ -3611,11 +3611,15 @@ fn prepare_connection(client: &mut Client, url: &str, lost: &std::sync::atomic::
     if !client.is_closed() && *seen == now {
         return;
     }
-    *seen = now;
     if client.is_closed() || client.is_valid(std::time::Duration::from_secs(2)).is_err() {
+        // The loss counts as handled only once this worker holds a working connection. If the database is still away,
+        // `seen` stays behind, so the next job checks again instead of trusting a dead connection that looks open.
         if let Ok(fresh) = Client::connect(url, NoTls) {
             *client = fresh;
+            *seen = now;
         }
+    } else {
+        *seen = now;
     }
 }
 
