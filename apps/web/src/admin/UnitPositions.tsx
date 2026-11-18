@@ -12,7 +12,7 @@ const inputClass =
 /** The positions a unit can have, who holds each, and the actions on them. */
 export function UnitPositions({ unitId }: { unitId: string }) {
   const load = useCallback(() => apiClient.listUnitPositions(unitId), [unitId]);
-  const { data, error, loading, reload } = useAsync(load, true);
+  const { data, error, loading, reload } = useAsync(load, true, [load]);
   const [action, setAction] = useState<Action | null>(null);
   const [eppn, setEppn] = useState("");
 

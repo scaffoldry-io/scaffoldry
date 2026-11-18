@@ -1,6 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
-export function useAsync<T>(fn: () => Promise<T>, immediate = true) {
+/**
+ * Run an async function and track its result.
+ *
+ * `reload` is stable. It always calls the latest `fn`, so an inline arrow is safe.
+ * The first fetch runs once per mount. Pass `deps` to fetch again when inputs change.
+ */
+export function useAsync<T>(fn: () => Promise<T>, immediate = true, deps: readonly unknown[] = []) {
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState<boolean>(immediate);
@@ -9,7 +17,7 @@ export function useAsync<T>(fn: () => Promise<T>, immediate = true) {
     setLoading(true);
     setError(null);
     try {
-      const result = await fn();
+      const result = await fnRef.current();
       setData(result);
       return result;
     } catch (err: unknown) {
@@ -20,13 +28,14 @@ export function useAsync<T>(fn: () => Promise<T>, immediate = true) {
     } finally {
       setLoading(false);
     }
-  }, [fn]);
+  }, []);
 
   useEffect(() => {
     if (immediate) {
       void reload();
     }
-  }, [immediate, reload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [immediate, reload, ...deps]);
 
   return { data, error, loading, reload };
 }

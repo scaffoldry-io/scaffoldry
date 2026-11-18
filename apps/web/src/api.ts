@@ -1417,7 +1417,8 @@ export const apiClient = {
   },
 
   getSettings: async () => {
-    return request<{ settings: Record<string, any> }>("/settings");
+    // The server answers with a flat map of setting key to value.
+    return request<Record<string, any>>("/settings");
   },
 
   updateSetting: async (key: string, value: any, reason?: string) => {

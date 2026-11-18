@@ -42,6 +42,7 @@ export interface AdminConsoleProps {
   simResult?: { decision: string; reason: string; rule: string };
   ledger?: LedgerEntryItem[];
   setNotificationToast?: React.Dispatch<React.SetStateAction<string | null>>;
+  setErrorToast?: (message: string) => void;
   handleDownloadOscal?: () => void;
   personas?: Persona[];
   handleStartImpersonation?: (user: Persona) => void;
@@ -65,6 +66,7 @@ export function AdminConsole({
   simResult = { decision: "", reason: "", rule: "" },
   ledger = [],
   setNotificationToast = () => {},
+  setErrorToast,
   handleDownloadOscal = () => {},
   personas = [],
   handleStartImpersonation = () => {},
@@ -199,6 +201,7 @@ export function AdminConsole({
           simResult={simResult}
           ledger={ledger}
           setNotificationToast={setNotificationToast}
+          setErrorToast={setErrorToast}
           handleDownloadOscal={handleDownloadOscal}
           personas={personas}
           handleStartImpersonation={handleStartImpersonation}

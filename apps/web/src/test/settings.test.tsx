@@ -43,10 +43,8 @@ describe("Phase 9: Settings Panes", () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            settings: {
-              "tokens.agent_enabled": true,
-              "tokens.max_days": 90,
-            },
+            "tokens.agent_enabled": true,
+            "tokens.max_days": 90,
           }),
         });
       }
@@ -151,9 +149,7 @@ describe("Phase 9: Settings Panes", () => {
       if (urlStr.endsWith("/settings")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            settings: { "tokens.agent_enabled": true, "tokens.max_days": 90 },
-          }),
+          json: async () => ({ "tokens.agent_enabled": true, "tokens.max_days": 90 }),
         });
       }
       if (urlStr.endsWith("/auth/tokens") && (!options || options.method === "GET" || !options.method)) {
@@ -235,10 +231,8 @@ describe("Phase 9: Settings Panes", () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            settings: {
-              "tokens.max_days": 90,
-              "tokens.agent_enabled": true,
-            },
+            "tokens.max_days": 90,
+            "tokens.agent_enabled": true,
           }),
         });
       }
@@ -288,10 +282,12 @@ describe("Phase 9: Settings Panes", () => {
 
     const saveBtn = screen.getByTestId("setting-save-tokens.max_days");
     fireEvent.click(saveBtn);
+    fireEvent.change(screen.getByLabelText(/Reason for decision/), { target: { value: "Longer pilots" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save tokens\.max_days/ }));
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/v1\/settings\/tokens\.max_days/),
+        expect.stringMatching(/\/api\/v1\/settings\/tokens\.max_days\?reason=Longer%20pilots/),
         expect.objectContaining({
           method: "PUT",
           body: "180",
@@ -309,9 +305,7 @@ describe("Phase 9: Settings Panes", () => {
       if (urlStr.endsWith("/settings")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            settings: { "tokens.agent_enabled": true, "tokens.max_days": 90 },
-          }),
+          json: async () => ({ "tokens.agent_enabled": true, "tokens.max_days": 90 }),
         });
       }
       if (urlStr.endsWith("/auth/tokens") && (!options || options.method === "GET" || !options.method)) {

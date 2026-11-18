@@ -78,12 +78,12 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({ isOpen, on
     setError(null);
     try {
       const settingsRes = await apiClient.getSettings().catch(() => null);
-      if (settingsRes?.settings) {
-        if (settingsRes.settings["tokens.agent_enabled"] !== undefined) {
-          setAgentEnabled(Boolean(settingsRes.settings["tokens.agent_enabled"]));
+      if (settingsRes) {
+        if (settingsRes["tokens.agent_enabled"] !== undefined) {
+          setAgentEnabled(Boolean(settingsRes["tokens.agent_enabled"]));
         }
-        if (settingsRes.settings["tokens.max_days"] !== undefined) {
-          const md = Number(settingsRes.settings["tokens.max_days"]);
+        if (settingsRes["tokens.max_days"] !== undefined) {
+          const md = Number(settingsRes["tokens.max_days"]);
           if (!isNaN(md) && md > 0) {
             setMaxDays(md);
             if (days > md) setDays(md);
