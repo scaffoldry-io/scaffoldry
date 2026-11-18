@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { ManifestRenderer } from "./ManifestRenderer";
 import { WorkflowBuilder } from "./WorkflowBuilder";
 import { apiClient } from "./api";
+import { Banner, Drawer } from "./ui";
 import { Collaborator, Persona, PublishedDataset, RegisteredApp, WorkflowAutomationRule } from "./types";
 
 export interface CoBuilderStudioModalProps {
@@ -51,15 +52,21 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
   onViewAs,
   viewerEppn,
 }) => {
-  // The datasets a field can link to are the server's, loaded when the studio opens. A failed load leaves the list empty.
+  // The datasets a field can link to are the server's, loaded when the studio opens. A failed load leaves the list empty and says so.
   const [publishedDatasets, setPublishedDatasets] = useState<PublishedDataset[]>([]);
+  const [datasetsError, setDatasetsError] = useState(false);
   useEffect(() => {
     if (!isOpen) return;
     let live = true;
+    setDatasetsError(false);
     apiClient
       .listDatasets()
       .then((list) => live && setPublishedDatasets(list))
-      .catch(() => live && setPublishedDatasets([]));
+      .catch(() => {
+        if (!live) return;
+        setPublishedDatasets([]);
+        setDatasetsError(true);
+      });
     return () => {
       live = false;
     };
@@ -68,32 +75,19 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
   if (!isOpen || !activeStudioApp) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+    <Drawer open={isOpen} onClose={onClose} title={activeStudioApp.title} variant="modal" size="xl">
+      <div className="flex flex-col">
         {/* Studio Header */}
-        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src="/logo-mark.png" alt="Scaffoldry" className="h-8 w-auto object-contain shrink-0" />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
-                  App Studio &amp; Co-Builder
-                </span>
-                <span className="font-mono text-xs text-slate-400">{activeStudioApp.slug}</span>
-              </div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
-                {activeStudioApp.title}
-              </h2>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
-          >
-            ✕
-          </button>
+        <div className="pb-3 flex items-center gap-2">
+          <img src="/logo-mark.png" alt="Scaffoldry" className="h-8 w-auto object-contain shrink-0" />
+          <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+            App Studio &amp; Co-Builder
+          </span>
+          <span className="font-mono text-xs text-slate-400">{activeStudioApp.slug}</span>
         </div>
+        {datasetsError && (
+          <Banner kind="warning">The datasets you can link to could not be loaded, so the list is empty. Close the studio and open it again to retry.</Banner>
+        )}
 
         {/* Studio Sub-Navigation */}
         <div className="px-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-4 text-xs font-medium bg-slate-50/60 dark:bg-slate-800/30">
@@ -418,6 +412,6 @@ export const CoBuilderStudioModal: React.FC<CoBuilderStudioModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </Drawer>
   );
 };

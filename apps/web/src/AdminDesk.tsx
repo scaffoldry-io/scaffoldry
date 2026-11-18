@@ -10,7 +10,7 @@ import { WorkspaceSettingsModal } from "./WorkspaceSettingsModal";
 import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow, type ProposalTrial } from "./api";
 import { MyApps } from "./MyApps";
 import { Policies } from "./library/Policies";
-import { BackgroundWork, PreviewBanner, ViewAsBanner } from "./ui";
+import { Banner, BackgroundWork, PreviewBanner, ViewAsBanner } from "./ui";
 import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
@@ -622,7 +622,10 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       try {
         const saved = localStorage.getItem("scaffoldry_pinned_workspaces");
         if (saved) return JSON.parse(saved);
-      } catch {}
+      } catch {
+        // Unreadable saved pins start the list empty. Pinning again saves a fresh list.
+        return [];
+      }
     }
     return [];
   });
@@ -638,7 +641,9 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     setPinnedWorkspaceIds(updated);
     try {
       localStorage.setItem("scaffoldry_pinned_workspaces", JSON.stringify(updated));
-    } catch {}
+    } catch {
+      showToast("Your pinned workspaces could not be saved on this device.");
+    }
     showToast(
       isPinned
         ? `Unpinned workspace "${targetWs?.name || wsId}"`
@@ -842,6 +847,8 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   // Whether the desk's apps came from the server. When they did not, the desk shows built-in sample apps, and says so.
   const [appsStatus, setAppsStatus] = useState<"loading" | "server" | "built-in">("loading");
   const appsFromServer = appsStatus === "server";
+  // Whether the workspaces and the ledger came from the server. When they did not, the desk shows built-in samples, and says so.
+  const [workspacesFromServer, setWorkspacesFromServer] = useState(true);
   useEffect(() => {
     if (!authToken) {
       setMyApps([]);
@@ -921,23 +928,29 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     let cancelled = false;
 
     const syncWorkspaces = async () => {
+      let failed = false;
+      const unavailable = () => {
+        failed = true;
+        return null;
+      };
       try {
-        const serverWorkspaces = await apiClient.listWorkspaces().catch(() => null);
+        const serverWorkspaces = await apiClient.listWorkspaces().catch(unavailable);
         if (!cancelled && Array.isArray(serverWorkspaces) && serverWorkspaces.length > 0) {
           setWorkspaces(serverWorkspaces);
         }
-        const serverLedger = await apiClient.getGovernanceLedger().catch(() => null);
+        const serverLedger = await apiClient.getGovernanceLedger().catch(unavailable);
         if (!cancelled && serverLedger && Array.isArray(serverLedger.entries)) {
           // The server sends the newest page first. The desk reads the chain oldest first.
           setLedger([...serverLedger.entries].reverse());
         }
-        const serverOrgs = await apiClient.listOrganizations().catch(() => null);
+        const serverOrgs = await apiClient.listOrganizations().catch(unavailable);
         if (!cancelled && Array.isArray(serverOrgs)) {
           setUserUnits(serverOrgs);
         }
       } catch {
-        // offline fallback
+        failed = true;
       }
+      if (!cancelled) setWorkspacesFromServer(!failed);
     };
 
     syncWorkspaces();
@@ -3109,6 +3122,13 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
           {appsStatus === "built-in" && (
             <div data-testid="offline-sample-banner" role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               The server's app list did not load. These are built-in sample apps, and nothing done with them is saved.
+            </div>
+          )}
+          {!workspacesFromServer && (
+            <div className="mb-4">
+              <Banner kind="warning">
+                The server's workspaces and ledger did not load. What you see is built-in sample data, and nothing done with it is saved.
+              </Banner>
             </div>
           )}
           {/* DISCREET ADMIN CONSOLE VIEW (/admin) */}

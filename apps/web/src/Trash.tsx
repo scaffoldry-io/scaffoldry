@@ -23,7 +23,7 @@ export function Trash({ appSlug }: { appSlug: string }) {
   };
 
   if (loading && !data) return <Skeleton rows={3} />;
-  if (error) return <ErrorState error={error} onRetry={() => reload().catch(() => {})} />;
+  if (error) return <ErrorState error={error} onRetry={() => void reload()} />;
   if (!data || data.entries.length === 0) {
     return <EmptyState title="The trash is empty" description="Deleted records wait here until they are removed permanently." />;
   }

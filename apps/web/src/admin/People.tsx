@@ -248,7 +248,7 @@ function UserDetail({
 
   if (loading && !data) return <Skeleton rows={6} />;
   if (error || !data) {
-    return <ErrorState error={error ?? new Error("Could not load the user")} onRetry={() => reload().catch(() => {})} />;
+    return <ErrorState error={error ?? new Error("Could not load the user")} onRetry={() => void reload()} />;
   }
 
   const u = data.user;
@@ -260,7 +260,7 @@ function UserDetail({
   const done = () => {
     setAction(null);
     onChanged();
-    reload().catch(() => {});
+    void reload();
   };
 
   const run = async (reason: string): Promise<void> => {

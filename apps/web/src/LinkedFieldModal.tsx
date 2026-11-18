@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppTable, FieldSpec, LinkCardinality } from "./types";
+import { Drawer } from "./ui";
 
 export interface LinkedFieldModalProps {
   isOpen: boolean;
@@ -133,38 +134,19 @@ export const LinkedFieldModal: React.FC<LinkedFieldModalProps> = ({
   };
 
   return (
-    <div
-      data-testid="link-characteristics-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fade-in"
-      onClick={onClose}
+    <Drawer
+      open={isOpen}
+      onClose={onClose}
+      title={initialField ? "Edit Linked Field Characteristics" : "Add Linked Field (Airtable-style)"}
+      variant="modal"
+      size="lg"
+      testId="link-characteristics-modal"
+      closeTestId="close-link-modal-btn"
     >
-      <div
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full p-6 text-slate-800 dark:text-slate-200 space-y-5"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800 flex items-center justify-center text-purple-600 dark:text-purple-400 font-bold">
-              🔗
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                {initialField ? "Edit Linked Field Characteristics" : "Add Linked Field (Airtable-style)"}
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Configure relational linkage, cardinality, display labels, and filters.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            data-testid="close-link-modal-btn"
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg leading-none cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
+      <div className="text-slate-800 dark:text-slate-200 space-y-5">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Configure relational linkage, cardinality, display labels, and filters.
+        </p>
 
         <div className="space-y-4 text-xs">
           {/* Field Label */}
@@ -365,6 +347,6 @@ export const LinkedFieldModal: React.FC<LinkedFieldModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </Drawer>
   );
 };

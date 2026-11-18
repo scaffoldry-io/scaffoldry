@@ -1,5 +1,6 @@
 import React from "react";
 import { ViewType } from "./types";
+import { Drawer } from "./ui";
 
 export interface AddViewModalProps {
   isOpen: boolean;
@@ -20,27 +21,9 @@ export const AddViewModal: React.FC<AddViewModalProps> = ({
   setNewViewType,
   onCreateNewView,
 }) => {
-  if (!isOpen) return null;
-
   return (
-    <div
-      data-testid="modal-add-view"
-      className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4"
-    >
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-          <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            Create New Saved View
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-          >
-            ✕
-          </button>
-        </div>
-
+    <Drawer open={isOpen} onClose={onClose} title="Create New Saved View" variant="modal" size="md" testId="modal-add-view">
+      <div className="space-y-4">
         <form onSubmit={onCreateNewView} className="space-y-4 text-xs">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -115,6 +98,6 @@ export const AddViewModal: React.FC<AddViewModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </Drawer>
   );
 };

@@ -79,7 +79,7 @@ export function Authority() {
 
   useEffect(() => {
     let live = true;
-    apiClient.getCurrentUser().then((u) => live && setMe(String(u.user?.eppn ?? ""))).catch(() => {});
+    apiClient.getCurrentUser().then((u) => live && setMe(String(u.user?.eppn ?? ""))).catch((e) => live && setError(e));
     apiClient
       .accessGrantAnchors()
       .then((a) => {

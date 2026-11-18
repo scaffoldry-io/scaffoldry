@@ -17,7 +17,7 @@ export function UnitPositions({ unitId }: { unitId: string }) {
   const [eppn, setEppn] = useState("");
 
   if (loading && !data) return <Skeleton rows={2} />;
-  if (error) return <ErrorState error={error} onRetry={() => reload().catch(() => {})} />;
+  if (error) return <ErrorState error={error} onRetry={() => void reload()} />;
   const positions: UnitPositionRow[] = Array.isArray(data?.positions) ? data!.positions : [];
   if (positions.length === 0) {
     return <p className="text-xs text-gray-500 italic">No position types apply to this unit.</p>;
@@ -26,7 +26,7 @@ export function UnitPositions({ unitId }: { unitId: string }) {
   const done = () => {
     setAction(null);
     setEppn("");
-    reload().catch(() => {});
+    void reload();
   };
 
   const run = async (reason: string): Promise<void> => {

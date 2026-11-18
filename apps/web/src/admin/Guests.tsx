@@ -37,7 +37,7 @@ export function Guests() {
   if (error !== null) return <ErrorState error={error} />;
   if (data === null) return <Skeleton rows={3} />;
 
-  const confirm = () => {
+  const confirmation = () => {
     if (!act) return null;
     const done = () => {
       setAct(null);
@@ -172,7 +172,7 @@ export function Guests() {
         )}
       </section>
 
-      {act && <div className="rounded border p-3">{confirm()}</div>}
+      {act && <div className="rounded border p-3">{confirmation()}</div>}
 
       <section className="space-y-2" aria-labelledby="guest-abuse">
         <h3 id="guest-abuse" className="text-sm font-semibold">Signs of abuse</h3>

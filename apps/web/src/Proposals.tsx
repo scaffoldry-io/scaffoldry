@@ -161,7 +161,7 @@ function ProposalDetail({
     apiClient
       .myTrials()
       .then((t) => live && setTrials({ limit: t.limit, open: t.trials.length }))
-      .catch(() => {});
+      .catch(() => live && setTrialError("Your remaining trials could not be loaded. Reload to try again."));
     return () => {
       live = false;
     };

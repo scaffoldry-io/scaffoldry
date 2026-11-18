@@ -685,7 +685,11 @@ export function DataGrid({
     if (navigator?.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(tsv);
-      } catch {}
+      } catch {
+        setCopyToast("Could not copy. Allow clipboard access and try again.");
+        setTimeout(() => setCopyToast(null), 2500);
+        return;
+      }
     }
     const count = (maxRow - minRow + 1) * (maxCol - minCol + 1);
     setCopyToast(`Copied ${count} cell${count > 1 ? "s" : ""} to clipboard`);
