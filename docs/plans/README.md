@@ -307,7 +307,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 186 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
 | 187 | [workflows.md](workflows.md) | 11 | Console panel for flows | **COMPLETED** |
 | 188 | [live-data.md](live-data.md) | 3 | Moved to Wave 1c as 1c-1. The desk reads records and the directory from the API |
-| 189 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files |
+| 189 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files | **COMPLETED** |
 | 190 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool |
 | 191 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both |
 | 192 | [data-grid-parity.md](data-grid-parity.md) | open phases | Grid work on the web desk. Last, because the agent is the primary surface |

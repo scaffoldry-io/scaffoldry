@@ -17,6 +17,21 @@ services:
       timeout: 5s
       retries: 5
 
+  # The API server and the web app in one image.
+  scaffoldry:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: scaffoldry
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-scaffoldry}:${POSTGRES_PASSWORD:-scaffoldry_dev_password}@postgres:5432/${POSTGRES_DB:-scaffoldry}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # Cloudflare Tunnel for zero-open-port edge ingress
   # tunnel:
   #   image: cloudflare/cloudflared:latest

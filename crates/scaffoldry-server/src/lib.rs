@@ -64,6 +64,7 @@ pub mod service;
 pub mod state;
 pub mod testing;
 
+use axum::response::IntoResponse;
 use axum::Router;
 pub use state::{ServerState, SharedState};
 use std::sync::Arc;
@@ -118,7 +119,25 @@ pub fn build_app_with_state(state: SharedState) -> Result<Router, Box<dyn std::e
             axum::http::HeaderName::from_static("x-file-name"),
         ]);
 
-    let router = routes::api_router(state.clone())
+    let mut router = routes::api_router(state.clone());
+    // One image: when SCAFFOLDRY_WEB_DIR is set, any path no route answers gets a built web file, or the index for
+    // a page the browser routes itself. The guard lets those requests through and still guards every API path.
+    if let Some(dir) = std::env::var_os("SCAFFOLDRY_WEB_DIR") {
+        let index = std::path::Path::new(&dir).join("index.html");
+        let files = tower_http::services::ServeDir::new(&dir).fallback(tower_http::services::ServeFile::new(index));
+        // An unknown path under /api, /scim or /.well-known is a 404, never the index.
+        let web = Router::new().fallback_service(files).layer(axum::middleware::from_fn(
+            |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                if guard::is_web_path(req.uri().path()) {
+                    next.run(req).await
+                } else {
+                    axum::http::StatusCode::NOT_FOUND.into_response()
+                }
+            },
+        ));
+        router = router.fallback_service(web);
+    }
+    let router = router
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::require_session))
         // The first thing every request does. A request is answered from what the database says now.
         .layer(axum::middleware::from_fn_with_state(state, refresh_state))
