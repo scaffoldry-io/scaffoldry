@@ -31,7 +31,7 @@ export function RecordComments({ appSlug, recordId, viewerEppn, role }: RecordCo
     const [list, people] = await Promise.all([apiClient.listComments(appSlug, recordId), apiClient.mentionable(appSlug)]);
     return { comments: list.comments, people: people.people };
   }, [appSlug, recordId]);
-  const { data, error, loading, reload } = useAsync(load);
+  const { data, error, loading, reload } = useAsync(load, true, [load]);
 
   const query = mentionQuery(text);
   const matches =

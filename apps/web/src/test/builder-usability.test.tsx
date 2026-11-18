@@ -762,7 +762,7 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
 
       // Verify banner disappears and session is restored to admin
       expect(screen.queryByTestId("impersonation-banner")).not.toBeInTheDocument();
-      expect(screen.getByText(/Institutional Administrative Console/i)).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 1, name: "Impersonation" })).toBeInTheDocument();
     });
 
     it("verifies non-admin user menu does not allow unrestricted persona switching", () => {

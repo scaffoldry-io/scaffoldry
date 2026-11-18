@@ -88,7 +88,8 @@ describe("the Connections panel", () => {
     const set = vi.spyOn(apiClient, "setDataConnectionEnabled").mockResolvedValue(undefined);
     render(<Connections />);
     fireEvent.click(await screen.findByRole("button", { name: "Disable Programs" }));
-    const confirm = screen.getByRole("button", { name: "Disable Programs" });
+    // The row keeps its own Disable button. The confirmation form follows it.
+    const confirm = screen.getAllByRole("button", { name: "Disable Programs" })[1];
     expect(confirm).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox", { name: /reason/i }), { target: { value: "The registrar is moving the export" } });
     fireEvent.click(confirm);

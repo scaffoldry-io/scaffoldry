@@ -1418,7 +1418,25 @@ impl ServerState {
             coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
             custom_domain: None,
             custom_domain_verified: false,
-            tables: vec![],
+            tables: vec![serde_json::from_value(json!({
+                "id": "applications",
+                "name": "Applications",
+                "slug": "applications",
+                "primary_field": "applicant_name",
+                "fields": [
+                    {"name": "applicant_name", "label": "Applicant", "field_type": "Text", "required": true, "ferpa_sensitive": false},
+                    {"name": "program", "label": "Program", "field_type": "Text", "required": true, "ferpa_sensitive": false},
+                    {"name": "gpa", "label": "GPA", "field_type": "Number", "required": false, "ferpa_sensitive": false},
+                    {"name": "status", "label": "Status", "field_type": "Select", "required": true, "ferpa_sensitive": false,
+                     "select_options": [
+                        {"id": "Submitted", "label": "Submitted", "order": 0},
+                        {"id": "In Review", "label": "In Review", "order": 1},
+                        {"id": "Approved", "label": "Approved", "order": 2},
+                        {"id": "Declined", "label": "Declined", "order": 3}
+                     ]},
+                    {"name": "submitted_on", "label": "Submitted", "field_type": "Date", "required": false, "ferpa_sensitive": false}
+                ]
+            }))?],
             relationships: vec![],
             views: vec![],
             pages: vec![],
@@ -1670,10 +1688,11 @@ impl ServerState {
         };
         let manifest_stored = {
             let repo = &self.repository;
+            // An app seeded before it had a table is filled in. One that has a table stays as stored.
             repo.get_app_manifest(&demo_app.slug)
                 .ok()
                 .flatten()
-                .is_some()
+                .is_some_and(|m| !m.tables.is_empty())
         };
 
         // A workspace that is stored stays as stored, collaborators included.
