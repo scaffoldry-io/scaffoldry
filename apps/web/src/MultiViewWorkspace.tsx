@@ -7,6 +7,8 @@ import { Banner } from "./ui/Banner";
 import { Toast } from "./ui/Toast";
 import { AppActivity } from "./RecordHistory";
 import { PresenceAvatars } from "./ui/PresenceAvatars";
+import { RecordHistory } from "./RecordHistory";
+import { Drawer } from "./ui/Drawer";
 import { NewRecordDrawer, requiredFields } from "./NewRecordDrawer";
 
 interface Props {
@@ -35,6 +37,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
   const [viewMode, setViewMode] = useState<TabularViewMode>("grid");
   const [showActivity, setShowActivity] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [openedId, setOpenedId] = useState<string | null>(null);
 
   // The stored rows of this app. Nothing is seeded or generated: the grid shows what the server holds.
   const {
@@ -54,7 +57,9 @@ export const MultiViewWorkspace: React.FC<Props> = ({
     work.catch((e: unknown) => setActionError(e instanceof Error ? e.message : "That change could not be saved."));
   };
 
-  const fields = app.manifest.views[0]?.fields || [];
+  // With no saved view, the grid shows the fields of the table it is showing.
+  const shownTable = app.manifest.tables?.find((t) => t.id === tableId) ?? app.manifest.tables?.[0];
+  const fields = app.manifest.views[0]?.fields ?? shownTable?.fields ?? [];
 
   // Filtered records based on search query
   const filteredRecords = useMemo(() => {
@@ -74,7 +79,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
 
   // The fields a new record cannot be stored without. The table's own list is the full one.
   const [newRecordOpen, setNewRecordOpen] = useState(false);
-  const tableFields = app.manifest.tables?.find((t) => t.id === tableId)?.fields ?? fields;
+  const tableFields = shownTable?.fields ?? fields;
   const needed = requiredFields(tableFields);
 
   const storeNewRecord = (values: Record<string, unknown>) => create({ _table_id: tableId, ...values });
@@ -132,6 +137,19 @@ export const MultiViewWorkspace: React.FC<Props> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden">
+      <Drawer
+        open={openedId !== null}
+        onClose={() => setOpenedId(null)}
+        title={`Record ${String(records.find((r) => r.id === openedId)?.[fields[0]?.name] || openedId || "")}`}
+        testId="record-drawer"
+      >
+        {openedId && (
+          <section aria-label="Record history" className="space-y-2">
+            <h3 className="text-sm font-semibold">History</h3>
+            <RecordHistory appSlug={app.slug} recordId={openedId} fields={fields} canRestore={false} />
+          </section>
+        )}
+      </Drawer>
       <NewRecordDrawer open={newRecordOpen} onClose={() => setNewRecordOpen(false)} fields={needed} onSubmit={storeNewRecord} />
       {/* Top Application Bar */}
       <header className="px-6 py-3.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-xs">
@@ -213,11 +231,11 @@ export const MultiViewWorkspace: React.FC<Props> = ({
       {/* Views Navigation Toolbar */}
       <div className="px-6 py-2.5 bg-slate-100/70 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
         {/* View Mode Buttons */}
-        <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="flex items-center gap-1 max-w-full overflow-x-auto bg-white dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800 shadow-xs">
           <button
             type="button"
             onClick={() => setViewMode("grid")}
-            className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
               viewMode === "grid"
                 ? "bg-blue-600 text-white shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -230,7 +248,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
           <button
             type="button"
             onClick={() => setViewMode("kanban")}
-            className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
               viewMode === "kanban"
                 ? "bg-blue-600 text-white shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -243,7 +261,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
           <button
             type="button"
             onClick={() => setViewMode("calendar")}
-            className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
               viewMode === "calendar"
                 ? "bg-blue-600 text-white shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -256,7 +274,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
           <button
             type="button"
             onClick={() => setViewMode("gallery")}
-            className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
               viewMode === "gallery"
                 ? "bg-blue-600 text-white shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -269,7 +287,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
           <button
             type="button"
             onClick={() => setViewMode("form")}
-            className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
+            className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md font-semibold cursor-pointer transition-colors flex items-center gap-1.5 ${
               viewMode === "form"
                 ? "bg-blue-600 text-white shadow-xs"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
@@ -356,6 +374,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
               updatedByOthers={updatedByOthers}
               changedUnderEdit={changedUnderEdit}
               onEditingChange={setEditing}
+              onOpenRecord={setOpenedId}
             />
 
             {/* Quick Add Row */}
@@ -583,7 +602,7 @@ export const MultiViewWorkspace: React.FC<Props> = ({
         {/* VIEW 5: INTAKE FORM */}
         {viewMode === "form" && (
           <div className="max-w-2xl mx-auto">
-            <ManifestRenderer manifest={app.manifest} onSubmitRecord={handleFormSubmit} />
+            <ManifestRenderer manifest={app.manifest} fields={fields} onSubmitRecord={handleFormSubmit} />
           </div>
         )}
       </div>

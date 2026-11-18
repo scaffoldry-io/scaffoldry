@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { apiClient } from "./api";
 import {
   AppManifest,
@@ -48,6 +48,8 @@ interface AppBuilderProps {
   onOpenPublishedApp: (slug: string) => void;
   onOpenIntakeForm?: (tableId?: string) => void;
   onSaveApp?: (updated: RegisteredApp) => void;
+  /** The app named in the address. The studio saves only the app it was opened for. */
+  routeSlug?: string;
 }
 
 export const AppBuilder: React.FC<AppBuilderProps> = ({
@@ -56,6 +58,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   onOpenPublishedApp,
   onOpenIntakeForm,
   onSaveApp,
+  routeSlug,
 }) => {
   const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "insights" | "settings" | "access">("pages");
   // The Studio is for the app's owners and admins, so its record drawer shows them every tab. The server checks again.
@@ -95,7 +98,7 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const startRelationships: TableRelationship[] = app.manifest.relationships ?? [];
 
   const [tables, setTables] = useState<AppTable[]>(startTables);
-  const [relationships] = useState<TableRelationship[]>(startRelationships);
+  const [relationships, setRelationships] = useState<TableRelationship[]>(startRelationships);
   const [activeTableId, setActiveTableId] = useState<string>(startTables[0]?.id ?? "");
   const [tableSearchFilter, setTableSearchFilter] = useState<string>("");
   const [isAddTableModalOpen, setIsAddTableModalOpen] = useState<boolean>(false);
@@ -627,6 +630,19 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
 
   const [pages, setPages] = useState<AppPage[]>(startPages);
 
+  // A different app arrived (for example the real one, after a placeholder). Start the studio over from it.
+  const loadedSlug = useRef(app.slug);
+  useEffect(() => {
+    if (loadedSlug.current === app.slug) return;
+    loadedSlug.current = app.slug;
+    setTables(startTables);
+    setRelationships(startRelationships);
+    setActiveTableId(startTables[0]?.id ?? "");
+    setAppTitle(app.title);
+    setPages(startPages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.slug]);
+
   const NO_PAGE: AppPage = { id: "", slug: "", title: "", icon: "", description: "", components: [] };
   const activePage = pages.find((p) => p.id === activePageId) || pages[0] || NO_PAGE;
   const selectedComponent =
@@ -753,6 +769,10 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   const handleSave = async () => {
     setSaveError(null);
     setSaveStatus(null);
+    if (routeSlug && app.slug !== routeSlug) {
+      setSaveError(`Not saved. The studio has not loaded ${routeSlug} yet. Wait for it to load, then save again.`);
+      return;
+    }
     try {
       const known = (app.manifest as AppManifest & { version?: number }).version;
       const version = typeof known === "number" ? known : (await apiClient.getApp(app.slug))?.version;

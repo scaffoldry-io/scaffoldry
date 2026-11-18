@@ -45,6 +45,8 @@ export type DataGridProps = {
   changedUnderEdit?: { recordId: string; fieldName: string } | null;
   /** Told which cell is being typed in, or none. */
   onEditingChange?: (cell: { recordId: string; fieldName: string } | null) => void;
+  /** Adds an Open button to each row. It is told which record was opened. */
+  onOpenRecord?: (recordId: string) => void;
 };
 
 type Gesture = { batchId: string; label: string; at: number };
@@ -235,6 +237,7 @@ export function DataGrid({
   updatedByOthers,
   changedUnderEdit,
   onEditingChange,
+  onOpenRecord,
 }: DataGridProps) {
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -1116,6 +1119,7 @@ export function DataGrid({
               key={headerGroup.id}
               className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold"
             >
+              {onOpenRecord && <th className="py-2.5 px-2 w-14"><span className="sr-only">Open</span></th>}
               {headerGroup.headers.map((header) => {
                 const colName = header.column.id;
                 const width = widthsMap.get(colName);
@@ -1170,6 +1174,18 @@ export function DataGrid({
                 data-updated={updated ? "true" : undefined}
                 className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors ${updated ? "bg-amber-50 dark:bg-amber-950/30" : ""}`}
               >
+                {onOpenRecord && (
+                  <td className="px-2 border-r border-slate-200/60 dark:border-slate-800/60">
+                    <button
+                      type="button"
+                      aria-label={`Open ${String(row.original[visibleFields[0]?.name] || recordId)}`}
+                      onClick={() => onOpenRecord(recordId)}
+                      className="px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      Open
+                    </button>
+                  </td>
+                )}
                 {row.getVisibleCells().map((cell, cellIdx) => {
                   const fieldName = cell.column.id;
                   const field = visibleFields.find((f) => f.name === fieldName);
@@ -1623,8 +1639,10 @@ export function DataGrid({
           })}
         </tbody>
         {/* Footer Summary Row */}
+        {visibleFields.some((f) => columnSummaries[f.name]) && (
         <tfoot>
           <tr className="bg-slate-100/80 dark:bg-slate-800/80 font-mono text-[11px] text-slate-600 dark:text-slate-300 border-t border-slate-200 dark:border-slate-800">
+            {onOpenRecord && <td />}
             {visibleFields.map((field) => {
               const summaryText = columnSummaries[field.name];
               return (
@@ -1643,6 +1661,7 @@ export function DataGrid({
             })}
           </tr>
         </tfoot>
+        )}
       </table>
       {(() => {
         const { minRow, maxRow, minCol, maxCol } = getSelectionBounds();
