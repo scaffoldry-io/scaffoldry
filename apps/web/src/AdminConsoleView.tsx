@@ -20,7 +20,8 @@ export interface AdminConsoleViewProps {
   simFerpa: boolean;
   setSimFerpa: React.Dispatch<React.SetStateAction<boolean>>;
   simResult: { decision: string; reason: string; rule: string };
-  ledger: LedgerEntryItem[];
+  /** No longer read here: the ledger view loads the ledger itself, so the count and the chain check are the server's. */
+  ledger?: LedgerEntryItem[];
   setNotificationToast: React.Dispatch<React.SetStateAction<string | null>>;
   /** Shows a failure. Without it a failure goes to `setNotificationToast`. */
   setErrorToast?: (message: string) => void;
@@ -51,7 +52,6 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
   simFerpa,
   setSimFerpa,
   simResult,
-  ledger,
   setNotificationToast,
   setErrorToast,
   handleDownloadOscal,
@@ -612,14 +612,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
 
       {/* ADMIN TAB 4: CRYPTOGRAPHIC DECISION AUDIT LEDGER */}
       {adminTab === "ledger" && (
-        <DecisionLedgerView
-          entries={ledger}
-          onVerifyChain={() => {
-            setNotificationToast("Cryptographic proof verified: All SHA-256 blocks chained without tampering.");
-            setTimeout(() => setNotificationToast(null), 3500);
-          }}
-          onDownloadOscal={handleDownloadOscal}
-        />
+        <DecisionLedgerView onDownloadOscal={handleDownloadOscal} />
       )}
 
       {/* ADMIN TAB 5: INSTITUTIONAL IDENTITY & IMPERSONATION HUB */}
