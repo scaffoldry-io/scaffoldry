@@ -11,3 +11,5 @@ cedar-policy = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# Already in the lock file through cedar-policy. Read here only for the line and column of a Cedar error.
+miette = "7.6.0"

@@ -259,15 +259,8 @@ describe("Phase 9: Settings Panes", () => {
         navigateTo={vi.fn()}
         adminTab="settings"
         apps={[]}
-        sourceRules={[]}
-        simAction="read"
-        setSimAction={vi.fn()}
-        simFerpa={false}
-        setSimFerpa={vi.fn()}
-        simResult={{ decision: "", reason: "", rule: "" }}
         ledger={[]}
         setNotificationToast={vi.fn()}
-        handleDownloadOscal={vi.fn()}
         personas={[mockCentralAdmin, mockFaculty]}
         handleStartImpersonation={vi.fn()}
       />

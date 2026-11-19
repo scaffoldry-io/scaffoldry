@@ -360,6 +360,74 @@ export interface AccessRequestRule {
   retired_at: string | null;
 }
 
+/** Policy and OSCAL (admin console phase 5). */
+export interface PolicyVersionRow {
+  id: string;
+  version: number;
+  status: "Draft" | "Active" | "Retired";
+  note: string;
+  created_by: string;
+  created_at: string;
+  activated_by: string | null;
+  activated_at: string | null;
+  /** Present on one version, absent from a list. */
+  source?: string;
+}
+export interface PolicySummary {
+  id: string;
+  key: string;
+  effect: "permit" | "forbid";
+  oscal: string;
+  source: string;
+  description: string;
+  text: string;
+}
+export interface PolicyProblem {
+  message: string;
+  line: number;
+  column: number;
+}
+export interface PolicyCaseRow {
+  id: string;
+  name: string;
+  principal: unknown;
+  action: string;
+  resource: unknown;
+  expected: "Allow" | "Deny";
+  created_by: string;
+  created_at: string;
+}
+export interface PolicyCaseResult {
+  name: string;
+  expected: string;
+  actual: string;
+  pass: boolean;
+  error: string;
+}
+export interface PolicyCaseRun {
+  version: PolicyVersionRow;
+  results: PolicyCaseResult[];
+  passed: number;
+  failed: number;
+}
+export interface PolicySimulation {
+  version: number;
+  decision: "Allow" | "Deny";
+  reasons: string[];
+  diagnostics: string[];
+  deciding_policy: { id: string; description: string } | null;
+}
+export interface OscalRequirement {
+  control_id: string;
+  title: string | null;
+  statement: string;
+  status: string;
+  policy_ids: string[];
+  evidence_count: number;
+  latest_evidence: string | null;
+  edited: boolean;
+}
+
 export class ApiError extends Error {
   public status: number;
   public details?: any;
@@ -2497,6 +2565,32 @@ export const apiClient = {
   /** Sets or removes labels. `ferpa_sensitive: null` removes one. The whole request is refused if one field is unknown. */
   putLabels: async (changes: AdminLabelChange[], reason: string): Promise<{ changed: number }> =>
     request<{ changed: number }>("/admin/labels", { method: "PUT", body: JSON.stringify({ changes, reason }) }),
+  /** Policy and OSCAL (admin console phase 5). */
+  adminPolicyActive: async (): Promise<{ version: PolicyVersionRow; source: string; policies: PolicySummary[] }> => request("/admin/policy/active"),
+  adminPolicyVersions: async (): Promise<PolicyVersionRow[]> => (await request<{ rows: PolicyVersionRow[] }>("/admin/policy/versions?limit=200")).rows,
+  adminPolicyVersion: async (id: string): Promise<PolicyVersionRow> => request(`/admin/policy/versions/${encodeURIComponent(id)}`),
+  /** Checks a source and stores nothing. */
+  validatePolicy: async (source: string): Promise<{ ok: boolean; problems: PolicyProblem[] }> => request("/admin/policy/validate", { method: "POST", body: JSON.stringify({ source }) }),
+  /** Stores a draft. A source with problems is refused with `fields`, one line and column each. */
+  createPolicyDraft: async (source: string, note: string): Promise<PolicyVersionRow> => request("/admin/policy/versions", { method: "POST", body: JSON.stringify({ source, note }) }),
+  clonePolicyVersion: async (id: string): Promise<PolicyVersionRow> => request(`/admin/policy/versions/${encodeURIComponent(id)}/clone`, { method: "POST", body: "{}" }),
+  runPolicyCases: async (id: string): Promise<PolicyCaseRun> => request(`/admin/policy/versions/${encodeURIComponent(id)}/run-cases`, { method: "POST" }),
+  activatePolicyVersion: async (id: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/policy/versions/${encodeURIComponent(id)}/activate`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  adminPolicyCases: async (): Promise<PolicyCaseRow[]> => (await request<{ rows: PolicyCaseRow[] }>("/admin/policy/cases?limit=200")).rows,
+  addPolicyCase: async (c: { name: string; principal: unknown; action: string; resource: unknown; expected: string }, reason: string): Promise<PolicyCaseRow> =>
+    request("/admin/policy/cases", { method: "POST", body: JSON.stringify({ ...c, reason }) }),
+  removePolicyCase: async (id: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/policy/cases/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason }) });
+  },
+  simulatePolicy: async (b: { version_id?: string; principal: unknown; action: string; resource: unknown }): Promise<PolicySimulation> =>
+    request("/admin/policy/simulate", { method: "POST", body: JSON.stringify(b) }),
+  adminOscalRequirements: async (): Promise<OscalRequirement[]> => (await request<{ rows: OscalRequirement[] }>("/admin/oscal/requirements")).rows,
+  putOscalRequirement: async (controlId: string, b: { statement: string; status: string }, reason: string): Promise<OscalRequirement> =>
+    request(`/admin/oscal/requirements/${encodeURIComponent(controlId)}`, { method: "PUT", body: JSON.stringify({ ...b, reason }) }),
+  /** The server's OSCAL component definition. */
+  getOscalComponentDefinition: async (): Promise<unknown> => request("/admin/oscal/component-definition"),
   adminDatasets: async (): Promise<{ datasets: AdminDataset[]; levels: string[] }> => request<{ datasets: AdminDataset[]; levels: string[] }>("/admin/datasets"),
   classifyDataset: async (id: string, sensitivity_level: string, reason: string): Promise<void> => {
     await request<unknown>(`/admin/datasets/${encodeURIComponent(id)}/classification`, { method: "PUT", body: JSON.stringify({ sensitivity_level, reason }) });

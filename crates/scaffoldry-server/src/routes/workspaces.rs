@@ -269,7 +269,7 @@ fn build_proposed_policy_set(
     source: Option<&str>,
     state: &SharedState,
 ) -> Result<scaffoldry_policy::PolicySet, ServiceError> {
-    let mut ps = state.policy_engine.policies().clone();
+    let mut ps = state.policy().policies().clone();
     let org_names = state
         .organizations
         .read()
@@ -622,7 +622,7 @@ async fn impact_workspace_guards(
                 let dec_now =
                     crate::service::access::decide(&state, &collab_user, action, &resource);
                 let dec_prop = scaffoldry_policy::entities::authorize_with_policy_set(
-                    &state.policy_engine,
+                    &state.policy(),
                     &proposed_policy_set,
                     &princ,
                     action,
@@ -728,7 +728,7 @@ async fn test_workspace_guards(
 
     let dec_now = crate::service::access::decide(&state, &target_user, action, &resource);
     let dec_prop = scaffoldry_policy::entities::authorize_with_policy_set(
-        &state.policy_engine,
+        &state.policy(),
         &proposed_policy_set,
         &princ,
         action,

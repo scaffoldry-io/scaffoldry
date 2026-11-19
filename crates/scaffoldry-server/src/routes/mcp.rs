@@ -480,7 +480,7 @@ async fn handle_mcp_request(
                             {
                                 "uri": uri,
                                 "mimeType": "text/plain",
-                                "text": state.policy_engine.policy_source()
+                                "text": state.policy().policy_source()
                             }
                         ]
                     }),

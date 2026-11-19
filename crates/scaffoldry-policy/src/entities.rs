@@ -339,21 +339,15 @@ pub fn authorize_with_policy_set(
     )
 }
 
-/// Builds the entities for one request and evaluates it. Every decision goes through here.
+/// Builds the entities for one request and evaluates it. Every decision goes through here, and so through
+/// `ScaffoldryPolicyEngine::is_allowed_with`.
 pub fn authorize(
     engine: &ScaffoldryPolicyEngine,
     principal: &PrincipalCtx,
     action: &str,
     resource: &Resource,
 ) -> Result<AuthorizationResult, PolicyError> {
-    let mut entities = vec![principal.entity(), resource.entity()];
-    entities.extend(collect_unit_entities(principal, resource));
-    engine.evaluate(
-        entities,
-        ("User", &principal.eppn),
-        action,
-        (resource.type_name(), &resource.id()),
-    )
+    engine.is_allowed_with(&principal.entity(), action, &resource.entity(), collect_unit_entities(principal, resource))
 }
 
 /// Every unit where the person holds a role, plus all ancestors of each.

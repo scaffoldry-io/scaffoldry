@@ -48,7 +48,7 @@ fn policy_set_for(
     ws_id: Option<&str>,
 ) -> Result<scaffoldry_policy::PolicySet, String> {
     let Some(wid) = ws_id.filter(|w| !w.is_empty()) else {
-        return Ok(state.policy_engine.policies().clone());
+        return Ok(state.policy().policies().clone());
     };
     let current_guard = state
         .guards
@@ -57,7 +57,7 @@ fn policy_set_for(
         .get(wid)
         .and_then(|h| h.last().cloned());
     let Some(guard) = current_guard else {
-        return Ok(state.policy_engine.policies().clone());
+        return Ok(state.policy().policies().clone());
     };
 
     let cache_key = (wid.to_string(), guard.version);
@@ -71,7 +71,7 @@ fn policy_set_for(
         return Ok(cached);
     }
 
-    let mut ps = state.policy_engine.policies().clone();
+    let mut ps = state.policy().policies().clone();
     match serde_json::from_value::<Vec<scaffoldry_core::GuardRule>>(guard.rules.clone()) {
         Ok(rules) => {
             let org_names = state
@@ -201,7 +201,7 @@ pub fn decide_for(
         Err(e) => return Decision::failed(e),
     };
     match scaffoldry_policy::entities::authorize_with_policy_set(
-        &state.policy_engine,
+        &state.policy(),
         &policy_set,
         principal,
         action,

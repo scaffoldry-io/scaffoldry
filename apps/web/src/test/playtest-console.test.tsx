@@ -93,9 +93,8 @@ function consoleView(tab: "settings" | "ledger", extra: Record<string, unknown> 
   return render(
     <AdminConsoleView
       activePersona={admin} isImpersonating={false} realAdmin={null} handleStopImpersonation={vi.fn()}
-      navigateTo={vi.fn()} adminTab={tab} apps={[]} sourceRules={[]} simAction="read" setSimAction={vi.fn()}
-      simFerpa={false} setSimFerpa={vi.fn()} simResult={{ decision: "", reason: "", rule: "" }} ledger={[]}
-      setNotificationToast={vi.fn()} handleDownloadOscal={vi.fn()} personas={[admin]}
+      navigateTo={vi.fn()} adminTab={tab} apps={[]} ledger={[]}
+      setNotificationToast={vi.fn()} personas={[admin]}
       handleStartImpersonation={vi.fn()} {...extra}
     />
   );
