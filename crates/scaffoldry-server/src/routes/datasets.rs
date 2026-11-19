@@ -16,6 +16,31 @@ pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/datasets", get(list_datasets).post(publish_dataset))
         .route("/datasets/{id}", get(get_dataset))
+        // Data layer phase 1: an app table is a dataset with an id. These read through the app's own access.
+        .route("/data/datasets", get(list_app_datasets))
+        .route("/data/datasets/{id}/records/{record_id}", get(get_dataset_record))
+}
+
+async fn list_app_datasets(State(state): State<SharedState>, headers: HeaderMap) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    let datasets = tokio::task::spawn_blocking(move || crate::service::datasets::list(&user, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The read stopped").into_pair())?
+        .map_err(ServiceError::into_pair)?;
+    Ok(Json(json!({ "total": datasets.len(), "datasets": datasets })))
+}
+
+async fn get_dataset_record(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((id, record_id)): Path<(String, String)>,
+) -> Result<Json<crate::state::DatasetRecord>, (StatusCode, Json<Value>)> {
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::datasets::get_record(&user, &id, &record_id, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The read stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
 }
 
 async fn list_datasets(
