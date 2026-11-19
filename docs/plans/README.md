@@ -115,7 +115,7 @@ Added after the click-through in [clickthrough-findings.md](clickthrough-finding
 | 1c-5 | [position-roles.md](position-roles.md) | 2a | A position, group, unit, or person can be granted one app, not only a whole workspace. An app-only member finds the app in My apps, and can pin it | **COMPLETED**. Pins are per browser |
 | 1c-6 | [position-roles.md](position-roles.md) | 3 | An admin lists every direct person grant, and which grants are app-scoped. A reason on a direct grant is optional | **COMPLETED** for the API. A desk screen and a desk reason field are not done |
 
-Proposed order for the next work: [workplan-v2.md](workplan-v2.md). It joins the design notes to the briefs in this file. The design notes are [data-layer.md](data-layer.md), [mcp-guidance.md](mcp-guidance.md), and [position-roles.md](position-roles.md). Rows labelled `1f-n` below come from them. They are **proposed and not approved**. The build agent reads only rows with a number in the first column, so it does not see them. Do not give them numbers until Johann approves the order.
+Proposed order for the next work: [workplan-v2.md](workplan-v2.md). It joins the design notes to the briefs in this file. The design notes are [data-layer.md](data-layer.md), [mcp-guidance.md](mcp-guidance.md), and [position-roles.md](position-roles.md). Rows labelled `1f-n` below come from them. Johann approved them on 2026-11-19. The build agent reads only rows with a number in the first column. A `1f-n` row gets a number once its brief gives it a plain phase number.
 
 Rows 1c-2 and 1c-3 need a new phase written in their brief. `live-data.md` phase 3 already removes the record arrays from `PublishedAppView.tsx`, so 1c-1 is written. Found by the UI audit (`docs/ui-review.md`), not yet fixed:
 
@@ -185,19 +185,19 @@ The rest of the access model, then the rules behind a decision and who decides. 
 | 106 | [proposal-preview.md](proposal-preview.md) | 3 | A trial copy of a proposed app, filled with synthetic records, to try writes. It expires | **COMPLETED** |
 | 107 | [lifecycle.md](lifecycle.md) | 5 | When an owner leaves: orphaned workspaces are listed, a transfer is previewed first, and no workspace loses its last owner | **COMPLETED** |
 
-### Wave 1f — the data layer, the catalog, and MCP guidance (proposed)
+### Wave 1f — the data layer, the catalog, and MCP guidance
 
-Not approved. These rows come from `data-layer.md` and `mcp-guidance.md`. They have no run order yet. Their order is in [workplan-v2.md](workplan-v2.md). The first column has a label, not a number, so `next-phase.py` skips them. They sit on the access model (Waves 1d and 1e) and start after its phase 4.
+Approved by Johann on 2026-11-19. Rows 1f-1, 1f-2 and 1f-6 are scheduled as rows 193 to 197, after row 192. The rest need a numbered phase in their brief first. These rows come from `data-layer.md` and `mcp-guidance.md`. Their order is in [workplan-v2.md](workplan-v2.md). A row with a label in the first column is skipped by `next-phase.py`. They sit on the access model (Waves 1d and 1e), which is complete.
 
 | Order | Brief | Phase | What is true after it | Status |
 | --- | --- | --- | --- | --- |
 | 1f-0 | [mcp-guidance.md](mcp-guidance.md) | 1 | An agent that connects is told who it acts for, that a person decides, that stored text is untrusted, and where to look | **COMPLETED** |
-| 1f-1 | [data-layer.md](data-layer.md) | 1 | A dataset has an id. Each app table gets one by migration. The app path and the dataset path return the same row | Proposed |
-| 1f-2 | [data-layer.md](data-layer.md) | 2 | A data crate is the single door to rows. The architecture audit fails any other reader of the record or label tables | Proposed |
+| 1f-1 | [data-layer.md](data-layer.md) | 1 | A dataset has an id. Each app table gets one by migration. The app path and the dataset path return the same row | Scheduled as row 193 |
+| 1f-2 | [data-layer.md](data-layer.md) | 2 | A data crate is the single door to rows. The architecture audit fails any other reader of the record or label tables | Scheduled as row 194 |
 | 1f-3 | [data-layer.md](data-layer.md) | keys | A dataset declares a key, enforced by `record_keys`. A row's unit is a column from the governed list, and a bad value is rejected | Proposed |
 | 1f-4 | [data-layer.md](data-layer.md) | catalog | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy | Proposed |
 | 1f-5 | [data-layer.md](data-layer.md) | catalog | Request access can start from a catalog entry, as an `access-model.md` phase 13 request. Needs the inbox and email | Proposed |
-| 1f-6 | [mcp-guidance.md](mcp-guidance.md) | 2 to 4 | Error hints, `explain_decision`, and prompts generated from policy | Proposed |
+| 1f-6 | [mcp-guidance.md](mcp-guidance.md) | 2 to 4 | Error hints, `explain_decision`, and prompts generated from policy | Scheduled as rows 195 to 197 |
 | 1f-7 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label. Needs the sensitive content rows | Proposed |
 | 1f-8 | [data-layer.md](data-layer.md) | 5, 6, 6b | The AI review proposes. A steward reads the evaluation and decides. A change has an effective date, a notice, and exceptions as grants | Proposed |
 | 1f-9 | [data-layer.md](data-layer.md) | shares | A row share with a reason and an expiry | Proposed |
@@ -310,7 +310,19 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 189 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files | **COMPLETED** |
 | 190 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool | **COMPLETED** |
 | 191 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both | **COMPLETED** |
-| 192 | [data-grid-parity.md](data-grid-parity.md) | open phases | Grid work on the web desk. Last, because the agent is the primary surface |
+| 192 | [data-grid-parity.md](data-grid-parity.md) | 6 | Grid gaps found on 2026-11-19: column resize, Shift+click to add a sort rule, and the builder data tab uses the shared grid. Phases 1–5 are checked in the brief |
+
+### Wave 1f, approved
+
+Johann approved Wave 1f on 2026-11-19. These rows have plain phase numbers. The other 1f rows wait until their brief gives them a numbered phase. They are in the 1f table above.
+
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 193 | [data-layer.md](data-layer.md) | 1 | A dataset has an id. Each app table gets one by migration. The app path and the dataset path return the same row |
+| 194 | [data-layer.md](data-layer.md) | 2 | A data crate is the single door to rows. The architecture audit fails any other reader of the record or label tables |
+| 195 | [mcp-guidance.md](mcp-guidance.md) | 2 | Every error code has a hint that names a next step. A refusal names the rule and the request path |
+| 196 | [mcp-guidance.md](mcp-guidance.md) | 3 | `explain_decision` explains the caller's own refusal in words and refuses to explain another person's |
+| 197 | [mcp-guidance.md](mcp-guidance.md) | 4 | Prompts are built from policy data. Changing the policy changes the prompt with no code change |
 
 Foundation phases 10 and 11 depend on nothing after phase 9. Run them earlier if a pilot date appears.
 
