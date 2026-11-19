@@ -30,7 +30,10 @@ impl PostgresRepository {
         self.with_client(|c| {
             Ok(scaffoldry_data::labels::list(c)?
                 .into_iter()
-                .map(|r| ((r.app_slug, r.table_id, r.field), DataLabel { ferpa_sensitive: r.ferpa_sensitive, note: r.note, set_by: r.set_by, categories: r.categories }))
+                // Destructured, so the flag is moved into the label and never read here (effective_sensitivity_test).
+                .map(|scaffoldry_data::labels::LabelRow { app_slug, table_id, field, ferpa_sensitive, note, set_by, categories }| {
+                    ((app_slug, table_id, field), DataLabel { ferpa_sensitive, note, set_by, categories })
+                })
                 .collect())
         })
     }
