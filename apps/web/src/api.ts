@@ -21,6 +21,8 @@ export interface AdminOverviewData {
   };
   processes: {
     waiting_instance_count: number;
+    /** Admin console phase 6: waiting instances older than the `process.stale_days` setting. */
+    stale?: number;
   };
   proposals?: {
     pending: number;
@@ -2607,6 +2609,28 @@ export const apiClient = {
   setFlowDisabled: async (ruleId: string, disabled: boolean, reason: string): Promise<void> => {
     await request<unknown>(`/admin/flows/${encodeURIComponent(ruleId)}/${disabled ? "disable" : "enable"}`, { method: "POST", body: JSON.stringify({ reason }) });
   },
+  /** Business processes (admin console phase 6): the definitions, one page at a time. */
+  adminProcesses: async (params: Record<string, string | undefined> = {}): Promise<{ rows: AdminProcessRow[]; next_cursor: string | null }> =>
+    request<{ rows: AdminProcessRow[]; next_cursor: string | null }>(`/admin/processes${queryOf(params)}`),
+  adminProcess: async (ruleId: string): Promise<AdminProcessDetail> => request<AdminProcessDetail>(`/admin/processes/${encodeURIComponent(ruleId)}`),
+  adminProcessVersion: async (ruleId: string, version: number): Promise<AdminProcessVersion> =>
+    request<AdminProcessVersion>(`/admin/processes/${encodeURIComponent(ruleId)}/versions/${version}`),
+  /** Turns a process off or on. The reason is kept in the ledger. */
+  setProcessEnabled: async (ruleId: string, enabled: boolean, reason: string): Promise<{ rule_id: string; enabled: boolean; version: number }> =>
+    request<{ rule_id: string; enabled: boolean; version: number }>(`/admin/processes/${encodeURIComponent(ruleId)}`, { method: "PATCH", body: JSON.stringify({ enabled, reason }) }),
+  simulateProcess: async (ruleId: string, body: { record: Record<string, unknown>; principal: string }): Promise<{ result: ProcessSimulation }> =>
+    request<{ result: ProcessSimulation }>(`/admin/processes/${encodeURIComponent(ruleId)}/simulate`, { method: "POST", body: JSON.stringify(body) }),
+  adminProcessInstances: async (params: Record<string, string | undefined> = {}): Promise<{ rows: AdminProcessInstance[]; next_cursor: string | null }> =>
+    request<{ rows: AdminProcessInstance[]; next_cursor: string | null }>(`/admin/process-instances${queryOf(params)}`),
+  adminProcessInstanceApprovers: async (id: string): Promise<AdminInstanceApprovers> =>
+    request<AdminInstanceApprovers>(`/admin/process-instances/${encodeURIComponent(id)}/approvers`),
+  /** `eppn` null returns the step to its role. */
+  reassignProcessInstance: async (id: string, eppn: string | null, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/process-instances/${encodeURIComponent(id)}/reassign`, { method: "POST", body: JSON.stringify({ eppn, reason }) });
+  },
+  cancelProcessInstance: async (id: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/process-instances/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
   /** The Guests panel: forms open to guests, the guests, and signs of abuse. A Platform Admin only. */
   adminGuests: async (): Promise<AdminGuests> => request<AdminGuests>("/admin/guests"),
   closeGuestForm: async (formId: string, reason: string): Promise<void> => {
@@ -2867,6 +2891,97 @@ export interface AdminFlow {
   runs_last_7_days: number;
   failures_last_7_days: number;
   state: "Active" | "Disabled" | "Tripped";
+}
+
+function queryOf(params: Record<string, string | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") q.set(k, v);
+  }
+  const qs = q.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export interface AdminProcessRow {
+  rule_id: string;
+  name: string;
+  app_slug: string;
+  workspace_id: string | null;
+  workspace_name: string;
+  version: number;
+  enabled: boolean;
+  trigger: string;
+  step_count: number;
+  user_task_roles: string[];
+  waiting_count: number;
+  last_changed_by: string | null;
+  last_changed_at: string | null;
+}
+
+export interface AdminProcessVersionRow {
+  version: number;
+  changed_by: string;
+  changed_at: string;
+  summary: string;
+  proposal_id: string | null;
+  sha256: string;
+}
+
+export interface AdminProcessDetail {
+  rule: Record<string, unknown> & { id: string; name: string; app_slug: string; enabled: boolean; version: number };
+  sentences: string[];
+  workspace_id: string | null;
+  workspace_name: string;
+  versions: AdminProcessVersionRow[];
+  instance_counts: Record<string, number>;
+}
+
+export interface AdminProcessVersion {
+  version: number;
+  changed_by: string;
+  changed_at: string;
+  summary: string;
+  sha256: string;
+  rule: Record<string, unknown>;
+  sentences: string[];
+}
+
+export interface ProcessSimulation {
+  rule_id: string;
+  rule_name: string;
+  trigger_matched: boolean;
+  conditions_met: boolean;
+  cedar_authorized: boolean;
+  actions_executed: string[];
+  waiting_instance: { waiting_step_id: string | null; role: string | null; prompt: string | null } | null;
+}
+
+export interface AdminProcessInstance {
+  id: string;
+  app_slug: string;
+  rule_id: string;
+  rule_name: string;
+  rule_version: number;
+  record_id: string;
+  status: "Waiting" | "Completed" | "Rejected" | "Failed";
+  waiting_step_id: string | null;
+  deciders: string[];
+  no_approver: string | null;
+  no_approver_reason: string | null;
+  assigned_to: string | null;
+  started_at: string;
+  age_days: number;
+  stale: boolean;
+}
+
+export interface AdminInstanceApprovers {
+  instance_id: string;
+  assigned_to?: string | null;
+  approvers: { eppn: string; display_name: string; via: string }[];
+  unit_id: string | null;
+  unit_name: string | null;
+  problem: string | null;
+  problem_reason: string | null;
 }
 
 export interface AdminFlows {

@@ -86,6 +86,11 @@ pub const RECORD_INTERNALS: &[&str] = &[
     // its submitter only to refuse them (after checking the caller's scope), and a decision's notice reads it for its
     // creator and table. None returns the record.
     "vote_closing",
+    // Admin console phase 6: reassigning reads a record only for who made it, to refuse that person (separation of
+    // duties). Simulating a rule reads the record a Platform Admin names, to run the rule on it; the answer is the rule's
+    // outcome, never the record.
+    "check_target",
+    "simulate",
     "committee_votes",
     "tell_decision",
     // Workflows phase 4: a step's task grants read its record for the table id only. The grant itself is checked where

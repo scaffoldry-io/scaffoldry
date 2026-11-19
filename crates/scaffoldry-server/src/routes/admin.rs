@@ -140,6 +140,7 @@ async fn get_overview(State(state): State<SharedState>, headers: HeaderMap) -> i
             "processes": {
                 "waiting_instance_count": waiting_instance_count,
                 "waiting": waiting_instance_count,
+                "stale": crate::service::admin_processes::counts(&state).1,
                 "work_repairs": work_repairs,
             },
             "proposals": {

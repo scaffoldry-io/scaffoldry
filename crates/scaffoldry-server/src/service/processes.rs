@@ -235,6 +235,36 @@ fn structure_problems(manifest: &AppManifest, rule: &AutomationRule, state: &Sha
     problems
 }
 
+/// Runs every rule of an app against one sample event and record, as `user`. Nothing is stored. The app's simulate route and
+/// the console's both call this, so they cannot disagree.
+pub fn simulate_rules(
+    state: &SharedState,
+    slug: &str,
+    user: &AuthUser,
+    event: &TriggerEvent,
+    record: &Value,
+) -> Result<Vec<scaffoldry_core::WorkflowExecutionResult>, ServiceError> {
+    let affiliation = EduPersonAffiliation::from_str(&user.affiliation).unwrap_or(EduPersonAffiliation::Staff);
+    let realm = user.eppn.split('@').nth(1).unwrap_or("university.edu");
+    let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: user.eppn.clone(),
+        realm: realm.to_string(),
+        affiliations: vec![affiliation],
+    };
+    let rules = state
+        .automations
+        .read()
+        .map_err(|_| ServiceError::Internal("lock poisoned".to_string()))?
+        .get(slug)
+        .cloned()
+        .unwrap_or_default();
+    let engine = scaffoldry_engine::AutomationEngine;
+    Ok(rules
+        .iter()
+        .map(|r| engine.evaluate_rule(r, event, record, &identity, &user.department, 0))
+        .collect())
+}
+
 /// The rule an instance runs under: the version it started with, or the live rule for an old
 /// instance that has none.
 pub fn rule_for(state: &SharedState, inst: &ProcessInstance) -> Option<AutomationRule> {

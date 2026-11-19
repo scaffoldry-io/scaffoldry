@@ -2971,6 +2971,48 @@ impl PostgresRepository {
         })
     }
 
+    /// Admin console phase 6: ends a waiting instance as `Failed`. In one transaction it locks the row, checks it still waits at
+    /// the step the caller read, writes the new state and a `cancelled` event, and stops the step's timers, task grants and work
+    /// items. No record is touched. Returns false when the instance had already moved on.
+    pub fn cancel_waiting_instance(&self, next: &ProcessInstance, waiting_step: &str, actor: &str) -> Result<bool, RepositoryError> {
+        let (next, step, actor) = (next.clone(), waiting_step.to_string(), actor.to_string());
+        self.with_client(move |client| {
+            let mut tx = client.transaction()?;
+            let Some(row) = tx.query_opt("SELECT instance_json FROM process_instances WHERE id = $1 FOR UPDATE", &[&next.id])? else {
+                return Ok(false);
+            };
+            let stored: ProcessInstance = serde_json::from_value(row.get(0))?;
+            if stored.status != ProcessStatus::Waiting || stored.waiting_step_id.as_deref() != Some(step.as_str()) {
+                return Ok(false);
+            }
+            let json = serde_json::to_value(&next)?;
+            tx.execute(
+                "UPDATE process_instances SET status = $2, instance_json = $3, updated_at = NOW() WHERE id = $1",
+                &[&next.id, &status_name(&next.status), &json],
+            )?;
+            process_event_in_tx(&mut tx, &next, Some(&step), "cancelled", Some(&actor), &serde_json::json!({}))?;
+            process_event_in_tx(&mut tx, &next, Some(&step), "step_left", Some(&actor), &serde_json::json!({}))?;
+            process_event_in_tx(&mut tx, &next, None, "completed", Some(&actor), &serde_json::json!({ "status": status_name(&next.status) }))?;
+            crate::repository_timers::cancel_timers_in_tx(&mut tx, &next.id)?;
+            crate::repository_task_grants::close_task_grants_in_tx(&mut tx, &next.id)?;
+            crate::repository_work::close_work_in_tx(&mut tx, &next.id, "cancelled")?;
+            tx.commit()?;
+            Ok(true)
+        })
+    }
+
+    /// Who saved the newest version of each rule named, and when, as `(rule id, who, when)`.
+    pub fn rule_last_changes(&self, rule_ids: &[String]) -> Result<Vec<(String, String, chrono::DateTime<chrono::Utc>)>, RepositoryError> {
+        let ids = rule_ids.to_vec();
+        self.with_client(move |client| {
+            let rows = client.query(
+                "SELECT DISTINCT ON (rule_id) rule_id, changed_by, changed_at FROM workflow_rule_versions WHERE rule_id = ANY($1) ORDER BY rule_id, version DESC",
+                &[&ids],
+            )?;
+            Ok(rows.iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+        })
+    }
+
     /// How many instances have this status.
     pub fn count_process_instances(&self, status: ProcessStatus) -> Result<i64, RepositoryError> {
         self.with_client(move |client| Ok(client.query_one("SELECT count(*) FROM process_instances WHERE status = $1", &[&status_name(&status)])?.get(0)))

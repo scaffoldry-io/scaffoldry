@@ -86,6 +86,7 @@ pub fn hint_for(err: &ServiceError) -> String {
         "token_scope" => "This token is limited. Ask the person who made it for a token that covers this app, table and operation.",
         "preview_read_only" => "Stop the preview to make a change. A preview only reads. Approve the proposal to make it live.",
         "proposal_changed" => "Call get_proposal, read what it now holds, and approve with the digest it returns.",
+        "separation_of_duties" => "Choose someone who did not make the record or start the process.",
         "grant_outside_scope" | "grant_too_broad" => "Ask for access inside your own units, and call list_workspaces to see what you administer.",
         "unauthorized" => "Sign in again, then call list_workspaces to confirm access.",
         _ => "Retry once, and call list_workspaces to check that the server is answering.",
