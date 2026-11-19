@@ -4,10 +4,9 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import {
   useReactTable,
   getCoreRowModel,
-  flexRender,
   ColumnDef,
 } from "@tanstack/react-table";
-import { FieldSpec, RowDensity, FieldType, AppView, AppTable } from "./types";
+import { FieldSpec, RowDensity, FieldType, AppView, AppTable, SortRule } from "./types";
 import { explainError } from "./ui/explainError";
 import { AttachmentChips, type AttachedFile } from "./ui/Attachments";
 import { LinkCell } from "./LinkCell";
@@ -32,7 +31,24 @@ export type DataGridProps = {
   hidden_columns?: string[];
   frozen_through?: string;
   column_summary?: [string, string][];
+  /** The sort rules in force. Shift+click on a sort entry in the column menu appends to them. */
+  sort_rules?: SortRule[];
   onViewChange?: (patch: Partial<AppView>) => void;
+  /** Extra content at the end of each column menu, for a host that edits the schema (the app builder). */
+  renderHeaderMenu?: (field: FieldSpec, close: () => void) => React.ReactNode;
+  /** A line under the header label. */
+  renderHeaderNote?: (field: FieldSpec) => React.ReactNode;
+  /** Lets the host own which column menu is open. Give both, or neither. */
+  headerMenu?: string | null;
+  onHeaderMenuChange?: (fieldName: string | null) => void;
+  /** A first column drawn by the host, such as row checkboxes and row buttons. */
+  leadingColumn?: { header: React.ReactNode; cell: (recordId: string) => React.ReactNode };
+  /** A last header cell drawn by the host, such as an Add Field button. */
+  trailingHeader?: React.ReactNode;
+  /** Overrides the text of a cell. Return undefined to keep the grid's own format. */
+  formatCell?: (field: FieldSpec, value: unknown) => string | undefined;
+  /** Draws a full-width row above a record when it returns something. Used for group headings. */
+  groupHeader?: (recordId: string) => React.ReactNode;
   /** `batchId` is the same for every cell one gesture writes, so the server can undo the gesture as one. */
   onPatch: (recordId: string, fieldName: string, value: unknown, batchId?: string) => void;
   /** Asks the server to undo a batch. Resolves with the batch that the undo wrote, which undoes the undo. */
@@ -230,7 +246,16 @@ export function DataGrid({
   hidden_columns,
   frozen_through,
   column_summary,
+  sort_rules,
   onViewChange,
+  renderHeaderMenu,
+  renderHeaderNote,
+  headerMenu,
+  onHeaderMenuChange,
+  leadingColumn,
+  trailingHeader,
+  groupHeader,
+  formatCell,
   onPatch,
   onUndoBatch,
   tableName = "this table",
@@ -247,7 +272,14 @@ export function DataGrid({
   const [editValue, setEditValue] = useState<string>("");
   const [multiSelectOpen, setMultiSelectOpen] = useState<boolean>(false);
   const [draftMultiSelect, setDraftMultiSelect] = useState<string[]>([]);
-  const [activeHeaderMenu, setActiveHeaderMenu] = useState<string | null>(null);
+  const [ownHeaderMenu, setOwnHeaderMenu] = useState<string | null>(null);
+  const activeHeaderMenu = headerMenu !== undefined ? headerMenu : ownHeaderMenu;
+  const setActiveHeaderMenu = (name: string | null) => {
+    setOwnHeaderMenu(name);
+    onHeaderMenuChange?.(name);
+  };
+  // A width being dragged. It is drawn live and sent to onViewChange once, on release.
+  const [dragWidth, setDragWidth] = useState<{ name: string; width: number } | null>(null);
   const [draggedColName, setDraggedColName] = useState<string | null>(null);
   const isCancellingRef = useRef<boolean>(false);
   const editTriggerRef = useRef<"key" | "click" | "action">("click");
@@ -282,10 +314,11 @@ export function DataGrid({
     return unhidden;
   }, [fields, hidden_columns, column_order]);
 
+  const MIN_COLUMN_WIDTH = 72;
   const widthsMap = useMemo(() => {
     const map = new Map<string, number>();
     (column_widths || []).forEach(([name, w]) => {
-      map.set(name, Math.max(72, w));
+      map.set(name, Math.max(MIN_COLUMN_WIDTH, w));
     });
     return map;
   }, [column_widths]);
@@ -389,134 +422,190 @@ export function DataGrid({
     [selection, getSelectionBounds, records, visibleFields, getRecordId]
   );
 
+  // The header is drawn by renderHeader, called in the <thead>. It is not a TanStack header component,
+  // so opening a menu does not remount the header and a held reference to its buttons stays valid.
   const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
     return visibleFields.map((field) => ({
       id: field.name,
       accessorFn: (row) => row[field.name],
-      header: () => (
-        <div className="flex items-center justify-between gap-1.5 select-none w-full group">
-          <div className="flex items-center gap-1.5 truncate">
-            <span className="font-semibold text-slate-700 dark:text-slate-200">
-              {field.label}
-            </span>
-            {field.ferpa_sensitive && (
-              <span className="text-[9px] px-1 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold">
-                FERPA
-              </span>
-            )}
-            {field.field_type === "Relation" && field.linked_dataset_id && (
-              <span className="text-[9px] px-1 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
-                🔗 {field.linked_dataset_id}
-              </span>
-            )}
-          </div>
+      header: field.label,
+    }));
+  }, [visibleFields]);
 
-          {/* Column Menu Trigger */}
-          <div className="relative">
+  /** A plain click replaces the rules with this one. Shift+click adds it, or flips its direction if it is already there. */
+  const nextSortRules = (fieldName: string, direction: SortRule["direction"], append: boolean): SortRule[] => {
+    const rule: SortRule = { id: `sort-${fieldName}`, field_name: fieldName, direction };
+    if (!append) return [rule];
+    const current = sort_rules || [];
+    return current.some((r) => r.field_name === fieldName)
+      ? current.map((r) => (r.field_name === fieldName ? rule : r))
+      : [...current, rule];
+  };
+
+  const setColumnWidth = (name: string, width: number) => {
+    const next = Math.max(MIN_COLUMN_WIDTH, Math.round(width));
+    const list: [string, number][] = [...(column_widths || [])];
+    const at = list.findIndex(([n]) => n === name);
+    if (at === -1) list.push([name, next]);
+    else list[at] = [name, next];
+    onViewChange?.({ column_widths: list });
+  };
+
+  const startResize = (e: React.MouseEvent, name: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const th = (e.currentTarget as HTMLElement).closest("th");
+    const startWidth = widthsMap.get(name) ?? th?.getBoundingClientRect().width ?? MIN_COLUMN_WIDTH;
+    let latest = startWidth;
+    let moved = false;
+    const onMove = (ev: MouseEvent) => {
+      moved = true;
+      latest = Math.max(MIN_COLUMN_WIDTH, startWidth + ev.clientX - startX);
+      setDragWidth({ name, width: latest });
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      setDragWidth(null);
+      if (moved) setColumnWidth(name, latest);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const onResizeKey = (e: React.KeyboardEvent, name: string, current: number) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const step = e.shiftKey ? 32 : 8;
+    setColumnWidth(name, current + (e.key === "ArrowRight" ? step : -step));
+  };
+
+  const renderHeader = (field: FieldSpec) => (
+    <div className="select-none w-full group">
+    <div className="flex items-center justify-between gap-1.5">
+      <div className="flex items-center gap-1.5 truncate">
+        <span className="font-semibold text-slate-700 dark:text-slate-200">
+          {field.label}
+        </span>
+        {field.ferpa_sensitive && (
+          <span className="text-[9px] px-1 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold">
+            FERPA
+          </span>
+        )}
+        {field.field_type === "Relation" && field.linked_dataset_id && (
+          <span className="text-[9px] px-1 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold">
+            🔗 {field.linked_dataset_id}
+          </span>
+        )}
+      </div>
+
+      {/* Column Menu Trigger */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActiveHeaderMenu(activeHeaderMenu === field.name ? null : field.name);
+          }}
+          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+          data-testid={`column-menu-btn-${field.name}`}
+          aria-label={`Column options for ${field.label}`}
+        >
+          ▾
+        </button>
+
+        {/* Popover Header Menu */}
+        {activeHeaderMenu === field.name && (
+          <div
+            className="absolute z-50 right-0 top-full mt-1 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-1 text-xs text-slate-700 dark:text-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               type="button"
               onClick={(e) => {
-                e.stopPropagation();
-                setActiveHeaderMenu(activeHeaderMenu === field.name ? null : field.name);
+                setActiveHeaderMenu(null);
+                onViewChange?.({ sort_rules: nextSortRules(field.name, "asc", e.shiftKey) });
               }}
-              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              aria-label={`Column options for ${field.label}`}
+              className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
             >
-              ▾
+              Sort Ascending
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                setActiveHeaderMenu(null);
+                onViewChange?.({ sort_rules: nextSortRules(field.name, "desc", e.shiftKey) });
+              }}
+              className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+            >
+              Sort Descending
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveHeaderMenu(null);
+                const currentHidden = hidden_columns || [];
+                if (!currentHidden.includes(field.name)) {
+                  onViewChange?.({
+                    hidden_columns: [...currentHidden, field.name],
+                  });
+                }
+              }}
+              className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-rose-600 dark:text-rose-400"
+            >
+              Hide Column
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveHeaderMenu(null);
+                onViewChange?.({ frozen_through: field.name });
+              }}
+              className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer border-t border-slate-100 dark:border-slate-700"
+            >
+              Freeze through this column
             </button>
 
-            {/* Popover Header Menu */}
-            {activeHeaderMenu === field.name && (
-              <div
-                className="absolute z-50 right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-1 text-xs text-slate-700 dark:text-slate-200"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveHeaderMenu(null);
-                    onViewChange?.({
-                      sort_rules: [{ id: `sort-${field.name}`, field_name: field.name, direction: "asc" }],
-                    });
-                  }}
-                  className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                >
-                  Sort Ascending
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveHeaderMenu(null);
-                    onViewChange?.({
-                      sort_rules: [{ id: `sort-${field.name}`, field_name: field.name, direction: "desc" }],
-                    });
-                  }}
-                  className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                >
-                  Sort Descending
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveHeaderMenu(null);
-                    const currentHidden = hidden_columns || [];
-                    if (!currentHidden.includes(field.name)) {
-                      onViewChange?.({
-                        hidden_columns: [...currentHidden, field.name],
-                      });
-                    }
-                  }}
-                  className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-rose-600 dark:text-rose-400"
-                >
-                  Hide Column
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveHeaderMenu(null);
-                    onViewChange?.({ frozen_through: field.name });
-                  }}
-                  className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer border-t border-slate-100 dark:border-slate-700"
-                >
-                  Freeze through this column
-                </button>
-
-                {(field.field_type === "Number" ||
-                  field.field_type === "Currency" ||
-                  field.field_type === "Percent") && (
-                  <div className="border-t border-slate-100 dark:border-slate-700 pt-1">
-                    <div className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase">
-                      Summary
-                    </div>
-                    {["sum", "avg", "min", "max", "count", "none"].map((agg) => (
-                      <button
-                        key={agg}
-                        type="button"
-                        onClick={() => {
-                          setActiveHeaderMenu(null);
-                          const curSummaries = (column_summary || []).filter(
-                            ([name]) => name !== field.name
-                          );
-                          const nextSummaries =
-                            agg === "none"
-                              ? curSummaries
-                              : [...curSummaries, [field.name, agg] as [string, string]];
-                          onViewChange?.({ column_summary: nextSummaries });
-                        }}
-                        className="w-full text-left px-4 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-xs"
-                      >
-                        {agg.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                )}
+            {(field.field_type === "Number" ||
+              field.field_type === "Currency" ||
+              field.field_type === "Percent") && (
+              <div className="border-t border-slate-100 dark:border-slate-700 pt-1">
+                <div className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase">
+                  Summary
+                </div>
+                {["sum", "avg", "min", "max", "count", "none"].map((agg) => (
+                  <button
+                    key={agg}
+                    type="button"
+                    onClick={() => {
+                      setActiveHeaderMenu(null);
+                      const curSummaries = (column_summary || []).filter(
+                        ([name]) => name !== field.name
+                      );
+                      const nextSummaries =
+                        agg === "none"
+                          ? curSummaries
+                          : [...curSummaries, [field.name, agg] as [string, string]];
+                      onViewChange?.({ column_summary: nextSummaries });
+                    }}
+                    className="w-full text-left px-4 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-xs"
+                  >
+                    {agg.toUpperCase()}
+                  </button>
+                ))}
               </div>
             )}
+            {renderHeaderMenu?.(field, () => setActiveHeaderMenu(null))}
           </div>
-        </div>
-      ),
-    }));
-  }, [visibleFields, activeHeaderMenu, hidden_columns, column_summary, onViewChange]);
+        )}
+      </div>
+    </div>
+    {renderHeaderNote?.(field)}
+    </div>
+  );
 
   const table = useReactTable({
     data: records,
@@ -1119,10 +1208,12 @@ export function DataGrid({
               key={headerGroup.id}
               className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold"
             >
+              {leadingColumn && leadingColumn.header}
               {onOpenRecord && <th className="py-2.5 px-2 w-14"><span className="sr-only">Open</span></th>}
               {headerGroup.headers.map((header) => {
                 const colName = header.column.id;
                 const width = widthsMap.get(colName);
+                const shownWidth = dragWidth?.name === colName ? dragWidth.width : width;
                 const isFrozen =
                   frozen_through &&
                   visibleFields.findIndex((f) => f.name === colName) <=
@@ -1150,17 +1241,38 @@ export function DataGrid({
                       }
                       setDraggedColName(null);
                     }}
-                    style={{ width: width ? `${width}px` : undefined }}
+                    style={{ width: shownWidth ? `${shownWidth}px` : undefined }}
                     className={`py-2.5 px-3 min-w-[72px] border-r border-slate-200/60 dark:border-slate-800/60 last:border-r-0 relative ${
                       isFrozen ? "sticky left-0 bg-slate-100 dark:bg-slate-800 z-20" : ""
                     }`}
                   >
                     {header.isPlaceholder
                       ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
+                      : renderHeader(visibleFields.find((f) => f.name === colName) as FieldSpec)}
+                    <div
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={`Resize ${visibleFields.find((f) => f.name === colName)?.label ?? colName}`}
+                      aria-valuemin={MIN_COLUMN_WIDTH}
+                      aria-valuenow={Math.round(shownWidth ?? 0)}
+                      tabIndex={0}
+                      draggable={false}
+                      data-testid={`resize-handle-${colName}`}
+                      onMouseDown={(e) => startResize(e, colName)}
+                      onKeyDown={(e) =>
+                        onResizeKey(
+                          e,
+                          colName,
+                          shownWidth ?? (e.currentTarget.closest("th")?.getBoundingClientRect().width || MIN_COLUMN_WIDTH)
+                        )
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/60 focus:bg-blue-500/70 focus:outline-none"
+                    />
                   </th>
                 );
               })}
+              {trailingHeader}
             </tr>
           ))}
         </thead>
@@ -1168,12 +1280,21 @@ export function DataGrid({
           {table.getRowModel().rows.map((row, rowIdx) => {
             const recordId = getRecordId(row.original, rowIdx);
             const updated = updatedByOthers?.has(recordId) ?? false;
+            const heading = groupHeader?.(recordId);
             return (
+              <React.Fragment key={row.id}>
+              {heading && (
+                <tr>
+                  <td colSpan={visibleFields.length + (leadingColumn ? 1 : 0) + (onOpenRecord ? 1 : 0)} className="p-0">
+                    {heading}
+                  </td>
+                </tr>
+              )}
               <tr
-                key={row.id}
                 data-updated={updated ? "true" : undefined}
                 className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors ${updated ? "bg-amber-50 dark:bg-amber-950/30" : ""}`}
               >
+                {leadingColumn && leadingColumn.cell(recordId)}
                 {onOpenRecord && (
                   <td className="px-2 border-r border-slate-200/60 dark:border-slate-800/60">
                     <button
@@ -1360,7 +1481,7 @@ export function DataGrid({
                         /* MultiSelect Popover */
                         <div className="relative">
                           <div className="text-slate-800 dark:text-slate-200">
-                            {formatDisplayValue(field, cellVal, tables)}
+                            {(formatCell?.(field, cellVal) ?? formatDisplayValue(field, cellVal, tables))}
                           </div>
                           <div className="absolute z-30 top-full left-0 mt-1 min-w-[180px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-2.5 flex flex-col gap-1.5">
                             <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 pb-1 border-b border-slate-100 dark:border-slate-700">
@@ -1610,6 +1731,20 @@ export function DataGrid({
                       ) : (
                         /* Non-editing display */
                         <div className="flex items-center justify-between text-slate-800 dark:text-slate-200 min-h-[1.25rem]">
+                          {field.field_type === "MultiSelect" && cellVal !== null && cellVal !== undefined && cellVal !== "" ? (
+                            <span className="flex flex-wrap gap-1">
+                              {(formatCell?.(field, cellVal) ?? formatDisplayValue(field, cellVal, tables))
+                                .split(", ")
+                                .map((label) => (
+                                  <span
+                                    key={label}
+                                    className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200"
+                                  >
+                                    {label}
+                                  </span>
+                                ))}
+                            </span>
+                          ) : (
                           <span
                             className={`${
                               field.field_type === "Number" ||
@@ -1621,8 +1756,9 @@ export function DataGrid({
                                 : ""
                             }`}
                           >
-                            {formatDisplayValue(field, cellVal, tables)}
+                            {(formatCell?.(field, cellVal) ?? formatDisplayValue(field, cellVal, tables))}
                           </span>
+                          )}
                         </div>
                       )}
                       {isBottomRightCorner && (
@@ -1635,6 +1771,7 @@ export function DataGrid({
                   );
                 })}
               </tr>
+              </React.Fragment>
             );
           })}
         </tbody>
@@ -1642,6 +1779,7 @@ export function DataGrid({
         {visibleFields.some((f) => columnSummaries[f.name]) && (
         <tfoot>
           <tr className="bg-slate-100/80 dark:bg-slate-800/80 font-mono text-[11px] text-slate-600 dark:text-slate-300 border-t border-slate-200 dark:border-slate-800">
+            {leadingColumn && <td />}
             {onOpenRecord && <td />}
             {visibleFields.map((field) => {
               const summaryText = columnSummaries[field.name];
