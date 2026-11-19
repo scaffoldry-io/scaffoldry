@@ -192,7 +192,7 @@ jobs:
           cargo nextest run --workspace $args --partition hash:${{ matrix.part }}/${{ matrix.parts }} --profile ci
 
       - name: Drop this repository's own build output before the cache is saved
-        run: cargo clean -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server
+        run: cargo clean -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-data -p scaffoldry-server
 
   # Three gates that are not tests of the light group's two runners: the policy library's OSCAL catalog, the doc tests,
   # and clippy. They run beside the test runners, on a runner of their own, so they lengthen none of them.
@@ -261,7 +261,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Drop this repository's own build output before the cache is saved
-        run: cargo clean -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server
+        run: cargo clean -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-data -p scaffoldry-server
 
   # The million-row proof (docs/plans/row-scale.md phase 6). It seeds 1,000,000 rows of thirty fields, five indexed, runs each
   # of nine operations twenty times through the routes, and fails if the 95th percentile (the 19th of twenty) passes its limit or a read scans a table. The slowest is still printed. If a
@@ -285,7 +285,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$EVENT" != "pull_request" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          paths='^(crates/scaffoldry-core/migrations/|crates/scaffoldry-server/src/repository|crates/scaffoldry-server/src/service/(records|scope|access)\.rs|crates/scaffoldry-engine/src/access\.rs|crates/scaffoldry-server/tests/(million_rows|decide_benchmark|content_scan_scale)_test\.rs|crates/scaffoldry-server/src/content_scan\.rs|crates/scaffoldry-core/src/reach\.rs|Cargo\.lock$|\.github/workflows/ci\.yml$)'
+          paths='^(crates/scaffoldry-core/migrations/|crates/scaffoldry-data/|crates/scaffoldry-server/src/repository|crates/scaffoldry-server/src/service/(records|scope|access)\.rs|crates/scaffoldry-engine/src/access\.rs|crates/scaffoldry-server/tests/(million_rows|decide_benchmark|content_scan_scale)_test\.rs|crates/scaffoldry-server/src/content_scan\.rs|crates/scaffoldry-core/src/reach\.rs|Cargo\.lock$|\.github/workflows/ci\.yml$)'
           if git diff --name-only "$BASE"...HEAD | grep -Eq "$paths"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -330,4 +330,4 @@ jobs:
 
       - name: Drop this repository's own build output before the cache is saved
         if: steps.scope.outputs.run == 'true'
-        run: cargo clean --release -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-server
+        run: cargo clean --release -p scaffoldry-core -p scaffoldry-engine -p scaffoldry-policy -p scaffoldry-data -p scaffoldry-server

@@ -1,0 +1,12 @@
+[package]
+name = "scaffoldry-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The single door to rows: the SQL that reads and writes dataset records, their index rows, and field labels"
+
+[dependencies]
+postgres = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

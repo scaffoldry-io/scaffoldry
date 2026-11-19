@@ -28,9 +28,12 @@ impl PostgresRepository {
     /// Every label. The set holds exceptions only.
     pub fn list_labels(&self) -> Result<LabelSet, RepositoryError> {
         self.with_client(|c| {
-            Ok(c.query("SELECT app_slug, table_id, field, ferpa_sensitive, note, set_by, categories FROM data_labels", &[])?
-                .iter()
-                .map(|r| ((r.get::<_, String>(0), r.get::<_, String>(1), r.get::<_, String>(2)), DataLabel { ferpa_sensitive: r.get(3), note: r.get(4), set_by: r.get(5), categories: r.get(6) }))
+            Ok(scaffoldry_data::labels::list(c)?
+                .into_iter()
+                // Destructured, so the flag is moved into the label and never read here (effective_sensitivity_test).
+                .map(|scaffoldry_data::labels::LabelRow { app_slug, table_id, field, ferpa_sensitive, note, set_by, categories }| {
+                    ((app_slug, table_id, field), DataLabel { ferpa_sensitive, note, set_by, categories })
+                })
                 .collect())
         })
     }
@@ -43,12 +46,8 @@ impl PostgresRepository {
             let mut tx = c.transaction()?;
             for ch in &changes {
                 match ch.sensitive {
-                    Some(v) => tx.execute(
-                        "INSERT INTO data_labels (app_slug, table_id, field, ferpa_sensitive, note, set_by) VALUES ($1, $2, $3, $4, $5, $6) \
-                         ON CONFLICT (app_slug, table_id, field) DO UPDATE SET (ferpa_sensitive, note, set_by, set_at) = ($4, $5, $6, NOW())",
-                        &[&ch.app_slug, &ch.table_id, &ch.field, &v, &note, &by],
-                    )?,
-                    None => tx.execute("DELETE FROM data_labels WHERE app_slug = $1 AND table_id = $2 AND field = $3", &[&ch.app_slug, &ch.table_id, &ch.field])?,
+                    Some(v) => scaffoldry_data::labels::set_sensitive(&mut tx, &ch.app_slug, &ch.table_id, &ch.field, v, &note, &by)?,
+                    None => scaffoldry_data::labels::remove(&mut tx, &ch.app_slug, &ch.table_id, &ch.field)?,
                 };
             }
             // A record is flagged when it holds a value in any field that is now sensitive. The same test the backfill of a category uses.

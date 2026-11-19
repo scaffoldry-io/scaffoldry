@@ -9,6 +9,7 @@ description = "Sovereign REST, Tabular Dataset, and SCIM 2.0 API Server"
 scaffoldry-core = { path = "../scaffoldry-core" }
 scaffoldry-policy = { path = "../scaffoldry-policy" }
 scaffoldry-engine = { path = "../scaffoldry-engine" }
+scaffoldry-data = { path = "../scaffoldry-data" }
 
 axum = { version = "0.8", features = ["json"] }
 tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "signal", "sync", "time"] }
