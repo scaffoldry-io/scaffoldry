@@ -29,6 +29,8 @@ This brief builds that suite, adds a budget that keeps the tool list small, and 
 
 `mcp-guidance.md` widens row 131. It keeps this brief's error hints, scenarios, and tool budget, and adds: `instructions` at `initialize` (built), generated prompts, an `explain_decision` tool, tools listed by the caller's access, and typed text marked untrusted. Its scenarios are the contract for the prompts, so each prompt there has a recorded scenario here.
 
+Row 131 is the error hints. They are done: this brief's phase 2 built hints for the 25 mistakes, and `mcp-guidance.md` phase 2 (README row 195) extended them to every code in `ERROR_CODES`, with the rule and request path on a refusal. Row 131 has no README row of its own, so no status changed there. Scenarios, generated prompts and `explain_decision` are not built.
+
 ## Out of scope
 
 - Running a language model in CI.

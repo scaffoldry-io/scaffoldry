@@ -77,7 +77,7 @@ fn coded_tool_error(code: &str, message: &str, hint: &str) -> Value {
 fn service_tool_error(err: &crate::service::ServiceError) -> Value {
     let mut value = coded_tool_error(err.code(), err.message(), &crate::service::hints::hint_for(err));
     let body = err.body();
-    for key in ["reason", "remedy", "fields", "request"] {
+    for key in ["reason", "remedy", "fields", "request", "rule", "policy", "request_path"] {
         if let Some(v) = body.get(key) {
             value["structuredContent"][key] = v.clone();
         }
@@ -265,6 +265,7 @@ async fn handle_mcp_request(
                 }
             };
             let worker_state = state.clone();
+            let tool_name_for_guidance = tool_name.clone();
             let outcome =
                 tokio::task::spawn_blocking(move || tools::call(&caller, &origin, &tool_name, args, &worker_state)).await;
 
@@ -272,14 +273,20 @@ async fn handle_mcp_request(
                 Ok(Ok(value)) => {
                     // The spec says structuredContent is an object. A client validates it and discards a bare list.
                     // A list goes under `items`, a lone value under `value`. The text keeps the plain result.
-                    let structured = match &value {
+                    let mut structured = match &value {
                         Value::Object(_) => value.clone(),
                         Value::Array(_) => json!({ "items": value }),
                         other => json!({ "value": other }),
                     };
+                    // A main result says what usually comes next. A result that already has a `guidance` field keeps its own.
+                    let guided = crate::service::next_step::for_tool(&tool_name_for_guidance).filter(|_| structured.get("guidance").is_none());
+                    if let Some(g) = &guided {
+                        structured["guidance"] = g.clone();
+                    }
+                    let shown = if guided.is_some() && value.is_object() { &structured } else { &value };
                     json!({
                         "structuredContent": structured,
-                        "content": [{ "type": "text", "text": serde_json::to_string(&value).unwrap_or_default() }]
+                        "content": [{ "type": "text", "text": serde_json::to_string(shown).unwrap_or_default() }]
                     })
                 }
                 Ok(Err(err)) => service_tool_error(&err),

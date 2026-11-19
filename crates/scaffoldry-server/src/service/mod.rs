@@ -59,6 +59,7 @@ pub mod rate_limit;
 pub mod shares;
 pub mod proposals;
 pub mod hints;
+pub mod next_step;
 pub mod prompts;
 pub mod tool_meta;
 pub mod tools;
@@ -158,6 +159,26 @@ pub const ERROR_CODES: &[&str] = &[
 
 /// What a person who tried to act as a real person should do instead.
 pub const IMPERSONATION_REMEDY: &str = "Use view-as to see what they see. View-as is read-only and works for real people.";
+
+/// Where a person or an agent sends the request for access that a refusal withheld. The refusal's `request` is the body.
+pub const REQUEST_PATH: &str = "Call request_access with the request in this result, or POST it to /api/v1/access/requests. A person confirms it, then an approver decides.";
+/// For a refusal that no access request answers.
+pub const NO_REQUEST_PATH: &str = "No access request covers this. Ask a workspace owner or a Platform Admin; request_access cannot grant it.";
+
+/// The rule that refused, as `{ id, description }`. A Cedar `forbid` names its policy. A Cedar decision with no policy
+/// means no `permit` matched, which is a default deny. Anything else is a role check made in code.
+fn forbidden_rule(reasons: &[String], policy: Option<&PolicyRef>, cedar: bool) -> Value {
+    if let Some(p) = policy {
+        return serde_json::json!({ "id": p.id, "description": p.description });
+    }
+    if let Some(id) = reasons.first() {
+        return serde_json::json!({ "id": id, "description": "A policy with this id refused the request." });
+    }
+    if cedar {
+        return serde_json::json!({ "id": "default_deny", "description": "No policy permits this action for this person, so it is refused by default." });
+    }
+    serde_json::json!({ "id": "role_required", "description": "A role check refused it. The message names the role." })
+}
 
 #[derive(Debug, Clone)]
 pub enum ServiceError {
@@ -403,6 +424,7 @@ impl ServiceError {
         let mut body = Map::new();
         body.insert("error".to_string(), Value::String(self.message().to_string()));
         body.insert("code".to_string(), Value::String(self.code().to_string()));
+        body.insert("hint".to_string(), Value::String(crate::service::hints::hint_for(self)));
         match self {
             Self::Forbidden { reasons, diagnostics, policy, action, request, .. } => {
                 if let Some(request) = request {
@@ -411,6 +433,8 @@ impl ServiceError {
                 if let Some(action) = action {
                     body.insert("action".to_string(), Value::String(action.clone()));
                 }
+                body.insert("request_path".to_string(), Value::String(if request.is_some() { REQUEST_PATH } else { NO_REQUEST_PATH }.to_string()));
+                body.insert("rule".to_string(), forbidden_rule(reasons, policy.as_deref(), action.is_some()));
                 body.insert("reasons".to_string(), serde_json::to_value(reasons).unwrap_or(Value::Null));
                 body.insert("diagnostics".to_string(), serde_json::to_value(diagnostics).unwrap_or(Value::Null));
                 if let Some(policy) = policy {
@@ -442,6 +466,9 @@ impl ServiceError {
                 }
                 body.insert("reason".to_string(), Value::String(reason.clone()));
                 body.insert("remedy".to_string(), Value::String(remedy.clone()));
+                if request.is_some() {
+                    body.insert("request_path".to_string(), Value::String(REQUEST_PATH.to_string()));
+                }
             }
             Self::FieldReadOnly { fields, reason, remedy, .. } => {
                 body.insert("fields".to_string(), serde_json::to_value(fields.iter().map(|f| (f.clone(), "read_only".to_string())).collect::<BTreeMap<_, _>>()).unwrap_or(Value::Null));

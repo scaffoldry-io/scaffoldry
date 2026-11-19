@@ -320,7 +320,7 @@ Johann approved Wave 1f on 2026-11-19. These rows have plain phase numbers. The 
 | --- | --- | --- | --- | --- |
 | 193 | [data-layer.md](data-layer.md) | 1 | A dataset has an id. Each app table gets one by migration. The app path and the dataset path return the same row | **COMPLETED** |
 | 194 | [data-layer.md](data-layer.md) | 2 | A data crate is the single door to rows. The architecture audit fails any other reader of the record or label tables |
-| 195 | [mcp-guidance.md](mcp-guidance.md) | 2 | Every error code has a hint that names a next step. A refusal names the rule and the request path |
+| 195 | [mcp-guidance.md](mcp-guidance.md) | 2 | Every error code has a hint that names a next step. A refusal names the rule and the request path | **COMPLETED** |
 | 196 | [mcp-guidance.md](mcp-guidance.md) | 3 | `explain_decision` explains the caller's own refusal in words and refuses to explain another person's |
 | 197 | [mcp-guidance.md](mcp-guidance.md) | 4 | Prompts are built from policy data. Changing the policy changes the prompt with no code change |
 
