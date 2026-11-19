@@ -26,6 +26,8 @@ RUN apt-get update \
     && useradd --system --uid 10001 --no-create-home scaffoldry
 COPY --from=server /src/target/release/scaffoldry-server /usr/local/bin/scaffoldry-server
 COPY --from=web /app/apps/web/dist /srv/web
+# Used only by the playtest service (deploy/cloudrun-playtest.yaml). The default command is still the server.
+COPY deploy/playtest-entrypoint.sh /usr/local/bin/playtest-entrypoint.sh
 ENV SCAFFOLDRY_WEB_DIR=/srv/web HOST=0.0.0.0 PORT=8080
 USER scaffoldry
 EXPOSE 8080
