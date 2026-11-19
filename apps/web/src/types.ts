@@ -302,18 +302,6 @@ export interface Workspace {
   collaborators: Collaborator[];
 }
 
-export interface SourceRule {
-  id: string;
-  source: string;
-  title: string;
-  oscalControl: string;
-  cedarPolicyId: string;
-  cedarSnippet: string;
-  targetSensitivity: string;
-  status: "Enforced" | "Audit-Only";
-  departmentScope: string;
-}
-
 export interface Persona {
   eppn: string;
   name: string;

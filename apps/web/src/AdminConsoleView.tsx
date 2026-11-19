@@ -3,7 +3,7 @@ import { ConfirmAction, PageHeader } from "./ui";
 import { NotificationDefaultsEditor } from "./NotificationPrefs";
 import { DecisionLedgerView } from "./DecisionLedgerView";
 import { UnitPositions } from "./admin/UnitPositions";
-import { LedgerEntryItem, OrganizationNode, OrgRole, Persona, RegisteredApp, SourceRule, Workspace } from "./types";
+import { LedgerEntryItem, OrganizationNode, OrgRole, Persona, RegisteredApp, Workspace } from "./types";
 import { apiClient } from "./api";
 
 export interface AdminConsoleViewProps {
@@ -12,27 +12,19 @@ export interface AdminConsoleViewProps {
   realAdmin: Persona | null;
   handleStopImpersonation: () => void;
   navigateTo: (path: string) => void;
-  adminTab: "org" | "policy" | "ledger" | "impersonation" | "settings";
+  adminTab: "org" | "ledger" | "impersonation" | "settings";
   apps: RegisteredApp[];
-  sourceRules: SourceRule[];
-  simAction: "read" | "write" | "export";
-  setSimAction: React.Dispatch<React.SetStateAction<"read" | "write" | "export">>;
-  simFerpa: boolean;
-  setSimFerpa: React.Dispatch<React.SetStateAction<boolean>>;
-  simResult: { decision: string; reason: string; rule: string };
   /** No longer read here: the ledger view loads the ledger itself, so the count and the chain check are the server's. */
   ledger?: LedgerEntryItem[];
   setNotificationToast: React.Dispatch<React.SetStateAction<string | null>>;
   /** Shows a failure. Without it a failure goes to `setNotificationToast`. */
   setErrorToast?: (message: string) => void;
-  handleDownloadOscal: () => void;
   personas: Persona[];
   handleStartImpersonation: (user: Persona) => void;
 }
 
 const PAGE_TITLES: Record<AdminConsoleViewProps["adminTab"], { title: string; description: string }> = {
   org: { title: "Organization", description: "Institutional hierarchical scope tree and sovereign administrative unit governance." },
-  policy: { title: "Policy & OSCAL Lattice", description: "Source rules, the access simulator and the OSCAL component definition." },
   ledger: { title: "Decision Ledger", description: "Every decision, chained so that any change to the record shows." },
   impersonation: { title: "Impersonation", description: "Act as another person for support, with every action recorded." },
   settings: { title: "Platform Settings", description: "Authoritative configuration stored in PostgreSQL. Every edit is audited in the cryptographic ledger." },
@@ -46,15 +38,8 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
   navigateTo,
   adminTab,
   apps,
-  sourceRules,
-  simAction,
-  setSimAction,
-  simFerpa,
-  setSimFerpa,
-  simResult,
   setNotificationToast,
   setErrorToast,
-  handleDownloadOscal,
   personas,
   handleStartImpersonation,
 }) => {
@@ -518,101 +503,9 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
         </div>
       )}
 
-      {/* ADMIN TAB 2: POLICY & OSCAL LATTICE */}
-      {adminTab === "policy" && (
-        <div className="space-y-6">
-          {/* Source Rules Matrix */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs space-y-4">
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              Statutory Rules to Cedar Policy Crosswalk (NIST OSCAL 1.1.2)
-            </h2>
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase text-[10px]">
-                  <th className="py-2.5 px-3">Statutory Source</th>
-                  <th className="py-2.5 px-3">OSCAL Control</th>
-                  <th className="py-2.5 px-3">Executable Cedar Policy</th>
-                  <th className="py-2.5 px-3">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {sourceRules.map((rule) => (
-                  <tr key={rule.id}>
-                    <td className="py-2.5 px-3 font-semibold text-slate-800 dark:text-slate-200">{rule.source}</td>
-                    <td className="py-2.5 px-3 font-mono text-purple-600 dark:text-purple-400">{rule.oscalControl}</td>
-                    <td className="py-2.5 px-3">
-                      <code className="p-1 rounded bg-slate-900 text-sky-300 font-mono text-[10px] block max-w-sm overflow-x-auto">
-                        {rule.cedarSnippet}
-                      </code>
-                    </td>
-                    <td className="py-2.5 px-3 text-emerald-600 font-medium">✓ {rule.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Policy Decision Simulator */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
-              Interactive Cedar Authorization Simulator
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs text-slate-500 mb-1">Requested Action:</label>
-                <select
-                  value={simAction}
-                  onChange={(e) => setSimAction(e.target.value as "read" | "write" | "export")}
-                  className="w-full text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-1.5"
-                >
-                  <option value="read">Action::&quot;read&quot;</option>
-                  <option value="write">Action::&quot;write&quot;</option>
-                  <option value="export">Action::&quot;export&quot; (FERPA Guard)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-500 mb-1">Record Sensitivity:</label>
-                <select
-                  value={simFerpa ? "true" : "false"}
-                  onChange={(e) => setSimFerpa(e.target.value === "true")}
-                  className="w-full text-xs rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-1.5"
-                >
-                  <option value="false">Standard Department Record</option>
-                  <option value="true">FERPA Sensitive Student Record</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-500 mb-1">Target Department:</label>
-                <input
-                  type="text"
-                  disabled
-                  value="biology"
-                  className="w-full text-xs rounded border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/40 p-1.5 text-slate-500"
-                />
-              </div>
-            </div>
-            <div
-              className={`p-3 rounded-lg border text-xs flex items-center justify-between ${
-                simResult.decision === "ALLOW"
-                  ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
-                  : "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200"
-              }`}
-            >
-              <div>
-                <strong className="mr-2">CEDAR {simResult.decision}</strong>
-                <span>{simResult.reason}</span>
-              </div>
-              <span className="font-mono text-[10px] opacity-70">{simResult.rule}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-
       {/* ADMIN TAB 4: CRYPTOGRAPHIC DECISION AUDIT LEDGER */}
       {adminTab === "ledger" && (
-        <DecisionLedgerView onDownloadOscal={handleDownloadOscal} />
+        <DecisionLedgerView />
       )}
 
       {/* ADMIN TAB 5: INSTITUTIONAL IDENTITY & IMPERSONATION HUB */}

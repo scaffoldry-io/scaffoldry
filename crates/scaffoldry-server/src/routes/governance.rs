@@ -143,7 +143,10 @@ async fn export_oscal_component_definition(
         return Err(ServiceError::forbidden("Forbidden: Requires Platform Admin or compliance affiliation").into_pair());
     }
 
-    let doc = state.export_oscal_component_definition();
+    let doc = tokio::task::spawn_blocking(move || crate::service::oscal_admin::export_component_definition(&state))
+        .await
+        .map_err(|_| ServiceError::Internal("The request stopped".to_string()).into_pair())?
+        .map_err(|e| e.into_pair())?;
     Ok(Json(doc))
 }
 

@@ -906,7 +906,9 @@ async fn test_governance_decision_ledger_and_oscal_export() {
     let impl_reqs = components[0]["control-implementations"][0]["implemented-requirements"]
         .as_array()
         .unwrap();
-    assert!(impl_reqs.len() > appended_seq as usize);
+    // A ledger entry is evidence for a control. It is not a requirement, so the export holds one row for each control.
+    assert!(!impl_reqs.is_empty());
+    assert!(impl_reqs.iter().all(|r| r["control-id"].as_str().is_some_and(|c| c == c.to_lowercase())));
 
     // 5. Test MCP tools: governance_report (ledger) over JSON-RPC 2.0
     let mcp_verify_payload = json!({

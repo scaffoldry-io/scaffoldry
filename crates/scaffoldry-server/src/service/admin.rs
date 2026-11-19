@@ -6,6 +6,22 @@ use crate::state::{AuthUser, OrganizationNode, RecordDecisionInput, SharedState}
 use scaffoldry_core::ledger::DecisionType;
 
 pub const ADMIN_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/admin/policy/active"),
+    ("GET", "/admin/policy/versions"),
+    ("POST", "/admin/policy/versions"),
+    ("GET", "/admin/policy/versions/{id}"),
+    ("POST", "/admin/policy/versions/{id}/clone"),
+    ("POST", "/admin/policy/versions/{id}/run-cases"),
+    ("POST", "/admin/policy/versions/{id}/activate"),
+    ("GET", "/admin/policy/cases"),
+    ("POST", "/admin/policy/cases"),
+    ("GET", "/admin/policy/cases/{id}"),
+    ("DELETE", "/admin/policy/cases/{id}"),
+    ("POST", "/admin/policy/simulate"),
+    ("POST", "/admin/policy/validate"),
+    ("GET", "/admin/oscal/requirements"),
+    ("PUT", "/admin/oscal/requirements/{control_id}"),
+    ("GET", "/admin/oscal/component-definition"),
     ("GET", "/admin/flows"),
     ("POST", "/admin/flows/{rule_id}/disable"),
     ("POST", "/admin/flows/{rule_id}/enable"),

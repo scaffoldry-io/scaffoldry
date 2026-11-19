@@ -19,9 +19,10 @@ import { Authority } from "./Authority";
 import { OutsideApps } from "./OutsideApps";
 import { Access } from "./Access";
 import { Workspaces } from "./Workspaces";
+import { PolicyOscal } from "./PolicyOscal";
 import { AdminConsoleView } from "../AdminConsoleView";
 import { apiClient } from "../api";
-import { Persona, RegisteredApp, SourceRule, LedgerEntryItem } from "../types";
+import { Persona, RegisteredApp, LedgerEntryItem } from "../types";
 
 export interface AdminConsoleProps {
   activePersona?: Persona;
@@ -34,16 +35,9 @@ export interface AdminConsoleProps {
   adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
   setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
-  sourceRules?: SourceRule[];
-  simAction?: "read" | "write" | "export";
-  setSimAction?: React.Dispatch<React.SetStateAction<"read" | "write" | "export">>;
-  simFerpa?: boolean;
-  setSimFerpa?: React.Dispatch<React.SetStateAction<boolean>>;
-  simResult?: { decision: string; reason: string; rule: string };
   ledger?: LedgerEntryItem[];
   setNotificationToast?: React.Dispatch<React.SetStateAction<string | null>>;
   setErrorToast?: (message: string) => void;
-  handleDownloadOscal?: () => void;
   personas?: Persona[];
   handleStartImpersonation?: (user: Persona) => void;
 }
@@ -58,16 +52,9 @@ export function AdminConsole({
   adminTab: controlledTab,
   setAdminTab: _setControlledTab,
   apps = [],
-  sourceRules = [],
-  simAction = "read",
-  setSimAction = () => {},
-  simFerpa = false,
-  setSimFerpa = () => {},
-  simResult = { decision: "", reason: "", rule: "" },
   ledger = [],
   setNotificationToast = () => {},
   setErrorToast,
-  handleDownloadOscal = () => {},
   personas = [],
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
@@ -171,6 +158,8 @@ export function AdminConsole({
         <PolicyLibrary path={currentPath?.startsWith("/admin/library") ? currentPath : "/admin/library"} navigate={navigateTo ?? (() => {})} />
       ) : currentTab === "workspaces" ? (
         <Workspaces />
+      ) : currentTab === "policy" ? (
+        <PolicyOscal />
       ) : currentTab === "people" ? (
         <People
           onImpersonate={(row) =>
@@ -193,16 +182,9 @@ export function AdminConsole({
           navigateTo={navigateTo}
           adminTab={currentTab as any}
           apps={apps}
-          sourceRules={sourceRules}
-          simAction={simAction}
-          setSimAction={setSimAction}
-          simFerpa={simFerpa}
-          setSimFerpa={setSimFerpa}
-          simResult={simResult}
           ledger={ledger}
           setNotificationToast={setNotificationToast}
           setErrorToast={setErrorToast}
-          handleDownloadOscal={handleDownloadOscal}
           personas={personas}
           handleStartImpersonation={handleStartImpersonation}
         />

@@ -265,7 +265,8 @@ pub struct ServerState {
     pub datasets: RwLock<HashMap<String, PublishedDataset>>,
     pub automations: RwLock<HashMap<String, Vec<AutomationRule>>>,
     pub engine: RwLock<ManifestEngine>,
-    pub policy_engine: ScaffoldryPolicyEngine,
+    /// The running institutional policy: the active stored version. Read it through `policy()`. Only `reload` replaces it.
+    pub policy_engine: RwLock<Arc<ScaffoldryPolicyEngine>>,
     pub repository: Arc<crate::repository::PostgresRepository>,
     /// The version of each cached collection this instance holds, in the order of `cache::NAMES`.
     pub cache_seen: [std::sync::atomic::AtomicI64; crate::cache::NAMES.len()],
@@ -345,6 +346,17 @@ impl ServerState {
         Ok(())
     }
 
+    /// The institutional policy now running on this instance.
+    pub fn policy(&self) -> Arc<ScaffoldryPolicyEngine> {
+        self.policy_engine.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Builds the engine from the stored active version. A missing version or a source that does not parse is an error.
+    fn load_policy(repo: &crate::repository::PostgresRepository) -> Result<ScaffoldryPolicyEngine, String> {
+        let active = repo.active_policy().map_err(|e| e.to_string())?.ok_or_else(|| "no policy version is active".to_string())?;
+        ScaffoldryPolicyEngine::new(&active.source).map_err(|e| format!("version {}: {e}", active.version))
+    }
+
     /// Loads one cached collection again. A collection moves here from a boot-time copy to the mechanism in the phase
     /// that makes it cached. The ones not listed are still read at boot only.
     fn reload(&self, name: &str) -> Result<(), crate::repository::RepositoryError> {
@@ -361,6 +373,11 @@ impl ServerState {
             }
         }
         match name {
+            "policy" => {
+                // A version that cannot run keeps the old one in service. The error returns, and the next call tries again.
+                let engine = Self::load_policy(&self.repository).map_err(crate::repository::RepositoryError::Conflict)?;
+                *self.policy_engine.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(engine);
+            }
             "archives" => {
                 let all = self.repository.list_archives()?;
                 *self.archives.write().unwrap_or_else(|p| p.into_inner()) = all;
@@ -467,7 +484,8 @@ impl ServerState {
     pub fn connect(database_url: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let mut engine = ManifestEngine::new()
             .map_err(|e| format!("Failed to initialize ManifestEngine: {e}"))?;
-        let policy_engine = ScaffoldryPolicyEngine::default_institutional_engine()
+        // The compiled default seeds an empty database. What runs is the stored active version, read after the connection.
+        let default_policy = ScaffoldryPolicyEngine::default_institutional_engine()
             .map_err(|e| format!("Failed to initialize PolicyEngine: {e}"))?;
 
         let mut app_views_cache: HashMap<String, Vec<crate::repository_views::StoredView>> =
@@ -542,10 +560,18 @@ impl ServerState {
         // taken for a write that landed while the rest loads.
         crate::service::connections::ensure_system_workspace(repo).map_err(|e| read("the system workspace", e))?;
 
+        // Admin console phase 5: a new database starts on the compiled policy, stored as version 1 with its cases. A database that
+        // has a version runs its active one, and when that does not parse the server does not start. It never falls back.
+        repo.seed_policy(default_policy.source(), scaffoldry_policy::cases::default_cases()).map_err(|e| read("the policy", e))?;
+
         // The counters come first. A write that lands while the rest loads is then seen by the first refresh.
         let versions = repo
             .cache_versions()
             .map_err(|e| read("the cache versions", e))?;
+
+        let policy_engine = Arc::new(
+            Self::load_policy(repo).map_err(|e| format!("The institutional policy stored in the database cannot run, so the server does not start: {e}"))?,
+        );
 
         for (k, v) in repo
             .get_platform_settings()
@@ -740,7 +766,7 @@ impl ServerState {
             datasets: RwLock::new(datasets),
             automations: RwLock::new(automations),
             engine: RwLock::new(engine),
-            policy_engine,
+            policy_engine: RwLock::new(policy_engine),
             repository,
             cache_seen,
             organizations: RwLock::new(organizations),
@@ -1172,80 +1198,6 @@ impl ServerState {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
-    }
-
-    pub fn export_oscal_component_definition(&self) -> Value {
-        // The export names every entry, oldest first. It reads the chain a page at a time.
-        let mut entries: Vec<LedgerEntry> = Vec::new();
-        let mut before = None;
-        while let Ok(page) = self.repository.ledger_page(before, crate::repository::LEDGER_BATCH) {
-            let Some(last) = page.last() else { break };
-            before = Some(last.sequence);
-            entries.extend(page);
-        }
-        entries.reverse();
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let implemented_requirements: Vec<Value> = entries
-            .iter()
-            .map(|entry| {
-                json!({
-                    "uuid": uuid::Uuid::new_v4().to_string(),
-                    "control-id": entry.oscal_control_id.to_lowercase(),
-                    "description": entry.rationale.clone(),
-                    "props": [
-                        {
-                            "name": "ledger-sequence",
-                            "value": entry.sequence.to_string()
-                        },
-                        {
-                            "name": "ledger-principal",
-                            "value": entry.principal.clone()
-                        },
-                        {
-                            "name": "ledger-org-code",
-                            "value": entry.organization_code.clone()
-                        },
-                        {
-                            "name": "ledger-entry-hash",
-                            "value": entry.entry_hash.clone()
-                        },
-                        {
-                            "name": "ledger-previous-hash",
-                            "value": entry.previous_hash.clone()
-                        }
-                    ]
-                })
-            })
-            .collect();
-
-        json!({
-            "component-definition": {
-                "uuid": uuid::Uuid::new_v4().to_string(),
-                "metadata": {
-                    "title": "Scaffoldry Sovereign Application Platform Component Definition",
-                    "last-modified": now,
-                    "version": "1.0.0",
-                    "oscal-version": "1.1.2"
-                },
-                "components": [
-                    {
-                        "uuid": uuid::Uuid::new_v4().to_string(),
-                        "type": "software",
-                        "title": "Scaffoldry Sovereign Application Platform",
-                        "description": "Governed collaborative workspace, tabular engine, and Cedar authorization lattice",
-                        "control-implementations": [
-                            {
-                                "uuid": uuid::Uuid::new_v4().to_string(),
-                                "source": "https://doi.org/10.6028/NIST.SP.800-53r5",
-                                "description": "Automated institutional control implementation and cryptographic verification ledger",
-                                "implemented-requirements": implemented_requirements
-                            }
-                        ]
-                    }
-                ]
-            }
-        })
     }
 
     pub fn persist_api_token(

@@ -735,7 +735,7 @@ fn schema_governance_report() -> Value {
 fn run_governance_report(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     match required_str(&args, "report")? {
         "ledger" => crate::service::governance::verify_decision_ledger(state),
-        "oscal" => Ok(state.export_oscal_component_definition()),
+        "oscal" => crate::service::oscal_admin::export_component_definition(state),
         "framework" => Ok(crate::routes::framework::build_framework_spec_json()),
         other => Err(ServiceError::BadRequest(format!("Argument 'report' is ledger, oscal or framework, not '{other}'"))),
     }

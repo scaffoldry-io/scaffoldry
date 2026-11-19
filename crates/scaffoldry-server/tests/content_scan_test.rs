@@ -175,6 +175,12 @@ const SSN_B: &str = "234-56-7890";
 const SSN_C: &str = "345-67-8901";
 const CARD: &str = "4111 1111 1111 1111";
 
+/// Whether text holds the planted card number, as written or with its spaces removed. A bare "4111" is not enough: a
+/// random id or a SHA-256 holds those four digits about once in every few thousand values.
+fn holds_card(text: &str) -> bool {
+    text.contains(CARD) || text.contains(&CARD.replace(' ', ""))
+}
+
 fn repo() -> PostgresRepository {
     PostgresRepository::connect(None).expect("database is reachable")
 }
@@ -446,7 +452,7 @@ async fn an_authorized_store_is_labeled_at_once_and_its_matches_are_expected_not
     let (s, list) = send(&w.app, "GET", "/api/v1/admin/authorized-stores", &w.compliance, None).await;
     assert_eq!(s, StatusCode::OK, "{list}");
     assert_eq!(list["stores"][0]["category"], "pci");
-    assert!(!everything_stored().contains("4111"), "no card number was stored anywhere");
+    assert!(!holds_card(&everything_stored()), "no card number was stored anywhere");
 }
 
 // 6. Removing a designation leaves the label in place.

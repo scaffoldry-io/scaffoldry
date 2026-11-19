@@ -11,7 +11,7 @@ import { apiClient, getAuthToken, setAuthToken, type MyApp, type ProposalRow, ty
 import { MyApps } from "./MyApps";
 import { Policies } from "./library/Policies";
 import { Banner, BackgroundWork, Skeleton, PreviewBanner, Toast, ViewAsBanner } from "./ui";
-import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, SourceRule, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
+import { AppManifest, Collaborator, FieldSpec, Persona, PublishedDataset, RegisteredApp, Workspace, WorkflowAutomationRule, LedgerEntryItem, OrganizationNode } from "./types";
 
 const AppBuilder = lazy(() => import("./AppBuilder").then((m) => ({ default: m.AppBuilder })));
 const PublishedAppView = lazy(() => import("./PublishedAppView").then((m) => ({ default: m.PublishedAppView })));
@@ -252,42 +252,6 @@ export const INITIAL_WORKSPACES: Workspace[] = [
 ];
 
 export const WORKSPACES = INITIAL_WORKSPACES;
-
-const INITIAL_SOURCE_RULES: SourceRule[] = [
-  {
-    id: "rule-ferpa-30",
-    source: "Federal Law: 34 CFR Part 99 § 99.30",
-    title: "FERPA Written Consent Requirement for Educational Records",
-    oscalControl: "FERPA-34CFR-99.30 / NIST-800-53-AC-3",
-    cedarPolicyId: "ferpa-export-forbid-guard",
-    cedarSnippet: 'forbid (principal, action == Action::"export", resource) when { resource.is_ferpa_sensitive && !(principal.scoped_affiliation in ["staff", "compliance"]) };',
-    targetSensitivity: "FERPA Sensitive",
-    status: "Enforced",
-    departmentScope: "Institutional Universal",
-  },
-  {
-    id: "rule-nist-ac3",
-    source: "NIST SP 800-53 Rev 5 / CMMC",
-    title: "Access Enforcement & Departmental Realm Isolation",
-    oscalControl: "NIST-800-53-AC-3 / AC-6",
-    cedarPolicyId: "dept-realm-boundary",
-    cedarSnippet: 'permit (principal, action in [Action::"read", Action::"write"], resource) when { principal.department == resource.department };',
-    targetSensitivity: "Institutional Internal",
-    status: "Enforced",
-    departmentScope: "Departmental Isolation",
-  },
-  {
-    id: "rule-campus-l4",
-    source: "University Data Protection Standard v4.2",
-    title: "Level 4 Highly Restricted Research & Student Data",
-    oscalControl: "INST-DATA-STD-L4",
-    cedarPolicyId: "level4-strict-audit",
-    cedarSnippet: 'permit (principal, action == Action::"read", resource is Record) when { principal.scoped_affiliation in ["faculty", "staff", "student"] };',
-    targetSensitivity: "Level 4 Restricted",
-    status: "Enforced",
-    departmentScope: "Research Labs",
-  },
-];
 
 const INITIAL_APPS: RegisteredApp[] = [
   {
@@ -727,59 +691,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   });
   const [ledger, setLedger] = useState<LedgerEntryItem[]>(INITIAL_LEDGER);
 
-  const handleDownloadOscal = () => {
-    const oscalDoc = {
-      "component-definition": {
-        uuid: "7b41e891-b384-48f8-b391-49520cb6b621",
-        metadata: {
-          title: "Scaffoldry Sovereign Application Platform Component Definition",
-          "last-modified": new Date().toISOString(),
-          version: "1.0.0",
-          "oscal-version": "1.1.2",
-        },
-        components: [
-          {
-            uuid: "983a48e1-5f21-4f9e-a890-4100c5983b12",
-            type: "software",
-            title: "Scaffoldry Sovereign Application Platform",
-            description: "Governed collaborative workspace, tabular engine, and Cedar authorization lattice",
-            "control-implementations": [
-              {
-                uuid: "3f9821a0-47b2-4d92-9102-39c4a8501234",
-                source: "https://doi.org/10.6028/NIST.SP.800-53r5",
-                description: "Automated institutional control implementation and cryptographic verification ledger",
-                "implemented-requirements": ledger.map((entry) => ({
-                  uuid: `550e8400-e29b-41d4-a716-${entry.sequence.toString().padStart(12, "0")}`,
-                  "control-id": entry.oscal_control_id.toLowerCase(),
-                  description: entry.rationale,
-                  props: [
-                    { name: "ledger-sequence", value: entry.sequence.toString() },
-                    { name: "ledger-principal", value: entry.principal },
-                    { name: "ledger-org-code", value: entry.organization_code },
-                    { name: "ledger-entry-hash", value: entry.entry_hash },
-                    { name: "ledger-previous-hash", value: entry.previous_hash },
-                  ],
-                })),
-              },
-            ],
-          },
-        ],
-      },
-    };
-
-    const blob = new Blob([JSON.stringify(oscalDoc, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "scaffoldry-oscal-1.1.2.json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setNotificationToast("Downloaded NIST OSCAL 1.1.2 compliance component definition.");
-    setTimeout(() => setNotificationToast(null), 3500);
-  };
-
   // Theme State
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
@@ -1203,7 +1114,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
       live = false;
     };
   }, [needsDirect, builderSlug]);
-  const [sourceRules] = useState<SourceRule[]>(INITIAL_SOURCE_RULES);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [activeWorkspaceApp, setActiveWorkspaceApp] = useState<RegisteredApp | null>(null);
@@ -1224,10 +1134,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     }
     return "workspaces";
   });
-
-  // Policy Simulator State (inside /admin policy panel)
-  const [simAction, setSimAction] = useState<"read" | "write" | "export">("export");
-  const [simFerpa, setSimFerpa] = useState<boolean>(true);
 
   // Sync browser URL via HTML5 History API
   const navigateTo = (path: string) => {
@@ -1311,33 +1217,6 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
     setNotificationToast(msg);
     setTimeout(() => setNotificationToast(null), 3500);
   };
-
-  // Evaluate Cedar Decision
-  const evaluateCedarDecision = (targetDept: string, isFerpaSensitive: boolean, action: "read" | "write" | "export") => {
-    if (activePersona.department !== targetDept && activePersona.department !== "compliance") {
-      return {
-        decision: "DENY" as const,
-        reason: "Boundary Isolation Policy: Principal department does not match resource realm",
-        rule: "rule-nist-ac3",
-      };
-    }
-    if (action === "export" && isFerpaSensitive) {
-      if (activePersona.affiliation !== "staff" || activePersona.department !== "compliance") {
-        return {
-          decision: "DENY" as const,
-          reason: "FERPA 34 CFR § 99.30 Safeguard: Only designated compliance staff may export sensitive student records",
-          rule: "rule-ferpa-30",
-        };
-      }
-    }
-    return {
-      decision: "ALLOW" as const,
-      reason: "Permitted by Cedar Role Policy: Principal holds verified departmental affiliation",
-      rule: "rule-campus-l4",
-    };
-  };
-
-  const simResult = evaluateCedarDecision("biology", simFerpa, simAction);
 
   const handleCreateUnitWorkspace = async () => {
     if (!selectedUnitId) return;
@@ -3192,16 +3071,9 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                 adminTab={adminTab}
                 setAdminTab={setAdminTab}
                 apps={apps}
-                sourceRules={sourceRules}
-                simAction={simAction}
-                setSimAction={setSimAction}
-                simFerpa={simFerpa}
-                setSimFerpa={setSimFerpa}
-                simResult={simResult}
                 ledger={ledger}
                 setNotificationToast={setNotificationToast}
                 setErrorToast={setErrorToast}
-                handleDownloadOscal={handleDownloadOscal}
                 personas={PERSONAS}
                 handleStartImpersonation={handleStartImpersonation}
               />

@@ -302,7 +302,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 181 | [sensitive-content.md](sensitive-content.md) | 3 | New writes, imports, and plain-text files are checked. Each detector flags, warns, or blocks, as the organization chooses | **COMPLETED** |
 | 182 | [sensitive-content.md](sensitive-content.md) | 4 | History, exports, and snapshots honor the categories. The old flag name is gone | **COMPLETED** |
 | 183 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Sources fetched pinned, with provenance | **COMPLETED** |
-| 184 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export |
+| 184 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export | **COMPLETED** |
 | 185 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage |
 | 186 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
 | 187 | [workflows.md](workflows.md) | 11 | Console panel for flows | **COMPLETED** |

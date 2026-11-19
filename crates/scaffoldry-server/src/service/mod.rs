@@ -47,6 +47,8 @@ pub mod dashboards;
 pub mod forms;
 pub mod content_governance;
 pub mod data_governance;
+pub mod oscal_admin;
+pub mod policy_admin;
 pub mod guest_admin;
 pub mod guest_forms;
 pub mod guests;

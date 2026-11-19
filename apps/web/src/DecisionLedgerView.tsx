@@ -2,17 +2,14 @@ import React, { useState } from "react";
 import { LedgerEntryItem } from "./types";
 import { apiClient } from "./api";
 import { ErrorState, Skeleton, useAsync } from "./ui";
-
-interface Props {
-  onDownloadOscal?: () => void;
-}
+import { downloadJson } from "./admin/download";
 
 /** What the server said when it last checked the chain. `null` until someone asks. */
 type Verification = { verified: boolean; status: string } | null;
 
 // The decision ledger, read from the server each time it opens. The count is the server's total, and the chain is
 // called valid only after the server has checked it and said so.
-export const DecisionLedgerView: React.FC<Props> = ({ onDownloadOscal }) => {
+export const DecisionLedgerView: React.FC = () => {
   const ledger = useAsync(() => apiClient.getGovernanceLedger());
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>("all");
@@ -20,6 +17,15 @@ export const DecisionLedgerView: React.FC<Props> = ({ onDownloadOscal }) => {
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [verification, setVerification] = useState<Verification>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  // The document is the server's: the same one the Policy and OSCAL panel exports.
+  const exportOscal = async () => {
+    try {
+      downloadJson("scaffoldry-oscal-1.1.2.json", await apiClient.getOscalComponentDefinition());
+    } catch (e) {
+      setVerifyError(e instanceof Error ? e.message : "The OSCAL document could not be exported.");
+    }
+  };
 
   const handleCopy = (hash: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -92,7 +98,7 @@ export const DecisionLedgerView: React.FC<Props> = ({ onDownloadOscal }) => {
 
             <button
               type="button"
-              onClick={onDownloadOscal}
+              onClick={() => void exportOscal()}
               className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 cursor-pointer shadow-xs transition-colors flex items-center gap-1.5"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

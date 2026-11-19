@@ -27,7 +27,7 @@ fn require_admin(state: &SharedState, caller: &AuthUser) -> Result<(), ServiceEr
 /// A name for what a binding points at, when it exists and is in use. `None` means Missing.
 fn target_name(state: &SharedState, kind: &str, target: &str) -> Option<String> {
     match kind {
-        "cedar_policy" => state.policy_engine.policy_summaries().into_iter().find(|p| p.id == target).map(|p| if p.description.is_empty() { format!("Policy {}", p.id) } else { p.description }),
+        "cedar_policy" => state.policy().policy_summaries().into_iter().find(|p| p.id == target).map(|p| if p.description.is_empty() { format!("Policy {}", p.id) } else { p.description }),
         "guard_template" => ALLOWED_TEMPLATES.iter().find(|t| **t == target).map(|t| format!("Workspace guard: {t}")),
         "authority_row" => {
             let id = Uuid::parse_str(target).ok()?;

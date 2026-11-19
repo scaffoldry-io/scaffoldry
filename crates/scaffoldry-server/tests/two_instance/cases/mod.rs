@@ -29,6 +29,7 @@ macro_rules! files_case {
 mod apps;
 mod files;
 mod platform;
+mod policy;
 mod scim;
 mod tools;
 
@@ -37,6 +38,7 @@ pub type Entries = BTreeMap<String, Entry>;
 pub fn entries() -> Entries {
     let mut m = Entries::new();
     platform::add(&mut m);
+    policy::add(&mut m);
     apps::add(&mut m);
     files::add(&mut m);
     scim::add(&mut m);
