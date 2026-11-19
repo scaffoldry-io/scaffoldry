@@ -14,7 +14,6 @@ use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
     Router::new()
-        .route("/governance/oscal", get(get_oscal_catalog))
         .route("/governance/oscal/export", get(export_oscal_component_definition))
         .route("/governance/ledger", get(get_governance_ledger))
         .route("/governance/ledger/append", post(append_ledger_decision))
@@ -77,7 +76,7 @@ async fn get_governance_ledger(
         "total_entries": total,
         "head_hash": head.unwrap_or_else(|| GENESIS_PREVIOUS_HASH.to_string()),
         "next_cursor": next_cursor,
-        "entries": entries
+        "entries": entries.iter().map(with_title).collect::<Vec<_>>()
     })))
 }
 
@@ -150,49 +149,9 @@ async fn export_oscal_component_definition(
     Ok(Json(doc))
 }
 
-async fn get_oscal_catalog() -> impl IntoResponse {
-    let oscal = json!({
-        "schema_version": "1.1.2",
-        "catalog": {
-            "uuid": "8b5123d5-3be7-4a0b-9df2-4752b5ee4759",
-            "metadata": {
-                "title": "Scaffoldry Institutional Security and Compliance Lattice",
-                "version": "1.0",
-                "last_modified": "2026-10-04T12:00:00Z",
-                "oscal_version": "1.1.2"
-            },
-            "controls": [
-                {
-                    "id": "ac-03",
-                    "title": "Access Enforcement",
-                    "framework": "NIST SP 800-53 Rev 5",
-                    "status": "Automated",
-                    "implementation": "Cedar Policy Engine ABAC with sub-millisecond evaluation at API boundary"
-                },
-                {
-                    "id": "ia-02",
-                    "title": "Identification and Authentication",
-                    "framework": "NIST SP 800-53 Rev 5",
-                    "status": "Automated",
-                    "implementation": "SCIM 2.0 (RFC 7643 / RFC 7644) and eduPerson scoped affiliation tokens"
-                },
-                {
-                    "id": "mp-04",
-                    "title": "Media Transport / Privacy Export",
-                    "framework": "FERPA / 34 CFR Part 99",
-                    "status": "Automated",
-                    "implementation": "Strict Cedar forbid rule for records flagged ferpa_sensitive without compliance affiliation"
-                },
-                {
-                    "id": "au-02",
-                    "title": "Event Logging & Audit Ledger",
-                    "framework": "NIST SP 800-53 Rev 5",
-                    "status": "Automated",
-                    "implementation": "Immutable append-only cryptographic SHA-256 ledger"
-                }
-            ]
-        }
-    });
-
-    Json(oscal)
+/// A ledger entry as JSON, with the title of its control beside the id.
+fn with_title(entry: &scaffoldry_core::LedgerEntry) -> Value {
+    let mut v = serde_json::to_value(entry).unwrap_or(Value::Null);
+    v["control_title"] = json!(scaffoldry_core::catalog::title(&entry.oscal_control_id));
+    v
 }

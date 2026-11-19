@@ -109,7 +109,9 @@ All documentation, user interfaces, error messages, and commit histories must fo
 |                                                                                         |
 |       * Machine-readable catalogs, profiles, and System Security Plans (SSPs)           |
 |       * Direct export for university CISOs, auditors, and enterprise GRC tools          |
-|       * Pre-mapped baselines: FERPA, HIPAA, NIST SP 800-171, and CMMC                   |
+|       * Real catalogs: NIST SP 800-53 Rev 5 and SP 800-171 Rev 3 (not a CMMC mapping)    |
+|       * Real baselines: the NIST Low, Moderate, and High profiles of SP 800-53          |
+|       * FERPA and HIPAA are the source of a policy, not baselines                       |
 +-----------------------------------------------------------------------------------------+
 ```
 

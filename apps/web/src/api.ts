@@ -419,13 +419,43 @@ export interface PolicySimulation {
 }
 export interface OscalRequirement {
   control_id: string;
-  title: string | null;
+  control_title: string | null;
+  catalog: string | null;
+  family_title: string | null;
+  baselines: string[];
   statement: string;
   status: string;
   policy_ids: string[];
   evidence_count: number;
   latest_evidence: string | null;
   edited: boolean;
+}
+
+export interface OscalCatalogRow {
+  control_id: string;
+  control_title: string;
+  catalog: string;
+  family_id: string;
+  family_title: string;
+  baselines: string[];
+  has_requirement: boolean;
+  status: string | null;
+}
+export type OscalCounts = Record<"implemented" | "partial" | "planned" | "alternative" | "not-applicable" | "none", number>;
+export interface OscalCoverage {
+  catalog: string;
+  baseline: string | null;
+  total: number;
+  with_evidence: number;
+  counts: OscalCounts;
+  families: { family_id: string; family_title: string; total: number; counts: OscalCounts }[];
+}
+export interface OscalGap {
+  control_id: string;
+  control_title: string;
+  catalog: string;
+  family_id: string;
+  family_title: string;
 }
 
 export class ApiError extends Error {
@@ -565,6 +595,13 @@ export interface FlowCheck {
   checks: { name: string; outcome: string; messages: string[] }[];
   description: string[];
 }
+
+const queryOf = (q: Record<string, string | number | undefined>): string => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== "") p.set(k, String(v));
+  const text = p.toString();
+  return text ? `?${text}` : "";
+};
 
 const request = async <T>(path: string, options: RequestInit = {}): Promise<T> => (await requestFull<T>(path, options)).data;
 
@@ -2590,6 +2627,11 @@ export const apiClient = {
   putOscalRequirement: async (controlId: string, b: { statement: string; status: string }, reason: string): Promise<OscalRequirement> =>
     request(`/admin/oscal/requirements/${encodeURIComponent(controlId)}`, { method: "PUT", body: JSON.stringify({ ...b, reason }) }),
   /** The server's OSCAL component definition. */
+  searchOscalCatalog: async (q: { q?: string; family?: string; catalog?: string; baseline?: string; cursor?: string; limit?: number }): Promise<{ rows: OscalCatalogRow[]; total: number; next_cursor: string | null }> =>
+    request(`/admin/oscal/catalog${queryOf(q)}`),
+  oscalCoverage: async (catalog: string, baseline: string): Promise<OscalCoverage> => request(`/admin/oscal/coverage${queryOf({ catalog, baseline })}`),
+  oscalCoverageGaps: async (catalog: string, baseline: string, cursor?: string): Promise<{ rows: OscalGap[]; total: number; next_cursor: string | null }> =>
+    request(`/admin/oscal/coverage/gaps${queryOf({ catalog, baseline, cursor })}`),
   getOscalComponentDefinition: async (): Promise<unknown> => request("/admin/oscal/component-definition"),
   adminDatasets: async (): Promise<{ datasets: AdminDataset[]; levels: string[] }> => request<{ datasets: AdminDataset[]; levels: string[] }>("/admin/datasets"),
   classifyDataset: async (id: string, sensitivity_level: string, reason: string): Promise<void> => {

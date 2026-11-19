@@ -84,3 +84,13 @@ fn test_search_filters_by_family() {
     let by_title = catalog::search("", Some("Access Control"), Some("sp800-53r5"));
     assert_eq!(hits.len(), by_title.len());
 }
+
+#[test]
+fn test_each_catalog_has_its_canonical_source_url_from_provenance() {
+    let u53 = scaffoldry_core::catalog::source_url("sp800-53r5").expect("800-53 url");
+    assert!(u53.starts_with("https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d"), "{u53}");
+    assert!(u53.ends_with("NIST_SP-800-53_rev5_catalog.json"));
+    let u171 = scaffoldry_core::catalog::source_url("sp800-171r3").expect("800-171 url");
+    assert!(u171.ends_with("NIST_SP800-171_rev3_catalog.json"), "{u171}");
+    assert!(scaffoldry_core::catalog::source_url("nope").is_none());
+}
