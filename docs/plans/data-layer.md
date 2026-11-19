@@ -9,6 +9,8 @@ IfNo:   Policy stays split. Each app is reviewed on its own, and labels protect 
 Checks: None yet. This is a design. Each phase names its failing test first.
 ```
 
+Approved by Johann on 2026-11-19. Scheduled in `README.md`: data-layer phases 1 and 2 are rows 193 and 194, and MCP guidance phases 2 to 4 are rows 195 to 197.
+
 ## The decision
 
 These are your words, in order.
