@@ -114,7 +114,7 @@ The agent always works for a person, and a person decides. This holds in every p
 
 ### Phase 3, as built
 
-- **Decision.** "explain_decision" ships as `request_access` with `explain: true`, because the tool list is full (45 of 45 tools, 23,991 of 24,000 bytes). The budget was not raised. Wording in other tool descriptions was trimmed to make room. No behavior or safety sentence was cut.
+- **Decision.** "explain_decision" ships as `request_access` with `explain: true`, because the tool list is full (45 of 45 tools, 23,995 of 24,000 bytes). The budget was not raised. Wording in other tool descriptions was trimmed to make room. No behavior or safety sentence was cut.
 - **What it returns.** `allowed`, the `rule` that decided (`id` and `description`), an `explanation` in words, the `facts` used (sensitivity, visibility, own unit, days, the axes on which held grants missed), and `would_route`, the route a request would take. It files nothing and carries a `guidance` block that replaces the filing one.
 - **Reuse.** The grants and the policy decision come from `access_review::explain`, the service behind `GET /access/explain` (`access-model.md` phase 7). The rule is named as a refusal names it, by `forbidden_rule`. No REST route was added.
 - **Other people.** A `person` other than the caller is refused, on filing and on explaining, and the refusal does not repeat the name. The brief also lets a steward ask about datasets they steward. No steward role exists in the code, so nobody may ask yet. Add it with the steward position.
