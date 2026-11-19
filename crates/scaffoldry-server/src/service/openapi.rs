@@ -237,7 +237,7 @@ pub fn describe(caller: &AuthUser, slug: &str, state: &SharedState) -> Result<Va
     let mut schemas = Map::new();
     schemas.insert(
         "Error".into(),
-        json!({ "type": "object", "properties": { "error": { "type": "string" }, "code": { "type": "string" } }, "required": ["error", "code"] }),
+        json!({ "type": "object", "properties": { "error": { "type": "string" }, "code": { "type": "string" }, "hint": { "type": "string" }, "rule": { "type": "object" }, "request_path": { "type": "string" } }, "required": ["error", "code"] }),
     );
     for table in &manifest.tables {
         let name = schema_name(&table.id);

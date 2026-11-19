@@ -60,9 +60,30 @@ pub fn hint_for(err: &ServiceError) -> String {
             if has("Platform Admin") {
                 "This tool is for a Platform Admin. Call list_workspaces to see what you can do instead."
             } else {
-                "Call list_workspaces to see where you have access, and ask a workspace owner for a role if you need more."
+                "Call request_access with the request this result carries, or call list_workspaces to see where you have access."
             }
         }
+        other => hint_for_code(other).unwrap_or("Retry once, and call list_workspaces to check that the server is answering."),
+    };
+    h.to_string()
+}
+
+/// The hint for a code when nothing in the message sharpens it. Every code in `ERROR_CODES` has one, and a test holds
+/// that. Each is fixed text: it carries nothing from the error, so it carries no record value.
+pub fn hint_for_code(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "no_approver" => "Call list_workspaces to find the unit, then ask a Platform Admin to fill the approver position.",
+        "job_failed" => "Call get_job to read why it stopped, fix that, then start the work again.",
+        "sensitive_content_blocked" => "Remove the protected data from what you send. Sensitive data stays inside Scaffoldry's own pages, so ask the person to enter it there.",
+        "rate_limited" => "Wait a minute, then retry. Send fewer calls, and call list_records with a limit to read a page at a time.",
+        "master_key_missing" => "This server cannot keep secrets yet. Ask a Platform Admin to set the master key, then retry.",
+        "share_not_allowed" => "Sharing is off here. Ask a workspace owner or a Platform Admin to allow it, or call request_access for the access you need.",
+        "archived" => "The app or workspace only reads. Call list_records to keep reading, and ask its owner to unarchive it to change it.",
+        "too_many_indexes" => "Remove an index that the message lists as unused, then call propose_app_change again.",
+        "internal" => "Retry once. If it fails again, call list_workspaces to check that the server is answering, and tell the person.",
+        "forbidden" => "Call list_workspaces to see where you have access, then call request_access for the role you need.",
+        "not_found" => "Call list_workspaces to find the right id, then retry.",
+        "bad_request" => "Call describe_app to check the names and types you sent, then retry.",
         "read_only_source" => "This is a copy of another system's data. Change it at its source, and the next sync brings the change here.",
         "version_conflict" => "Call get_record to read the current version, then call the tool again with it.",
         "constraint_violated" => "Call describe_app to see which fields are required and their limits, then send them.",
@@ -81,7 +102,7 @@ pub fn hint_for(err: &ServiceError) -> String {
         "view_as_read_only" => "Exit the view to make changes. Call list_records to keep reading in the meantime.",
         "client_sensitive_field" => "Remove the sensitive field from the client's ceiling. Sensitive data stays inside Scaffoldry's own pages.",
         "client_scope" => "The app's ceiling does not cover this. Ask its owners to widen the ceiling, or do it in Scaffoldry yourself.",
-        "flow_grant_exceeded" => "The flow touched something its approved grants do not cover. Propose a new version of the flow, and its grants are derived again for review.",
+        "flow_grant_exceeded" => "The flow touched something its approved grants do not cover. Call propose_app_change with a new version of the flow, and its grants are derived again for review.",
         "last_owner" => "Make someone else an owner first with manage_workspace_member, then change this one. Call list_workspaces to see who owns it.",
         "token_scope" => "This token is limited. Ask the person who made it for a token that covers this app, table and operation.",
         "preview_read_only" => "Stop the preview to make a change. A preview only reads. Approve the proposal to make it live.",
@@ -89,7 +110,6 @@ pub fn hint_for(err: &ServiceError) -> String {
         "separation_of_duties" => "Choose someone who did not make the record or start the process.",
         "grant_outside_scope" | "grant_too_broad" => "Ask for access inside your own units, and call list_workspaces to see what you administer.",
         "unauthorized" => "Sign in again, then call list_workspaces to confirm access.",
-        _ => "Retry once, and call list_workspaces to check that the server is answering.",
-    };
-    h.to_string()
+        _ => return None,
+    })
 }
