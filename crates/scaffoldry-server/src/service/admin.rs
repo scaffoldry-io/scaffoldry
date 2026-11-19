@@ -146,6 +146,16 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/admin/holds/preview"),
     ("POST", "/admin/holds/{id}/release"),
     ("GET", "/admin/disclosures/export"),
+    ("GET", "/admin/processes"),
+    ("GET", "/admin/processes/{rule_id}"),
+    ("GET", "/admin/processes/{rule_id}/versions/{v}"),
+    ("PATCH", "/admin/processes/{rule_id}"),
+    ("POST", "/admin/processes/{rule_id}/simulate"),
+    ("GET", "/admin/process-instances"),
+    ("GET", "/admin/process-instances/{id}"),
+    ("GET", "/admin/process-instances/{id}/approvers"),
+    ("POST", "/admin/process-instances/{id}/reassign"),
+    ("POST", "/admin/process-instances/{id}/cancel"),
 ];
 
 pub fn require_platform_admin(caller: &AuthUser, state: &SharedState) -> Result<(), ServiceError> {
@@ -193,6 +203,17 @@ pub fn decode_cursor(cursor: &str) -> Result<usize, ServiceError> {
     }
 }
 
+/// The reason of an administrative write: 1 to 500 characters once trimmed.
+pub fn require_reason(reason: &str) -> Result<&str, ServiceError> {
+    let trimmed = reason.trim();
+    if trimmed.is_empty() || trimmed.len() > 500 {
+        return Err(ServiceError::BadRequest(
+            "A reason between 1 and 500 characters is required for administrative actions".to_string(),
+        ));
+    }
+    Ok(trimmed)
+}
+
 pub fn admin_write<F, R>(
     state: &SharedState,
     admin: &AuthUser,
@@ -205,12 +226,7 @@ pub fn admin_write<F, R>(
 where
     F: FnOnce() -> Result<R, ServiceError>,
 {
-    let trimmed = reason.trim();
-    if trimmed.is_empty() || trimmed.len() > 500 {
-        return Err(ServiceError::BadRequest(
-            "A reason between 1 and 500 characters is required for administrative actions".to_string(),
-        ));
-    }
+    let trimmed = require_reason(reason)?;
 
     state
         .append_ledger_entry(RecordDecisionInput {

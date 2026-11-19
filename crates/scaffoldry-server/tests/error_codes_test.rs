@@ -80,6 +80,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::GrantOutsideScope("Outside".into()), "grant_outside_scope", StatusCode::FORBIDDEN),
         (ServiceError::GrantTooBroad("Broad".into()), "grant_too_broad", StatusCode::BAD_REQUEST),
         (ServiceError::ProposalChanged("Changed".into()), "proposal_changed", StatusCode::CONFLICT),
+        (ServiceError::SeparationOfDuties("Not the maker".into()), "separation_of_duties", StatusCode::BAD_REQUEST),
         (ServiceError::PreviewReadOnly("Read only".into()), "preview_read_only", StatusCode::FORBIDDEN),
         (ServiceError::Archived("Archived".into()), "archived", StatusCode::CONFLICT),
         (ServiceError::RateLimited("Too many".into()), "rate_limited", StatusCode::TOO_MANY_REQUESTS),
@@ -99,6 +100,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::GrantOutsideScope(_)
             | ServiceError::GrantTooBroad(_)
             | ServiceError::ProposalChanged(_)
+            | ServiceError::SeparationOfDuties(_)
             | ServiceError::PreviewReadOnly(_)
             | ServiceError::Archived(_)
             | ServiceError::ReadOnlySource(_)

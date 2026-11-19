@@ -78,6 +78,10 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/admin/shares/revoke".into(), case!(admin_shares_revoke));
 
     m.insert("POST /api/v1/apps/{slug}/processes/{id}/decide".into(), case!(process_decide));
+    m.insert("PATCH /api/v1/admin/processes/{rule_id}".into(), case!(admin_process_disable));
+    m.insert("POST /api/v1/admin/process-instances/{id}/reassign".into(), case!(admin_process_reassign));
+    m.insert("POST /api/v1/admin/process-instances/{id}/cancel".into(), case!(admin_process_cancel));
+    exempt(m, "POST /api/v1/admin/processes/{rule_id}/simulate", "runs a rule against a sample and stores nothing");
     m.insert("POST /api/v1/me/work/{id}/act".into(), case!(work_act));
     m.insert("POST /api/v1/apps/{slug}/view-as".into(), case!(view_as_start));
     m.insert("POST /api/v1/auth/stop-view-as".into(), case!(view_as_stop));
@@ -945,6 +949,33 @@ async fn process_decide(w: World) -> Outcome {
     status(w.wa("POST", &format!("/api/v1/apps/{slug}/processes/{}/decide", instance.replace(':', "%3A")), OWNER, Some(json!({ "decision": "approve" }))).await, StatusCode::OK, "decide")?;
     let after = status(w.rb("GET", &format!("/api/v1/apps/{slug}/processes"), OWNER, None).await, StatusCode::OK, "B lists instances again")?;
     ensure(has(&after, "Completed") && !has(&after, "Waiting"), format!("B sees the instance decided: {after}"))
+}
+
+/// Admin console phase 6: A turns a process off, and B reads it off at version 2.
+async fn admin_process_disable(w: World) -> Outcome {
+    let (_slug, instance) = waiting_instance(&w).await?;
+    let rule = instance.split(':').next().ok_or("a rule id")?.to_string();
+    status(w.wa("PATCH", &format!("/api/v1/admin/processes/{rule}"), ADMIN, Some(json!({ "enabled": false, "reason": "Pause the review" }))).await, StatusCode::OK, "A turns it off")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/processes/{rule}"), ADMIN, None).await, StatusCode::OK, "B reads the process")?;
+    ensure(seen["rule"]["enabled"] == false && seen["rule"]["version"] == 2, format!("B shows the rule off at version 2: {seen}"))
+}
+
+/// A reassigns a waiting instance to the workspace owner, and B shows the assignee.
+async fn admin_process_reassign(w: World) -> Outcome {
+    let (_slug, instance) = waiting_instance(&w).await?;
+    let id = instance.replace(':', "%3A");
+    status(w.wa("POST", &format!("/api/v1/admin/process-instances/{id}/reassign"), ADMIN, Some(json!({ "eppn": OWNER, "reason": "Cover the review" }))).await, StatusCode::OK, "A reassigns")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/process-instances/{id}"), ADMIN, None).await, StatusCode::OK, "B reads the instance")?;
+    ensure(seen["assigned_to"] == OWNER, format!("B shows the assignee A chose: {seen}"))
+}
+
+/// A cancels a waiting instance, and B shows it failed.
+async fn admin_process_cancel(w: World) -> Outcome {
+    let (_slug, instance) = waiting_instance(&w).await?;
+    let id = instance.replace(':', "%3A");
+    status(w.wa("POST", &format!("/api/v1/admin/process-instances/{id}/cancel"), ADMIN, Some(json!({ "reason": "Raised in error" }))).await, StatusCode::OK, "A cancels")?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/process-instances/{id}"), ADMIN, None).await, StatusCode::OK, "B reads the instance")?;
+    ensure(seen["status"] == "Failed", format!("B shows the instance cancelled: {seen}"))
 }
 
 async fn view_as_start(w: World) -> Outcome {

@@ -40,6 +40,7 @@ pub mod flow_validate;
 pub mod flow_test_run;
 pub mod flow_runs;
 pub mod flows_admin;
+pub mod admin_processes;
 pub mod date_triggers;
 pub mod flow_chains;
 pub mod buttons;
@@ -141,6 +142,7 @@ pub const ERROR_CODES: &[&str] = &[
     "grant_outside_scope",
     "grant_too_broad",
     "proposal_changed",
+    "separation_of_duties",
     "preview_read_only",
     "client_sensitive_field",
     "client_scope",
@@ -253,6 +255,8 @@ pub enum ServiceError {
     GrantTooBroad(String),
     /// An approval named a digest that is not the proposal's. Nothing was applied.
     ProposalChanged(String),
+    /// A person may not take a part in a decision about their own work (admin console phase 6).
+    SeparationOfDuties(String),
     Internal(String),
 }
 
@@ -293,7 +297,7 @@ impl ServiceError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) | Self::ShareNotAllowed(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
-            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
+            Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::SeparationOfDuties(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::SensitiveContentBlocked(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Conflict(_) | Self::GrantConflict(_) | Self::ProposalChanged(_) | Self::PositionFull(_) | Self::LastOwner(_) | Self::FlowGrantExceeded(_) | Self::StaleVersion { .. } | Self::IndexBuilding(_) | Self::Calculating(_) | Self::ConstraintViolated(_) | Self::UndoConflict { .. } | Self::Archived(_) | Self::ReadOnlySource(_) => StatusCode::CONFLICT,
             Self::QuotaExceeded(_) | Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
@@ -345,6 +349,7 @@ impl ServiceError {
             Self::GrantOutsideScope(_) => "grant_outside_scope",
             Self::GrantTooBroad(_) => "grant_too_broad",
             Self::ProposalChanged(_) => "proposal_changed",
+            Self::SeparationOfDuties(_) => "separation_of_duties",
             Self::Internal(_) => "internal",
         }
     }
@@ -385,6 +390,7 @@ impl ServiceError {
             | Self::GrantOutsideScope(msg)
             | Self::GrantTooBroad(msg)
             | Self::ProposalChanged(msg)
+            | Self::SeparationOfDuties(msg)
             | Self::Internal(msg) => msg,
             Self::ConstraintViolation { message, .. } | Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }

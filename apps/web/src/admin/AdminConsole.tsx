@@ -1,4 +1,4 @@
-import { ProcessInsightsPanel } from "../ProcessInsights";
+import { Processes } from "./Processes";
 import React, { useState, useEffect } from "react";
 import { Overview } from "./Overview";
 import { Jobs } from "./Jobs";
@@ -135,7 +135,7 @@ export function AdminConsole({
       ) : currentTab === "holds" ? (
         <LegalHolds />
       ) : currentTab === "processes" ? (
-        <ProcessInsightsPanel />
+        <Processes onEditInBuilder={(slug) => navigateTo?.(`/builder/${slug}/automations`)} />
       ) : currentTab === "secrets" ? (
         <Secrets />
       ) : currentTab === "outbound" ? (

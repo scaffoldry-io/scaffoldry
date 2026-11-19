@@ -198,6 +198,10 @@ export function Overview() {
               Waiting Task Instances
             </span>
           </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-xl font-bold text-slate-900 dark:text-slate-100">{data.processes.stale ?? 0}</span>
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">of them stale, waiting longer than the limit</span>
+          </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
             Workflow tasks awaiting user decision or Cedar policy evaluation.
           </p>

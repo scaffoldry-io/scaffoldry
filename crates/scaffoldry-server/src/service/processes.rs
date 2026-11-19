@@ -235,6 +235,36 @@ fn structure_problems(manifest: &AppManifest, rule: &AutomationRule, state: &Sha
     problems
 }
 
+/// Runs every rule of an app against one sample event and record, as `user`. Nothing is stored. The app's simulate route and
+/// the console's both call this, so they cannot disagree.
+pub fn simulate_rules(
+    state: &SharedState,
+    slug: &str,
+    user: &AuthUser,
+    event: &TriggerEvent,
+    record: &Value,
+) -> Result<Vec<scaffoldry_core::WorkflowExecutionResult>, ServiceError> {
+    let affiliation = EduPersonAffiliation::from_str(&user.affiliation).unwrap_or(EduPersonAffiliation::Staff);
+    let realm = user.eppn.split('@').nth(1).unwrap_or("university.edu");
+    let identity = scaffoldry_core::standards::eduperson::EduPersonIdentity {
+        eppn: user.eppn.clone(),
+        realm: realm.to_string(),
+        affiliations: vec![affiliation],
+    };
+    let rules = state
+        .automations
+        .read()
+        .map_err(|_| ServiceError::Internal("lock poisoned".to_string()))?
+        .get(slug)
+        .cloned()
+        .unwrap_or_default();
+    let engine = scaffoldry_engine::AutomationEngine;
+    Ok(rules
+        .iter()
+        .map(|r| engine.evaluate_rule(r, event, record, &identity, &user.department, 0))
+        .collect())
+}
+
 /// The rule an instance runs under: the version it started with, or the live rule for an old
 /// instance that has none.
 pub fn rule_for(state: &SharedState, inst: &ProcessInstance) -> Option<AutomationRule> {
@@ -259,6 +289,25 @@ pub fn save_rule(
     summary: &str,
     state: &SharedState,
 ) -> Result<AutomationRule, ServiceError> {
+    save_rule_checked(changed_by, app_slug, rule, proposal_id, summary, state, true)
+}
+
+/// Saves the rule as it is, turned off, without checking it. An off switch must work when a rule is broken, for example when
+/// the position it names was retired. The version and the ledger entry are written as for any other save.
+pub fn save_rule_disabled(changed_by: &str, app_slug: &str, mut rule: AutomationRule, summary: &str, state: &SharedState) -> Result<AutomationRule, ServiceError> {
+    rule.enabled = false;
+    save_rule_checked(changed_by, app_slug, rule, None, summary, state, false)
+}
+
+fn save_rule_checked(
+    changed_by: &str,
+    app_slug: &str,
+    rule: AutomationRule,
+    proposal_id: Option<Uuid>,
+    summary: &str,
+    state: &SharedState,
+    validate: bool,
+) -> Result<AutomationRule, ServiceError> {
     let manifest = state
         .engine
         .read()
@@ -268,11 +317,13 @@ pub fn save_rule(
         .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
     let mut rule = rule;
     rule.app_slug = app_slug.to_string();
-    let problems = validate_rule(state, &manifest, &rule);
-    if !problems.is_empty() {
-        return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
+    if validate {
+        let problems = validate_rule(state, &manifest, &rule);
+        if !problems.is_empty() {
+            return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
+        }
+        crate::service::flows::derive(state, &manifest, &mut rule);
     }
-    crate::service::flows::derive(state, &manifest, &mut rule);
     let repo = &*state.repository;
     let (saved, _) = repo
         .save_rule(&rule, summary, proposal_id, changed_by, &manifest.organization_code)

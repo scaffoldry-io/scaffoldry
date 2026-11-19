@@ -304,7 +304,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 183 | [oscal-catalog.md](oscal-catalog.md) | 1 | The NIST catalogs and baselines, slimmed and validated. Sources fetched pinned, with provenance | **COMPLETED** |
 | 184 | [admin-console.md](admin-console.md) | 5 | Policy and OSCAL: versioned Cedar policy with test cases, a real requirements export | **COMPLETED** |
 | 185 | [oscal-catalog.md](oscal-catalog.md) | 2 | Control titles, validation, and baseline coverage | **COMPLETED** |
-| 186 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel |
+| 186 | [admin-console.md](admin-console.md) | 6 | Business processes: inventory, versions, instance monitor, reassign, cancel | **COMPLETED** |
 | 187 | [workflows.md](workflows.md) | 11 | Console panel for flows | **COMPLETED** |
 | 188 | [live-data.md](live-data.md) | 3 | Moved to Wave 1c as 1c-1. The desk reads records and the directory from the API |
 | 189 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files | **COMPLETED** |

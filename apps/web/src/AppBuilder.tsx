@@ -60,7 +60,10 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
   onSaveApp,
   routeSlug,
 }) => {
-  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "insights" | "settings" | "access">("pages");
+  // `/builder/{slug}/automations` opens the workflow tab, as the console's "Edit in app builder" does.
+  const [activeTab, setActiveTab] = useState<"data" | "pages" | "forms" | "automations" | "insights" | "settings" | "access">(() =>
+    typeof window !== "undefined" && window.location.pathname.endsWith("/automations") ? "automations" : "pages"
+  );
   // The Studio is for the app's owners and admins, so its record drawer shows them every tab. The server checks again.
   const [studioViewer, setStudioViewer] = useState<{ eppn: string; role: "admin"; compliance: boolean } | undefined>(undefined);
   const [viewerFailed, setViewerFailed] = useState(false);

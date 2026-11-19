@@ -7,14 +7,12 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use scaffoldry_core::standards::eduperson::{EduPersonAffiliation, EduPersonIdentity};
 use scaffoldry_core::{
     AutomationRule, ProcessInstance, ProcessStatus, TriggerEvent, WorkflowExecutionResult,
 };
-use scaffoldry_engine::{AppManifest, AutomationEngine};
+use scaffoldry_engine::AppManifest;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::str::FromStr;
 use crate::service::ServiceError;
 
 pub fn router() -> Router<SharedState> {
@@ -385,25 +383,8 @@ async fn simulate_app_automation(
     let event: TriggerEvent = serde_json::from_value(payload["event"].clone())
         .map_err(|e| ServiceError::bad_request(format!("Invalid trigger event: {e}")).into_pair())?;
     let record = payload.get("record").cloned().unwrap_or(json!({}));
-
-    let affiliation = EduPersonAffiliation::from_str(&user.affiliation)
-        .unwrap_or(EduPersonAffiliation::Staff);
-    let realm = user.eppn.split('@').nth(1).unwrap_or("university.edu");
-    let identity = EduPersonIdentity {
-        eppn: user.eppn.clone(),
-        realm: realm.to_string(),
-        affiliations: vec![affiliation],
-    };
-
-    let auto_engine = AutomationEngine;
-    let automations = state.automations.read().map_err(|_| lock_err())?;
-    let rules = automations.get(&slug).cloned().unwrap_or_default();
-
-    let results: Vec<WorkflowExecutionResult> = rules
-        .iter()
-        .map(|r| auto_engine.evaluate_rule(r, &event, &record, &identity, &user.department, 0))
-        .collect();
-
+    let results = crate::service::processes::simulate_rules(&state, &slug, &user, &event, &record)
+        .map_err(ServiceError::into_pair)?;
     Ok(Json(results))
 }
 
