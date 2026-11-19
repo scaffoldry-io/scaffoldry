@@ -585,3 +585,90 @@ describe("DataGrid Field Entry & Cell Text Stability", () => {
     expect(handlePatch).toHaveBeenCalledWith("rec-1", "amount", 850, expect.any(String));
   });
 });
+
+describe("DataGrid Phase 6 — resize and multi-column sort", () => {
+  it("dragging a header edge to 40 pixels stores 72, in one onViewChange call", () => {
+    const onViewChange = vi.fn();
+    render(
+      <DataGrid
+        fields={mockFields}
+        records={mockRecords}
+        column_widths={[["amount", 150]]}
+        onViewChange={onViewChange}
+        onPatch={vi.fn()}
+      />
+    );
+
+    const handle = screen.getByTestId("resize-handle-amount");
+    fireEvent.mouseDown(handle, { clientX: 150 });
+    fireEvent.mouseMove(document, { clientX: 100 });
+    fireEvent.mouseMove(document, { clientX: 40 });
+    expect(onViewChange).not.toHaveBeenCalled();
+    fireEvent.mouseUp(document, { clientX: 40 });
+
+    expect(onViewChange).toHaveBeenCalledTimes(1);
+    expect(onViewChange).toHaveBeenCalledWith({ column_widths: [["amount", 72]] });
+  });
+
+  it("resizes from the keyboard with the arrow keys and never goes under 72", () => {
+    const onViewChange = vi.fn();
+    render(
+      <DataGrid
+        fields={mockFields}
+        records={mockRecords}
+        column_widths={[["amount", 80]]}
+        onViewChange={onViewChange}
+        onPatch={vi.fn()}
+      />
+    );
+    const handle = screen.getByTestId("resize-handle-amount");
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(onViewChange).toHaveBeenLastCalledWith({ column_widths: [["amount", 88]] });
+    fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true });
+    expect(onViewChange).toHaveBeenLastCalledWith({ column_widths: [["amount", 72]] });
+  });
+
+  it("Shift+click on a second column's sort entry appends a rule, a plain click replaces", () => {
+    const onViewChange = vi.fn();
+    const { rerender } = render(
+      <DataGrid
+        fields={mockFields}
+        records={mockRecords}
+        onViewChange={onViewChange}
+        onPatch={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("column-menu-btn-name"));
+    fireEvent.click(screen.getByText("Sort Ascending"));
+    expect(onViewChange).toHaveBeenLastCalledWith({
+      sort_rules: [{ id: "sort-name", field_name: "name", direction: "asc" }],
+    });
+    const first = onViewChange.mock.calls[0][0].sort_rules;
+
+    rerender(
+      <DataGrid
+        fields={mockFields}
+        records={mockRecords}
+        sort_rules={first}
+        onViewChange={onViewChange}
+        onPatch={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("column-menu-btn-amount"));
+    fireEvent.click(screen.getByText("Sort Descending"), { shiftKey: true });
+    expect(onViewChange).toHaveBeenLastCalledWith({
+      sort_rules: [
+        { id: "sort-name", field_name: "name", direction: "asc" },
+        { id: "sort-amount", field_name: "amount", direction: "desc" },
+      ],
+    });
+
+    fireEvent.click(screen.getByTestId("column-menu-btn-amount"));
+    fireEvent.click(screen.getByText("Sort Descending"));
+    expect(onViewChange).toHaveBeenLastCalledWith({
+      sort_rules: [{ id: "sort-amount", field_name: "amount", direction: "desc" }],
+    });
+  });
+});

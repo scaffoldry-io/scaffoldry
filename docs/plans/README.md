@@ -310,7 +310,7 @@ Tokens that can be narrower, webhooks, synced datasets, custom pages, people out
 | 189 | [foundation.md](foundation.md) | 11 | One image serves the API and the web files | **COMPLETED** |
 | 190 | [admin-console.md](admin-console.md) | 7 | Audit explorer, token management, agent controls, and a read-only admin inventory tool | **COMPLETED** |
 | 191 | [ux-standards.md](ux-standards.md) | 3 | The desk uses the kit. No browser dialogs. No swallowed errors. CI enforces both | **COMPLETED** |
-| 192 | [data-grid-parity.md](data-grid-parity.md) | 6 | Grid gaps found on 2026-11-19: column resize, Shift+click to add a sort rule, and the builder data tab uses the shared grid. Phases 1–5 are checked in the brief |
+| 192 | [data-grid-parity.md](data-grid-parity.md) | 6 | Grid gaps found on 2026-11-19: column resize, Shift+click to add a sort rule, and the builder data tab uses the shared grid. Phases 1–5 are checked in the brief | **COMPLETED** |
 
 ### Wave 1f, approved
 

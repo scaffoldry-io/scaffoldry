@@ -1,7 +1,7 @@
 # Data grid parity — implementation brief
 
-> **Status: phases 1, 2 and 5 built, with the deviations in "Checked on 2026-11-19". Phase 3 built with one parser. Phase 4 is missing column resize and Shift+click sort. Phase 6 closes the gaps.**  
-> **Test Coverage:** `apps/web/src/test/data-grid.test.tsx` (phases 1, 2, 4), `apps/web/src/test/builder-usability.test.tsx` (phase 5), `crates/scaffoldry-engine/tests/computed_fields_test.rs` (phase 3).
+> **Status: phases 1 to 6 built, with the deviations in "Checked on 2026-11-19" and "Phase 6 — close the gaps". Phase 3 built with one parser. Phase 6 added column resize, Shift+click multi-sort and the shared grid in the builder data tab.**  
+> **Test Coverage:** `apps/web/src/test/data-grid.test.tsx` (phases 1, 2, 4, 6), `apps/web/src/test/builder-usability.test.tsx` (phases 5, 6), `crates/scaffoldry-engine/tests/computed_fields_test.rs` (phase 3).
 
 
 Hand this file to Gemini Flash. Do one phase per session. Stop when that phase's tests pass. Do not start the next phase.
@@ -319,3 +319,19 @@ Tests, written first:
 2. Shift+click on a second column's sort entry gives two `sort_rules` in order. A plain click gives one.
 3. The builder data tab renders `DataGrid`. The phase 5 tests in `builder-usability.test.tsx` still pass unchanged.
 
+### Built on 2026-11-19
+
+All three items are done, test-first. Tests: `data-grid.test.tsx` 22 of 22, `builder-usability.test.tsx` 39 of 39 (the five phase 5 tests pass unchanged), full suite 735 of 735.
+
+1. Column resize. Each header has a drag handle on its right edge (`role="separator"`, `data-testid="resize-handle-<field>"`). Dragging draws the width live and calls `onViewChange({ column_widths })` once, on mouse release. The width never goes under 72. From the keyboard, focus the handle and press Left or Right: 8 pixels, or 32 with Shift. Each key press is one `onViewChange` call, because there is no release to wait for.
+2. Shift+click on a sort entry in the column menu appends to `sort_rules`. If the column is already a rule, Shift+click changes its direction in place. A plain click replaces the rules. The grid takes the current rules in a new `sort_rules` prop. Sorting stays on the server.
+3. The builder data tab renders `DataGrid`. All five phase 5 actions moved with their test ids: rename, change type, edit formula, insert left and right, and delete with the primary field blocked. `DataGrid` gained optional host props for this: `renderHeaderMenu`, `renderHeaderNote`, `headerMenu` and `onHeaderMenuChange`, `leadingColumn`, `trailingHeader`, `groupHeader` and `formatCell`. `MultiViewWorkspace` does not use them.
+
+Deviations:
+
+- The header is now drawn by a function call in the `<thead>`, not by TanStack's `flexRender`. A header component rebuilt on each menu change was remounted, which lost focus and made held button references stale.
+- A multi-select cell now draws one pill per value in both grids, not one comma-joined string.
+- The builder grid is editable. Before, only checkbox and link cells were. Edits go to the builder's in-memory records, as before.
+- The builder keeps its column chrome (width, order, hidden, frozen, summary) in component state per table. It is not saved with the manifest. A "Show hidden columns" button undoes Hide Column.
+- The builder header lost the field-type icon. The shared grid does not draw one.
+- Grouped builder tables draw a heading row above the first record of each group, not a separate table body.

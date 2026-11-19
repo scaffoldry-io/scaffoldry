@@ -23,6 +23,7 @@ import { WorkflowBuilder } from "./WorkflowBuilder";
 import { ProcessInsights } from "./ProcessInsights";
 import { StandaloneIntakeForm } from "./StandaloneIntakeForm";
 import { DataShapingToolbar } from "./DataShapingToolbar";
+import { DataGrid } from "./DataGrid";
 import { RecordDetailDrawer } from "./RecordDetailDrawer";
 import { AttachmentCover, type AttachedFile } from "./ui/Attachments";
 import { CsvImportModal } from "./CsvImportModal";
@@ -37,7 +38,6 @@ import {
   applyMultiSort,
   computeFieldValue,
   exportToCsv,
-  getFieldTypeIcon,
   groupRecordsByField,
   parseCsv,
 } from "./computedFields";
@@ -305,6 +305,17 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
       next.delete(recordId);
       return next;
     });
+  };
+
+  // Column chrome the grid reports (width, order, hidden, frozen, summary). It lives here, per table, for this session.
+  // Sort goes to the same sort rules the toolbar uses.
+  const [gridChrome, setGridChrome] = useState<Record<string, Partial<AppView>>>({});
+  const handleGridViewChange = (patch: Partial<AppView>) => {
+    const { sort_rules, ...chrome } = patch;
+    if (sort_rules) setSortRules(sort_rules);
+    if (Object.keys(chrome).length > 0) {
+      setGridChrome((prev) => ({ ...prev, [activeTable.id]: { ...prev[activeTable.id], ...chrome } }));
+    }
   };
 
   // Phase 5: Column Schema in Builder Grid
@@ -1191,16 +1202,6 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   const sortedRecords = applyMultiSort(compoundFiltered, sortRules);
                   const recordGroups = groupRecordsByField(sortedRecords, groupByField || undefined);
 
-                  // Density padding classes
-                  const cellPadding =
-                    rowDensity === "compact"
-                      ? "py-1.5 px-3 text-xs"
-                      : rowDensity === "tall"
-                      ? "py-4 px-3 text-xs"
-                      : rowDensity === "extra_tall"
-                      ? "py-6 px-3 text-xs"
-                      : "py-2.5 px-3 text-xs";
-
                   // VIEW TYPE: KANBAN
                   if (activeView.view_type === "Kanban") {
                     const stageCol = activeView.kanban_column_field || "status";
@@ -1432,593 +1433,342 @@ export const AppBuilder: React.FC<AppBuilderProps> = ({
                   const isAllSelected =
                     allVisibleIds.length > 0 &&
                     allVisibleIds.every((id) => selectedRowIds.has(id));
+                  const chrome = gridChrome[activeTable.id] || {};
+                  // The grid shows computed fields as their value. It does not compute.
+                  const computedTypes = ["Formula", "Lookup", "Count", "Rollup"];
+                  const gridRecords = recordGroups.flatMap((g) =>
+                    g.records.map((r) => {
+                      const row: Record<string, any> = { ...r };
+                      for (const f of activeTable.fields) {
+                        if (computedTypes.includes(f.field_type)) row[f.name] = computeFieldValue(f, r, tables);
+                      }
+                      return row;
+                    })
+                  );
+                  const groupStarts = new Map<string, (typeof recordGroups)[number]>();
+                  if (groupByField) {
+                    for (const g of recordGroups) if (g.records[0]) groupStarts.set(String(g.records[0].id), g);
+                  }
 
                   return (
-                    <div data-testid="view-grid-table" className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-lg">
-                      <table className="w-full text-left text-xs">
-                        <thead>
-                          <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-mono text-[11px] uppercase">
-                            <th className="py-2 px-2.5 w-10 text-center">
+                    <div data-testid="view-grid-table" className="border border-slate-200 dark:border-slate-800 rounded-lg">
+                      {(chrome.hidden_columns || []).length > 0 && (
+                        <div className="px-3 py-1.5 text-xs border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                          <button
+                            type="button"
+                            data-testid="show-hidden-columns-btn"
+                            onClick={() => handleGridViewChange({ hidden_columns: [] })}
+                            className="font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                          >
+                            Show {(chrome.hidden_columns || []).length} hidden column{(chrome.hidden_columns || []).length > 1 ? "s" : ""}
+                          </button>
+                        </div>
+                      )}
+                      <DataGrid
+                        fields={activeTable.fields}
+                        records={gridRecords}
+                        tables={tables}
+                        rowDensity={rowDensity}
+                        column_order={chrome.column_order}
+                        column_widths={chrome.column_widths}
+                        hidden_columns={chrome.hidden_columns}
+                        frozen_through={chrome.frozen_through}
+                        column_summary={chrome.column_summary}
+                        sort_rules={sortRules}
+                        onViewChange={handleGridViewChange}
+                        formatCell={(field, value) => {
+                          if (field.field_type === "Rollup") return `$${Number(value || 0).toLocaleString()}`;
+                          if (field.field_type === "Formula" && typeof value === "number") {
+                            if (field.currency_symbol) return `${field.currency_symbol}${value.toLocaleString()}`;
+                            return /cost|budget|amount/.test(field.name) ? `$${value.toLocaleString()}` : String(value);
+                          }
+                          return undefined;
+                        }}
+                        onPatch={(recordId, fieldName, value) => handleUpdateRecordField(recordId, fieldName, value)}
+                        headerMenu={activeColumnMenu}
+                        onHeaderMenuChange={(name) => {
+                          setActiveColumnMenu(name);
+                          const f = activeTable.fields.find((x) => x.name === name);
+                          if (f) {
+                            setRenameLabel(f.label);
+                            setFormulaInput(f.formula_expression || "");
+                            setRenameNotice(null);
+                          }
+                        }}
+                        renderHeaderNote={(field) =>
+                          field.field_type === "Formula" && field.formula_expression ? (
+                            <div
+                              data-testid={`formula-expression-${field.name}`}
+                              className="text-[10px] text-slate-400 font-mono font-normal mt-0.5"
+                            >
+                              {field.formula_expression}
+                            </div>
+                          ) : null
+                        }
+                        renderHeaderMenu={(field) => (
+                          <div
+                            data-testid={`column-menu-popover-${field.name}`}
+                            className="border-t border-slate-100 dark:border-slate-700 mt-1 p-2.5 space-y-2.5 text-left font-normal"
+                          >
+                      {/* Rename */}
+                      <div className="space-y-1">
+                        <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                          Rename Field
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            data-testid="rename-field-input"
+                            value={renameLabel}
+                            onChange={(e) => setRenameLabel(e.target.value)}
+                            placeholder="Label"
+                            className="flex-1 px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
+                          />
+                          <button
+                            type="button"
+                            data-testid="save-rename-btn"
+                            onClick={() => handleRenameField(field.name, renameLabel)}
+                            className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 cursor-pointer"
+                          >
+                            Save
+                          </button>
+                        </div>
+                        {renameNotice && (
+                          <div data-testid="rename-notice" className="text-[10px] text-amber-600 dark:text-amber-400">
+                            {renameNotice}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Change Type */}
+                      <div className="space-y-1 border-t border-slate-100 dark:border-slate-700 pt-2">
+                        <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                          Change Type
+                        </div>
+                        <select
+                          data-testid="change-type-select"
+                          value={field.field_type}
+                          onChange={(e) => handleChangeFieldType(field.name, e.target.value as FieldType)}
+                          className="w-full px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
+                        >
+                          {[
+                            "Text",
+                            "Number",
+                            "Date",
+                            "Select",
+                            "Checkbox",
+                            "MultiSelect",
+                            "Currency",
+                            "Percent",
+                            "Rating",
+                            "Email",
+                            "Phone",
+                            "Url",
+                            "Formula",
+                            "Relation",
+                          ].map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Configure Link Characteristics */}
+                      {field.field_type === "Relation" && (
+                        <div className="border-t border-slate-100 dark:border-slate-700 pt-2">
+                          <button
+                            type="button"
+                            data-testid="configure-link-btn"
+                            onClick={() => handleOpenEditLinkedField(field)}
+                            className="w-full text-left px-2 py-1.5 rounded bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-semibold cursor-pointer text-xs"
+                          >
+                            ⚙️ Configure Link Characteristics
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Edit Formula */}
+                      {field.field_type === "Formula" && (
+                        <div className="space-y-1 border-t border-slate-100 dark:border-slate-700 pt-2">
+                          <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                            Formula Expression
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              data-testid="formula-expression-input"
+                              value={formulaInput}
+                              onChange={(e) => setFormulaInput(e.target.value)}
+                              placeholder="{field} * 1.5"
+                              className="flex-1 px-2 py-1 text-xs font-mono border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
+                            />
+                            <button
+                              type="button"
+                              data-testid="save-formula-btn"
+                              onClick={() => handleSaveFormula(field.name, formulaInput)}
+                              className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 cursor-pointer"
+                            >
+                              Save
+                            </button>
+                          </div>
+                          {formulaPreviewResult !== null && (
+                            <div
+                              data-testid="formula-preview-result"
+                              className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono mt-1"
+                            >
+                              Preview: {typeof formulaPreviewResult === "object" ? JSON.stringify(formulaPreviewResult) : String(formulaPreviewResult)}
+                            </div>
+                          )}
+                          {formulaError && (
+                            <div
+                              data-testid="formula-syntax-error"
+                              className="text-[11px] text-red-500 font-mono mt-1 whitespace-pre"
+                            >
+                              <div data-testid="formula-error-message">{formulaError}</div>
+                              {formulaErrorPos !== null && (
+                                <div data-testid="formula-error-caret" aria-hidden="true">
+                                  {" ".repeat(formulaErrorPos)}^
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Insert Left / Right */}
+                      <div className="border-t border-slate-100 dark:border-slate-700 pt-2 space-y-1">
+                        <button
+                          type="button"
+                          data-testid="insert-field-left-btn"
+                          onClick={() => handleInsertField(field.name, "left")}
+                          className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                        >
+                          Insert field left
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="insert-field-right-btn"
+                          onClick={() => handleInsertField(field.name, "right")}
+                          className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                        >
+                          Insert field right
+                        </button>
+                      </div>
+
+                      {/* Delete field */}
+                      <div className="border-t border-slate-100 dark:border-slate-700 pt-2">
+                        <button
+                          type="button"
+                          data-testid="delete-field-btn"
+                          onClick={() => handleDeleteField(field.name)}
+                          disabled={field.name === (activeTable.primary_field || activeTable.fields[0]?.name)}
+                          className={`w-full text-left px-2 py-1 rounded cursor-pointer ${
+                            field.name === (activeTable.primary_field || activeTable.fields[0]?.name)
+                              ? "text-slate-400 cursor-not-allowed"
+                              : "text-rose-600 dark:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                          }`}
+                          title={
+                            field.name === (activeTable.primary_field || activeTable.fields[0]?.name)
+                              ? "Cannot delete primary field"
+                              : "Delete field"
+                          }
+                        >
+                          Delete field
+                        </button>
+                      </div>
+                          </div>
+                        )}
+                        leadingColumn={{
+                          header: (
+                            <th className="py-2 px-2.5 w-24 text-center">
                               <input
                                 type="checkbox"
                                 data-testid="select-all-checkbox"
+                                aria-label="Select all records"
                                 checked={isAllSelected}
                                 onChange={() => handleToggleSelectAll(allVisibleIds)}
                                 className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
                               />
                             </th>
-                            <th className="py-2 px-2 w-16 text-center">Actions</th>
-                            {activeTable.fields.map((field) => (
-                              <th key={field.name} className={`${cellPadding} font-semibold relative`}>
-                                <div className="flex items-center justify-between gap-1.5">
-                                  <div className="flex items-center gap-1.5 min-w-0">
-                                    <span className="text-slate-400 font-mono text-[11px] shrink-0">
-                                      {getFieldTypeIcon(field.field_type)}
-                                    </span>
-                                    <span className="truncate">{field.label}</span>
-                                    {field.field_type === "Relation" && (
-                                      <span className="text-purple-500 shrink-0" title="Relational Linked Record">
-                                        🔗
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <div className="relative shrink-0">
-                                    <button
-                                      type="button"
-                                      data-testid={`column-menu-btn-${field.name}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (activeColumnMenu === field.name) {
-                                          setActiveColumnMenu(null);
-                                        } else {
-                                          setActiveColumnMenu(field.name);
-                                          setRenameLabel(field.label);
-                                          setFormulaInput(field.formula_expression || "");
-                                          setRenameNotice(null);
-                                        }
-                                      }}
-                                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer text-xs leading-none"
-                                      aria-label={`Column options for ${field.label}`}
-                                    >
-                                      ▾
-                                    </button>
-
-                                    {activeColumnMenu === field.name && (
-                                      <div
-                                        data-testid={`column-menu-popover-${field.name}`}
-                                        className="absolute z-50 right-0 top-full mt-1 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-2.5 text-xs text-slate-700 dark:text-slate-200 space-y-2.5 text-left font-normal"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {/* Rename */}
-                                        <div className="space-y-1">
-                                          <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                                            Rename Field
-                                          </div>
-                                          <div className="flex items-center gap-1">
-                                            <input
-                                              type="text"
-                                              data-testid="rename-field-input"
-                                              value={renameLabel}
-                                              onChange={(e) => setRenameLabel(e.target.value)}
-                                              placeholder="Label"
-                                              className="flex-1 px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
-                                            />
-                                            <button
-                                              type="button"
-                                              data-testid="save-rename-btn"
-                                              onClick={() => handleRenameField(field.name, renameLabel)}
-                                              className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 cursor-pointer"
-                                            >
-                                              Save
-                                            </button>
-                                          </div>
-                                          {renameNotice && (
-                                            <div data-testid="rename-notice" className="text-[10px] text-amber-600 dark:text-amber-400">
-                                              {renameNotice}
-                                            </div>
-                                          )}
-                                        </div>
-
-                                        {/* Change Type */}
-                                        <div className="space-y-1 border-t border-slate-100 dark:border-slate-700 pt-2">
-                                          <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                                            Change Type
-                                          </div>
-                                          <select
-                                            data-testid="change-type-select"
-                                            value={field.field_type}
-                                            onChange={(e) => handleChangeFieldType(field.name, e.target.value as FieldType)}
-                                            className="w-full px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
-                                          >
-                                            {[
-                                              "Text",
-                                              "Number",
-                                              "Date",
-                                              "Select",
-                                              "Checkbox",
-                                              "MultiSelect",
-                                              "Currency",
-                                              "Percent",
-                                              "Rating",
-                                              "Email",
-                                              "Phone",
-                                              "Url",
-                                              "Formula",
-                                              "Relation",
-                                            ].map((t) => (
-                                              <option key={t} value={t}>
-                                                {t}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </div>
-
-                                        {/* Configure Link Characteristics */}
-                                        {field.field_type === "Relation" && (
-                                          <div className="border-t border-slate-100 dark:border-slate-700 pt-2">
-                                            <button
-                                              type="button"
-                                              data-testid="configure-link-btn"
-                                              onClick={() => handleOpenEditLinkedField(field)}
-                                              className="w-full text-left px-2 py-1.5 rounded bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-semibold cursor-pointer text-xs"
-                                            >
-                                              ⚙️ Configure Link Characteristics
-                                            </button>
-                                          </div>
-                                        )}
-
-                                        {/* Edit Formula */}
-                                        {field.field_type === "Formula" && (
-                                          <div className="space-y-1 border-t border-slate-100 dark:border-slate-700 pt-2">
-                                            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                                              Formula Expression
-                                            </div>
-                                            <div className="flex items-center gap-1">
-                                              <input
-                                                type="text"
-                                                data-testid="formula-expression-input"
-                                                value={formulaInput}
-                                                onChange={(e) => setFormulaInput(e.target.value)}
-                                                placeholder="{field} * 1.5"
-                                                className="flex-1 px-2 py-1 text-xs font-mono border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-900"
-                                              />
-                                              <button
-                                                type="button"
-                                                data-testid="save-formula-btn"
-                                                onClick={() => handleSaveFormula(field.name, formulaInput)}
-                                                className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 cursor-pointer"
-                                              >
-                                                Save
-                                              </button>
-                                            </div>
-                                            {formulaPreviewResult !== null && (
-                                              <div
-                                                data-testid="formula-preview-result"
-                                                className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono mt-1"
-                                              >
-                                                Preview: {typeof formulaPreviewResult === "object" ? JSON.stringify(formulaPreviewResult) : String(formulaPreviewResult)}
-                                              </div>
-                                            )}
-                                            {formulaError && (
-                                              <div
-                                                data-testid="formula-syntax-error"
-                                                className="text-[11px] text-red-500 font-mono mt-1 whitespace-pre"
-                                              >
-                                                <div data-testid="formula-error-message">{formulaError}</div>
-                                                {formulaErrorPos !== null && (
-                                                  <div data-testid="formula-error-caret" aria-hidden="true">
-                                                    {" ".repeat(formulaErrorPos)}^
-                                                  </div>
-                                                )}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-
-                                        {/* Insert Left / Right */}
-                                        <div className="border-t border-slate-100 dark:border-slate-700 pt-2 space-y-1">
-                                          <button
-                                            type="button"
-                                            data-testid="insert-field-left-btn"
-                                            onClick={() => handleInsertField(field.name, "left")}
-                                            className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                                          >
-                                            Insert field left
-                                          </button>
-                                          <button
-                                            type="button"
-                                            data-testid="insert-field-right-btn"
-                                            onClick={() => handleInsertField(field.name, "right")}
-                                            className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                                          >
-                                            Insert field right
-                                          </button>
-                                        </div>
-
-                                        {/* Delete field */}
-                                        <div className="border-t border-slate-100 dark:border-slate-700 pt-2">
-                                          <button
-                                            type="button"
-                                            data-testid="delete-field-btn"
-                                            onClick={() => handleDeleteField(field.name)}
-                                            disabled={field.name === (activeTable.primary_field || activeTable.fields[0]?.name)}
-                                            className={`w-full text-left px-2 py-1 rounded cursor-pointer ${
-                                              field.name === (activeTable.primary_field || activeTable.fields[0]?.name)
-                                                ? "text-slate-400 cursor-not-allowed"
-                                                : "text-rose-600 dark:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-700"
-                                            }`}
-                                            title={
-                                              field.name === (activeTable.primary_field || activeTable.fields[0]?.name)
-                                                ? "Cannot delete primary field"
-                                                : "Delete field"
-                                            }
-                                          >
-                                            Delete field
-                                          </button>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Formula Expression display under header */}
-                                {field.field_type === "Formula" && field.formula_expression && (
-                                  <div
-                                    data-testid={`formula-expression-${field.name}`}
-                                    className="text-[10px] text-slate-400 font-mono font-normal mt-0.5"
-                                  >
-                                    {field.formula_expression}
-                                  </div>
-                                )}
-                              </th>
-                            ))}
-                            <th className="py-2 px-3 text-left w-28 whitespace-nowrap">
-                              <button
-                                type="button"
-                                data-testid="add-column-header-btn"
-                                onClick={() => setIsAddFieldOpen(true)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-500 hover:text-purple-600 dark:text-slate-400 dark:hover:text-purple-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-dashed border-slate-300 dark:border-slate-700"
-                                title="Add a field to this table"
-                              >
-                                <span>+ Add Field</span>
-                              </button>
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                          {recordGroups.map((group) => (
-                            <React.Fragment key={group.groupValue}>
-                              {/* GROUP HEADER ROW */}
-                              {groupByField && (
-                                <tr className="bg-slate-100/70 dark:bg-slate-800/60 font-semibold text-slate-700 dark:text-slate-300">
-                                  <td
-                                    colSpan={activeTable.fields.length + 3}
-                                    className="py-2 px-3 text-[11px] font-mono flex items-center justify-between"
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-slate-400">▾</span>
-                                      <span className="font-bold text-slate-900 dark:text-white">
-                                        {group.groupValue}
-                                      </span>
-                                      <span className="px-2 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px]">
-                                        {group.records.length} records
-                                      </span>
-                                    </div>
-                                    <span className="text-slate-500">
-                                      Subtotal: ${group.totalBudget.toLocaleString()}
-                                    </span>
-                                  </td>
-                                </tr>
-                              )}
-
-                              {group.records.map((record) => {
-                                const isSelected = selectedRowIds.has(record.id);
-                                return (
-                                <tr
-                                  key={record.id}
-                                  className={`hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors ${
-                                    isSelected ? "bg-blue-50/40 dark:bg-blue-950/30" : ""
-                                  }`}
+                          ),
+                          cell: (recordId) => (
+                            <td className="py-2 px-2 whitespace-nowrap">
+                              <div className="flex items-center justify-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  data-testid={`row-select-checkbox-${recordId}`}
+                                  aria-label={`Select ${recordId}`}
+                                  checked={selectedRowIds.has(recordId)}
+                                  onChange={() => handleToggleSelectRow(recordId)}
+                                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                                />
+                                <button
+                                  type="button"
+                                  data-testid={`row-expand-btn-${recordId}`}
+                                  onClick={() => setSelectedRecordId(recordId)}
+                                  className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
+                                  title="Expand record"
                                 >
-                                  <td className="py-2 px-2.5 text-center">
-                                    <input
-                                      type="checkbox"
-                                      data-testid={`row-select-checkbox-${record.id}`}
-                                      checked={isSelected}
-                                      onChange={() => handleToggleSelectRow(record.id)}
-                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
-                                    />
-                                  </td>
-                                  <td className="py-2 px-1 text-center whitespace-nowrap">
-                                    <div className="flex items-center justify-center gap-1">
-                                      <button
-                                        type="button"
-                                        data-testid={`row-expand-btn-${record.id}`}
-                                        onClick={() => setSelectedRecordId(record.id)}
-                                        className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
-                                        title="Expand record"
-                                      >
-                                        ⤢
-                                      </button>
-                                      <button
-                                        type="button"
-                                        data-testid={`row-duplicate-btn-${record.id}`}
-                                        onClick={() => handleDuplicateRecord(record.id)}
-                                        className="p-1 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
-                                        title="Duplicate record"
-                                      >
-                                        ⧉
-                                      </button>
-                                      <button
-                                        type="button"
-                                        data-testid={`row-delete-btn-${record.id}`}
-                                        onClick={() => handleDeleteRecord(record.id)}
-                                        className="p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
-                                        title="Delete record"
-                                      >
-                                        🗑
-                                      </button>
-                                    </div>
-                                  </td>
-                                  {activeTable.fields.map((field) => {
-                                    const cellValue = [
-                                      "Formula",
-                                      "Lookup",
-                                      "Count",
-                                      "Rollup",
-                                    ].includes(field.field_type)
-                                      ? computeFieldValue(field, record, tables)
-                                      : record[field.name];
-
-                                    // RELATIONAL LOOKUP
-                                    if (field.field_type === "Relation" && field.target_table_id) {
-                                      const targetTable = tables.find(
-                                        (t) => t.id === field.target_table_id
-                                      );
-                                      const rawRecords = targetTable?.records || [];
-                                      const targetRecords = rawRecords.filter((tr) => {
-                                        if (!field.link_filter || !field.link_filter.field) return true;
-                                        const val = String(tr[field.link_filter.field] ?? "").toLowerCase();
-                                        const expected = String(field.link_filter.value ?? "").toLowerCase();
-                                        if (field.link_filter.operator === "equals") return val === expected;
-                                        if (field.link_filter.operator === "not_equals") return val !== expected;
-                                        if (field.link_filter.operator === "contains") return val.includes(expected);
-                                        return true;
-                                      });
-                                      const labelPrefix = field.display_label_override || "";
-                                      const displayCol = field.target_display_field || "name";
-
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <div className="relative inline-flex items-center gap-1.5 flex-wrap">
-                                            <select
-                                              data-testid={`link-cell-select-${record.id}-${field.name}`}
-                                              value={cellValue || ""}
-                                              onChange={(e) =>
-                                                handleUpdateRecordField(
-                                                  record.id,
-                                                  field.name,
-                                                  e.target.value
-                                                )
-                                              }
-                                              className="appearance-none inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/70 dark:hover:bg-purple-900/70 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 cursor-pointer pr-5"
-                                            >
-                                              <option value="">Select link...</option>
-                                              {targetRecords.map((tr) => {
-                                                const recName = tr[displayCol] || tr.name || tr.title || tr.id;
-                                                return (
-                                                  <option key={tr.id} value={tr.id}>
-                                                    {labelPrefix}{recName}
-                                                  </option>
-                                                );
-                                              })}
-                                            </select>
-                                            <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-purple-500">
-                                              ▾
-                                            </span>
-                                          </div>
-                                        </td>
-                                      );
-                                    }
-
-                                    // CHECKBOX
-                                    if (field.field_type === "Checkbox") {
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <input
-                                            type="checkbox"
-                                            checked={Boolean(cellValue)}
-                                            onChange={(e) =>
-                                              handleUpdateRecordField(
-                                                record.id,
-                                                field.name,
-                                                e.target.checked
-                                              )
-                                            }
-                                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
-                                          />
-                                        </td>
-                                      );
-                                    }
-
-                                    // MULTI-SELECT
-                                    if (field.field_type === "MultiSelect") {
-                                      const items = Array.isArray(cellValue)
-                                        ? cellValue
-                                        : cellValue
-                                        ? [String(cellValue)]
-                                        : [];
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <div className="flex flex-wrap gap-1">
-                                            {items.map((opt: string) => (
-                                              <span
-                                                key={opt}
-                                                className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200"
-                                              >
-                                                {opt}
-                                              </span>
-                                            ))}
-                                          </div>
-                                        </td>
-                                      );
-                                    }
-
-                                    // RATING
-                                    if (field.field_type === "Rating") {
-                                      const score = Number(cellValue || 0);
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <div className="flex items-center gap-0.5 text-amber-500">
-                                            {[1, 2, 3, 4, 5].map((star) => (
-                                              <span key={star} className="text-xs">
-                                                {star <= score ? "★" : "☆"}
-                                              </span>
-                                            ))}
-                                          </div>
-                                        </td>
-                                      );
-                                    }
-
-                                    // LOOKUP
-                                    if (field.field_type === "Lookup") {
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                                            <span className="text-[10px]">🔍</span>
-                                            {String(cellValue ?? "")}
-                                          </span>
-                                        </td>
-                                      );
-                                    }
-
-                                    // ROLLUP
-                                    if (field.field_type === "Rollup") {
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                                            <span className="text-[10px]">Σ</span>
-                                            ${Number(cellValue || 0).toLocaleString()}
-                                          </span>
-                                        </td>
-                                      );
-                                    }
-
-                                    // COUNT
-                                    if (field.field_type === "Count") {
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                                            <span className="text-[10px]">#</span>
-                                            {cellValue}
-                                          </span>
-                                        </td>
-                                      );
-                                    }
-
-                                    // FORMULA
-                                    if (field.field_type === "Formula") {
-                                      return (
-                                        <td key={field.name} className={cellPadding}>
-                                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                                            <span className="text-[10px]">ƒx</span>
-                                            {typeof cellValue === "number"
-                                              ? (field.currency_symbol
-                                                  ? `${field.currency_symbol}${cellValue.toLocaleString()}`
-                                                  : (field.name.includes("cost") || field.name.includes("budget") || field.name.includes("amount")
-                                                      ? `$${cellValue.toLocaleString()}`
-                                                      : String(cellValue)))
-                                              : String(cellValue ?? "")}
-                                          </span>
-                                        </td>
-                                      );
-                                    }
-
-                                    return (
-                                      <td
-                                        key={field.name}
-                                        className={`${cellPadding} text-slate-800 dark:text-slate-200`}
-                                      >
-                                        {field.name === "budget" ||
-                                        field.name === "allocated_amount" ||
-                                        field.field_type === "Currency" ? (
-                                          <span className="font-mono font-medium">
-                                            ${Number(cellValue || 0).toLocaleString()}
-                                          </span>
-                                        ) : field.field_type === "Percent" ? (
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="font-mono text-xs">{cellValue}%</span>
-                                            <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                                              <div
-                                                className="h-full bg-blue-500 rounded-full"
-                                                style={{
-                                                  width: `${Math.min(
-                                                    100,
-                                                    Math.max(0, Number(cellValue || 0))
-                                                  )}%`,
-                                                }}
-                                              />
-                                            </div>
-                                          </div>
-                                        ) : field.field_type === "Email" ? (
-                                          <a
-                                            href={`mailto:${cellValue}`}
-                                            className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-                                          >
-                                            <span className="text-[10px]">✉</span>
-                                            {cellValue}
-                                          </a>
-                                        ) : field.field_type === "Url" ? (
-                                          <a
-                                            href={String(cellValue)}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-                                          >
-                                            <span className="text-[10px]">🌐</span>
-                                            {cellValue}
-                                          </a>
-                                        ) : field.name === "status" ||
-                                          field.name === "disbursement_status" ? (
-                                          <span
-                                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                              cellValue === "Approved" || cellValue === "Disbursed"
-                                                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-                                                : cellValue === "Funded"
-                                                ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                                                : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-                                            }`}
-                                          >
-                                            {cellValue}
-                                          </span>
-                                        ) : field.name === "id" ? (
-                                          <span className="font-mono text-slate-500">{cellValue}</span>
-                                        ) : (
-                                          <span>{String(cellValue ?? "")}</span>
-                                        )}
-                                      </td>
-                                    );
-                                  })}
-                                  <td className="py-2 px-3 text-center text-slate-300 dark:text-slate-700"></td>
-                                </tr>
-                              );
-                            })}
-                          </React.Fragment>
-                        ))}
-
-                        <tr>
-                          <td
-                            colSpan={activeTable.fields.length + 2}
-                            className="py-2.5 px-4 bg-slate-50/50 dark:bg-slate-800/30 text-xs text-slate-500 dark:text-slate-400"
-                          >
-                            Add records in the app&apos;s grid. This screen designs the app and does not store records.
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                );
+                                  ⤢
+                                </button>
+                                <button
+                                  type="button"
+                                  data-testid={`row-duplicate-btn-${recordId}`}
+                                  onClick={() => handleDuplicateRecord(recordId)}
+                                  className="p-1 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
+                                  title="Duplicate record"
+                                >
+                                  ⧉
+                                </button>
+                                <button
+                                  type="button"
+                                  data-testid={`row-delete-btn-${recordId}`}
+                                  onClick={() => handleDeleteRecord(recordId)}
+                                  className="p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400 cursor-pointer rounded hover:bg-slate-100 dark:hover:bg-slate-700"
+                                  title="Delete record"
+                                >
+                                  🗑
+                                </button>
+                              </div>
+                            </td>
+                          ),
+                        }}
+                        groupHeader={(recordId) => {
+                          const g = groupStarts.get(recordId);
+                          if (!g) return null;
+                          return (
+                            <div className="bg-slate-100/70 dark:bg-slate-800/60 font-semibold text-slate-700 dark:text-slate-300 py-2 px-3 text-[11px] font-mono flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-400">▾</span>
+                                <span className="font-bold text-slate-900 dark:text-white">{g.groupValue}</span>
+                                <span className="px-2 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px]">
+                                  {g.records.length} records
+                                </span>
+                              </div>
+                              <span className="text-slate-500">Subtotal: ${g.totalBudget.toLocaleString()}</span>
+                            </div>
+                          );
+                        }}
+                        trailingHeader={
+                          <th className="py-2 px-3 text-left w-28 whitespace-nowrap">
+                            <button
+                              type="button"
+                              data-testid="add-column-header-btn"
+                              onClick={() => setIsAddFieldOpen(true)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-500 hover:text-purple-600 dark:text-slate-400 dark:hover:text-purple-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-dashed border-slate-300 dark:border-slate-700"
+                              title="Add a field to this table"
+                            >
+                              <span>+ Add Field</span>
+                            </button>
+                          </th>
+                        }
+                      />
+                      <div className="py-2.5 px-4 bg-slate-50/50 dark:bg-slate-800/30 text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-800">
+                        Add records in the app&apos;s grid. This screen designs the app and does not store records.
+                      </div>
+                    </div>
+                  );
               })()}
 
               {/* FLOATING BATCH ACTION BAR */}

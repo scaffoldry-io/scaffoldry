@@ -960,6 +960,30 @@ describe("Milestone 2: Multi-View Engine & Data Shaping Usability", () => {
   });
 
   describe("Phase 5: Builder Column Schema Modification", () => {
+    it("phase 6: the builder data tab renders DataGrid with schema actions in its column menu", () => {
+      render(
+        <AppBuilder
+          app={studioApp}
+          onBack={vi.fn()}
+          onOpenPublishedApp={vi.fn()}
+        />
+      );
+      fireEvent.click(screen.getByTestId("tab-btn-data"));
+
+      // DataGrid draws cells with data-testid cell-<record>-<field> and a resize handle on each header.
+      expect(screen.getByTestId("cell-APP-001-budget")).toBeInTheDocument();
+      expect(screen.getByTestId("resize-handle-budget")).toBeInTheDocument();
+
+      // Its column menu carries the view actions and the phase 5 schema actions.
+      fireEvent.click(screen.getByTestId("column-menu-btn-budget"));
+      expect(screen.getByText("Sort Ascending")).toBeInTheDocument();
+      expect(screen.getByTestId("rename-field-input")).toBeInTheDocument();
+      expect(screen.getByTestId("change-type-select")).toBeInTheDocument();
+      expect(screen.getByTestId("insert-field-left-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("insert-field-right-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("delete-field-btn")).toBeInTheDocument();
+    });
+
     it("inserts a field via header menu in builder data-tab grid", () => {
       render(
         <AppBuilder
