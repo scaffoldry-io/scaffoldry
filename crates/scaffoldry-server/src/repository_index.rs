@@ -43,23 +43,14 @@ fn rows_of(record_id: &str, data: &Value, fields: &[FieldSpec]) -> Vec<Row> {
 }
 
 fn insert_rows(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &str, rows: &[Row]) -> Result<(), postgres::Error> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    let fields: Vec<&str> = rows.iter().map(|r| r.field.as_str()).collect();
-    let ids: Vec<&str> = rows.iter().map(|r| r.record_id.as_str()).collect();
-    let nums: Vec<Option<f64>> = rows.iter().map(|r| r.cols.0).collect();
-    let txts: Vec<Option<&str>> = rows.iter().map(|r| r.cols.1.as_deref()).collect();
-    let tss: Vec<Option<&str>> = rows.iter().map(|r| r.cols.2.as_deref()).collect();
-    let ords: Vec<i16> = rows.iter().map(|r| r.ord).collect();
-    tx.execute(
-        "INSERT INTO record_index (app_slug, table_id, field, record_id, num, txt, ts, ord) \
-         SELECT $1, $2, u.f, u.r, u.n, u.t, u.s::text::timestamptz, u.o \
-         FROM unnest($3::text[], $4::text[], $5::float8[], $6::text[], $7::text[], $8::int2[]) AS u(f, r, n, t, s, o) \
-         ON CONFLICT (record_id, field, ord) DO NOTHING",
-        &[&app_slug, &table_id, &fields, &ids, &nums, &txts, &tss, &ords],
-    )?;
-    Ok(())
+    let rows: Vec<(String, scaffoldry_data::index::IndexRow)> = rows
+        .iter()
+        .map(|r| {
+            let row = scaffoldry_data::index::IndexRow { field: r.field.clone(), ord: r.ord, num: r.cols.0, txt: r.cols.1.clone(), ts: r.cols.2.clone() };
+            (r.record_id.clone(), row)
+        })
+        .collect();
+    scaffoldry_data::index::insert_rows(tx, app_slug, table_id, &rows)
 }
 
 /// Replaces a record's index rows with the current set. Called by every record write, inside its
@@ -72,7 +63,7 @@ pub(crate) fn write_record_index(
     data: &Value,
     fields: &[FieldSpec],
 ) -> Result<(), postgres::Error> {
-    tx.execute("DELETE FROM record_index WHERE record_id = $1", &[&record_id])?;
+    scaffoldry_data::index::delete_for_record(tx, record_id)?;
     insert_rows(tx, app_slug, table_id, &rows_of(record_id, data, fields))
 }
 
@@ -150,7 +141,7 @@ pub(crate) fn sync_index(
     requested_by: &str,
 ) -> Result<(), RepositoryError> {
     if !left.is_empty() {
-        tx.execute("DELETE FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)", &[&app_slug, &table_id, &left])?;
+        scaffoldry_data::index::delete_for_fields(tx, app_slug, table_id, left)?;
         tx.execute("DELETE FROM index_status WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)", &[&app_slug, &table_id, &left])?;
     }
     if joined.is_empty() {
@@ -159,7 +150,7 @@ pub(crate) fn sync_index(
     let mut names: Vec<String> = joined.iter().map(|f| f.name.clone()).collect();
     names.sort();
     // A joining field has no rows yet. Clear any stale ones so a repeat is safe.
-    tx.execute("DELETE FROM record_index WHERE app_slug = $1 AND table_id = $2 AND field = ANY($3)", &[&app_slug, &table_id, &names])?;
+    scaffoldry_data::index::delete_for_fields(tx, app_slug, table_id, &names)?;
     for name in &names {
         tx.execute(
             "INSERT INTO index_status (app_slug, table_id, field, state, job_id) VALUES ($1, $2, $3, 'building', NULL) \
@@ -385,7 +376,7 @@ impl PostgresRepository {
         let (slug, table, fields) = (app_slug.to_string(), table_id.to_string(), fields.to_vec());
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            tx.execute("DELETE FROM record_index WHERE app_slug = $1 AND table_id = $2", &[&slug, &table])?;
+            scaffoldry_data::index::delete_for_table(&mut tx, &slug, &table)?;
             let n = copy_fields(&mut tx, &slug, &table, &fields)?;
             tx.commit()?;
             Ok(n)

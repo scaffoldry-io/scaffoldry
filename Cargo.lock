@@ -2442,6 +2442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scaffoldry-data"
+version = "0.1.0"
+dependencies = [
+ "postgres",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "scaffoldry-engine"
 version = "0.1.0"
 dependencies = [
@@ -2487,6 +2496,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "scaffoldry-core",
+ "scaffoldry-data",
  "scaffoldry-engine",
  "scaffoldry-policy",
  "serde",
