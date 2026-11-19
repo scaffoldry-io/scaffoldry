@@ -165,17 +165,7 @@ pub enum RepositoryError {
 
 type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
 
-/// The next page of a table after a cursor. The row comparison walks the paging index.
-pub const PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-     FROM dataset_records \
-     WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND (created_at, id) > ($3::text::timestamptz, $4::text) \
-     ORDER BY created_at, id LIMIT $5";
-
-/// The first page of a table.
-pub const FIRST_PAGE_SQL: &str = "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-     FROM dataset_records \
-     WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
-     ORDER BY created_at, id LIMIT $3";
+pub use scaffoldry_data::records::{FIRST_PAGE_SQL, PAGE_SQL};
 
 /// Who wrote a record, and how. Every write takes one, so a change cannot go unattributed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,11 +358,7 @@ pub(crate) fn set_record_data_in_tx(
     id: &str,
     data: &Value,
 ) -> Result<(), postgres::Error> {
-    tx.execute(
-        "UPDATE dataset_records SET data = $3 WHERE app_slug = $1 AND id = $2",
-        &[&app_slug, &id, data],
-    )?;
-    Ok(())
+    scaffoldry_data::records::set_data(tx, app_slug, id, data)
 }
 
 /// Writes the stored formulas of the table into the record's data. A value the caller sent for one is replaced.
@@ -406,11 +392,7 @@ pub(crate) fn insert_record_in_tx(
     let mut rec = rec.clone();
     apply_formulas(&mut rec.data, ctx);
     let table = table_id_of(&rec.data);
-    tx.execute(
-        "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
-    )?;
+    scaffoldry_data::records::insert(tx, &new_record(&rec, &table))?;
     crate::repository_index::write_record_index(
         tx,
         &rec.app_slug,
@@ -449,10 +431,9 @@ pub(crate) fn update_record_in_tx(
 ) -> Result<RecordWrite, postgres::Error> {
     let mut data = data.clone();
     apply_formulas(&mut data, ctx);
-    let Some(row) = tx.query_opt("SELECT data, version FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE", &[&slug, &id])? else {
+    let Some((old, version)) = scaffoldry_data::records::live_for_update(tx, slug, id)? else {
         return Ok(RecordWrite::Missing);
     };
-    let (old, version): (Value, i32) = (row.get(0), row.get(1));
     if expected_version.is_some_and(|expected| expected != version) {
         return Ok(RecordWrite::Conflict(version));
     }
@@ -461,13 +442,7 @@ pub(crate) fn update_record_in_tx(
         return Ok(RecordWrite::Saved(version));
     }
     let new_table = table_id_of(&data);
-    let next: i32 = tx
-        .query_one(
-            "UPDATE dataset_records SET data = $1, table_id = $2, version = version + 1 \
-             WHERE app_slug = $3 AND id = $4 RETURNING version",
-            &[&data, &new_table, &slug, &id],
-        )?
-        .get(0);
+    let next = scaffoldry_data::records::save_data(tx, slug, id, &data, &new_table)?;
     crate::repository_index::write_record_index(
         tx,
         slug,
@@ -505,21 +480,9 @@ pub(crate) fn delete_record_in_tx(
     ctx: &WriteCtx,
 ) -> Result<RecordWrite, postgres::Error> {
     let batch = ctx.batch_id;
-    let moved = match expected_version {
-        Some(expected) => tx.query_opt(
-            "UPDATE dataset_records SET deleted_at = NOW(), deleted_by = $4, delete_batch = $5 \
-             WHERE app_slug = $1 AND id = $2 AND version = $3 AND deleted_at IS NULL RETURNING data, version, table_id",
-            &[&slug, &id, &expected, &ctx.actor, &batch],
-        )?,
-        None => tx.query_opt(
-            "UPDATE dataset_records SET deleted_at = NOW(), deleted_by = $3, delete_batch = $4 \
-             WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL RETURNING data, version, table_id",
-            &[&slug, &id, &ctx.actor, &batch],
-        )?,
-    };
-    if let Some(row) = moved {
-        let (old, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
-        tx.execute("DELETE FROM record_index WHERE record_id = $1", &[&id])?;
+    let moved = scaffoldry_data::records::soft_delete(tx, slug, id, expected_version, &ctx.actor, Some(batch))?;
+    if let Some(scaffoldry_data::records::Deleted { data: old, version, table_id: table }) = moved {
+        scaffoldry_data::index::delete_for_record(tx, id)?;
         crate::repository_links::delete_record_links(tx, slug, id, ctx)?;
         let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
         let action = ctx.action.unwrap_or("delete");
@@ -537,9 +500,9 @@ pub(crate) fn delete_record_in_tx(
         )?;
         return Ok(RecordWrite::Saved(version));
     }
-    let current = tx.query_opt("SELECT version FROM dataset_records WHERE app_slug = $1 AND id = $2 AND deleted_at IS NULL", &[&slug, &id])?;
+    let current = scaffoldry_data::records::live_version(tx, slug, id)?;
     Ok(match current {
-        Some(row) => RecordWrite::Conflict(row.get(0)),
+        Some(version) => RecordWrite::Conflict(version),
         None => RecordWrite::Missing,
     })
 }
@@ -564,14 +527,9 @@ pub(crate) fn restore_record_in_tx(
     id: &str,
     ctx: &WriteCtx,
 ) -> Result<bool, postgres::Error> {
-    let Some(row) = tx.query_opt(
-        "UPDATE dataset_records SET deleted_at = NULL, deleted_by = NULL, delete_batch = NULL \
-         WHERE app_slug = $1 AND id = $2 AND deleted_at IS NOT NULL RETURNING data, version, table_id",
-        &[&slug, &id],
-    )? else {
+    let Some(scaffoldry_data::records::Deleted { data, version, table_id: table }) = scaffoldry_data::records::restore(tx, slug, id)? else {
         return Ok(false);
     };
-    let (data, version, table): (Value, i32, String) = (row.get(0), row.get(1), row.get(2));
     crate::repository_index::write_record_index(tx, slug, &table, id, &data, &ctx.index_fields)?;
     let action = ctx.action.unwrap_or("restore");
     write_history(
@@ -1030,6 +988,19 @@ fn json_expr(params: &mut Vec<SqlParam>, e: &crate::repository_index::Expr) -> S
 }
 
 /// The table a record belongs to, as the column holds it. The key also stays in the JSON.
+/// The data layer's view of a record to store.
+fn new_record<'a>(rec: &'a DatasetRecord, table: &'a str) -> scaffoldry_data::records::NewRecord<'a> {
+    scaffoldry_data::records::NewRecord {
+        id: &rec.id,
+        app_slug: &rec.app_slug,
+        data: &rec.data,
+        ceds_mapping: &rec.ceds_mapping,
+        is_ferpa_sensitive: rec.is_ferpa_sensitive,
+        created_by: rec.created_by.as_deref(),
+        table_id: table,
+    }
+}
+
 fn table_id_of(data: &Value) -> String {
     data.get("_table_id")
         .and_then(|v| v.as_str())
@@ -2359,23 +2330,9 @@ impl PostgresRepository {
         apply_formulas(&mut rec.data, &ctx);
         self.with_client(move |client| {
             let mut tx = client.transaction()?;
-            let before = tx.query_opt("SELECT data FROM dataset_records WHERE id = $1 FOR UPDATE", &[&rec.id])?;
-            let old: Option<Value> = before.map(|r| r.get(0));
+            let old: Option<Value> = scaffoldry_data::records::data_for_update(&mut tx, &rec.id)?;
             let table = table_id_of(&rec.data);
-            let version: i32 = tx
-                .query_one(
-                    "INSERT INTO dataset_records (id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_by, table_id) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7) \
-                     ON CONFLICT (id) DO UPDATE SET \
-                        data = EXCLUDED.data, \
-                        ceds_mapping = EXCLUDED.ceds_mapping, \
-                        is_ferpa_sensitive = EXCLUDED.is_ferpa_sensitive, \
-                        table_id = EXCLUDED.table_id, \
-                        version = dataset_records.version + 1 \
-                     RETURNING version",
-                    &[&rec.id, &rec.app_slug, &rec.data, &rec.ceds_mapping, &rec.is_ferpa_sensitive, &rec.created_by, &table],
-                )?
-                .get(0);
+            let version = scaffoldry_data::records::upsert(&mut tx, &new_record(&rec, &table))?;
             crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
             crate::repository_links::write_record_links(&mut tx, &rec.app_slug, &rec.id, old.as_ref(), &rec.data, &ctx)?;
             let changes = diff_fields(old.as_ref(), Some(&rec.data), &ctx.computed_fields);

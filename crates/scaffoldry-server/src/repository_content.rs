@@ -58,13 +58,7 @@ fn finding_json(r: &postgres::Row) -> Value {
 
 /// Puts a category on a field's label. An existing label keeps its flag and gains the category.
 fn label_with_category(tx: &mut postgres::Transaction<'_>, l: &CategoryLabel, category: &str, note: &str, by: &str) -> Result<(), postgres::Error> {
-    tx.execute(
-        "INSERT INTO data_labels (app_slug, table_id, field, ferpa_sensitive, note, set_by, categories) VALUES ($1, $2, $3, false, $4, $5, ARRAY[$6]::text[]) \
-         ON CONFLICT (app_slug, table_id, field) DO UPDATE SET \
-            categories = (SELECT COALESCE(array_agg(DISTINCT x), '{}') FROM unnest(data_labels.categories || ARRAY[$6]::text[]) AS x), \
-            note = $4, set_by = $5, set_at = NOW()",
-        &[&l.app_slug, &l.table_id, &l.field, &note, &by, &category],
-    )?;
+    scaffoldry_data::labels::add_category(tx, &l.app_slug, &l.table_id, &l.field, category, note, by)?;
     Ok(())
 }
 
