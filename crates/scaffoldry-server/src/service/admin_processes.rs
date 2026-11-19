@@ -72,7 +72,7 @@ fn problem_words(code: &str) -> String {
     .to_string()
 }
 
-fn query_flag(q: &HashMap<String, String>, key: &str) -> Result<Option<bool>, ServiceError> {
+pub(crate) fn query_flag(q: &HashMap<String, String>, key: &str) -> Result<Option<bool>, ServiceError> {
     match q.get(key).map(String::as_str) {
         None | Some("") => Ok(None),
         Some("true") => Ok(Some(true)),
@@ -82,7 +82,7 @@ fn query_flag(q: &HashMap<String, String>, key: &str) -> Result<Option<bool>, Se
 }
 
 /// The offset a cursor names, and the page size: 1 to 200, 50 unless asked.
-fn page_args(q: &HashMap<String, String>) -> Result<(usize, usize), ServiceError> {
+pub(crate) fn page_args(q: &HashMap<String, String>) -> Result<(usize, usize), ServiceError> {
     let offset = match q.get("cursor").filter(|c| !c.is_empty()) {
         Some(c) => decode_cursor(c)?,
         None => 0,
@@ -94,7 +94,7 @@ fn page_args(q: &HashMap<String, String>) -> Result<(usize, usize), ServiceError
     Ok((offset, limit))
 }
 
-fn page_of(rows: Vec<Value>, next: Option<usize>) -> Value {
+pub(crate) fn page_of(rows: Vec<Value>, next: Option<usize>) -> Value {
     json!({ "rows": rows, "next_cursor": next.map(encode_cursor) })
 }
 

@@ -46,6 +46,10 @@ fn live_page(slug: &str, page_id: &str, state: &SharedState) -> Result<AppPage, 
 
 fn live_custom(slug: &str, page_id: &str, state: &SharedState) -> Result<Custom, ServiceError> {
     let page = live_page(slug, page_id, state)?;
+    // An administrator can turn a page off (`pages.disabled`). It then renders nowhere and answers no call.
+    if crate::service::admin_audit::page_disabled(state, slug, page_id) {
+        return Err(ServiceError::forbidden(crate::service::admin_audit::PAGE_DISABLED));
+    }
     match page.kind.clone() {
         PageKind::Custom { source_sha256, grants, format, .. } => Ok(Custom { page, source_sha256, grants, format }),
         PageKind::View { .. } => Err(ServiceError::BadRequest(format!("The page '{page_id}' shows a view. Only a custom page has a document"))),

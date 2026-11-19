@@ -111,7 +111,13 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "platform.contact_email" => value.as_str().is_some_and(|s| s.len() <= 255 && s.contains('@') && !s.contains(char::is_whitespace)),
         // Left empty. An institution that adds a check names it here, and the code calls `guests::captcha_ok`.
         "guests.captcha_hook" => value.is_null() || value.is_string(),
-        "mcp.disabled_tools" | "pages.disabled" | "jobs.schedules_disabled" | "flows.disabled" | "forms.disabled" => {
+        // A tool is turned off by its registered name. An entry that is no tool would turn off nothing and look like a control.
+        "mcp.disabled_tools" => value.as_array().is_some_and(|arr| arr.iter().all(|v| v.as_str().is_some_and(|n| crate::service::tools::TOOLS.iter().any(|t| t.name == n)))),
+        // A page is `app_slug/page_id`. At most 200 are listed.
+        "pages.disabled" => value.as_array().is_some_and(|arr| {
+            arr.len() <= 200 && arr.iter().all(|v| v.as_str().and_then(|k| k.split_once('/')).is_some_and(|(app, page)| !app.is_empty() && !page.is_empty() && !page.contains('/')))
+        }),
+        "jobs.schedules_disabled" | "flows.disabled" | "forms.disabled" => {
             value.as_array().is_some_and(|arr| arr.iter().all(|v| v.is_string()))
         }
         // The shape of these two is checked in full, with a path, where the state is known.
@@ -199,6 +205,13 @@ async fn put_setting(
         }
     }
 
+    // The error names the entry that is not a tool, so the person can fix it.
+    if key == "mcp.disabled_tools" {
+        let unknown = payload.as_array().and_then(|a| a.iter().filter_map(Value::as_str).find(|n| !crate::service::tools::TOOLS.iter().any(|t| t.name == *n)));
+        if let Some(name) = unknown {
+            return ServiceError::bad_request(format!("'{name}' is not a tool. Use a name from the tool list")).into_pair().into_response();
+        }
+    }
     // Closed list. Reject any other key with 400. Validate value type.
     if !ALLOWED_KEYS.contains(&key.as_str()) || !validate_setting(&key, &payload) {
         return ServiceError::bad_request(format!("Invalid setting key or value: '{}'", key)).into_pair()

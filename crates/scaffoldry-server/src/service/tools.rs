@@ -90,7 +90,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "governance_report",
-        description: "Show a governance report. ledger: verify the hash chain. oscal: the OSCAL 1.1.2 component-definition with proofs. framework: the component catalog's schema, tokens and boundaries.",
+        description: "Show a governance report. ledger: verify the hash chain. oscal: the OSCAL 1.1.2 component-definition with proofs. framework: the component schema, tokens and boundaries.",
         input_schema: schema_governance_report,
         scope: Scope::SignedIn,
         read_only: true,
@@ -162,7 +162,7 @@ Tool {
     },
     Tool {
         name: "get_page",
-        description: "Get a custom page as one HTML document for a sandboxed frame; it holds no data and uses page_call. Without page_id, list the app's pages with their grants, format and libraries.",
+        description: "Get a custom page as one HTML document for a sandboxed frame; it uses page_call. Without page_id, list the app's pages with their grants, format and libraries.",
         input_schema: schema_get_page,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -258,7 +258,7 @@ Tool {
     },
     Tool {
         name: "get_agent_kit",
-        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. Writes nothing. Ask the person first.",
+        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. Ask the person first.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
@@ -391,6 +391,13 @@ Tool {
         scope: Scope::SignedIn,
         read_only: true,
         run: library_tools::run_list_questions,
+    },    Tool {
+        name: "admin_inventory",
+        description: "List a page of rows from an admin screen. Platform Admin only. Changes nothing.",
+        input_schema: schema_admin_inventory,
+        scope: Scope::PlatformAdmin,
+        read_only: true,
+        run: run_admin_inventory,
     },
 ];
 
@@ -400,6 +407,10 @@ pub fn call(caller: &AuthUser, origin: &Origin, name: &str, args: Value, state: 
         .iter()
         .find(|t| t.name == name)
         .ok_or_else(|| ServiceError::NotFound(format!("Tool '{name}' is not registered")))?;
+    // An administrator can turn a tool off. That is refused before anything else, so the caller learns nothing about the tool's scope.
+    if crate::service::admin_audit::tool_disabled(state, name) {
+        return Err(ServiceError::forbidden(crate::service::admin_audit::TOOL_DISABLED));
+    }
     let args = if args.is_null() { json!({}) } else { args };
 
     match tool.scope {
@@ -552,10 +563,7 @@ fn schema_list_datasets() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "department": {
-                "type": "string",
-                "description": "Department"
-            }
+            "department": { "type": "string" }
         }
     })
 }
@@ -771,7 +779,7 @@ fn schema_delete_view() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "view_id": { "type": "string", "description": "The view to delete" }
+            "view_id": { "type": "string" }
         },
         "required": ["app_slug", "view_id"]
     })
@@ -808,7 +816,7 @@ fn schema_get_job() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "job_id": { "type": "string", "description": "UUID of the job" }
+            "job_id": { "type": "string" }
         },
         "required": ["job_id"]
     })
@@ -840,7 +848,7 @@ fn schema_cancel_job() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "job_id": { "type": "string", "description": "UUID of the job" }
+            "job_id": { "type": "string" }
         },
         "required": ["job_id"]
     })
@@ -926,7 +934,7 @@ fn schema_get_page() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "page_id": { "type": "string", "description": "Leave out to list the pages" }
+            "page_id": { "type": "string" }
         },
         "required": ["app_slug"]
     })
@@ -937,7 +945,7 @@ fn schema_page_call() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "page_id": { "type": "string", "description": "Page id from get_page" },
+            "page_id": { "type": "string" },
             "op": { "type": "string", "description": "list, get, create, update, remove, settings_get, or settings_set" },
             "table_id": { "type": "string" },
             "record_id": { "type": "string", "description": "For get, update, remove" },
@@ -1001,8 +1009,8 @@ fn schema_update_record() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "record_id": { "type": "string", "description": "Record id" },
-            "version": { "type": "integer", "description": "The version you read" },
+            "record_id": { "type": "string" },
+            "version": { "type": "integer" },
             "data": { "type": "object", "description": "Fields to change. null clears one" }
         },
         "required": ["app_slug", "record_id", "version", "data"]
@@ -1014,8 +1022,8 @@ fn schema_delete_record() -> Value {
         "type": "object",
         "properties": {
             "app_slug": { "type": "string" },
-            "record_id": { "type": "string", "description": "Record id" },
-            "version": { "type": "integer", "description": "The version you read" }
+            "record_id": { "type": "string" },
+            "version": { "type": "integer" }
         },
         "required": ["app_slug", "record_id", "version"]
     })
@@ -1245,7 +1253,7 @@ fn schema_list_proposals() -> Value {
 fn schema_get_proposal() -> Value {
     json!({
         "type": "object",
-        "properties": { "proposal_id": { "type": "string", "description": "UUID of the proposal" } },
+        "properties": { "proposal_id": { "type": "string" } },
         "required": ["proposal_id"]
     })
 }
@@ -1254,7 +1262,7 @@ fn schema_decide_proposal() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "proposal_id": { "type": "string", "description": "UUID of the proposal" },
+            "proposal_id": { "type": "string" },
             "decision": { "type": "string", "description": "approve or reject" },
             "rationale": { "type": "string", "description": "Why. Recorded in the ledger" },
             "digest": { "type": "string", "description": "To approve: the digest from get_proposal" }
@@ -1530,8 +1538,8 @@ fn schema_aggregate_records() -> Value {
             "table_id": { "type": "string", "description": "From describe_app" },
             "function": { "type": "string", "enum": ["count", "sum", "avg", "min", "max", "count_distinct", "filled", "empty", "unique"], "description": "count_distinct (or unique), filled and empty fit any type" },
             "field": { "type": "string", "description": "Not for count" },
-            "filter": { "type": "object", "description": "Filter on indexed fields" },
-            "group_by": { "type": "string", "description": "Indexed field to group by" },
+            "filter": { "type": "object" },
+            "group_by": { "type": "string" },
             "group_by2": { "type": "string", "description": "Second indexed field, inside the first" },
             "bucket": { "type": "string", "enum": ["day", "week", "month", "quarter", "year"], "description": "Buckets a date group_by, in the institution's time zone" }
         },
@@ -1666,4 +1674,25 @@ fn run_export_records(
         "export_id": export_id.to_string(),
         "download_url": format!("/api/v1/apps/{}/exports/{}/download", app_slug, export_id),
     }))
+}
+
+// ---------------------------------------------------------------------------------------------
+// admin_inventory (admin console phase 7)
+// ---------------------------------------------------------------------------------------------
+
+fn schema_admin_inventory() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "kind": { "type": "string", "enum": crate::service::admin_audit::INVENTORY_KINDS },
+            "filter": { "type": "object", "description": "The screen's route filters" },
+            "limit": { "type": "integer" },
+            "cursor": { "type": "string" }
+        },
+        "required": ["kind"]
+    })
+}
+
+fn run_admin_inventory(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    crate::service::admin_audit::inventory(caller, &args, state)
 }

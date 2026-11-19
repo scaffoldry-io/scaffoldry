@@ -271,6 +271,7 @@ const EXPECTED: &[(&str, bool, bool, bool)] = &[
     ("find_library_rules", true, false, false),
     ("propose_library_rules", false, false, false),
     ("list_library_questions", true, false, false),
+    ("admin_inventory", true, false, false),
 ];
 
 #[tokio::test]

@@ -27,6 +27,8 @@ export interface DataTableProps<TData> {
   filters?: ReactNode;
   emptyState?: ReactNode;
   filterValues?: Record<string, unknown>;
+  /** The toolbar's CSV button saves the rows loaded so far. A screen with a server-side export turns it off. */
+  clientExport?: boolean;
 }
 
 export function DataTable<TData>({
@@ -37,6 +39,7 @@ export function DataTable<TData>({
   filters,
   emptyState,
   filterValues,
+  clientExport = true,
 }: DataTableProps<TData>) {
   const [rows, setRows] = useState<TData[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
@@ -146,16 +149,18 @@ export function DataTable<TData>({
           </div>
           {filters}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleExportCsv}
-            disabled={rows.length === 0}
-            className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition"
-          >
-            Export CSV
-          </button>
-        </div>
+        {clientExport && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={rows.length === 0}
+              className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition"
+            >
+              Export CSV
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Main Table / States */}

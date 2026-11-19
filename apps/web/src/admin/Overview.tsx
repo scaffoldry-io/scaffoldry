@@ -1,4 +1,4 @@
-import { useAsync, ErrorState, Skeleton, PageHeader, Banner } from "../ui";
+import { useAsync, ErrorState, Skeleton, PageHeader, Banner, ControlLabel } from "../ui";
 import { apiClient, type AdminOverviewData } from "../api";
 
 /** An age in the largest whole unit: `2 days`, `5 hours`, `12 minutes`. */
@@ -240,6 +240,43 @@ export function Overview() {
               {data.ledger.head_hash || "Genesis"}
             </span>
           </div>
+          {(data.ledger.recent?.length ?? 0) > 0 && (
+            <div className="mt-4" data-testid="admin-overview-recent-changes">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Recent changes</span>
+              <ul className="mt-1 space-y-1.5">
+                {data.ledger.recent?.map((c) => (
+                  <li key={c.sequence} className="text-xs text-slate-700 dark:text-slate-300">
+                    <span className="font-medium">
+                      <ControlLabel id={c.oscal_control_id} title={c.control_title} />
+                    </span>
+                    <span className="block text-slate-500 dark:text-slate-400">
+                      {c.decision_type} by {c.principal}. {c.rationale}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* TOKENS CARD (admin console phase 7) */}
+        <div
+          data-testid="admin-overview-tokens-card"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+        >
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Active tokens</span>
+          {Object.keys(data.people.active_tokens ?? {}).length === 0 ? (
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">No token is active.</p>
+          ) : (
+            <div className="space-y-2 mt-4">
+              {Object.entries(data.people.active_tokens).map(([kind, n]) => (
+                <div key={kind} className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 dark:text-slate-400">{kind}</span>
+                  <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{n}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* DATA CONNECTIONS CARD (connections phase 6) */}

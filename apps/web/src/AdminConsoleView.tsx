@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ConfirmAction, PageHeader } from "./ui";
 import { NotificationDefaultsEditor } from "./NotificationPrefs";
-import { DecisionLedgerView } from "./DecisionLedgerView";
 import { UnitPositions } from "./admin/UnitPositions";
 import { LedgerEntryItem, OrganizationNode, OrgRole, Persona, RegisteredApp, Workspace } from "./types";
 import { apiClient } from "./api";
@@ -12,9 +11,9 @@ export interface AdminConsoleViewProps {
   realAdmin: Persona | null;
   handleStopImpersonation: () => void;
   navigateTo: (path: string) => void;
-  adminTab: "org" | "ledger" | "impersonation" | "settings";
+  adminTab: "org" | "impersonation" | "settings";
   apps: RegisteredApp[];
-  /** No longer read here: the ledger view loads the ledger itself, so the count and the chain check are the server's. */
+  /** No longer read here: the Audit section loads the ledger itself, so the count and the chain check are the server's. */
   ledger?: LedgerEntryItem[];
   setNotificationToast: React.Dispatch<React.SetStateAction<string | null>>;
   /** Shows a failure. Without it a failure goes to `setNotificationToast`. */
@@ -25,7 +24,6 @@ export interface AdminConsoleViewProps {
 
 const PAGE_TITLES: Record<AdminConsoleViewProps["adminTab"], { title: string; description: string }> = {
   org: { title: "Organization", description: "Institutional hierarchical scope tree and sovereign administrative unit governance." },
-  ledger: { title: "Decision Ledger", description: "Every decision, chained so that any change to the record shows." },
   impersonation: { title: "Impersonation", description: "Act as another person for support, with every action recorded." },
   settings: { title: "Platform Settings", description: "Authoritative configuration stored in PostgreSQL. Every edit is audited in the cryptographic ledger." },
 };
@@ -503,10 +501,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({
         </div>
       )}
 
-      {/* ADMIN TAB 4: CRYPTOGRAPHIC DECISION AUDIT LEDGER */}
-      {adminTab === "ledger" && (
-        <DecisionLedgerView />
-      )}
+      {/* The decision ledger is the Audit section: admin/Audit.tsx. */}
 
       {/* ADMIN TAB 5: INSTITUTIONAL IDENTITY & IMPERSONATION HUB */}
       {adminTab === "impersonation" && (

@@ -41,6 +41,7 @@ pub fn example(name: &str) -> Value {
         "delete_record" => json!({ "app_slug": "scholarships", "record_id": "rec_123", "version": 3 }),
         "propose_app_change" => json!({ "workspace_id": "ws-physics-optics", "app_slug": "scholarships", "summary": "Add an amount column" }),
         "get_agent_kit" => json!({}),
+        "admin_inventory" => json!({ "kind": "users", "limit": 50 }),
         "explain_access" => json!({ "object": "app:scholarships" }),
         "draft_access_change" => json!({ "kind": "revoke", "change": { "grant_id": 12 }, "reason": "The audit is finished", "preview": true }),
         "access_suggestions" => json!({}),

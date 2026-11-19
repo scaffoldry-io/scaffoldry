@@ -203,8 +203,12 @@ async fn handle_mcp_request(
         }),
 
         "tools/list" => {
+            // A tool for a Platform Admin is not listed to anyone else, and a tool an administrator turned off is listed to no one.
+            let is_admin = crate::service::admin::require_platform_admin(&caller, &state).is_ok();
             let listed: Vec<Value> = tools::TOOLS
                 .iter()
+                .filter(|t| is_admin || !matches!(t.scope, tools::Scope::PlatformAdmin))
+                .filter(|t| !crate::service::admin_audit::tool_disabled(&state, t.name))
                 // A limited token sees the tools its scope allows and no others.
                 .filter(|t| scope.as_ref().is_none_or(|s| crate::service::token_scope::lists_tool(s, t.name)))
                 .map(|t| {

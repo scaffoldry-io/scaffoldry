@@ -46,6 +46,7 @@ pub mod repository_supervision;
 pub mod repository_calc;
 pub mod repository_index;
 pub mod repository_links;
+pub mod repository_audit;
 pub mod repository_people;
 pub mod repository_proposals;
 pub mod repository_trash;

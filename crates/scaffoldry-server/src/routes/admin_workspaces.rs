@@ -131,7 +131,11 @@ async fn list_workspaces(
     Query(query): Query<AdminWorkspacesQuery>,
 ) -> Result<impl axum::response::IntoResponse, ServiceError> {
     let _caller = admin(&state, &headers)?;
+    Ok((StatusCode::OK, Json(workspaces_page(&state, &query)?)))
+}
 
+/// One page of workspaces for the console. The admin inventory tool calls this too, so the rows are the same.
+pub(crate) fn workspaces_page(state: &SharedState, query: &AdminWorkspacesQuery) -> Result<serde_json::Value, ServiceError> {
     let offset = query
         .cursor
         .as_deref()
@@ -161,7 +165,7 @@ async fn list_workspaces(
                 }
             }
             if let Some(ref u) = query.unit {
-                let unit_name = get_workspace_unit_name(&state, ws);
+                let unit_name = get_workspace_unit_name(state, ws);
                 let org_id_str = ws.organization_id.map(|id| id.to_string()).unwrap_or_default();
                 if !unit_name.eq_ignore_ascii_case(u)
                     && !org_id_str.eq_ignore_ascii_case(u)
@@ -226,7 +230,7 @@ async fn list_workspaces(
 
     let mut rows: Vec<AdminWorkspaceRow> = Vec::with_capacity(page.len());
     for ws in page {
-        let unit_name = get_workspace_unit_name(&state, &ws);
+        let unit_name = get_workspace_unit_name(state, &ws);
         let collabs = collabs_guard.get(&ws.id).cloned().unwrap_or_default();
         let owners: Vec<String> = collabs
             .iter()
@@ -265,13 +269,10 @@ async fn list_workspaces(
         None
     };
 
-    Ok((
-        StatusCode::OK,
-        Json(json!({
-            "rows": rows,
-            "next_cursor": next_cursor,
-        })),
-    ))
+    Ok(json!({
+        "rows": rows,
+        "next_cursor": next_cursor,
+    }))
 }
 
 async fn get_workspace(
@@ -536,7 +537,11 @@ async fn list_apps(
     Query(query): Query<AdminAppsQuery>,
 ) -> Result<impl axum::response::IntoResponse, ServiceError> {
     let _caller = admin(&state, &headers)?;
+    Ok((StatusCode::OK, Json(apps_page(&state, &query)?)))
+}
 
+/// One page of apps for the console. The admin inventory tool calls this too, so the rows are the same.
+pub(crate) fn apps_page(state: &SharedState, query: &AdminAppsQuery) -> Result<serde_json::Value, ServiceError> {
     let offset = query
         .cursor
         .as_deref()
@@ -579,7 +584,7 @@ async fn list_apps(
 
     let mut rows: Vec<AdminAppRow> = Vec::with_capacity(page.len());
     for m in page {
-        let (records_per_table, _) = get_records_per_table(&state, &m)?;
+        let (records_per_table, _) = get_records_per_table(state, &m)?;
         rows.push(AdminAppRow {
             slug: m.slug.clone(),
             title: m.title.clone(),
@@ -599,13 +604,10 @@ async fn list_apps(
         None
     };
 
-    Ok((
-        StatusCode::OK,
-        Json(json!({
-            "rows": rows,
-            "next_cursor": next_cursor,
-        })),
-    ))
+    Ok(json!({
+        "rows": rows,
+        "next_cursor": next_cursor,
+    }))
 }
 
 /// Every grant that names a person, for an administrator to review.
