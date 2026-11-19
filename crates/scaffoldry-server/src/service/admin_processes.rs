@@ -211,8 +211,9 @@ pub fn detail(caller: &AuthUser, rule_id: &str, state: &SharedState) -> Result<V
 }
 
 /// `GET /admin/processes/{rule_id}/versions/{v}`: one version as it was, read-only.
-pub fn version(caller: &AuthUser, rule_id: &str, v: i32, state: &SharedState) -> Result<Value, ServiceError> {
+pub fn version(caller: &AuthUser, rule_id: &str, v: &str, state: &SharedState) -> Result<Value, ServiceError> {
     require_platform_admin(caller, state)?;
+    let v: i32 = v.parse().map_err(|_| ServiceError::BadRequest("The version is a whole number".to_string()))?;
     find_rule(state, rule_id)?;
     let rows = state.repository.rule_versions(rule_id).map_err(storage)?;
     let row = rows.iter().find(|r| r.version == v).ok_or_else(|| ServiceError::NotFound(format!("There is no version {v} of this process")))?;

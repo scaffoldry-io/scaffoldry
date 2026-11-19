@@ -50,9 +50,9 @@ async fn detail(State(state): State<SharedState>, user: Option<Extension<AuthUse
     blocking(move || svc::detail(&who, &rule_id, &state)).await
 }
 
-async fn version(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path((rule_id, v)): Path<(String, i32)>) -> Reply {
+async fn version(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path((rule_id, v)): Path<(String, String)>) -> Reply {
     let who = caller(user, &headers, &state)?;
-    blocking(move || svc::version(&who, &rule_id, v, &state)).await
+    blocking(move || svc::version(&who, &rule_id, &v, &state)).await
 }
 
 async fn patch(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path(rule_id): Path<String>, body: Option<Json<Value>>) -> Reply {

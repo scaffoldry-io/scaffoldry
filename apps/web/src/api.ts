@@ -2935,15 +2935,6 @@ export interface AdminFlow {
   state: "Active" | "Disabled" | "Tripped";
 }
 
-function queryOf(params: Record<string, string | undefined>): string {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== "") q.set(k, v);
-  }
-  const qs = q.toString();
-  return qs ? `?${qs}` : "";
-}
-
 export interface AdminProcessRow {
   rule_id: string;
   name: string;
