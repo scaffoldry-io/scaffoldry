@@ -85,11 +85,10 @@ export function NotificationPrefsPanel() {
  */
 export function NotificationDefaultsEditor() {
   const { data, error, setError } = useNotificationPrefs();
-  const [values, setValues] = useState<Record<string, string>>({});
+  // Only the admin's edits are state. The stored defaults fill the rest when they arrive, so a late load never overwrites an edit.
+  const [edits, setEdits] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
-  useEffect(() => {
-    if (data) setValues(Object.fromEntries(data.kinds.map((k) => [k.kind, k.default])));
-  }, [data]);
+  const values: Record<string, string> = { ...Object.fromEntries((data?.kinds ?? []).map((k) => [k.kind, k.default])), ...edits };
 
   const save = async () => {
     setSaved(false);
@@ -115,7 +114,7 @@ export function NotificationDefaultsEditor() {
               <tr key={k.kind} className="border-t border-slate-100 dark:border-slate-800">
                 <td className="py-1 pr-2">{k.label}</td>
                 <td className="py-1">
-                  <select aria-label={k.label} value={values[k.kind] ?? k.default} onChange={(e) => setValues((v) => ({ ...v, [k.kind]: e.target.value }))} className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-1 py-0.5">
+                  <select aria-label={k.label} value={values[k.kind] ?? k.default} onChange={(e) => setEdits((v) => ({ ...v, [k.kind]: e.target.value }))} className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-1 py-0.5">
                     {CHANNEL_WORDS.filter(([value]) => !(k.forced && value === "off")).map(([value, words]) => (
                       <option key={value} value={value}>
                         {words}
