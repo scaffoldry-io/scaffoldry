@@ -9,6 +9,8 @@ IfNo:   The agent sees a tool list and one-line descriptions. It guesses at the 
 Checks: Phase 1 only. The rest is design. Each later phase names its failing test first.
 ```
 
+Approved by Johann on 2026-11-19. Scheduled in `README.md`: data-layer phases 1 and 2 are rows 193 and 194, and MCP guidance phases 2 to 4 are rows 195 to 197.
+
 ## The decision
 
 You asked that the MCP server expose as much of the business logic and thinking as can be exposed securely, so that an agent can help a person make an informed choice. You also asked that prompts be woven into the service, to keep the agent focused.
