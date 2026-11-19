@@ -50,7 +50,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "get_workspace",
-        description: "Get a workspace's settings and its collaborators.",
+        description: "Get a workspace's settings and collaborators.",
         input_schema: schema_get_workspace,
         scope: Scope::Workspace("access_workspace"),
         read_only: true,
@@ -90,7 +90,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "governance_report",
-        description: "Show a governance report. ledger: verify the hash chain. oscal: the OSCAL 1.1.2 component-definition with proofs. framework: the component schema, tokens and boundaries.",
+        description: "Show a governance report. ledger: verify the hash chain. oscal: OSCAL 1.1.2 component-definition with proofs. framework: component schema, tokens and boundaries.",
         input_schema: schema_governance_report,
         scope: Scope::SignedIn,
         read_only: true,
@@ -114,7 +114,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_apps",
-        description: "List the apps in a workspace: slug, title, and table names.",
+        description: "List the apps in a workspace: slug, title and table names.",
         input_schema: schema_list_apps,
         scope: Scope::Workspace("access_workspace"),
         read_only: true,
@@ -122,7 +122,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "describe_app",
-        description: "Read the stored manifest of an app and its version.",
+        description: "Read an app's stored manifest and version.",
         input_schema: schema_describe_app,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -138,7 +138,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_records",
-        description: "List a page of records, up to 200. Pass next_cursor back as cursor. Filter and sort need 10,000 rows or fewer.",
+        description: "List a page of records, up to 200. Pass next_cursor as cursor. Filter and sort need 10,000 rows or fewer.",
         input_schema: schema_list_records,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -146,7 +146,7 @@ pub static TOOLS: &[Tool] = &[
     },
         Tool {
         name: "get_view_data",
-        description: "Get a kanban or group-by view's grouped records with option labels and colors.",
+        description: "Get a kanban or group-by view's records, grouped, with option labels and colors.",
         input_schema: schema_get_view_data,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -154,7 +154,7 @@ pub static TOOLS: &[Tool] = &[
     },
 Tool {
         name: "get_record",
-        description: "Get one record with its version, or with history: true its changes, newest first, with who made each. A field you may not read shows only that it changed.",
+        description: "Get one record and its version, or with history: true its changes, newest first, and who made each. A field you may not read shows only that it changed.",
         input_schema: schema_get_record,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -162,7 +162,7 @@ Tool {
     },
     Tool {
         name: "get_page",
-        description: "Get a custom page as one HTML document for a sandboxed frame; it uses page_call. Without page_id, list the app's pages with their grants, format and libraries.",
+        description: "Get a custom page as one HTML document for a sandboxed frame; it uses page_call. Without page_id, list the app's pages with grants, format and libraries.",
         input_schema: schema_get_page,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -178,7 +178,7 @@ Tool {
     },
     Tool {
         name: "update_record",
-        description: "Change fields of a record. Send the version you read. Fields you do not name keep their value.",
+        description: "Change fields of a record. Send the version you read. Other fields keep their value.",
         input_schema: schema_update_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
@@ -186,7 +186,7 @@ Tool {
     },
     Tool {
         name: "delete_record",
-        description: "Move a record to trash. It can be restored. Send the version you read.",
+        description: "Move a record to trash; it can be restored. Send the version you read.",
         input_schema: schema_delete_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
@@ -194,7 +194,7 @@ Tool {
     },
     Tool {
         name: "propose_app_change",
-        description: "Propose a new app or a change to one: the whole manifest and each custom page's source. Nothing changes until a person approves. Returns the id, checks, changes and approvers.",
+        description: "Propose a new app or a change to one: the whole manifest and each custom page's source. Nothing changes until a person approves. Returns id, checks, changes and approvers.",
         input_schema: schema_propose_app_change,
         scope: Scope::Workspace("access_workspace"),
         read_only: false,
@@ -210,7 +210,7 @@ Tool {
     },
     Tool {
         name: "access_suggestions",
-        description: "List ways to simplify who has access: covered memberships, position grants, ended or unused grants, unmasked fields.",
+        description: "List ways to simplify access: covered memberships, position grants, ended or unused grants, unmasked fields.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
@@ -218,7 +218,7 @@ Tool {
     },
     Tool {
         name: "request_access",
-        description: "Ask for access you were refused. The person confirms; a rule or approver decides.",
+        description: "Ask for access you were refused. The person confirms; a rule or approver decides. explain: true says why instead and files nothing.",
         input_schema: schema_request_access,
         scope: Scope::SignedIn,
         read_only: false,
@@ -242,7 +242,7 @@ Tool {
     },
     Tool {
         name: "decide_proposal",
-        description: "Approve or reject a proposal; to approve send the digest you reviewed. Owner or admin only. A flagged check needs a second person.",
+        description: "Approve or reject a proposal; to approve send the digest you reviewed. Owner or admin. A flagged check needs a second person.",
         input_schema: schema_decide_proposal,
         scope: Scope::Proposal("manage_workspace"),
         read_only: false,
@@ -250,7 +250,7 @@ Tool {
     },
     Tool {
         name: "preview_proposal",
-        description: "Show a proposed change as an app before it is live: a 30-minute read-only token, the app, and its custom pages.",
+        description: "Show a proposed change as an app before it is live: a 30-minute read-only token, the app and its custom pages.",
         input_schema: schema_get_proposal,
         scope: Scope::Proposal("access_workspace"),
         read_only: false,
@@ -258,7 +258,7 @@ Tool {
     },
     Tool {
         name: "get_agent_kit",
-        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder, and the server version. Ask the person first.",
+        description: "Get setup text for an AI tool: an AGENTS.md section, a skill folder and the server version. Ask the person first.",
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
@@ -298,7 +298,7 @@ Tool {
     },
     Tool {
         name: "list_views",
-        description: "List an app's views: your personal ones and every collaborative and locked one.",
+        description: "List an app's views: your personal ones and all collaborative and locked ones.",
         input_schema: schema_list_views,
         scope: Scope::App(AppAction::Read),
         read_only: true,
@@ -338,7 +338,7 @@ Tool {
     },
     Tool {
         name: "cancel_job",
-        description: "Cancel a running or queued job (only creator or Platform Admin).",
+        description: "Cancel a running or queued job. Creator or Platform Admin only.",
         input_schema: schema_cancel_job,
         scope: Scope::SignedIn,
         read_only: false,
@@ -1237,9 +1237,11 @@ fn schema_request_access() -> Value {
             "role": { "type": "string" },
             "clearance": { "type": "string" },
             "reason": { "type": "string" },
-            "days": { "type": "integer" }
+            "days": { "type": "integer" },
+            "explain": { "type": "boolean" },
+            "person": { "type": "string" }
         },
-        "required": ["object_kind", "object_id", "role", "reason", "days"]
+        "required": ["object_kind", "object_id", "role"]
     })
 }
 
@@ -1328,6 +1330,10 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
 }
 
 fn run_request_access(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    if args.get("explain").and_then(Value::as_bool) == Some(true) {
+        return crate::service::access_requests::explain(state, caller, &args);
+    }
+    crate::service::access_requests::own_only(caller, &args)?;
     crate::service::access_requests::file(state, caller, origin, &args)
 }
 
