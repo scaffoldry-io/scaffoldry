@@ -1,0 +1,62 @@
+# A throwaway playtest of the whole product: the one image beside a Postgres sidecar, in one Cloud Run instance.
+# Deployed by .github/workflows/playtest.yml, which fills in ${IMAGE}. See docs/operations/playtest-gcp.md.
+#
+# One instance only: each instance has its own database, so a second one would hold different data. The instance
+# stays up while deployed (minScale 1), because scaling to zero wipes the database. Hibernate it when done.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: scaffoldry-playtest
+  annotations:
+    run.googleapis.com/launch-stage: BETA
+    # Only Google accounts granted access through Identity-Aware Proxy reach the service.
+    run.googleapis.com/iap-enabled: "true"
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/container-dependencies: '{"app":["postgres"]}'
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - name: app
+          image: ${IMAGE}
+          command: ["/usr/local/bin/playtest-entrypoint.sh"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              # The sidecar is reachable only inside this instance, on localhost.
+              value: postgres://scaffoldry:playtest@localhost:5432/scaffoldry
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 60
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: scaffoldry
+            - name: POSTGRES_PASSWORD
+              value: playtest
+            - name: POSTGRES_DB
+              value: scaffoldry
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: 5432
+            periodSeconds: 2
+            failureThreshold: 60

@@ -1,0 +1,68 @@
+name: GCP Playtest
+
+# Manual only. Deploys a throwaway playtest of the whole product, or removes it.
+# See docs/operations/playtest-gcp.md.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy or hibernate"
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - hibernate
+
+permissions:
+  contents: read
+  id-token: write  # Workload Identity Federation
+
+concurrency:
+  group: gcp-playtest
+  cancel-in-progress: false
+
+jobs:
+  playtest:
+    runs-on: ubuntu-latest
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
+      ACTION: ${{ inputs.action }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push the one image
+        if: env.ACTION == 'deploy'
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          IMAGE="${REGISTRY}/scaffoldry:${GITHUB_SHA}"
+          docker build -f deploy/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy the playtest service
+        if: env.ACTION == 'deploy'
+        run: |
+          envsubst '${IMAGE}' < deploy/cloudrun-playtest.yaml > /tmp/service.yaml
+          gcloud run services replace /tmp/service.yaml --region="$REGION"
+          URL=$(gcloud run services describe scaffoldry-playtest --region="$REGION" --format='value(status.url)')
+          echo "Playtest URL: $URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "The sign-in token is in the service log: search for PLAYTEST SIGN-IN TOKEN." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hibernate the playtest service
+        if: env.ACTION == 'hibernate'
+        run: |
+          gcloud run services delete scaffoldry-playtest --region="$REGION" --quiet
+          echo "The playtest service is deleted. Nothing is running." >> "$GITHUB_STEP_SUMMARY"
