@@ -2,14 +2,14 @@ import { useMemo, useState } from "react";
 import {
   apiClient,
   ApiError,
-  type OscalRequirement,
+  type OscalGap,
   type PolicyCaseResult,
   type PolicyCaseRow,
   type PolicyProblem,
   type PolicySimulation,
   type PolicyVersionRow,
 } from "../api";
-import { ConfirmAction, ControlLabel, EmptyState, ErrorState, PageHeader, Skeleton, StatusBadge, Tabs, useAsync } from "../ui";
+import { ConfirmAction, ControlLabel, Drawer, EmptyState, ErrorState, PageHeader, Skeleton, StatusBadge, Tabs, useAsync } from "../ui";
 import { downloadJson } from "./download";
 
 const buttonClass = "px-3 py-1.5 text-sm font-medium rounded border border-gray-300 dark:border-gray-700 disabled:opacity-50";
@@ -22,6 +22,7 @@ const TABS = [
   { id: "cases", label: "Test cases" },
   { id: "simulator", label: "Simulator" },
   { id: "oscal", label: "OSCAL requirements" },
+  { id: "coverage", label: "Coverage" },
 ];
 
 /** Each problem the server found in a source, one per line, with its place. */
@@ -50,7 +51,7 @@ function statusTone(status: string): "ok" | "warn" | "neutral" {
 /** A name for each control that a policy or a requirement mentions. */
 function useTitles() {
   const rows = useAsync(() => apiClient.adminOscalRequirements());
-  const titles = useMemo(() => Object.fromEntries((rows.data ?? []).filter((r) => r.title).map((r) => [r.control_id, r.title as string])), [rows.data]);
+  const titles = useMemo(() => Object.fromEntries((rows.data ?? []).filter((r) => r.control_title).map((r) => [r.control_id, r.control_title as string])), [rows.data]);
   return titles;
 }
 
@@ -487,16 +488,103 @@ function SimulatorTab() {
   );
 }
 
+const BASELINES = ["low", "moderate", "high"];
+const CATALOGS = [
+  { id: "sp800-53r5", label: "NIST SP 800-53 Rev 5" },
+  { id: "sp800-171r3", label: "NIST SP 800-171 Rev 3" },
+];
+
+function statusBadge(status: string | null) {
+  const tone = status === "implemented" ? "ok" : status === "partial" ? "warn" : status === "planned" ? "info" : status === "alternative" ? "accent1" : "neutral";
+  return <StatusBadge tone={tone} text={status ?? "none"} />;
+}
+
+/** What the drawer edits: a control chosen from the catalog, and the statement and status it already has. */
+interface Chosen {
+  control_id: string;
+  control_title: string;
+  family_title: string | null;
+  statement?: string;
+  status?: string;
+}
+
+/** The drawer that adds or edits one requirement. A control is chosen from the catalog. Free text is not accepted. */
+function RequirementDrawer({ open, preset, onClose, onSaved }: { open: boolean; preset: Chosen | null; onClose: () => void; onSaved: () => void }) {
+  const [query, setQuery] = useState("");
+  const [chosen, setChosen] = useState<Chosen | null>(preset);
+  const [statement, setStatement] = useState(preset?.statement ?? "");
+  const [status, setStatus] = useState(preset?.status ?? "implemented");
+  const found = useAsync(() => apiClient.searchOscalCatalog({ q: query, limit: 20 }), open && chosen === null, [query, open, chosen]);
+
+  if (!open) return null;
+  return (
+    <Drawer open={open} onClose={onClose} title={preset?.statement !== undefined ? "Edit requirement" : "Add a requirement"}>
+      <div className="space-y-3">
+        {chosen === null ? (
+          <>
+            <label htmlFor="control-search" className="block text-xs text-gray-500">Search controls</label>
+            <input id="control-search" className={`${inputClass} w-full`} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="A word from the title, or an id such as ac-2" />
+            {found.error ? <ErrorState error={found.error} onRetry={() => void found.reload()} /> : !found.data ? <Skeleton rows={3} /> : found.data.rows.length === 0 ? <EmptyState title="No control matches" description="Try another word." /> : (
+              <ul className="space-y-1">
+                {found.data.rows.map((r) => (
+                  <li key={r.control_id}>
+                    <button
+                      type="button"
+                      className="w-full text-left rounded border border-gray-200 dark:border-gray-800 px-2 py-1.5 text-sm"
+                      onClick={() => {
+                        setChosen({ control_id: r.control_id, control_title: r.control_title, family_title: r.family_title });
+                        if (r.has_requirement && r.status) setStatus(r.status);
+                      }}
+                    >
+                      <ControlLabel id={r.control_id} title={r.control_title} />
+                      <span className="block text-xs text-gray-500">{r.family_title}{r.has_requirement ? `, already ${r.status}` : ""}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <>
+            <label htmlFor="req-control" className="block text-xs text-gray-500">Control</label>
+            <input id="req-control" readOnly className={`${inputClass} w-full`} value={`${chosen.control_id.toUpperCase()} · ${chosen.control_title}`} />
+            {chosen.family_title && <p className="text-xs text-gray-500">{chosen.family_title}</p>}
+            {preset === null && (
+              <button type="button" className={buttonClass} onClick={() => setChosen(null)}>Choose another control</button>
+            )}
+            <label htmlFor="req-statement" className="block text-xs text-gray-500">Statement</label>
+            <textarea id="req-statement" rows={3} value={statement} onChange={(e) => setStatement(e.target.value)} className={`${inputClass} w-full`} />
+            <label htmlFor="req-status" className="block text-xs text-gray-500">Implementation status</label>
+            <select id="req-status" value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
+              {STATUSES.map((st) => (
+                <option key={st} value={st}>{st}</option>
+              ))}
+            </select>
+            {statement.trim() && (
+              <ConfirmAction
+                verb="Save"
+                target={chosen.control_id}
+                consequence="The statement and status go into the OSCAL document the institution exports."
+                onConfirm={async (reason) => {
+                  await apiClient.putOscalRequirement(chosen.control_id, { statement, status }, reason);
+                }}
+                onSuccess={onSaved}
+              />
+            )}
+          </>
+        )}
+      </div>
+    </Drawer>
+  );
+}
+
 function OscalTab() {
   const rows = useAsync(() => apiClient.adminOscalRequirements());
-  const [editing, setEditing] = useState<OscalRequirement | null>(null);
-  const [statement, setStatement] = useState("");
-  const [status, setStatus] = useState("implemented");
+  const [drawer, setDrawer] = useState<{ preset: Chosen | null } | null>(null);
   const [error, setError] = useState<unknown>(null);
 
   if (rows.error) return <ErrorState error={rows.error} onRetry={() => void rows.reload()} />;
   if (!rows.data) return <Skeleton rows={4} />;
-  const titles = Object.fromEntries(rows.data.filter((r) => r.title).map((r) => [r.control_id, r.title as string]));
 
   const exportDoc = async () => {
     setError(null);
@@ -509,7 +597,8 @@ function OscalTab() {
 
   return (
     <div className="space-y-3">
-      <div>
+      <div className="flex gap-2">
+        <button type="button" className={buttonClass} onClick={() => setDrawer({ preset: null })}>Add a requirement</button>
         <button type="button" className={buttonClass} onClick={() => void exportDoc()}>Export</button>
       </div>
       {error !== null && <ErrorState error={error} />}
@@ -518,6 +607,8 @@ function OscalTab() {
           <thead>
             <tr className="text-left text-xs text-gray-500">
               <th className="pr-3">Control</th>
+              <th className="pr-3">Family</th>
+              <th className="pr-3">Baselines</th>
               <th className="pr-3">Statement</th>
               <th className="pr-3">Status</th>
               <th className="pr-3">Policies</th>
@@ -528,56 +619,183 @@ function OscalTab() {
           <tbody>
             {rows.data.map((r) => (
               <tr key={r.control_id} className="border-t border-gray-200 dark:border-gray-800 align-top">
-                <td className="pr-3 py-1"><ControlLabel id={r.control_id} lookup={titles} /></td>
+                <td className="pr-3 py-1"><ControlLabel id={r.control_id} title={r.control_title} /></td>
+                <td className="pr-3">{r.family_title ?? "None"}</td>
+                <td className="pr-3">
+                  <span className="flex flex-wrap gap-1">{r.baselines.length === 0 ? "None" : r.baselines.map((b) => <StatusBadge key={b} tone="neutral" text={b} />)}</span>
+                </td>
                 <td className="pr-3">{r.statement}</td>
-                <td className="pr-3">{r.status}</td>
+                <td className="pr-3">{statusBadge(r.status)}</td>
                 <td className="pr-3">{r.policy_ids.length === 0 ? "None" : r.policy_ids.join(", ")}</td>
                 <td className="pr-3">{r.evidence_count} {r.evidence_count === 1 ? "entry" : "entries"}{r.latest_evidence ? `, latest ${r.latest_evidence}` : ""}</td>
                 <td>
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    aria-label={`Edit ${r.control_id}`}
-                    onClick={() => {
-                      setEditing(r);
-                      setStatement(r.statement);
-                      setStatus(r.status);
-                    }}
-                  >
-                    Edit
-                  </button>
+                  {r.control_title && (
+                    <button
+                      type="button"
+                      className={buttonClass}
+                      aria-label={`Edit ${r.control_id}`}
+                      onClick={() => setDrawer({ preset: { control_id: r.control_id, control_title: r.control_title as string, family_title: r.family_title, statement: r.statement, status: r.status } })}
+                    >
+                      Edit
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {editing && (
-        <div className="space-y-2 rounded border border-gray-200 dark:border-gray-800 p-3">
-          <h3 className="text-sm font-semibold"><ControlLabel id={editing.control_id} lookup={titles} /></h3>
-          <label htmlFor="req-statement" className="block text-xs text-gray-500">Statement</label>
-          <textarea id="req-statement" rows={3} value={statement} onChange={(e) => setStatement(e.target.value)} className={`${inputClass} w-full`} />
-          <label htmlFor="req-status" className="block text-xs text-gray-500">Implementation status</label>
-          <select id="req-status" value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+      {drawer && (
+        <RequirementDrawer
+          key={drawer.preset?.control_id ?? "new"}
+          open
+          preset={drawer.preset}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            void rows.reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CoverageTab() {
+  const [catalog, setCatalog] = useState("sp800-53r5");
+  const [baseline, setBaseline] = useState("moderate");
+  const [drawer, setDrawer] = useState<Chosen | null>(null);
+  const [extra, setExtra] = useState<OscalGap[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [more, setMore] = useState<unknown>(null);
+  const coverage = useAsync(() => apiClient.oscalCoverage(catalog, baseline), true, [catalog, baseline]);
+  const gaps = useAsync(() => apiClient.oscalCoverageGaps(catalog, baseline), true, [catalog, baseline]);
+
+  const loadMore = async (from: string) => {
+    setMore(null);
+    try {
+      const page = await apiClient.oscalCoverageGaps(catalog, baseline, from);
+      setExtra((e) => [...e, ...page.rows]);
+      setCursor(page.next_cursor);
+    } catch (e) {
+      setMore(e);
+    }
+  };
+  const reloadAll = () => {
+    setExtra([]);
+    setCursor(null);
+    void coverage.reload();
+    void gaps.reload();
+  };
+  const pick = (c: string) => {
+    setCatalog(c);
+    if (c !== "sp800-53r5") setBaseline("");
+    else if (baseline === "") setBaseline("moderate");
+    setExtra([]);
+    setCursor(null);
+  };
+
+  const c = coverage.data;
+  const scope = baseline ? `in ${baseline.charAt(0).toUpperCase()}${baseline.slice(1)}` : "in the catalog";
+  const gapRows = [...(gaps.data?.rows ?? []), ...extra];
+  const nextCursor = cursor ?? gaps.data?.next_cursor ?? null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-3">
+        <div>
+          <label htmlFor="cov-catalog" className="block text-xs text-gray-500">Catalog</label>
+          <select id="cov-catalog" className={inputClass} value={catalog} onChange={(e) => pick(e.target.value)}>
+            {CATALOGS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
           </select>
-          {statement.trim() && (
-            <ConfirmAction
-              verb="Save"
-              target={editing.control_id}
-              consequence="The statement and status go into the OSCAL document the institution exports."
-              onConfirm={async (reason) => {
-                await apiClient.putOscalRequirement(editing.control_id, { statement, status }, reason);
-              }}
-              onSuccess={() => {
-                setEditing(null);
-                void rows.reload();
-              }}
-            />
-          )}
         </div>
+        <div>
+          <label htmlFor="cov-baseline" className="block text-xs text-gray-500">Baseline</label>
+          <select id="cov-baseline" className={inputClass} value={baseline} disabled={catalog !== "sp800-53r5"} onChange={(e) => { setBaseline(e.target.value); setExtra([]); setCursor(null); }}>
+            {catalog !== "sp800-53r5" && <option value="">Whole catalog</option>}
+            {BASELINES.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+      </div>
+      {catalog === "sp800-171r3" && (
+        <p className="text-xs text-gray-500">This is SP 800-171 Rev 3. CMMC Level 2 cites Rev 2, which NIST has not published in OSCAL, so this is not a CMMC mapping.</p>
+      )}
+      {coverage.error ? <ErrorState error={coverage.error} onRetry={() => void coverage.reload()} /> : !c ? <Skeleton rows={4} /> : (
+        <>
+          <p className="text-sm">
+            {`${c.counts.implemented} of ${c.total} controls ${scope} have an implemented requirement. ${c.counts.none} have none.`}
+          </p>
+          <p className="text-xs text-gray-500">{c.with_evidence} of {c.total} have ledger evidence. Status is the officer&apos;s claim. Evidence is the ledger count.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" aria-label="Coverage by family">
+              <thead>
+                <tr className="text-left text-xs text-gray-500">
+                  <th className="pr-3">Family</th>
+                  <th className="pr-3">Controls</th>
+                  <th className="pr-3">Implemented</th>
+                  <th className="pr-3">Partial</th>
+                  <th className="pr-3">Planned</th>
+                  <th className="pr-3">Alternative</th>
+                  <th className="pr-3">Not applicable</th>
+                  <th className="pr-3">None</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.families.map((f) => (
+                  <tr key={f.family_id} className="border-t border-gray-200 dark:border-gray-800">
+                    <td className="pr-3 py-1">{f.family_title}</td>
+                    <td className="pr-3">{f.total}</td>
+                    <td className="pr-3">{f.counts.implemented}</td>
+                    <td className="pr-3">{f.counts.partial}</td>
+                    <td className="pr-3">{f.counts.planned}</td>
+                    <td className="pr-3">{f.counts.alternative}</td>
+                    <td className="pr-3">{f.counts["not-applicable"]}</td>
+                    <td className="pr-3">{f.counts.none}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <h3 className="text-sm font-semibold">Controls with no requirement</h3>
+      {gaps.error ? <ErrorState error={gaps.error} onRetry={() => void gaps.reload()} /> : !gaps.data ? <Skeleton rows={3} /> : gapRows.length === 0 ? <EmptyState title="No gaps" description="Every control in this set has a requirement." /> : (
+        <table className="w-full text-sm" aria-label="Controls with no requirement">
+          <thead>
+            <tr className="text-left text-xs text-gray-500">
+              <th className="pr-3">Control</th>
+              <th className="pr-3">Family</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {gapRows.map((g) => (
+              <tr key={g.control_id} className="border-t border-gray-200 dark:border-gray-800">
+                <td className="pr-3 py-1"><ControlLabel id={g.control_id} title={g.control_title} /></td>
+                <td className="pr-3">{g.family_title}</td>
+                <td>
+                  <button type="button" className={buttonClass} aria-label={`Add requirement for ${g.control_id}`} onClick={() => setDrawer({ control_id: g.control_id, control_title: g.control_title, family_title: g.family_title })}>
+                    Add requirement
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {more !== null && <ErrorState error={more} />}
+      {nextCursor && <button type="button" className={buttonClass} onClick={() => void loadMore(nextCursor)}>Show more</button>}
+      {drawer && (
+        <RequirementDrawer
+          key={drawer.control_id}
+          open
+          preset={drawer}
+          onClose={() => setDrawer(null)}
+          onSaved={() => {
+            setDrawer(null);
+            reloadAll();
+          }}
+        />
       )}
     </div>
   );
@@ -591,7 +809,7 @@ export function PolicyOscal() {
     <div className="space-y-4">
       <PageHeader title="Policy and OSCAL" description="The rules every server runs, how they are tested before they change, and the OSCAL document that maps each control to the policies that enforce it." />
       <Tabs ariaLabel="Policy and OSCAL" selectedId={tab} onSelect={setTab} tabs={TABS} />
-      {tab === "active" ? <ActiveTab /> : tab === "versions" ? <VersionsTab /> : tab === "cases" ? <CasesTab /> : tab === "simulator" ? <SimulatorTab /> : <OscalTab />}
+      {tab === "active" ? <ActiveTab /> : tab === "versions" ? <VersionsTab /> : tab === "cases" ? <CasesTab /> : tab === "simulator" ? <SimulatorTab /> : tab === "coverage" ? <CoverageTab /> : <OscalTab />}
     </div>
   );
 }

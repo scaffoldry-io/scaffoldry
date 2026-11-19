@@ -133,3 +133,19 @@ pub fn search(query: &str, family: Option<&str>, catalog: Option<&str>) -> Vec<&
 pub fn baseline(name: &str) -> Option<&'static [String]> {
     loaded().baselines.get(&name.trim().to_ascii_lowercase()).map(Vec::as_slice)
 }
+
+const PROVENANCE: &str = include_str!("../../../governance/catalog/PROVENANCE.json");
+
+/// The canonical source URL of a catalog, from `governance/catalog/PROVENANCE.json`.
+pub fn source_url(catalog: &str) -> Option<&'static str> {
+    static URLS: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
+    let urls = URLS.get_or_init(|| {
+        let doc: serde_json::Value = serde_json::from_str(PROVENANCE).expect("embedded provenance is valid");
+        let url_of = |file: &str| doc["files"].as_array().into_iter().flatten().find(|f| f["name"] == file).and_then(|f| f["source_url"].as_str()).map(str::to_string);
+        [("sp800-53r5", "NIST_SP-800-53_rev5_catalog.json"), ("sp800-171r3", "NIST_SP800-171_rev3_catalog.json")]
+            .into_iter()
+            .filter_map(|(name, file)| url_of(file).map(|u| (name, u)))
+            .collect()
+    });
+    urls.get(catalog).map(String::as_str)
+}

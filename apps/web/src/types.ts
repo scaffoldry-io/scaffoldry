@@ -473,6 +473,8 @@ export interface LedgerEntryItem {
   app_slug?: string;
   decision_type: string;
   oscal_control_id: string;
+  /** The control's title in the NIST catalog, when the control is in one. */
+  control_title?: string | null;
   rationale: string;
   payload?: Record<string, any>;
   payload_hash: string;

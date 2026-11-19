@@ -80,7 +80,7 @@ Tests.
 7. `normalize` table test: `AC-02` to `ac-2`, `ac-03` to `ac-3`, `SC-07` to `sc-7`, `AC-2(1)` to `ac-2.1`, `ac-2.1` unchanged.
 8. `search("account")` returns `ac-2` first or among the first five.
 
-## Phase 2 — titles, validation, and coverage
+## Phase 2 — titles, validation, and coverage [COMPLETED]
 
 Needs phase 1 and `admin-console.md` phase 5. Edits that phase's routes and screen.
 
