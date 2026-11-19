@@ -172,6 +172,12 @@ const SSN: &str = "123-45-6789";
 const SSN_B: &str = "234-56-7890";
 const CARD: &str = "4111 1111 1111 1111";
 
+/// Whether text holds the planted card number, as written or with its spaces removed. A bare "4111" is not enough: a
+/// random id or a SHA-256 holds those four digits about once in every few thousand values.
+fn holds_card(text: &str) -> bool {
+    text.contains(CARD) || text.contains(&CARD.replace(' ', ""))
+}
+
 async fn findings(w: &World, query: &str) -> Vec<Value> {
     let (s, v) = send(&w.app, "GET", &format!("/api/v1/admin/content-findings?app_slug={}&{query}", w.slug), &w.compliance, None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -233,7 +239,7 @@ async fn a_card_in_a_write_is_flagged_or_blocked_as_the_organization_chooses() {
     let rows = findings(&w, "").await;
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!((rows[0]["source"].as_str(), rows[0]["field"].as_str(), rows[0]["detector_id"].as_str(), rows[0]["match_count"].as_i64()), (Some("write"), Some("body"), Some("payment_card"), Some(1)));
-    assert!(!everything_stored().contains("4111"), "no card number was stored in a finding");
+    assert!(!holds_card(&everything_stored()), "no card number was stored in a finding");
 
     set_action(&w, "payment_card", "block").await;
     let before = stored(&w, "notes");
@@ -242,7 +248,7 @@ async fn a_card_in_a_write_is_flagged_or_blocked_as_the_organization_chooses() {
     assert_eq!(v["code"], "sensitive_content_blocked", "{v}");
     let text = v.to_string();
     assert!(text.contains("body") && text.contains("payment_card"), "it names the field and the detector: {text}");
-    assert!(!text.contains("4111"), "and never the value: {text}");
+    assert!(!holds_card(&text), "and never the value: {text}");
     assert_eq!(stored(&w, "notes"), before, "nothing was stored");
     // The message says where the category may live, once a place is designated.
     pci_store(&w).await;
