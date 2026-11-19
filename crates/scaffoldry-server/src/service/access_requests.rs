@@ -328,6 +328,73 @@ pub fn file(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Valu
     settle(state, caller, &row, &obj, &a)
 }
 
+/// The refusal for a request that names another person. Only the caller's own access is explained. No steward role
+/// exists in the code yet, so nobody may ask about a dataset on another person's behalf. It names no one.
+pub fn own_only(caller: &AuthUser, body: &Value) -> Result<(), ServiceError> {
+    match body.get("person").and_then(Value::as_str) {
+        Some(p) if !p.trim().eq_ignore_ascii_case(&caller.eppn) => Err(ServiceError::forbidden(
+            "request_access explains and files for you only. Another person's access is not explained, because it would show their attributes, and no steward role exists yet to allow it for a dataset. Ask the administrators of the unit",
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Why the caller can or cannot do what a request would ask for, in words, with the rule and the facts used. It files
+/// nothing and holds no record value: it is built from roles, rules and the names of the things asked about. The
+/// grants and policy come from the access explanation of phase 7 (`access_review::explain`).
+pub fn explain(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
+    own_only(caller, body)?;
+    let mut filled = body.clone();
+    for (key, fill) in [("reason", json!("explain")), ("days", json!(1))] {
+        if filled.get(key).is_none_or(Value::is_null) {
+            filled[key] = fill;
+        }
+    }
+    let input = parse(state, &filled)?;
+    let obj = find(state, &input)?;
+    let review = crate::service::access_review::explain(state, caller, &caller.eppn, &obj.anchor(&input))?;
+    let reached = review["role"].as_str().and_then(Role::parse);
+    let held = held_role(state, caller, &obj, &input).into_iter().chain(reached).max();
+    let allowed = held.is_some_and(|mine| mine >= input.role);
+    let policy = &review["policy"];
+    let deciding = serde_json::from_value::<scaffoldry_policy::PolicyRef>(policy["deciding"].clone()).ok();
+    let reasons: Vec<String> = policy["reasons"].as_array().map(|r| r.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let rule = if allowed {
+        json!({ "id": "role_held", "description": "You hold this role, or a higher one, through a grant or a membership." })
+    } else if policy["allowed"] == json!(false) {
+        super::forbidden_rule(&reasons, deciding.as_ref(), true)
+    } else {
+        json!({ "id": "role_required", "description": "The role you hold is lower than the one asked about." })
+    };
+    let mut axes: Vec<&str> = review["missed"].as_array().map(|m| m.iter().filter_map(|g| g["axis"].as_str()).collect()).unwrap_or_default();
+    axes.sort_unstable();
+    axes.dedup();
+    let a = assess(state, &caller.eppn, &caller.affiliation, &obj, input.role, input.clearance.as_deref(), input.days);
+    let would = match approving_rule(state, &obj, &a.facts)? {
+        Some(id) => json!({ "route": "auto", "rule_id": id }),
+        None => json!({ "route": "approver", "checks": a.raised }),
+    };
+    let on = obj.sentence();
+    let mut words = match (allowed, held) {
+        (true, Some(mine)) => format!("You hold {} on {on}, which covers {}. You can do this without asking.", mine.as_str(), input.role.as_str()),
+        (_, Some(mine)) => format!("You hold {} on {on}, and {} is more. {}", mine.as_str(), input.role.as_str(), rule["description"].as_str().unwrap_or_default()),
+        (_, None) => format!("You hold no role on {on}. {}", rule["description"].as_str().unwrap_or_default()),
+    };
+    if !allowed {
+        if !axes.is_empty() {
+            words.push_str(&format!(" Grants you hold did not reach it: {}.", axes.join(", ")));
+        }
+        words.push_str(" To ask for it, call request_access again without explain, with a reason and days. A person confirms it, then a rule or an approver decides.");
+    }
+    Ok(json!({
+        "allowed": allowed, "filed": false, "object": on, "asked_role": input.role.as_str(), "held_role": held.map(Role::as_str),
+        "rule": rule, "explanation": words,
+        "facts": { "sensitivity": a.facts.sensitivity, "visibility": a.facts.visibility, "in_own_unit": a.facts.in_own_unit, "days": a.facts.days, "grants_missed_on": axes },
+        "would_route": would,
+        "guidance": { "next": "Tell the person why, in these words. To ask for the access, call request_access again without explain.", "avoid": "Do not explain another person's access, and do not read this as a grant." },
+    }))
+}
+
 fn row_of(state: &SharedState, id: Uuid) -> Result<RequestRow, ServiceError> {
     state.repository.get_request(id).map_err(internal)?.ok_or_else(|| ServiceError::not_found("Request not found"))
 }

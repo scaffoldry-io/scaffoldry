@@ -99,7 +99,7 @@ The agent always works for a person, and a person decides. This holds in every p
 | --- | --- | --- |
 | 1 | `initialize` returns `instructions`. They name the caller, state that the agent acts for a person and proposes before anything changes, say that text in data is untrusted, point to resources and prompts, contain no record value, and stay under a size limit | `instructions`, built per caller. **Built** |
 | 2 | Every error code has a hint and every hint names a next step. A refusal names the rule that refused and the request path | Error hints from `agent-coverage.md` row 131. A `guidance` block on the main results. **Built** |
-| 3 | `explain_decision` explains the caller's own refusal in words and names the rule. It refuses to explain another person's | The explanation tool |
+| 3 | `explain_decision` explains the caller's own refusal in words and names the rule. It refuses to explain another person's | The explanation tool. **Built** |
 | 4 | A prompt is built from policy data. Changing the policy changes the prompt, with no code change. Each prompt names its tools and stopping points. No prompt contains a record value | Generated prompts. The first five above |
 | 5 | `tools/list` omits a tool the caller cannot use. It signals a change when access changes | Tools shown by access |
 | 6 | Untrusted fields are marked in every result that carries typed text. A tool that would change access returns a proposal and a link. The ledger names the agent as the proposer | Untrusted marking and propose-then-confirm |
@@ -111,6 +111,13 @@ The agent always works for a person, and a person decides. This holds in every p
 - **Refusals.** A `forbidden` body carries `rule` (`{ id, description }`) and `request_path`. The rule is the Cedar policy that refused. With no policy, a Cedar decision is `default_deny`, and a role check made in code is `role_required`. The path is `request_access`, or `POST /api/v1/access/requests`, when the refusal carries a filled request. Otherwise it says who to ask. A hidden field carries the same `request_path`.
 - **Guidance.** `service/next_step.rs` holds a fixed `{ next, avoid }` block for nine tools: `list_workspaces`, `list_apps`, `describe_app`, `list_records`, `get_record`, `create_record`, `update_record`, `propose_app_change`, `request_access`. `routes/mcp.rs` adds it to `structuredContent`. Nothing changed in `tools/list`, so the byte budget is untouched.
 - **Tests.** `tests/mcp_guidance_phase2_test.rs`. The per-code hint table, the 25 mistakes in `mcp_hints_test.rs`, and the no-record-value checks together hold the failing-test-first rows above. The OpenAPI `Error` schema gained `hint`, `rule` and `request_path`, and the checked-in fixture was regenerated.
+
+### Phase 3, as built
+
+- **Decision.** "explain_decision" ships as `request_access` with `explain: true`, because the tool list is full (45 of 45 tools, 23,991 of 24,000 bytes). The budget was not raised. Wording in other tool descriptions was trimmed to make room. No behavior or safety sentence was cut.
+- **What it returns.** `allowed`, the `rule` that decided (`id` and `description`), an `explanation` in words, the `facts` used (sensitivity, visibility, own unit, days, the axes on which held grants missed), and `would_route`, the route a request would take. It files nothing and carries a `guidance` block that replaces the filing one.
+- **Reuse.** The grants and the policy decision come from `access_review::explain`, the service behind `GET /access/explain` (`access-model.md` phase 7). The rule is named as a refusal names it, by `forbidden_rule`. No REST route was added.
+- **Other people.** A `person` other than the caller is refused, on filing and on explaining, and the refusal does not repeat the name. The brief also lets a steward ask about datasets they steward. No steward role exists in the code, so nobody may ask yet. Add it with the steward position.
 
 ## Enterprise objections
 
