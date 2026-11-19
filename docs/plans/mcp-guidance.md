@@ -100,7 +100,7 @@ The agent always works for a person, and a person decides. This holds in every p
 | 1 | `initialize` returns `instructions`. They name the caller, state that the agent acts for a person and proposes before anything changes, say that text in data is untrusted, point to resources and prompts, contain no record value, and stay under a size limit | `instructions`, built per caller. **Built** |
 | 2 | Every error code has a hint and every hint names a next step. A refusal names the rule that refused and the request path | Error hints from `agent-coverage.md` row 131. A `guidance` block on the main results. **Built** |
 | 3 | `explain_decision` explains the caller's own refusal in words and names the rule. It refuses to explain another person's | The explanation tool. **Built** |
-| 4 | A prompt is built from policy data. Changing the policy changes the prompt, with no code change. Each prompt names its tools and stopping points. No prompt contains a record value | Generated prompts. The first five above |
+| 4 | A prompt is built from policy data. Changing the policy changes the prompt, with no code change. Each prompt names its tools and stopping points. No prompt contains a record value | Generated prompts. The first five above. **Built** |
 | 5 | `tools/list` omits a tool the caller cannot use. It signals a change when access changes | Tools shown by access |
 | 6 | Untrusted fields are marked in every result that carries typed text. A tool that would change access returns a proposal and a link. The ledger names the agent as the proposer | Untrusted marking and propose-then-confirm |
 | 7 | A recorded scenario for each of the first five prompts passes against the real server | Scenarios as the contract, from `agent-coverage.md` |
@@ -118,6 +118,19 @@ The agent always works for a person, and a person decides. This holds in every p
 - **What it returns.** `allowed`, the `rule` that decided (`id` and `description`), an `explanation` in words, the `facts` used (sensitivity, visibility, own unit, days, the axes on which held grants missed), and `would_route`, the route a request would take. It files nothing and carries a `guidance` block that replaces the filing one.
 - **Reuse.** The grants and the policy decision come from `access_review::explain`, the service behind `GET /access/explain` (`access-model.md` phase 7). The rule is named as a refusal names it, by `forbidden_rule`. No REST route was added.
 - **Other people.** A `person` other than the caller is refused, on filing and on explaining, and the refusal does not repeat the name. The brief also lets a steward ask about datasets they steward. No steward role exists in the code, so nobody may ask yet. Add it with the steward position.
+
+### Phase 4, as built
+
+- **Where.** `service/guided_prompts.rs`. `prompts/list` adds five prompts to the older ones, and `prompts/get` builds the text for the caller each time it is asked. The older fixed prompts are unchanged. Prompts are not tools, so `tools/list` and its byte budget did not change.
+- **Five parts.** Every prompt prints `Task`, `Context`, `Tools you may use` (with a `Do not use` line), `Stop and ask the person`, and `Output shape`. A test requires that every word in backticks is a name in `TOOLS`, and that no word that looks like a tool name is missing from it.
+- **Prompts and their data.**
+  - `request_dataset_access`: the stored request rules (`request_rules`), the setting `access.request_max_days`, the authority tables for the three request checks at the person's unit, and the person's positions and admin rights. Tools: `list_datasets`, `list_apps`, `explain_access`, `request_access`.
+  - `explain_a_refusal`: `access_requests::explain` for the object named (rule, facts, held and asked role, route), the same rules and limit. Tools: `request_access` with `explain: true`, `explain_access`, `get_workspace`, `list_workspaces`. The explanation sentence is left out, because it carries the app title.
+  - `review_a_change`: the authority tables for all flagged checks at the person's unit (tier and who decides). Tools: `get_proposal`, `list_proposals`, `describe_app`, `get_workspace`.
+  - `write_a_policy`: the active Cedar version, the policy summaries (key, effect, OSCAL control, description), and the stored test case count. `simulate_cedar_policy` is offered only to a Platform Admin.
+  - `review_a_share_request`: the setting `sharing.allowed_scopes` and the sharing limits. Tools: `describe_app`, `list_views`, `get_workspace`.
+- **Not built, and said so in the prompt.** A stored steward evaluation and a communications plan do not exist, so `review_a_change` tells the agent to build both from the proposal's checks and change list and to label them a draft. A share request has no stored record or workflow, so `review_a_share_request` takes the justification as an argument and marks it as untrusted text.
+- **Tests.** `tests/mcp_guidance_phase4_test.rs`: the five parts, real tool names only, no planted record value, and that a changed setting, request rule, authority table or active Cedar policy changes the next prompt with no code change.
 
 ## Enterprise objections
 
@@ -138,4 +151,4 @@ The agent always works for a person, and a person decides. This holds in every p
 
 ## Prompt for the session
 
-Read this file, `agent-coverage.md`, and `data-layer.md`. Phase 1 is built. Do one phase at a time. Stop when its tests pass.
+Read this file, `agent-coverage.md`, and `data-layer.md`. Phases 1 to 4 are built. Do one phase at a time. Stop when its tests pass.

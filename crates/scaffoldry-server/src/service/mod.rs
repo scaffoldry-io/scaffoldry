@@ -25,6 +25,7 @@ pub mod access_review;
 pub mod receipts;
 pub mod coordinates;
 pub mod guidance;
+pub mod guided_prompts;
 pub mod comments;
 pub mod disclosure;
 pub mod workspaces;

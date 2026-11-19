@@ -22,8 +22,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 pub const SCOPES: [&str; 2] = ["institution", "public"];
-const DEFAULT_DAYS: i64 = 30;
-const MAX_DAYS: i64 = 90;
+pub const DEFAULT_DAYS: i64 = 30;
+pub const MAX_DAYS: i64 = 90;
 /// The most active shares one view holds.
 pub const MAX_ACTIVE: i64 = 20;
 /// Requests a minute for one token, and for one address on a public link.
@@ -48,7 +48,7 @@ pub fn valid_scopes(value: &Value) -> bool {
     })
 }
 
-fn allowed_scopes(state: &SharedState) -> Vec<String> {
+pub(crate) fn allowed_scopes(state: &SharedState) -> Vec<String> {
     state
         .settings
         .read()

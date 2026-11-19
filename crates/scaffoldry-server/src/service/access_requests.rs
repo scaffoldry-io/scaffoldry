@@ -27,7 +27,7 @@ fn internal(e: impl ToString) -> ServiceError {
 }
 
 /// The longest request, in days: the setting `access.request_max_days`.
-fn max_days(state: &SharedState) -> i64 {
+pub(crate) fn max_days(state: &SharedState) -> i64 {
     state.settings.read().ok().and_then(|s| s.get("access.request_max_days").and_then(Value::as_i64)).filter(|d| (1..=rules::MAX_DAYS).contains(d)).unwrap_or(90)
 }
 

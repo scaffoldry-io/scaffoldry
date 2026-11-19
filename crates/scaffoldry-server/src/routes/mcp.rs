@@ -595,6 +595,7 @@ async fn handle_mcp_request(
                 }),
             ];
             all.extend(crate::service::prompts::listed());
+            all.extend(crate::service::guided_prompts::listed());
             let prompts = json!({ "prompts": all });
             rpc(JsonRpcResponse {
                 jsonrpc: "2.0",
@@ -645,7 +646,9 @@ async fn handle_mcp_request(
                         ]
                     })
                 }
-                other => crate::service::prompts::render(other, &args).unwrap_or_else(|| json!({ "messages": [] })),
+                other => crate::service::guided_prompts::render(&state, &caller, other, &args)
+                    .or_else(|| crate::service::prompts::render(other, &args))
+                    .unwrap_or_else(|| json!({ "messages": [] })),
             };
 
             rpc(JsonRpcResponse {
