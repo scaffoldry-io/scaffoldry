@@ -33,6 +33,7 @@ pub mod mail;
 pub mod delegations;
 pub mod work;
 pub mod flows;
+pub mod admin_audit;
 pub mod admin_processes;
 pub mod webhooks;
 pub mod holds;
@@ -122,6 +123,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(work::router())
         .merge(flows::router())
         .merge(admin_processes::router())
+        .merge(admin_audit::router())
         .merge(webhooks::router())
         .merge(realtime::router())
         .merge(notifications::router())

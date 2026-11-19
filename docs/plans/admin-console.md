@@ -440,9 +440,9 @@ Tests.
 8. Every route above is in `ADMIN_ROUTES`.
 9. Web: a definition drawer shows sentences. `Disable` without a reason is not sent. `Reassign` posts the chosen user. The Unassigned filter lists an instance and its row says why in words.
 
-## Phase 7 — Audit and security
+## Phase 7 — Audit and security [COMPLETED]
 
-Needs phases 1 and 2 and `mcp-apps.md` phase 1. The page controls need `mcp-apps.md` phase 6. If it is not built, build only the tool controls and say so.
+Needs phases 1 and 2 and `mcp-apps.md` phase 1. The page controls need `mcp-apps.md` phase 6, which is built, so both the tool controls and the page controls exist.
 
 Migration `*_ledger_filters.sql`, which indexes fixed platform columns only:
 
@@ -456,16 +456,18 @@ Ledger. Platform Admin or `compliance`.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| GET | `/admin/ledger` | Query `principal`, `decision_type`, `app`, `control`, `from`, `to`, `cursor`, `limit`. Newest first by sequence. Each row includes the stored `payload`. Add `LedgerRow { entry, payload }` and a repository function that reads it |
-| POST | `/admin/ledger/verify` | Walks the whole chain. Returns `valid`, entry count, head hash, and the first bad sequence when invalid. This replaces the toast. It is a full scan and the console says so |
-| GET | `/admin/ledger/export` | Same filters, `format` of `json` or `csv`, at most 50,000 rows, else 400 telling the caller to narrow the filter. JSON starts with the head hash and the verify result |
+| GET | `/admin/ledger` | Query `principal`, `decision_type`, `app`, `control`, `from`, `to`, `cursor`, `limit`. Newest first by sequence. Each row includes the stored `payload` and the `control_title`. Add `LedgerRow { entry, payload }` and a repository function that reads it. `control` matches any spelling of the id (`ac-2`, `AC-02`). `from` and `to` are a date or an RFC 3339 time. The cursor is the sequence the next page starts under |
+| POST | `/admin/ledger/verify` | Walks the whole chain. Returns `valid`, `entries`, `head_hash`, `first_bad_sequence` (null when valid), and `detail`. This replaces the toast. It is a full scan and the console says so |
+| GET | `/admin/ledger/export` | Same filters, `format` of `json` or `csv`, at most 50,000 rows, else 400 telling the caller to narrow the filter. JSON starts with the head hash and the verify result. CSV has a header row, and a cell that starts like a spreadsheet formula is made text |
 
 Tokens. Platform Admin.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
 | GET | `/admin/tokens` | Query `kind`, `owner`, `state` (`active`, `expired`, `revoked`), `cursor`, `limit`. Row: id, kind, owner, label, created, expires, last used, revoked, and `original_admin` for impersonation. Never the hash |
-| DELETE | `/admin/tokens/{id}` | Body `reason`. Revokes. Ledger `TokenRevoked`. Works for impersonation sessions too |
+| DELETE | `/admin/tokens/{id}` | Body `reason`. Revokes. Ledger `TokenRevoked`, `IA-05`. Works for impersonation sessions too. A token that is already revoked is 409 |
+| GET | `/admin/tools` | Every tool in `TOOLS` with its description, `read_only`, scope and `disabled`. For the Agent access table |
+| GET | `/admin/pages` | Every custom page of every app: app, page, a sentence for its grants, `disabled`, and `approved_by` (null: the approver is not stored with the page) |
 
 SCIM tokens are minted with the existing `POST /auth/tokens` and `kind: "scim"` from `foundation.md`. The panel has a `Mint SCIM token` button that calls it and shows the token once.
 
@@ -477,9 +479,9 @@ Agent controls. Add three keys to the closed settings list in `foundation.md` ph
 | `pages.disabled` | array of `"{app_slug}/{page_id}"`, at most 200 | Custom pages that may not run |
 | `process.stale_days` | integer 1 to 365 | Added in phase 6 |
 
-These keys only remove capability. None turns a check off. `tools::call` refuses a disabled tool with `Tool disabled by administrator` before it checks scope. `tools/list` omits it. `page_call` and `get_page` refuse a disabled page. `PageFrame` shows `This page was disabled by an administrator.`
+These keys only remove capability. None turns a check off. `tools::call` refuses a disabled tool with `Tool disabled by administrator` before it checks scope. `tools/list` omits it. `page_call` and `get_page` refuse a disabled page (403, `This page was disabled by an administrator.`). `PageFrame` shows that sentence. `tools/list` also omits every `PlatformAdmin` tool for a caller who is not a Platform Admin.
 
-`admin_inventory`: one MCP tool, scope `PlatformAdmin`, `read_only: true`. Arguments `kind` (`users`, `workspaces`, `apps`, `fields`, `processes`, `process_instances`, `tokens`, `ledger`), the same filters as the matching REST route, `limit` up to 200, and `cursor`. It calls the same service function as the route. There is no admin write tool.
+`admin_inventory`: one MCP tool, scope `PlatformAdmin`, `read_only: true`. Arguments `kind` (`users`, `workspaces`, `apps`, `fields`, `processes`, `process_instances`, `tokens`, `ledger`), `filter` (an object with the matching REST route's query names, such as `{"affiliation": "faculty"}`), `limit` from 1 to 200, and `cursor`. It calls the same service function as the route and answers `{ kind, rows, next_cursor }`. There is no admin write tool. The filters are one object, not one argument each, because the tool list has a budget of 24,000 bytes and 45 tools and a flat list of thirty arguments does not fit in it.
 
 Frontend: `admin/Audit.tsx` and `admin/Security.tsx`. Replace the old ledger tab.
 

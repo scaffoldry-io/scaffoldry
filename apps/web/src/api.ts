@@ -30,6 +30,8 @@ export interface AdminOverviewData {
   ledger: {
     entry_count: number;
     head_hash: string;
+    /** Admin console phase 7: the newest entries, each with the title of its control. */
+    recent?: { sequence: number; timestamp_iso: string; principal: string; decision_type: string; oscal_control_id: string; control_title: string | null; rationale: string }[];
   };
   jobs?: {
     queue_depth: number;
@@ -542,7 +544,8 @@ export const getBaseUrl = (): string => {
   return envUrl || "/api/v1";
 };
 
-const requestFull = async <T>(path: string, options: RequestInit = {}): Promise<{ status: number; data: T }> => {
+/** Sends a request with the session's token and throws an `ApiError` for any answer that is not a success. */
+const fetchChecked = async (path: string, options: RequestInit = {}): Promise<Response> => {
   const baseUrl = getBaseUrl();
   const token = getAuthToken();
 
@@ -581,13 +584,20 @@ const requestFull = async <T>(path: string, options: RequestInit = {}): Promise<
     }
     throw new ApiError(response.status, errorMessage, details);
   }
+  return response;
+};
 
+const requestFull = async <T>(path: string, options: RequestInit = {}): Promise<{ status: number; data: T }> => {
+  const response = await fetchChecked(path, options);
   if (response.status === 204) {
     return { status: 204, data: null as T };
   }
 
   return { status: response.status, data: await response.json() };
 };
+
+/** A file the server sends as text, such as a CSV export. */
+const requestText = async (path: string): Promise<string> => (await fetchChecked(path)).text();
 
 /** The answer of `POST /flows/validate`. A problem's path is the step's place in the flow (see `flows/reducer.ts`). */
 export interface FlowCheck {
@@ -2445,24 +2455,6 @@ export const apiClient = {
     }>(`/governance/ledger${suffix}`);
   },
 
-  verifyGovernanceLedger: async (): Promise<{
-    verified: boolean;
-    total_entries: number;
-    genesis_previous_hash: string;
-    head_hash: string;
-    verification_status: string;
-  }> => {
-    return request<{
-      verified: boolean;
-      total_entries: number;
-      genesis_previous_hash: string;
-      head_hash: string;
-      verification_status: string;
-    }>("/governance/ledger/verify", {
-      method: "POST",
-    });
-  },
-
   recordGovernanceDecision: async (decision: {
     principal: string;
     organization_code: string;
@@ -2673,6 +2665,26 @@ export const apiClient = {
   cancelProcessInstance: async (id: string, reason: string): Promise<void> => {
     await request<unknown>(`/admin/process-instances/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
   },
+  /** Audit (admin console phase 7): the ledger a page at a time, newest first, each row with its stored payload. */
+  adminLedger: async (params: Record<string, string | undefined> = {}): Promise<{ rows: AdminLedgerRow[]; next_cursor: string | null }> =>
+    request<{ rows: AdminLedgerRow[]; next_cursor: string | null }>(`/admin/ledger${queryOf(params)}`),
+  /** Walks the whole chain. It is a full scan. */
+  verifyAdminLedger: async (): Promise<LedgerVerification> => request<LedgerVerification>("/admin/ledger/verify", { method: "POST" }),
+  /** The filtered entries as the server's own file: JSON starts with the head hash and a chain check, CSV has a header row. */
+  exportAdminLedger: async (format: "json" | "csv", params: Record<string, string | undefined> = {}): Promise<string> =>
+    requestText(`/admin/ledger/export${queryOf({ ...params, format })}`),
+  /** Security: tokens and impersonation sessions. The row never holds the hash. */
+  adminTokens: async (params: Record<string, string | undefined> = {}): Promise<{ rows: AdminTokenRow[]; next_cursor: string | null }> =>
+    request<{ rows: AdminTokenRow[]; next_cursor: string | null }>(`/admin/tokens${queryOf(params)}`),
+  revokeAdminToken: async (id: string, reason: string): Promise<void> => {
+    await request<unknown>(`/admin/tokens/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ reason }) });
+  },
+  /** Mints a SCIM token with the one route that makes tokens. The token is in the answer once and is never shown again. */
+  mintScimToken: async (label: string, days?: number): Promise<{ id: string; token: string; label: string; expires_at: string }> =>
+    request("/auth/tokens", { method: "POST", body: JSON.stringify({ kind: "scim", label, days }) }),
+  /** Agent access: every tool and every custom page, with whether an administrator turned it off. */
+  adminTools: async (): Promise<{ tools: AdminToolRow[] }> => request<{ tools: AdminToolRow[] }>("/admin/tools"),
+  adminPages: async (): Promise<{ pages: AdminPageRow[] }> => request<{ pages: AdminPageRow[] }>("/admin/pages"),
   /** The Guests panel: forms open to guests, the guests, and signs of abuse. A Platform Admin only. */
   adminGuests: async (): Promise<AdminGuests> => request<AdminGuests>("/admin/guests"),
   closeGuestForm: async (formId: string, reason: string): Promise<void> => {
@@ -3005,6 +3017,62 @@ export interface AdminProcessInstance {
   started_at: string;
   age_days: number;
   stale: boolean;
+}
+
+/** A ledger entry with the payload it was stored with, as `GET /admin/ledger` returns it. */
+export interface AdminLedgerRow {
+  sequence: number;
+  timestamp_iso: string;
+  previous_hash: string;
+  principal: string;
+  organization_code: string;
+  app_slug: string | null;
+  decision_type: string;
+  oscal_control_id: string;
+  control_title: string | null;
+  rationale: string;
+  payload: Record<string, unknown>;
+  payload_hash: string;
+  entry_hash: string;
+}
+
+export interface LedgerVerification {
+  valid: boolean;
+  entries: number;
+  head_hash: string;
+  first_bad_sequence: number | null;
+  detail: string | null;
+}
+
+export interface AdminTokenRow {
+  id: string;
+  kind: string;
+  owner: string;
+  label: string;
+  state: "active" | "expired" | "revoked";
+  created_at: string;
+  expires_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  original_admin: string | null;
+}
+
+export interface AdminToolRow {
+  name: string;
+  description: string;
+  read_only: boolean;
+  scope: string;
+  disabled: boolean;
+}
+
+export interface AdminPageRow {
+  app_slug: string;
+  app_title: string;
+  page_id: string;
+  title: string;
+  grants: string;
+  approved_by: string | null;
+  disabled: boolean;
 }
 
 export interface AdminInstanceApprovers {

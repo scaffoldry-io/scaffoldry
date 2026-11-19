@@ -108,7 +108,6 @@ describe("the admin console pages", () => {
 
   it.each([
     ["settings", "Platform Settings"],
-    ["ledger", "Decision Ledger"],
   ] as const)("the %s page has one kit page header and no old console banner", async (tab, title) => {
     server({ "/settings": {} });
     consoleView(tab);

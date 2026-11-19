@@ -116,6 +116,7 @@ const SCHEMA_0109: &str = include_str!("../../scaffoldry-core/migrations/0109_da
 const SCHEMA_0110: &str = include_str!("../../scaffoldry-core/migrations/0110_content_findings.sql");
 const SCHEMA_0111: &str = include_str!("../../scaffoldry-core/migrations/0111_content_guard.sql");
 const SCHEMA_0112: &str = include_str!("../../scaffoldry-core/migrations/0112_policy_versions.sql");
+const SCHEMA_0113: &str = include_str!("../../scaffoldry-core/migrations/0113_ledger_filters.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1232,6 +1233,7 @@ impl PostgresRepository {
                             ("0110_content_findings.sql", SCHEMA_0110),
                             ("0111_content_guard.sql", SCHEMA_0111),
                             ("0112_policy_versions.sql", SCHEMA_0112),
+                            ("0113_ledger_filters.sql", SCHEMA_0113),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -1415,8 +1417,10 @@ impl PostgresRepository {
             .map_err(|_| RepositoryError::NotFound("Postgres worker response lost".to_string()))?
     }
 
-    fn verify_client_ledger(client: &mut Client, fresh_install: bool) -> Result<ChainReport, RepositoryError> {
-        let mut report = ChainReport { entries: 0, largest_batch: 0 };
+    /// Walks the chain from the start and stops at the first entry that does not hold. It reads a batch at a time, and
+    /// says how many entries held, the hash of the last good one, and the first bad sequence with the reason.
+    pub(crate) fn check_chain(client: &mut Client) -> Result<ChainCheck, RepositoryError> {
+        let mut check = ChainCheck { entries: 0, largest_batch: 0, head_hash: None, first_bad: None };
         let mut prev_hash = GENESIS_PREVIOUS_HASH.to_string();
         let mut after: i64 = -1;
         loop {
@@ -1430,40 +1434,55 @@ impl PostgresRepository {
             if rows.is_empty() {
                 break;
             }
-            report.largest_batch = report.largest_batch.max(rows.len());
+            check.largest_batch = check.largest_batch.max(rows.len());
             for row in &rows {
-                let entry = ledger_entry_of(row)?;
-                // Chain continuity: the first entry follows the genesis hash, each later one the hash before it.
-                if entry.sequence == 0 {
-                    if entry.previous_hash != GENESIS_PREVIOUS_HASH {
-                        return Err(RepositoryError::TamperDetected(format!(
-                            "Genesis block (sequence 0) has invalid previous hash: {}",
-                            entry.previous_hash
-                        )));
+                let entry = match ledger_entry_of(row) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        check.first_bad = Some((row.get::<_, i64>(0) as u64, e.to_string()));
+                        return Ok(check);
                     }
+                };
+                // Chain continuity: the first entry follows the genesis hash, each later one the hash before it.
+                let broken = if entry.sequence == 0 {
+                    (entry.previous_hash != GENESIS_PREVIOUS_HASH)
+                        .then(|| format!("Genesis block (sequence 0) has invalid previous hash: {}", entry.previous_hash))
                 } else if entry.previous_hash != prev_hash {
-                    return Err(RepositoryError::TamperDetected(format!(
+                    Some(format!(
                         "Ledger hash chain broken at sequence {}: expected previous hash {}, got {}",
                         entry.sequence, prev_hash, entry.previous_hash
-                    )));
+                    ))
+                } else {
+                    None
                 }
-                if entry.sequence != report.entries {
-                    return Err(RepositoryError::TamperDetected(format!(
-                        "Ledger sequence broken: expected {}, found {}",
-                        report.entries, entry.sequence
-                    )));
-                }
-                if let Err(e) = entry.verify() {
-                    return Err(RepositoryError::TamperDetected(format!(
-                        "Cryptographic tamper detected at sequence {}: {}",
-                        entry.sequence, e
-                    )));
+                .or_else(|| {
+                    (entry.sequence != check.entries).then(|| format!("Ledger sequence broken: expected {}, found {}", check.entries, entry.sequence))
+                })
+                .or_else(|| {
+                    entry
+                        .verify()
+                        .err()
+                        .map(|e| format!("Cryptographic tamper detected at sequence {}: {}", entry.sequence, e))
+                });
+                if let Some(message) = broken {
+                    check.first_bad = Some((entry.sequence, message));
+                    return Ok(check);
                 }
                 prev_hash = entry.entry_hash.clone();
-                report.entries += 1;
+                check.head_hash = Some(prev_hash.clone());
+                check.entries += 1;
                 after = entry.sequence as i64;
             }
         }
+        Ok(check)
+    }
+
+    fn verify_client_ledger(client: &mut Client, fresh_install: bool) -> Result<ChainReport, RepositoryError> {
+        let check = Self::check_chain(client)?;
+        if let Some((_, message)) = check.first_bad {
+            return Err(RepositoryError::TamperDetected(message));
+        }
+        let report = ChainReport { entries: check.entries, largest_batch: check.largest_batch };
         if report.entries == 0 {
             if fresh_install {
                 Self::seed_client_genesis_ledger(client)?;
@@ -3727,8 +3746,18 @@ pub struct ChainReport {
     pub largest_batch: usize,
 }
 
+/// What a walk of the chain found: how many entries held, the hash of the last good one, and the first entry that did not.
+#[derive(Debug, Clone)]
+pub struct ChainCheck {
+    pub entries: u64,
+    pub largest_batch: usize,
+    pub head_hash: Option<String>,
+    /// The sequence of the first bad entry, and why.
+    pub first_bad: Option<(u64, String)>,
+}
+
 /// A ledger row, in the column order every ledger read selects.
-fn ledger_entry_of(row: &postgres::Row) -> Result<LedgerEntry, RepositoryError> {
+pub(crate) fn ledger_entry_of(row: &postgres::Row) -> Result<LedgerEntry, RepositoryError> {
     let dec_str: String = row.get(7);
     let payload: Value = row.get(10);
     let raw_payload_hash: String = row.get(11);

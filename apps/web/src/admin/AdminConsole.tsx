@@ -1,4 +1,6 @@
 import { Processes } from "./Processes";
+import { Audit } from "./Audit";
+import { Security } from "./Security";
 import React, { useState, useEffect } from "react";
 import { Overview } from "./Overview";
 import { Jobs } from "./Jobs";
@@ -32,8 +34,8 @@ export interface AdminConsoleProps {
   navigateTo?: (path: string) => void;
   /** The path the console is showing, for sections with views of their own. */
   currentPath?: string;
-  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings";
-  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings") => void;
+  adminTab?: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "security" | "impersonation" | "settings";
+  setAdminTab?: (tab: "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "security" | "impersonation" | "settings") => void;
   apps?: RegisteredApp[];
   ledger?: LedgerEntryItem[];
   setNotificationToast?: React.Dispatch<React.SetStateAction<string | null>>;
@@ -59,7 +61,7 @@ export function AdminConsole({
   handleStartImpersonation = () => {},
 }: AdminConsoleProps) {
   const [internalTab] = useState<
-    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings"
+    "overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "security" | "impersonation" | "settings"
   >(controlledTab ?? "overview");
 
   const currentTab = controlledTab ?? internalTab;
@@ -160,6 +162,10 @@ export function AdminConsole({
         <Workspaces />
       ) : currentTab === "policy" ? (
         <PolicyOscal />
+      ) : currentTab === "ledger" ? (
+        <Audit />
+      ) : currentTab === "security" ? (
+        <Security />
       ) : currentTab === "people" ? (
         <People
           onImpersonate={(row) =>

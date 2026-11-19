@@ -136,6 +136,8 @@ pub fn add(m: &mut Entries) {
 
     m.insert("POST /api/v1/auth/tokens".into(), case!(token_create));
     m.insert("DELETE /api/v1/auth/tokens/{id}".into(), case!(token_revoke));
+    m.insert("DELETE /api/v1/admin/tokens/{id}".into(), case!(admin_token_revoke));
+    exempt(m, "POST /api/v1/admin/ledger/verify", "walks the chain and reports where it breaks; stores nothing");
     m.insert("POST /api/v1/auth/logout".into(), case!(logout));
     m.insert("POST /api/v1/auth/impersonate".into(), case!(impersonate));
     m.insert("POST /api/v1/auth/stop-impersonate".into(), case!(stop_impersonate));
@@ -539,7 +541,33 @@ async fn setting_put(w: World) -> Outcome {
     let days = 100 + (uuid::Uuid::new_v4().as_u128() % 200) as i64;
     status(w.wa("PUT", "/api/v1/settings/process.stale_days", ADMIN, Some(json!(days))).await, StatusCode::OK, "put the setting")?;
     let seen = status(w.rb("GET", "/api/v1/settings", ADMIN, None).await, StatusCode::OK, "B reads settings again")?;
-    ensure(before != seen && has(&seen, &days.to_string()), format!("B shows the setting A wrote ({days}): {seen}"))
+    ensure(before != seen && has(&seen, &days.to_string()), format!("B shows the setting A wrote ({days}): {seen}"))?;
+    // Admin console phase 7: a tool A turns off is gone from B's list, and comes back when A turns it on.
+    status(w.wa("PUT", "/api/v1/settings/mcp.disabled_tools?reason=Pause", ADMIN, Some(json!(["list_library_questions"]))).await, StatusCode::OK, "turn a tool off")?;
+    let off = !b_lists_tool(&w, "list_library_questions").await;
+    status(w.wa("PUT", "/api/v1/settings/mcp.disabled_tools?reason=Resume", ADMIN, Some(json!([]))).await, StatusCode::OK, "turn it on")?;
+    ensure(off, "B no longer lists the tool A turned off")?;
+    ensure(b_lists_tool(&w, "list_library_questions").await, "B lists the tool again")
+}
+
+/// Whether B's `tools/list` shows the tool to a Platform Admin.
+async fn b_lists_tool(w: &World, name: &str) -> bool {
+    let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let (_, v) = World::call(&w.b, "POST", "/api/mcp", ADMIN, Some(payload)).await;
+    v["result"]["tools"].as_array().is_some_and(|t| t.iter().any(|x| x["name"] == name))
+}
+
+/// Admin console phase 7: A revokes a token from the Security panel, B refuses it and lists it as revoked.
+async fn admin_token_revoke(w: World) -> Outcome {
+    let made = status(w.wa("POST", "/api/v1/auth/tokens", ADMIN, Some(json!({ "label": unique("p7rev"), "days": 1, "kind": "agent" }))).await, StatusCode::CREATED, "create a token")?;
+    let (token, id) = (made["token"].as_str().ok_or("a token")?.to_string(), made["id"].as_str().ok_or("an id")?.to_string());
+    let (s, _) = World::call_with(&w.b, "GET", "/api/v1/auth/me", &token, None).await;
+    ensure(s == StatusCode::OK, "B accepts the token before it is revoked")?;
+    status(w.wa("DELETE", &format!("/api/v1/admin/tokens/{id}"), ADMIN, Some(json!({ "reason": "Seen in the wrong place" }))).await, StatusCode::OK, "revoke it")?;
+    let (s, body) = World::call_with(&w.b, "GET", "/api/v1/auth/me", &token, None).await;
+    ensure(s == StatusCode::UNAUTHORIZED, format!("B refuses the revoked token: {s} {body}"))?;
+    let listed = status(w.rb("GET", "/api/v1/admin/tokens?state=revoked&kind=agent", ADMIN, None).await, StatusCode::OK, "B lists revoked tokens")?;
+    ensure(listed["rows"].as_array().is_some_and(|r| r.iter().any(|t| t["id"] == id.as_str())), format!("B lists it as revoked: {listed}"))
 }
 
 /// Integrations phase 5: A saves the outbound allowlist, and B reads the list A saved.

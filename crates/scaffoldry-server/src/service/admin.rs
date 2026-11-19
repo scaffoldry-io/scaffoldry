@@ -156,6 +156,13 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/admin/process-instances/{id}/approvers"),
     ("POST", "/admin/process-instances/{id}/reassign"),
     ("POST", "/admin/process-instances/{id}/cancel"),
+    ("GET", "/admin/ledger"),
+    ("POST", "/admin/ledger/verify"),
+    ("GET", "/admin/ledger/export"),
+    ("GET", "/admin/tokens"),
+    ("DELETE", "/admin/tokens/{id}"),
+    ("GET", "/admin/tools"),
+    ("GET", "/admin/pages"),
 ];
 
 pub fn require_platform_admin(caller: &AuthUser, state: &SharedState) -> Result<(), ServiceError> {

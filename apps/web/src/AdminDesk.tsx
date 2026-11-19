@@ -659,13 +659,14 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
   };
 
   // Admin Tab State (when on /admin)
-  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "impersonation" | "settings">(() => {
+  const [adminTab, setAdminTab] = useState<"overview" | "jobs" | "people" | "positions" | "access" | "authority" | "clients" | "holds" | "processes" | "secrets" | "outbound" | "connections" | "shares" | "guests" | "flows" | "governance" | "content" | "webhooks" | "library" | "workspaces" | "org" | "policy" | "ledger" | "security" | "impersonation" | "settings">(() => {
     if (typeof window !== "undefined") {
       const p = window.location.pathname;
       if (p === "/admin/jobs") return "jobs";
       if (p === "/admin/org") return "org";
       if (p === "/admin/policy") return "policy";
       if (p === "/admin/ledger") return "ledger";
+      if (p === "/admin/security") return "security";
       if (p === "/admin/impersonation") return "impersonation";
       if (p === "/admin/people") return "people";
       if (p === "/admin/positions") return "positions";
@@ -2226,7 +2227,23 @@ export const AdminDesk: React.FC<AdminDeskProps> = ({ initialPath, initialEppn }
                     <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                     </svg>
-                    {navRailExpanded && <span>Decision Ledger &amp; OSCAL</span>}
+                    {navRailExpanded && <span>Audit</span>}
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="admin-security-tab-btn"
+                    onClick={() => { setAdminTab("security"); navigateTo("/admin/security"); }}
+                    className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      adminTab === "security"
+                        ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <svg className="w-4 h-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c0-1.1.9-2 2-2s2 .9 2 2v1h-4v-1zm-3 1h8a1 1 0 011 1v5a1 1 0 01-1 1H9a1 1 0 01-1-1v-5a1 1 0 011-1zM5 7a7 7 0 0114 0" />
+                    </svg>
+                    {navRailExpanded && <span>Security</span>}
                   </button>
 
                   <button

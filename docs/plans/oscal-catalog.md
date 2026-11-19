@@ -97,7 +97,7 @@ Frontend, from the kit, in the OSCAL tab of `admin/PolicyOscal.tsx`.
 - `Add a requirement` opens a drawer with a control search box that shows titles and families. Choosing one fills the id. Free text is not accepted.
 - The requirements table shows `ControlLabel`, family, baseline badges, status as a `StatusBadge`, and the evidence count.
 - A `Coverage` tab: a baseline and catalog choice, a summary in words and numbers (`112 of 287 controls in Moderate have an implemented requirement. 41 have none.`), a table by family, and the gaps table with an `Add requirement` action per row.
-- The ledger table in `admin/Audit.tsx` shows `ControlLabel` in its control column.
+- The ledger table in `admin/Audit.tsx` shows `ControlLabel` in its control column. Built in `admin-console.md` phase 7, with the ledger route and the overview's recent changes.
 
 Tests.
 

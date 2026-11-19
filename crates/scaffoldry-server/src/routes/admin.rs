@@ -149,6 +149,7 @@ async fn get_overview(State(state): State<SharedState>, headers: HeaderMap) -> i
             "ledger": {
                 "entry_count": ledger_count,
                 "head_hash": head_hash,
+                "recent": crate::service::admin_audit::recent_changes(&state, 5),
             },
             "retention": {
                 "placeholder": state.repository.list_retention_policies().map(|l| l.iter().any(|p| p.active && p.basis.trim() == crate::purge::PLACEHOLDER_BASIS)).unwrap_or(false),

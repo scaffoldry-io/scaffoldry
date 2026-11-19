@@ -41,12 +41,14 @@ describe("every admin nav button keeps the address in step", () => {
     });
   }
 
-  it("Policy goes to /admin/policy and Ledger to /admin/ledger", async () => {
+  it("Policy goes to /admin/policy, Audit to /admin/ledger and Security to /admin/security", async () => {
     openAdmin();
     fireEvent.click(await screen.findByText(/Policy & OSCAL Lattice/));
     expect(window.location.pathname).toBe("/admin/policy");
-    fireEvent.click(screen.getByText(/Decision Ledger & OSCAL/));
+    fireEvent.click(screen.getByText("Audit"));
     expect(window.location.pathname).toBe("/admin/ledger");
+    fireEvent.click(screen.getByTestId("admin-security-tab-btn"));
+    expect(window.location.pathname).toBe("/admin/security");
   });
 
   it("opening /admin/settings selects the settings tab", async () => {
