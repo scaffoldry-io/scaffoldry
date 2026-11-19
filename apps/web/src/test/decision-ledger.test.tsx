@@ -14,6 +14,7 @@ const entry = (sequence: number) => ({
   app_slug: null,
   decision_type: "PolicyRevision",
   oscal_control_id: "AC-03",
+  control_title: "Access Enforcement",
   rationale: `Entry ${sequence}`,
 });
 
@@ -74,5 +75,12 @@ describe("the decision ledger", () => {
     vi.spyOn(apiClient, "getGovernanceLedger").mockRejectedValue(new Error("The server cannot read its database"));
     render(<DecisionLedgerView />);
     expect(await screen.findByText(/cannot read its database/)).toBeInTheDocument();
+  });
+
+  it("shows the title of the control beside its id", async () => {
+    vi.spyOn(apiClient, "getGovernanceLedger").mockResolvedValue(page() as never);
+    render(<DecisionLedgerView />);
+    await screen.findByText("16 Blocks Recorded");
+    expect(screen.getAllByText("AC-03 · Access Enforcement").length).toBe(2);
   });
 });

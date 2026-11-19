@@ -274,7 +274,7 @@ async fn evidence_is_counted_and_a_ledger_entry_is_not_a_requirement() {
     assert!(!rows.iter().any(|r| r["control_id"] == "pe-3"), "a ledger entry alone is not a requirement");
     let ac3 = rows.iter().find(|r| r["control_id"] == "ac-3").expect("a control a policy names");
     assert!(!ac3["policy_ids"].as_array().unwrap().is_empty());
-    assert!(ac3["title"].as_str().unwrap().len() > 3, "a control id carries its title: {ac3}");
+    assert!(ac3["control_title"].as_str().unwrap().len() > 3, "a control id carries its title: {ac3}");
 
     let (s, doc) = send(&w.app, "GET", "/admin/oscal/component-definition", &w.admin, None).await;
     assert_eq!(s, StatusCode::OK);

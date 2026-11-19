@@ -27,6 +27,9 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/oscal/requirements", get(requirements))
         .route("/admin/oscal/requirements/{control_id}", axum::routing::put(put_requirement))
         .route("/admin/oscal/component-definition", get(component_definition))
+        .route("/admin/oscal/catalog", get(oscal_catalog))
+        .route("/admin/oscal/coverage", get(oscal_coverage))
+        .route("/admin/oscal/coverage/gaps", get(oscal_gaps))
 }
 
 fn caller(user: Option<Extension<AuthUser>>, headers: &HeaderMap, state: &SharedState) -> Result<AuthUser, ServiceError> {
@@ -124,6 +127,21 @@ async fn put_requirement(State(state): State<SharedState>, user: Option<Extensio
 async fn component_definition(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap) -> Result<impl IntoResponse, ServiceError> {
     let caller = caller(user, &headers, &state)?;
     Ok(Json(tokio::task::spawn_blocking(move || oscal_admin::component_definition(&caller, &state)).await.map_err(stopped)??))
+}
+
+async fn oscal_catalog(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    Ok(Json(tokio::task::spawn_blocking(move || oscal_admin::search_catalog(&caller, &q, &state)).await.map_err(stopped)??))
+}
+
+async fn oscal_coverage(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    Ok(Json(tokio::task::spawn_blocking(move || oscal_admin::coverage(&caller, &q, &state)).await.map_err(stopped)??))
+}
+
+async fn oscal_gaps(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    Ok(Json(tokio::task::spawn_blocking(move || oscal_admin::coverage_gaps(&caller, &q, &state)).await.map_err(stopped)??))
 }
 
 async fn validate(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {

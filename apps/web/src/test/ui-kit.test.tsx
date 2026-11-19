@@ -346,7 +346,7 @@ describe("UI Kit — Phase 1 Components", () => {
       const { rerender } = render(
         <ControlLabel id="AC-1" lookup={{ "AC-1": "Access Control Policy" }} />
       );
-      expect(screen.getByText("AC-1 — Access Control Policy")).toBeInTheDocument();
+      expect(screen.getByText("AC-1 · Access Control Policy")).toBeInTheDocument();
 
       rerender(<ControlLabel id="AC-2" lookup={{}} />);
       expect(screen.getByText("AC-2 unknown")).toBeInTheDocument();

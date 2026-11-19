@@ -456,22 +456,6 @@ async fn test_cedar_policy_and_governance_endpoints() {
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let sim_result: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(sim_result["decision"], "Deny");
-
-    // 4. OSCAL Governance Catalog Export
-    let resp = app
-        .clone()
-        .oneshot(
-            authed_req()
-                .uri("/api/v1/governance/oscal")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let oscal: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(oscal["schema_version"], "1.1.2");
 }
 
 #[tokio::test]

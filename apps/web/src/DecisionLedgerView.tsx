@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { LedgerEntryItem } from "./types";
 import { apiClient } from "./api";
-import { ErrorState, Skeleton, useAsync } from "./ui";
+import { ControlLabel, ErrorState, Skeleton, useAsync } from "./ui";
 import { downloadJson } from "./admin/download";
 
 /** What the server said when it last checked the chain. `null` until someone asks. */
@@ -184,7 +184,7 @@ export const DecisionLedgerView: React.FC = () => {
                         {entry.decision_type}
                       </span>
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-50 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                        NIST {entry.oscal_control_id}
+                        <ControlLabel id={entry.oscal_control_id} title={entry.control_title} />
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
