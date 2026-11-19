@@ -465,6 +465,8 @@ I recommend a crate boundary first, not a second service. The doctrine says reac
 
 Phases 1 and 2 add no feature. They put the code where the rest stands.
 
+**Phase 1 is built (2026-11-19).** Migration `0114_datasets.sql` adds a `datasets` table of identity only: an id, an app slug, and a table id, unique for the pair. It gave each stored app table a dataset. Every manifest write gives a new table one in the same transaction. `GET /api/v1/data/datasets` lists the datasets of the apps the caller may read. `GET /api/v1/data/datasets/{id}/records/{record_id}` returns the row the app path returns, through the same service function, so row rules and field masks agree. A record in another table of the app is not found through this dataset. The name and fields stay in the manifest. The older `/datasets` catalog is a different thing and is unchanged. No access rule reads the new table yet. Tests: `datasets_phase1_test`.
+
 ## The catalog: find what exists and ask for it
 
 You called this the biggest problem we could try to solve: what data is out there, and how do I ask for it. A person should be able to find a dataset without seeing a single real value.

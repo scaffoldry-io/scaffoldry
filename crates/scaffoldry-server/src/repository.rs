@@ -117,6 +117,7 @@ const SCHEMA_0110: &str = include_str!("../../scaffoldry-core/migrations/0110_co
 const SCHEMA_0111: &str = include_str!("../../scaffoldry-core/migrations/0111_content_guard.sql");
 const SCHEMA_0112: &str = include_str!("../../scaffoldry-core/migrations/0112_policy_versions.sql");
 const SCHEMA_0113: &str = include_str!("../../scaffoldry-core/migrations/0113_ledger_filters.sql");
+const SCHEMA_0114: &str = include_str!("../../scaffoldry-core/migrations/0114_datasets.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1234,6 +1235,7 @@ impl PostgresRepository {
                             ("0111_content_guard.sql", SCHEMA_0111),
                             ("0112_policy_versions.sql", SCHEMA_0112),
                             ("0113_ledger_filters.sql", SCHEMA_0113),
+                            ("0114_datasets.sql", SCHEMA_0114),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -2692,6 +2694,7 @@ impl PostgresRepository {
                 ],
             )?;
             if let Some(row) = updated {
+                crate::repository_datasets::ensure_datasets_in_tx(&mut tx, &m)?;
                 crate::cache::bump(&mut tx, "manifests")?;
                 tx.commit()?;
                 return Ok(RecordWrite::Saved(row.get(0)));
@@ -2738,6 +2741,7 @@ impl PostgresRepository {
                     &manifest_json,
                 ],
             )?;
+            crate::repository_datasets::ensure_datasets_in_tx(&mut tx, &m)?;
             crate::cache::bump(&mut tx, "manifests")?;
             tx.commit()?;
             Ok(())

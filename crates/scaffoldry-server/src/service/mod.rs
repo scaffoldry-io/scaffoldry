@@ -98,6 +98,7 @@ pub mod my_apps;
 pub mod scope;
 pub mod synthesize;
 pub mod trash;
+pub mod datasets;
 pub mod undo;
 
 use axum::http::StatusCode;
