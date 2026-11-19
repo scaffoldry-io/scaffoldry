@@ -190,6 +190,41 @@ async fn disable_writes_one_new_version_with_no_proposal_and_one_ledger_entry() 
     assert_eq!(v1["rule"]["enabled"], true, "version 1 is as it was");
 }
 
+// An off switch works precisely when a rule is broken: a rule whose position was retired can be turned off, not on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rule_that_fails_validation_can_still_be_turned_off_but_not_on() {
+    let w = world().await;
+    let (s, b) = w.admin("POST", "/admin/positions", Some(json!({ "key": "chair", "name": "Chair", "description": "d", "org_types": ["Department"], "max_holders": 1, "reason": "Fixture" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = unique("broken");
+    let rule = json!({
+        "id": id, "name": "Broken", "enabled": true, "trigger": "RecordCreated",
+        "steps": [{ "id": "decide", "when": [], "kind": { "UserTask": {
+            "role": "chair", "prompt": "Decide", "approve": [], "reject": [],
+            "approver": { "Position": { "key": "chair", "from": "Submitter", "walk_up": false } }
+        }}}]
+    });
+    let (s, b) = send(&w.app, "POST", &format!("/api/v1/apps/{}/automations", w.slug), OWNER, Some(rule)).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let (s, b) = w.admin("PATCH", "/admin/positions/chair", Some(json!({ "retired": true, "reason": "No longer used" }))).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let before = w.ledger("ProcessDefinitionChanged").len();
+
+    let (s, b) = w.admin("PATCH", &format!("/admin/processes/{id}"), Some(json!({ "enabled": false, "reason": "It points at a retired position" }))).await;
+    assert_eq!(s, StatusCode::OK, "turning off must work: {b}");
+    assert_eq!(b["enabled"], false);
+    assert_eq!(b["version"], 2);
+    assert_eq!(w.ledger("ProcessDefinitionChanged").len(), before + 1);
+    let (_, detail) = w.admin("GET", &format!("/admin/processes/{id}"), None).await;
+    assert_eq!(detail["rule"]["enabled"], false);
+    assert_eq!(detail["versions"].as_array().unwrap().len(), 2);
+
+    let (s, b) = w.admin("PATCH", &format!("/admin/processes/{id}"), Some(json!({ "enabled": true, "reason": "Try again" }))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+    assert!(b["error"].as_str().unwrap().contains("retired"), "names why: {b}");
+    assert_eq!(w.ledger("ProcessDefinitionChanged").len(), before + 1, "a refused enable writes nothing");
+}
+
 // 3. Reassign: a held user, the creator, a completed instance. After a reassign, `approvers` is the assignee alone.
 #[tokio::test(flavor = "multi_thread")]
 async fn reassign_refuses_a_held_user_the_creator_and_a_finished_instance() {

@@ -289,6 +289,25 @@ pub fn save_rule(
     summary: &str,
     state: &SharedState,
 ) -> Result<AutomationRule, ServiceError> {
+    save_rule_checked(changed_by, app_slug, rule, proposal_id, summary, state, true)
+}
+
+/// Saves the rule as it is, turned off, without checking it. An off switch must work when a rule is broken, for example when
+/// the position it names was retired. The version and the ledger entry are written as for any other save.
+pub fn save_rule_disabled(changed_by: &str, app_slug: &str, mut rule: AutomationRule, summary: &str, state: &SharedState) -> Result<AutomationRule, ServiceError> {
+    rule.enabled = false;
+    save_rule_checked(changed_by, app_slug, rule, None, summary, state, false)
+}
+
+fn save_rule_checked(
+    changed_by: &str,
+    app_slug: &str,
+    rule: AutomationRule,
+    proposal_id: Option<Uuid>,
+    summary: &str,
+    state: &SharedState,
+    validate: bool,
+) -> Result<AutomationRule, ServiceError> {
     let manifest = state
         .engine
         .read()
@@ -298,11 +317,13 @@ pub fn save_rule(
         .ok_or_else(|| ServiceError::NotFound(format!("App '{app_slug}' not found")))?;
     let mut rule = rule;
     rule.app_slug = app_slug.to_string();
-    let problems = validate_rule(state, &manifest, &rule);
-    if !problems.is_empty() {
-        return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
+    if validate {
+        let problems = validate_rule(state, &manifest, &rule);
+        if !problems.is_empty() {
+            return Err(ServiceError::BadRequest(format!("rule_schema: {}", problems.join("; "))));
+        }
+        crate::service::flows::derive(state, &manifest, &mut rule);
     }
-    crate::service::flows::derive(state, &manifest, &mut rule);
     let repo = &*state.repository;
     let (saved, _) = repo
         .save_rule(&rule, summary, proposal_id, changed_by, &manifest.organization_code)

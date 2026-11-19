@@ -229,7 +229,7 @@ pub fn version(caller: &AuthUser, rule_id: &str, v: &str, state: &SharedState) -
     }))
 }
 
-/// `PATCH /admin/processes/{rule_id}`: turns a rule off or on. A new version through `save_rule` with no proposal, because this
+/// `PATCH /admin/processes/{rule_id}`: turns a rule off or on. Off is always allowed; on is checked in full. A new version through `save_rule` with no proposal, because this
 /// is the administrator's own authority. `save_rule` writes the ledger entry, and the reason is its rationale. A rule that
 /// is off starts no new instance. Instances that wait can still be decided.
 pub fn set_enabled(caller: &AuthUser, rule_id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -240,10 +240,15 @@ pub fn set_enabled(caller: &AuthUser, rule_id: &str, body: &Value, state: &Share
     if rule.enabled == enabled {
         return Err(ServiceError::BadRequest(format!("The process is already {}", if enabled { "on" } else { "off" })));
     }
-    rule.enabled = enabled;
     let summary = format!("Turned {} by {}. Reason: {reason}", if enabled { "on" } else { "off" }, caller.eppn);
     let app = rule.app_slug.clone();
-    let saved = processes::save_rule(&caller.eppn, &app, rule, None, &summary, state)?;
+    // Turning off is never refused for what is wrong with the rule. Turning on checks it in full.
+    let saved = if enabled {
+        rule.enabled = true;
+        processes::save_rule(&caller.eppn, &app, rule, None, &summary, state)?
+    } else {
+        processes::save_rule_disabled(&caller.eppn, &app, rule, &summary, state)?
+    };
     Ok(json!({ "rule_id": saved.id, "enabled": saved.enabled, "version": saved.version }))
 }
 
