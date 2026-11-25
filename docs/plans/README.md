@@ -324,6 +324,16 @@ Johann approved Wave 1f on 2026-11-19. These rows have plain phase numbers. The 
 | 196 | [mcp-guidance.md](mcp-guidance.md) | 3 | `explain_decision` explains the caller's own refusal in words and refuses to explain another person's | **COMPLETED** |
 | 197 | [mcp-guidance.md](mcp-guidance.md) | 4 | Prompts are built from policy data. Changing the policy changes the prompt with no code change | **COMPLETED** |
 
+### MCP toolsets
+
+Johann asked for a better architecture for the full tool list on 2026-11-25 ("keep going"). The design is `mcp-toolsets.md`. One server, with the tool list chosen by the token's granted toolsets, as the 2026-07-28 MCP spec allows.
+
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 198 | [mcp-toolsets.md](mcp-toolsets.md) | 1 | Every tool is in one toolset. A token with explicit toolsets lists and calls only those plus `core`. The largest reachable list stays inside the budget |
+| 199 | [mcp-toolsets.md](mcp-toolsets.md) | 2 | Consent offers the toolsets, an OAuth scope pre-ticks them, and new sessions default to `core` and `data`. A call outside them gets `insufficient_scope` |
+| 200 | [mcp-toolsets.md](mcp-toolsets.md) | 3 | Each toolset has its own byte limit, and toolsets that would break the largest list are exclusive |
+
 Foundation phases 10 and 11 depend on nothing after phase 9. Run them earlier if a pilot date appears.
 
 Migrations. Each phase takes the next free number on `main` and names its file by a slug, as its brief does: `*_delegations.sql` means "the next free number, then `_delegations.sql`". A brief names the shipped file once it exists. `governance/scripts/check-migrations.py` fails when two files share a number or a file is not registered. When two branches take the same number, the second to merge renumbers its file.
