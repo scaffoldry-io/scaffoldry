@@ -17,11 +17,17 @@ export function OAuthConsent() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [access, setAccess] = useState("read");
+  const [ticked, setTicked] = useState<string[]>([]);
 
   const answer = async (decision: "allow" | "deny") => {
     setBusy(true);
     try {
-      const { redirect_to } = await apiClient.oauthDecide(params, decision, decision === "allow" && consent?.choices ? access : undefined);
+      const { redirect_to } = await apiClient.oauthDecide(
+        params,
+        decision,
+        decision === "allow" && consent?.choices ? access : undefined,
+        decision === "allow" && consent?.toolsets ? ticked : undefined,
+      );
       window.location.assign(redirect_to);
     } catch (e: any) {
       setError(e?.message || "The answer could not be sent.");
@@ -36,6 +42,7 @@ export function OAuthConsent() {
       .then((c) => {
         if (cancelled) return;
         setConsent(c);
+        setTicked((c.toolsets ?? []).filter((t) => t.selected && !t.always_on).map((t) => t.id));
         // The person already agreed to exactly this, so there is nothing to ask.
         if (c.remembered) void answer("allow");
       })
@@ -93,6 +100,25 @@ export function OAuthConsent() {
           ))}
           <p className="text-xs text-slate-500">
             The session lasts up to {consent.session_hours ?? 12} hours. It also ends when you disconnect it or an administrator turns it off.
+          </p>
+        </fieldset>
+      )}
+      {consent.toolsets && (
+        <fieldset className="space-y-1" data-testid="oauth-toolsets">
+          <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">Which tools may it use?</legend>
+          {consent.toolsets.map((t) => (
+            <label key={t.id} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={t.always_on || ticked.includes(t.id)}
+                disabled={t.always_on}
+                onChange={(e) => setTicked((now) => (e.target.checked ? [...now, t.id] : now.filter((id) => id !== t.id)))}
+              />
+              {t.sentence}
+            </label>
+          ))}
+          <p className="text-xs text-slate-500">
+            Core is always on. If nothing is ticked, it gets Data. A tool outside these is refused, and the app can ask you again.
           </p>
         </fieldset>
       )}

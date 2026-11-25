@@ -8,7 +8,7 @@ use crate::service::tools;
 use crate::state::{AuthUser, SharedState};
 use axum::{
     extract::{DefaultBodyLimit, Extension, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -182,7 +182,7 @@ async fn handle_mcp_request(
                     "name": "scaffoldry-sovereign-mcp",
                     "version": env!("CARGO_PKG_VERSION")
                 },
-                "instructions": crate::service::guidance::instructions(&caller)
+                "instructions": crate::service::guidance::instructions(&caller, scope.as_ref())
             });
             rpc(JsonRpcResponse {
                 jsonrpc: "2.0",
@@ -247,7 +247,14 @@ async fn handle_mcp_request(
             if let Some(scope) = &scope {
                 if let Err(err) = crate::service::token_scope::check_tool(scope, &tool_name, &mut args, &state) {
                     let err = crate::guard::as_client_refusal(err, from_client);
-                    return rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(service_tool_error(&err)), error: None });
+                    let mut response = rpc(JsonRpcResponse { jsonrpc: "2.0", id: req_id, result: Some(service_tool_error(&err)), error: None });
+                    // RFC 6750 section 3.1: say which scope would allow the call, so a client may ask the person for it.
+                    if let crate::service::ServiceError::ToolsetNotGranted { toolset, .. } = &err {
+                        if let Ok(value) = HeaderValue::from_str(&format!("Bearer error=\"insufficient_scope\", scope=\"mcp:{}\"", toolset.word())) {
+                            response.headers_mut().insert(header::WWW_AUTHENTICATE, value);
+                        }
+                    }
+                    return response;
                 }
             }
 
