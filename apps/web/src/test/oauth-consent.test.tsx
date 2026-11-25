@@ -92,6 +92,69 @@ describe("External apps phase 2: the consent screen", () => {
     await waitFor(() => expect(posts[0]?.access).toBe("propose"));
   });
 
+  describe("toolsets", () => {
+    const TOOLSETS = [
+      { id: "core", sentence: "Core: find workspaces, apps and datasets.", always_on: true, selected: true },
+      { id: "data", sentence: "Data: read and change records.", always_on: false, selected: true },
+      { id: "build", sentence: "Build: propose changes to apps.", always_on: false, selected: false },
+      { id: "governance", sentence: "Governance: read the policy library and propose rules.", always_on: false, selected: false },
+    ];
+    const AGENT = {
+      ...CONSENT,
+      client: { ...CONSENT.client, name: "Desk assistant", kind: "agent" },
+      choices: [{ id: "read", sentence: "Read" }],
+      session_hours: 12,
+      toolsets: TOOLSETS,
+    };
+
+    it("lists every toolset the server offers with its sentence, and core is always on", async () => {
+      mock(AGENT);
+      render(<OAuthConsent />);
+      expect(await screen.findByTestId("oauth-toolsets")).toBeInTheDocument();
+      for (const t of TOOLSETS) expect(screen.getByText(t.sentence)).toBeInTheDocument();
+      const core = screen.getByRole("checkbox", { name: /Core:/ });
+      expect(core).toBeChecked();
+      expect(core).toBeDisabled();
+      expect(screen.queryByRole("checkbox", { name: /Admin/ })).not.toBeInTheDocument();
+    });
+
+    it("shows the ticks the server worked out from the OAuth scope, and the person can change them", async () => {
+      const ticked = TOOLSETS.map((t) => ({ ...t, selected: t.id === "core" || t.id === "governance" }));
+      const posts = mock({ ...AGENT, toolsets: ticked });
+      render(<OAuthConsent />);
+      expect(await screen.findByRole("checkbox", { name: /Governance:/ })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /Data:/ })).not.toBeChecked();
+      fireEvent.click(screen.getByRole("checkbox", { name: /Build:/ }));
+      fireEvent.click(screen.getByRole("checkbox", { name: /Governance:/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+      await waitFor(() => expect(posts[0]).toBeDefined());
+      expect(posts[0].toolsets).toEqual(["build"]);
+    });
+
+    it("sends the default ticks as they stand and never sends core", async () => {
+      const posts = mock(AGENT);
+      render(<OAuthConsent />);
+      fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+      await waitFor(() => expect(posts[0]).toBeDefined());
+      expect(posts[0].toolsets).toEqual(["data"]);
+    });
+
+    it("says what happens when nothing is ticked", async () => {
+      mock(AGENT);
+      render(<OAuthConsent />);
+      expect(await screen.findByTestId("oauth-toolsets")).toHaveTextContent(/nothing is ticked.*Data/i);
+    });
+
+    it("an app that is not an AI tool shows no toolsets and sends none", async () => {
+      const posts = mock(CONSENT);
+      render(<OAuthConsent />);
+      fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+      await waitFor(() => expect(posts[0]).toBeDefined());
+      expect(screen.queryByTestId("oauth-toolsets")).not.toBeInTheDocument();
+      expect(posts[0].toolsets).toBeUndefined();
+    });
+  });
+
   it("an app that is not an AI tool shows no choice of access", async () => {
     const posts = mock(CONSENT);
     render(<OAuthConsent />);

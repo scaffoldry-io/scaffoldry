@@ -107,7 +107,9 @@ fn challenge() -> String {
 fn authorize_body(client_id: &str, access: Option<&str>) -> Value {
     let mut body = json!({
         "client_id": client_id, "redirect_uri": CALLBACK, "response_type": "code", "state": "s", "code_challenge": challenge(),
-        "code_challenge_method": "S256", "resource": ISSUER, "decision": "allow"
+        "code_challenge_method": "S256", "resource": ISSUER, "decision": "allow",
+        // These tests are about levels and sessions, so they ask for every toolset. The default is in mcp_toolsets_phase2_test.
+        "toolsets": ["data", "build", "access", "governance"]
     });
     if let Some(a) = access {
         body["access"] = json!(a);

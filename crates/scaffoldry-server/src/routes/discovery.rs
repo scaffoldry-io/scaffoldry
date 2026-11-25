@@ -33,7 +33,12 @@ async fn get_oauth_protected_resource(axum::extract::State(state): axum::extract
             "workspaces:write",
             "records:read",
             "records:write",
-            "governance:audit"
+            "governance:audit",
+            "mcp:data",
+            "mcp:build",
+            "mcp:access",
+            "mcp:governance",
+            "mcp:admin"
         ],
         "bearer_methods_supported": ["header"]
     }))

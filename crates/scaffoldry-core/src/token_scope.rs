@@ -130,6 +130,23 @@ impl Toolset {
             Toolset::Admin => "admin",
         }
     }
+
+    /// The toolset named by a word, or `None` for a name that is not one.
+    pub fn parse(word: &str) -> Option<Toolset> {
+        Toolset::ALL.into_iter().find(|t| t.word() == word)
+    }
+
+    /// One plain sentence for the consent screen.
+    pub fn sentence(self) -> &'static str {
+        match self {
+            Toolset::Core => "Core: find workspaces, apps and datasets, start and finish tasks, and ask for access.",
+            Toolset::Data => "Data: read, add, change and delete records, and use views and exports.",
+            Toolset::Build => "Build: propose changes to apps, review them, and manage workspaces.",
+            Toolset::Access => "Access: draft access changes and suggest who needs access.",
+            Toolset::Governance => "Governance: read the policy library and propose rules.",
+            Toolset::Admin => "Admin: see the platform inventory. Platform Admins only.",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

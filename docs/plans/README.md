@@ -331,7 +331,7 @@ Johann asked for a better architecture for the full tool list on 2026-11-25 ("ke
 | Order | Brief | Phase | What is true after it | Status |
 | --- | --- | --- | --- | --- |
 | 198 | [mcp-toolsets.md](mcp-toolsets.md) | 1 | Every tool is in one toolset. A token with explicit toolsets lists and calls only those plus `core`. The largest reachable list stays inside the budget | **COMPLETED** |
-| 199 | [mcp-toolsets.md](mcp-toolsets.md) | 2 | Consent offers the toolsets, an OAuth scope pre-ticks them, and new sessions default to `core` and `data`. A call outside them gets `insufficient_scope` |
+| 199 | [mcp-toolsets.md](mcp-toolsets.md) | 2 | Consent offers the toolsets, an OAuth scope pre-ticks them, and new sessions default to `core` and `data`. A call outside them gets `insufficient_scope` | **COMPLETED** |
 | 200 | [mcp-toolsets.md](mcp-toolsets.md) | 3 | Each toolset has its own byte limit, and toolsets that would break the largest list are exclusive |
 
 Foundation phases 10 and 11 depend on nothing after phase 9. Run them earlier if a pilot date appears.

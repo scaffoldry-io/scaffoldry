@@ -4,10 +4,21 @@
 //! record value.
 
 use crate::state::AuthUser;
+use scaffoldry_core::{TokenScope, Toolset};
 
-/// The orientation an agent reads when it connects. Built for the caller.
-pub fn instructions(caller: &AuthUser) -> String {
-    format!(
+/// One line naming the toolsets a session was not granted, with how to get them. Empty when it lacks none.
+/// `admin` is left out: it is offered to Platform Admins only.
+fn missing_toolsets(scope: Option<&TokenScope>) -> String {
+    let missing: Vec<&str> = scope.map(|s| Toolset::ALL.into_iter().filter(|t| *t != Toolset::Admin && !s.allows_toolset(*t)).map(Toolset::word).collect()).unwrap_or_default();
+    if missing.is_empty() {
+        return String::new();
+    }
+    format!("\nThis session was not granted these toolsets: {}. Their tools are not listed. If the task needs one, ask the person to reconnect this tool and tick it.", missing.join(", "))
+}
+
+/// The orientation an agent reads when it connects. Built for the caller and the token's scope.
+pub fn instructions(caller: &AuthUser, scope: Option<&TokenScope>) -> String {
+    let base = format!(
         "You are acting for {who}, a person at this institution, through Scaffoldry. Scaffoldry holds the \
 institution's governed data and the rules for who may see or change it.\n\
 \n\
@@ -24,5 +35,6 @@ person.\n\
 Where to look: the resources list holds the policies in plain words, their schemas, and this person's own access. The \
 prompts list holds ready-made tasks, such as requesting access to a dataset. Tool descriptions say when to use each tool.",
         who = caller.eppn,
-    )
+    );
+    base + &missing_toolsets(scope)
 }

@@ -12,7 +12,7 @@ use crate::service::identity::{generate_raw_token, hash_token, resolve_user};
 use crate::service::ServiceError;
 use crate::state::{ApiToken, AuthUser, RecordDecisionInput, SharedState};
 use base64::Engine;
-use scaffoldry_core::{AgentLevel, DecisionType, TokenScope};
+use scaffoldry_core::{AgentLevel, DecisionType, TokenScope, Toolset};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -93,6 +93,46 @@ pub struct AuthorizeParams {
     /// An agent client's choice: `read`, `propose` or `write`.
     #[serde(default)]
     pub access: String,
+    /// The OAuth `scope` the client asked for (RFC 6749 section 3.3). `mcp:<toolset>` values pre-tick a toolset at consent.
+    #[serde(default)]
+    pub scope: String,
+    /// An agent client's choice of toolsets beyond `core`. Nothing ticked gives `data`.
+    #[serde(default)]
+    pub toolsets: Vec<String>,
+}
+
+/// A person's own rights decide what a toolset can do, and `admin` is for Platform Admins, so a member is never offered it.
+fn offered(user: &AuthUser, state: &SharedState) -> Vec<Toolset> {
+    let admin = crate::service::admin::require_platform_admin(user, state).is_ok();
+    Toolset::ALL.into_iter().filter(|t| admin || *t != Toolset::Admin).collect()
+}
+
+/// The toolsets a client's `scope` asks for: each `mcp:<toolset>` that is offered. Other values, and `mcp:` names that
+/// are not toolsets, are ignored. `core` is never asked for.
+fn asked_toolsets(scope: &str, offered: &[Toolset]) -> Vec<Toolset> {
+    let asked: Vec<Toolset> = scope.split_whitespace().filter_map(|s| s.strip_prefix("mcp:")).filter_map(Toolset::parse).filter(|t| *t != Toolset::Core && offered.contains(t)).collect();
+    Toolset::ALL.into_iter().filter(|t| asked.contains(t)).collect()
+}
+
+/// What the person ticked, checked: an unknown name is refused, `core` and a toolset they are not offered are dropped,
+/// and nothing ticked gives `data`.
+fn picked_toolsets(picked: &[String], offered: &[Toolset]) -> Result<Vec<Toolset>, ServiceError> {
+    let mut chosen = Vec::new();
+    for word in picked {
+        let set = Toolset::parse(word).ok_or_else(|| ServiceError::bad_request(format!("'{word}' is not a toolset.")))?;
+        if set != Toolset::Core && offered.contains(&set) {
+            chosen.push(set);
+        }
+    }
+    let mut chosen: Vec<Toolset> = Toolset::ALL.into_iter().filter(|t| chosen.contains(t)).collect();
+    if chosen.is_empty() {
+        chosen.push(Toolset::Data);
+    }
+    Ok(chosen)
+}
+
+fn words(sets: &[Toolset]) -> Vec<String> {
+    sets.iter().map(|t| t.word().to_string()).collect()
 }
 
 fn origin_of(uri: &str) -> String {
@@ -155,6 +195,17 @@ pub fn consent(user: &AuthUser, p: &AuthorizeParams, issuer: &str, state: &Share
     if agent {
         out["choices"] = Value::Array(AgentLevel::ALL.iter().map(|l| json!({ "id": l.word(), "sentence": l.sentence() })).collect());
         out["session_hours"] = json!(agent_session_hours(state));
+        let offered = offered(user, state);
+        let mut ticked = asked_toolsets(&p.scope, &offered);
+        if ticked.is_empty() {
+            ticked.push(Toolset::Data);
+        }
+        out["toolsets"] = Value::Array(
+            offered
+                .iter()
+                .map(|t| json!({ "id": t.word(), "sentence": t.sentence(), "always_on": *t == Toolset::Core, "selected": *t == Toolset::Core || ticked.contains(t) }))
+                .collect(),
+        );
     }
     Ok(out)
 }
@@ -170,11 +221,12 @@ pub fn decide(user: &AuthUser, p: &AuthorizeParams, issuer: &str, state: &Shared
     let target = match p.decision.as_str() {
         "deny" => format!("{}?error=access_denied&state={state_param}", p.redirect_uri),
         "allow" => {
-            let access = if client.kind == "agent" {
+            let (access, toolsets) = if client.kind == "agent" {
                 let level = AgentLevel::parse(&p.access).ok_or_else(|| ServiceError::bad_request("access must be read, propose or write."))?;
-                Some(level.word().to_string())
+                let toolsets = picked_toolsets(&p.toolsets, &offered(user, state))?;
+                (Some(level.word().to_string()), Some(words(&toolsets)))
             } else {
-                None
+                (None, None)
             };
             let raw = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
             let digest = digest_of(&client);
@@ -182,7 +234,7 @@ pub fn decide(user: &AuthUser, p: &AuthorizeParams, issuer: &str, state: &Shared
                 .repository
                 .insert_code(
                     &hash_token(&raw),
-                    &CodeRow { client_id: client.client_id.clone(), eppn: user.eppn.clone(), redirect_uri: p.redirect_uri.clone(), code_challenge: p.code_challenge.clone(), ceiling_digest: digest.clone(), access },
+                    &CodeRow { client_id: client.client_id.clone(), eppn: user.eppn.clone(), redirect_uri: p.redirect_uri.clone(), code_challenge: p.code_challenge.clone(), ceiling_digest: digest.clone(), access, toolsets },
                 )
                 .map_err(internal)?;
             state.repository.upsert_consent(&user.eppn, &client.client_id, &digest).map_err(internal)?;
@@ -253,19 +305,32 @@ fn server_error(e: &dyn std::fmt::Display) -> OAuthError {
     OAuthError::new(500, "server_error", e.to_string())
 }
 
-/// The scope of a token: an app client's ceiling, or an agent session's level.
-fn scope_for(client: &ClientRow, level: Option<AgentLevel>) -> TokenScope {
-    match level {
-        Some(level) => TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: Some(level), toolsets: None },
+/// An agent session as a token is issued for it. `toolsets` is None for a session from before phase 2: every toolset.
+struct Session {
+    id: uuid::Uuid,
+    level: AgentLevel,
+    left: i64,
+    toolsets: Option<Vec<Toolset>>,
+}
+
+/// The toolsets a stored session names. A name this server does not know is dropped.
+fn toolsets_of(stored: Option<Vec<String>>) -> Option<Vec<Toolset>> {
+    stored.map(|words| words.iter().filter_map(|w| Toolset::parse(w)).filter(|t| *t != Toolset::Core).collect())
+}
+
+/// The scope of a token: an app client's ceiling, or an agent session's level and toolsets.
+fn scope_for(client: &ClientRow, session: Option<&Session>) -> TokenScope {
+    match session {
+        Some(s) => TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: Some(s.level), toolsets: s.toolsets.clone() },
         None => crate::service::clients::scope_of(&crate::service::clients::ceiling_of(client)),
     }
 }
 
 /// Makes and stores an access token. An agent session's token ends with its session if that comes first.
-fn issue(client: &ClientRow, eppn: &str, code_hash: &str, session: Option<(uuid::Uuid, AgentLevel, i64)>, state: &SharedState) -> Result<String, OAuthError> {
+fn issue(client: &ClientRow, eppn: &str, code_hash: &str, session: Option<&Session>, state: &SharedState) -> Result<String, OAuthError> {
     let raw = generate_raw_token();
     let now = chrono::Utc::now();
-    let seconds = session.map_or(TOKEN_SECONDS, |(_, _, left)| TOKEN_SECONDS.min(left)).max(1);
+    let seconds = session.map_or(TOKEN_SECONDS, |s| TOKEN_SECONDS.min(s.left)).max(1);
     let token = ApiToken {
         token_hash: hash_token(&raw),
         id: uuid::Uuid::new_v4(),
@@ -279,18 +344,19 @@ fn issue(client: &ClientRow, eppn: &str, code_hash: &str, session: Option<(uuid:
         last_used_at: None,
         revoked_at: None,
         app_slug: None,
-        scope: Some(scope_for(client, session.map(|(_, level, _)| level))),
+        scope: Some(scope_for(client, session)),
     };
     state.persist_api_token(&token).map_err(|e| server_error(&e))?;
-    state.repository.insert_oauth_token(&token.token_hash, &client.client_id, eppn, code_hash, session.map(|(id, _, _)| id)).map_err(|e| server_error(&e))?;
+    state.repository.insert_oauth_token(&token.token_hash, &client.client_id, eppn, code_hash, session.map(|s| s.id)).map_err(|e| server_error(&e))?;
     Ok(raw)
 }
 
 /// An agent client's reply: the access token, and a refresh token that belongs to the session.
-fn agent_reply(client: &ClientRow, eppn: &str, code_hash: &str, session: uuid::Uuid, level: AgentLevel, left: i64, state: &SharedState) -> Result<Value, OAuthError> {
-    let access = issue(client, eppn, code_hash, Some((session, level, left)), state)?;
+fn agent_reply(client: &ClientRow, eppn: &str, code_hash: &str, session: &Session, state: &SharedState) -> Result<Value, OAuthError> {
+    let left = session.left;
+    let access = issue(client, eppn, code_hash, Some(session), state)?;
     let refresh = generate_raw_token();
-    state.repository.insert_refresh(&hash_token(&refresh), session).map_err(|e| server_error(&e))?;
+    state.repository.insert_refresh(&hash_token(&refresh), session.id).map_err(|e| server_error(&e))?;
     Ok(json!({ "access_token": access, "token_type": "Bearer", "expires_in": TOKEN_SECONDS.min(left).max(1), "refresh_token": refresh }))
 }
 
@@ -324,8 +390,11 @@ fn from_code(basic: Option<(String, String)>, form: &TokenForm, state: &SharedSt
     if client.kind == "agent" {
         let level = row.access.as_deref().and_then(AgentLevel::parse).ok_or_else(|| grant("This code carries no choice of access."))?;
         let hours = agent_session_hours(state);
-        let session = state.repository.create_session(&client.client_id, &row.eppn, level.word(), hours).map_err(|e| server_error(&e))?;
-        return agent_reply(&client, &row.eppn, &code_hash, session, level, hours * 3600, state);
+        // A code from before phase 2 names no toolsets. A new session then gets the default: `core` and `data`.
+        let toolsets = toolsets_of(row.toolsets.clone().or_else(|| Some(vec![Toolset::Data.word().to_string()])));
+        let stored = toolsets.as_deref().map(words);
+        let id = state.repository.create_session(&client.client_id, &row.eppn, level.word(), stored.as_deref(), hours).map_err(|e| server_error(&e))?;
+        return agent_reply(&client, &row.eppn, &code_hash, &Session { id, level, left: hours * 3600, toolsets }, state);
     }
     let raw = issue(&client, &row.eppn, &code_hash, None, state)?;
     Ok(json!({ "access_token": raw, "token_type": "Bearer", "expires_in": TOKEN_SECONDS }))
@@ -363,8 +432,8 @@ fn from_refresh(basic: Option<(String, String)>, form: &TokenForm, state: &Share
     if form.refresh_token.is_empty() {
         return Err(OAuthError::new(400, "invalid_request", "refresh_token is required."));
     }
-    let (session, client_id, eppn, access, left) = match state.repository.take_refresh(&hash_token(&form.refresh_token)).map_err(|e| server_error(&e))? {
-        RefreshUse::Fresh { session_id, client_id, eppn, access, seconds_left } => (session_id, client_id, eppn, access, seconds_left),
+    let (session, client_id, eppn, access, left, toolsets) = match state.repository.take_refresh(&hash_token(&form.refresh_token)).map_err(|e| server_error(&e))? {
+        RefreshUse::Fresh { session_id, client_id, eppn, access, seconds_left, toolsets } => (session_id, client_id, eppn, access, seconds_left, toolsets),
         RefreshUse::Reused => return Err(grant("This refresh token was already used. The session has ended.")),
         RefreshUse::Missing => return Err(grant("This refresh token is unknown, or its session has ended.")),
     };
@@ -374,7 +443,8 @@ fn from_refresh(basic: Option<(String, String)>, form: &TokenForm, state: &Share
         return Err(grant("This person cannot continue the session."));
     }
     let level = AgentLevel::parse(&access).ok_or_else(|| grant("The session carries no access."))?;
-    agent_reply(&client, &eppn, "", session, level, left, state)
+    // A session from before phase 2 stores none, and keeps every toolset.
+    agent_reply(&client, &eppn, "", &Session { id: session, level, left, toolsets: toolsets_of(toolsets) }, state)
 }
 
 /// RFC 7009. The client revokes one of its own tokens. The answer is the same for a token it does not own.

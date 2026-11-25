@@ -118,6 +118,7 @@ const SCHEMA_0111: &str = include_str!("../../scaffoldry-core/migrations/0111_co
 const SCHEMA_0112: &str = include_str!("../../scaffoldry-core/migrations/0112_policy_versions.sql");
 const SCHEMA_0113: &str = include_str!("../../scaffoldry-core/migrations/0113_ledger_filters.sql");
 const SCHEMA_0114: &str = include_str!("../../scaffoldry-core/migrations/0114_datasets.sql");
+const SCHEMA_0115: &str = include_str!("../../scaffoldry-core/migrations/0115_session_toolsets.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1207,6 +1208,7 @@ impl PostgresRepository {
                             ("0112_policy_versions.sql", SCHEMA_0112),
                             ("0113_ledger_filters.sql", SCHEMA_0113),
                             ("0114_datasets.sql", SCHEMA_0114),
+                            ("0115_session_toolsets.sql", SCHEMA_0115),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 

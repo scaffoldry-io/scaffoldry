@@ -104,6 +104,8 @@ pub struct CodeRow {
     pub ceiling_digest: String,
     /// What an agent client's person chose: `read`, `propose` or `write`. None for an app client.
     pub access: Option<String>,
+    /// The toolsets beyond `core` the person ticked. None for an app client.
+    pub toolsets: Option<Vec<String>>,
 }
 
 /// An agent client's sign-in by one person.
@@ -119,7 +121,7 @@ pub struct SessionRow {
 /// What a refresh token turned out to be.
 pub enum RefreshUse {
     /// Valid, and now used. The session it belongs to, and how many seconds the session has left.
-    Fresh { session_id: uuid::Uuid, client_id: String, eppn: String, access: String, seconds_left: i64 },
+    Fresh { session_id: uuid::Uuid, client_id: String, eppn: String, access: String, seconds_left: i64, toolsets: Option<Vec<String>> },
     /// Used before. Its session, and every token of it, has been revoked.
     Reused,
     /// Unknown, or its session has ended.
@@ -141,9 +143,9 @@ impl PostgresRepository {
         let (code_hash, c) = (code_hash.to_string(), c.clone());
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO oauth_codes (code_hash, client_id, eppn, redirect_uri, code_challenge, ceiling_digest, access, expires_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '60 seconds')",
-                &[&code_hash, &c.client_id, &c.eppn, &c.redirect_uri, &c.code_challenge, &c.ceiling_digest, &c.access],
+                "INSERT INTO oauth_codes (code_hash, client_id, eppn, redirect_uri, code_challenge, ceiling_digest, access, toolsets, expires_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + INTERVAL '60 seconds')",
+                &[&code_hash, &c.client_id, &c.eppn, &c.redirect_uri, &c.code_challenge, &c.ceiling_digest, &c.access, &c.toolsets],
             )?;
             Ok(())
         })
@@ -156,11 +158,11 @@ impl PostgresRepository {
             let mut tx = client.transaction()?;
             let fresh = tx.query_opt(
                 "UPDATE oauth_codes SET used_at = NOW() WHERE code_hash = $1 AND used_at IS NULL AND expires_at > NOW() \
-                 RETURNING client_id, eppn, redirect_uri, code_challenge, ceiling_digest::text, access",
+                 RETURNING client_id, eppn, redirect_uri, code_challenge, ceiling_digest::text, access, toolsets",
                 &[&code_hash],
             )?;
             let out = if let Some(r) = fresh {
-                CodeUse::Fresh(CodeRow { client_id: r.get(0), eppn: r.get(1), redirect_uri: r.get(2), code_challenge: r.get(3), ceiling_digest: r.get(4), access: r.get(5) })
+                CodeUse::Fresh(CodeRow { client_id: r.get(0), eppn: r.get(1), redirect_uri: r.get(2), code_challenge: r.get(3), ceiling_digest: r.get(4), access: r.get(5), toolsets: r.get(6) })
             } else if tx.query_opt("SELECT 1 FROM oauth_codes WHERE code_hash = $1 AND used_at IS NOT NULL", &[&code_hash])?.is_some() {
                 tx.execute(
                     "UPDATE api_tokens SET revoked_at = NOW() WHERE revoked_at IS NULL AND token_hash IN (SELECT token_hash FROM oauth_tokens WHERE code_hash = $1)",
@@ -279,13 +281,13 @@ impl PostgresRepository {
     }
 
     /// Starts a session. It ends `hours` from now.
-    pub fn create_session(&self, client_id: &str, eppn: &str, access: &str, hours: i64) -> Result<uuid::Uuid, RepositoryError> {
-        let (client_id, eppn, access) = (client_id.to_string(), eppn.to_string(), access.to_string());
+    pub fn create_session(&self, client_id: &str, eppn: &str, access: &str, toolsets: Option<&[String]>, hours: i64) -> Result<uuid::Uuid, RepositoryError> {
+        let (client_id, eppn, access, toolsets) = (client_id.to_string(), eppn.to_string(), access.to_string(), toolsets.map(<[String]>::to_vec));
         let id = uuid::Uuid::new_v4();
         self.with_client(move |client| {
             client.execute(
-                "INSERT INTO oauth_sessions (session_id, client_id, eppn, access, expires_at) VALUES ($1, $2, $3, $4, NOW() + make_interval(hours => $5::int))",
-                &[&id, &client_id, &eppn, &access, &(hours as i32)],
+                "INSERT INTO oauth_sessions (session_id, client_id, eppn, access, toolsets, expires_at) VALUES ($1, $2, $3, $4, $5, NOW() + make_interval(hours => $6::int))",
+                &[&id, &client_id, &eppn, &access, &toolsets, &(hours as i32)],
             )?;
             Ok(id)
         })
@@ -317,10 +319,10 @@ impl PostgresRepository {
             let out = if let Some(r) = fresh {
                 let session: uuid::Uuid = r.get(0);
                 match tx.query_opt(
-                    "SELECT client_id, eppn, access, EXTRACT(EPOCH FROM (expires_at - NOW()))::float8 FROM oauth_sessions WHERE session_id = $1 AND revoked_at IS NULL AND expires_at > NOW()",
+                    "SELECT client_id, eppn, access, EXTRACT(EPOCH FROM (expires_at - NOW()))::float8, toolsets FROM oauth_sessions WHERE session_id = $1 AND revoked_at IS NULL AND expires_at > NOW()",
                     &[&session],
                 )? {
-                    Some(s) => RefreshUse::Fresh { session_id: session, client_id: s.get(0), eppn: s.get(1), access: s.get(2), seconds_left: s.get::<_, f64>(3) as i64 },
+                    Some(s) => RefreshUse::Fresh { session_id: session, client_id: s.get(0), eppn: s.get(1), access: s.get(2), seconds_left: s.get::<_, f64>(3) as i64, toolsets: s.get(4) },
                     None => RefreshUse::Missing,
                 }
             } else if let Some(r) = tx.query_opt("SELECT session_id FROM oauth_refresh WHERE refresh_hash = $1 AND used_at IS NOT NULL", &[&refresh_hash])? {

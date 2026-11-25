@@ -97,6 +97,22 @@ Listed size of each toolset, measured on 2026-11-25 as the bytes of its entries 
 
 The default list in phase 2, `core` plus `data`, is 12,202 bytes before separators. The largest list is 5 bytes under the cap, so phase 3 must decide on exclusive toolsets before any tool is added.
 
+## Phase 2, as built
+
+Phase 2 is in. Tests: `crates/scaffoldry-server/tests/mcp_toolsets_phase2_test.rs` and `apps/web/src/test/oauth-consent.test.tsx`.
+
+- **Consent.** `GET /oauth/authorize` for an agent client adds `toolsets`: one row per toolset with `id`, `sentence`, `always_on` and `selected`. `core` is always on. `admin` is listed only to a Platform Admin. `Toolset::sentence` in `scaffoldry-core` holds the sentences.
+- **OAuth scope.** The `scope` parameter is read at consent. Each `mcp:<toolset>` that is offered is pre-ticked. Unknown `mcp:` values, `mcp:core`, and other scopes are ignored. With none, `data` is ticked.
+- **The choice.** `POST /oauth/authorize` takes `toolsets` (a list of names). An unknown name is a `400`. `core` is dropped, and so is `admin` for anyone but a Platform Admin. An empty list gives `data`. The screen is `OAuthConsent.tsx`.
+- **Storage.** Migration `0115_session_toolsets.sql` adds a nullable `toolsets TEXT[]` to `oauth_codes` and `oauth_sessions`. The code carries the choice to the token endpoint. The session keeps it, and a refreshed token reads it from the session. Rows from before stay NULL, which means every toolset, so tokens issued earlier keep every toolset until they expire.
+- **Default.** A new agent session that picks nothing gets `core` and `data`. A code from before phase 2 is treated the same way.
+- **Discovery.** `scopes_supported` keeps its seven values and adds `mcp:data`, `mcp:build`, `mcp:access`, `mcp:governance` and `mcp:admin`. `core` is not listed, because it is never asked for.
+- **Refusal.** When `tools/call` is refused with `ToolsetNotGranted`, the response carries `WWW-Authenticate: Bearer error="insufficient_scope", scope="mcp:<toolset>"`. The JSON-RPC body is unchanged. The MCP route answers every tool error with HTTP `200`, so the status stays `200`. The header is there, but a client that steps up on the status code alone will not see it. Moving the status to `403` is a change to every MCP client, and it is not part of this phase.
+- **Instructions.** `instructions` adds one line naming the toolsets the session lacks (never `admin`) with the reconnect hint. A token with every toolset, and a desk token, get no line. The limit of 1,800 bytes holds.
+- **Tests that signed in an agent.** `agent_clients_test` and `access_drafts_test` now tick every toolset, since they are about levels and need `build` and `access` tools.
+
+Listed size of the default list, measured as the bytes of its entries in `tools/list` for a non-admin Write session: 19 tools, 8,652 bytes. A Read or Propose session lists fewer, and a Platform Admin with the same toolsets sees all 25 `core` and `data` tools, 12,202 bytes.
+
 ## Enterprise objections
 
 | Objection | Answer |
