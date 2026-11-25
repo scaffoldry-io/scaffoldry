@@ -71,6 +71,32 @@ Every tool is in exactly one toolset. A test holds that.
 
 Phase 1 changes no client. A token with no `toolsets` value keeps every toolset, so every call that worked before still works. Only a token with an explicit `toolsets` value is narrowed. Before phase 2, a client has no way to ask for fewer toolsets, so it could not ask for more either. Phase 2 adds the choice at consent, and only then do new sessions default to `core` and `data`. Tokens issued earlier keep every toolset until they expire.
 
+## Phase 1, as built
+
+Phase 1 is in. Tests: `crates/scaffoldry-server/tests/mcp_toolsets_phase1_test.rs`.
+
+- `Toolset` is in `scaffoldry-core` (`token_scope.rs`). Every `Tool` has a `toolset`, assigned as the table above says.
+- `TokenScope.toolsets` is `Option<Vec<Toolset>>`. `None` means every toolset. `validate` refuses `core`, and an unknown name fails to parse. The mint route (`POST /auth/tokens`) takes it with the rest of the scope. No screen sets it yet.
+- `tools/list` drops a tool whose toolset the token lacks. This sits beside the existing filters, so `admin` is still shown only to a Platform Admin, whatever a token asks for.
+- `tools/call` is checked first in `token_scope::check_tool`. The refusal is `ServiceError::ToolsetNotGranted`, with the code `token_scope`, the phase 2 `hint`, `required_toolset` and a `request_path` that says to reconnect and grant the toolset. It adds no error code.
+- A toolset narrows a session or a limited token. It does not widen one. A read session with `toolsets` of `["governance"]` lists the governance tools a read session lists, and no more.
+- Sessions made by consent keep `toolsets: None`. Tests build the others.
+- The budget tests measure the largest reachable list: a Platform Admin with every toolset.
+
+Listed size of each toolset, measured on 2026-11-25 as the bytes of its entries in `tools/list` (`mcp_conformance`, `each_toolset_lists_its_own_size...`):
+
+| Toolset | Tools | Listed bytes |
+| --- | --- | --- |
+| `core` | 13 | 4,872 |
+| `data` | 12 | 7,330 |
+| `build` | 9 | 5,971 |
+| `access` | 2 | 1,008 |
+| `governance` | 8 | 4,277 |
+| `admin` | 1 | 542 |
+| Largest list (all) | 45 | 23,995 |
+
+The default list in phase 2, `core` plus `data`, is 12,202 bytes before separators. The largest list is 5 bytes under the cap, so phase 3 must decide on exclusive toolsets before any tool is added.
+
 ## Enterprise objections
 
 | Objection | Answer |

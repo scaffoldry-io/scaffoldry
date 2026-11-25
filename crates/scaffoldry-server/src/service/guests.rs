@@ -183,7 +183,7 @@ pub fn verify(state: &SharedState, body: &Value) -> Result<Value, ServiceError> 
     let now = chrono::Utc::now();
     let expires = now + chrono::Duration::hours(SESSION_HOURS);
     // Limited to this app, and to no table: every ordinary route refuses it. The form's own routes read the form from the label.
-    let scope = TokenScope { apps: vec![app.clone()], tables: std::collections::BTreeMap::<String, Vec<TokenOp>>::new(), tools: Some(Vec::new()), max_rows_per_call: None, level: None };
+    let scope = TokenScope { apps: vec![app.clone()], tables: std::collections::BTreeMap::<String, Vec<TokenOp>>::new(), tools: Some(Vec::new()), max_rows_per_call: None, level: None, toolsets: None };
     let row = ApiToken {
         token_hash: crate::service::identity::hash_token(&session),
         id: Uuid::new_v4(),

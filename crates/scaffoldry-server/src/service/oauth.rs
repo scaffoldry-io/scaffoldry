@@ -256,7 +256,7 @@ fn server_error(e: &dyn std::fmt::Display) -> OAuthError {
 /// The scope of a token: an app client's ceiling, or an agent session's level.
 fn scope_for(client: &ClientRow, level: Option<AgentLevel>) -> TokenScope {
     match level {
-        Some(level) => TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: Some(level) },
+        Some(level) => TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: Some(level), toolsets: None },
         None => crate::service::clients::scope_of(&crate::service::clients::ceiling_of(client)),
     }
 }

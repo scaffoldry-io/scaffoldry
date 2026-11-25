@@ -77,7 +77,7 @@ fn coded_tool_error(code: &str, message: &str, hint: &str) -> Value {
 fn service_tool_error(err: &crate::service::ServiceError) -> Value {
     let mut value = coded_tool_error(err.code(), err.message(), &crate::service::hints::hint_for(err));
     let body = err.body();
-    for key in ["reason", "remedy", "fields", "request", "rule", "policy", "request_path"] {
+    for key in ["reason", "remedy", "fields", "request", "rule", "policy", "request_path", "required_toolset"] {
         if let Some(v) = body.get(key) {
             value["structuredContent"][key] = v.clone();
         }
@@ -210,7 +210,7 @@ async fn handle_mcp_request(
                 .filter(|t| is_admin || !matches!(t.scope, tools::Scope::PlatformAdmin))
                 .filter(|t| !crate::service::admin_audit::tool_disabled(&state, t.name))
                 // A limited token sees the tools its scope allows and no others.
-                .filter(|t| scope.as_ref().is_none_or(|s| crate::service::token_scope::lists_tool(s, t.name)))
+                .filter(|t| scope.as_ref().is_none_or(|s| s.allows_toolset(t.toolset) && crate::service::token_scope::lists_tool(s, t.name)))
                 .map(|t| {
                     // The schema is closed (`validate_args` refuses an unknown argument) and carries one valid call.
                     let mut schema = (t.input_schema)();

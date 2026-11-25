@@ -101,6 +101,37 @@ impl AgentLevel {
     pub const ALL: [AgentLevel; 3] = [AgentLevel::Read, AgentLevel::Propose, AgentLevel::Write];
 }
 
+/// An area of the tool list (`docs/plans/mcp-toolsets.md`). Every tool is in exactly one. A token lists and calls the
+/// toolsets it was granted, and `core` always. A toolset only decides what is listed and callable: it never adds a right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Toolset {
+    /// Always listed. It is implied, so a token never names it.
+    Core,
+    Data,
+    Build,
+    Access,
+    Governance,
+    /// Offered to a Platform Admin only, whatever a token asks for.
+    Admin,
+}
+
+impl Toolset {
+    pub const ALL: [Toolset; 6] = [Toolset::Core, Toolset::Data, Toolset::Build, Toolset::Access, Toolset::Governance, Toolset::Admin];
+
+    /// The name in a token and in the scope `mcp:<name>`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Toolset::Core => "core",
+            Toolset::Data => "data",
+            Toolset::Build => "build",
+            Toolset::Access => "access",
+            Toolset::Governance => "governance",
+            Toolset::Admin => "admin",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenScope {
@@ -115,6 +146,9 @@ pub struct TokenScope {
     /// An AI tool's session. When set, `apps` and `tables` are empty and the level decides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level: Option<AgentLevel>,
+    /// The toolsets beyond `core` that the token lists and calls. Omitted: every toolset, as before. It only narrows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolsets: Option<Vec<Toolset>>,
 }
 
 impl TokenScope {
@@ -126,6 +160,9 @@ impl TokenScope {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.toolsets.as_ref().is_some_and(|sets| sets.contains(&Toolset::Core)) {
+            return Err("The toolset 'core' is always on, so a scope does not name it.".to_string());
+        }
         if self.apps.is_empty() || self.apps.iter().any(|a| a.trim().is_empty()) {
             return Err("A scope must name at least one app.".to_string());
         }
@@ -147,6 +184,11 @@ impl TokenScope {
             }
         }
         Ok(())
+    }
+
+    /// Whether the token's toolsets cover a tool in `set`. `core` is always covered.
+    pub fn allows_toolset(&self, set: Toolset) -> bool {
+        set == Toolset::Core || self.toolsets.as_ref().is_none_or(|sets| sets.contains(&set))
     }
 
     pub fn allows_app(&self, app: &str) -> bool {

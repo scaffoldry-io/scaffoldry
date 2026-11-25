@@ -9,7 +9,7 @@ use crate::service::access::{authorize_app, authorize_workspace, AppAction};
 use crate::service::history::Origin;
 use crate::service::{library_tools, records, workspaces, ServiceError};
 use crate::state::{AuthUser, SharedState};
-use scaffoldry_core::DecisionType;
+use scaffoldry_core::{DecisionType, Toolset};
 use scaffoldry_engine::HostRouter;
 use serde_json::{json, Map, Value};
 
@@ -36,6 +36,8 @@ pub struct Tool {
     pub scope: Scope,
     /// True when the tool changes nothing. It becomes the `readOnlyHint` annotation.
     pub read_only: bool,
+    /// The area of the tool list this tool is in. Exactly one (`docs/plans/mcp-toolsets.md`).
+    pub toolset: Toolset,
     pub run: fn(&AuthUser, &Origin, Value, &SharedState) -> Result<Value, ServiceError>,
 }
 
@@ -46,6 +48,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_list_workspaces,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Core,
         run: run_list_workspaces,
     },
     Tool {
@@ -54,6 +57,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_get_workspace,
         scope: Scope::Workspace("access_workspace"),
         read_only: true,
+        toolset: Toolset::Core,
         run: run_get_workspace,
     },
     Tool {
@@ -62,6 +66,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_update_workspace,
         scope: Scope::Workspace("manage_workspace"),
         read_only: false,
+        toolset: Toolset::Build,
         run: run_update_workspace,
     },
     Tool {
@@ -70,6 +75,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_manage_workspace_member,
         scope: Scope::Workspace("manage_workspace"),
         read_only: false,
+        toolset: Toolset::Build,
         run: run_manage_workspace_member,
     },
     Tool {
@@ -78,6 +84,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_create_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
+        toolset: Toolset::Data,
         run: run_create_record,
     },
     Tool {
@@ -86,6 +93,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_list_datasets,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Core,
         run: run_list_datasets,
     },
     Tool {
@@ -94,6 +102,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_governance_report,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Governance,
         run: run_governance_report,
     },
     Tool {
@@ -102,6 +111,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_simulate_cedar_policy,
         scope: Scope::PlatformAdmin,
         read_only: true,
+        toolset: Toolset::Governance,
         run: run_simulate_cedar_policy,
     },
     Tool {
@@ -110,6 +120,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_record_governance_decision,
         scope: Scope::SignedIn,
         read_only: false,
+        toolset: Toolset::Governance,
         run: run_record_governance_decision,
     },
     Tool {
@@ -118,6 +129,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_list_apps,
         scope: Scope::Workspace("access_workspace"),
         read_only: true,
+        toolset: Toolset::Core,
         run: run_list_apps,
     },
     Tool {
@@ -126,6 +138,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_describe_app,
         scope: Scope::App(AppAction::Read),
         read_only: true,
+        toolset: Toolset::Core,
         run: run_describe_app,
     },
     Tool {
@@ -134,6 +147,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_aggregate_records,
         scope: Scope::App(AppAction::Read),
         read_only: true,
+        toolset: Toolset::Data,
         run: run_aggregate_records,
     },
     Tool {
@@ -142,6 +156,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_list_records,
         scope: Scope::App(AppAction::Read),
         read_only: true,
+        toolset: Toolset::Data,
         run: run_list_records,
     },
         Tool {
@@ -150,6 +165,7 @@ pub static TOOLS: &[Tool] = &[
         input_schema: schema_get_view_data,
         scope: Scope::App(AppAction::Read),
         read_only: true,
+        toolset: Toolset::Data,
         run: run_get_view_data,
     },
 Tool {
@@ -158,6 +174,7 @@ Tool {
         input_schema: schema_get_record,
         scope: Scope::App(AppAction::Read),
         read_only: true,
+        toolset: Toolset::Data,
         run: run_get_record,
     },
     Tool {
@@ -166,6 +183,7 @@ Tool {
         input_schema: schema_get_page,
         scope: Scope::App(AppAction::Read),
         read_only: true,
+        toolset: Toolset::Build,
         run: run_get_page,
     },
     Tool {
@@ -174,6 +192,7 @@ Tool {
         input_schema: schema_page_call,
         scope: Scope::App(AppAction::Read),
         read_only: false,
+        toolset: Toolset::Build,
         run: run_page_call,
     },
     Tool {
@@ -182,6 +201,7 @@ Tool {
         input_schema: schema_update_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
+        toolset: Toolset::Data,
         run: run_update_record,
     },
     Tool {
@@ -190,6 +210,7 @@ Tool {
         input_schema: schema_delete_record,
         scope: Scope::App(AppAction::WriteRecords),
         read_only: false,
+        toolset: Toolset::Data,
         run: run_delete_record,
     },
     Tool {
@@ -198,6 +219,7 @@ Tool {
         input_schema: schema_propose_app_change,
         scope: Scope::Workspace("access_workspace"),
         read_only: false,
+        toolset: Toolset::Build,
         run: run_propose_app_change,
     },
     Tool {
@@ -206,6 +228,7 @@ Tool {
         input_schema: schema_draft_access_change,
         scope: Scope::SignedIn,
         read_only: false,
+        toolset: Toolset::Access,
         run: run_draft_access_change,
     },
     Tool {
@@ -214,6 +237,7 @@ Tool {
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Access,
         run: run_access_suggestions,
     },
     Tool {
@@ -222,6 +246,7 @@ Tool {
         input_schema: schema_request_access,
         scope: Scope::SignedIn,
         read_only: false,
+        toolset: Toolset::Core,
         run: run_request_access,
     },
     Tool {
@@ -230,6 +255,7 @@ Tool {
         input_schema: schema_list_proposals,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Build,
         run: run_list_proposals,
     },
     Tool {
@@ -238,6 +264,7 @@ Tool {
         input_schema: schema_get_proposal,
         scope: Scope::Proposal("access_workspace"),
         read_only: true,
+        toolset: Toolset::Build,
         run: run_get_proposal,
     },
     Tool {
@@ -246,6 +273,7 @@ Tool {
         input_schema: schema_decide_proposal,
         scope: Scope::Proposal("manage_workspace"),
         read_only: false,
+        toolset: Toolset::Build,
         run: run_decide_proposal,
     },
     Tool {
@@ -254,6 +282,7 @@ Tool {
         input_schema: schema_get_proposal,
         scope: Scope::Proposal("access_workspace"),
         read_only: false,
+        toolset: Toolset::Build,
         run: run_preview_proposal,
     },
     Tool {
@@ -262,6 +291,7 @@ Tool {
         input_schema: schema_empty,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Core,
         run: run_get_agent_kit,
     },
     Tool {
@@ -270,6 +300,7 @@ Tool {
         input_schema: schema_explain_access,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Core,
         run: run_explain_access,
     },
     Tool {
@@ -278,6 +309,7 @@ Tool {
         input_schema: schema_list_my_work,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Core,
         run: run_list_my_work,
     },
     Tool {
@@ -286,6 +318,7 @@ Tool {
         input_schema: schema_complete_task,
         scope: Scope::SignedIn,
         read_only: false,
+        toolset: Toolset::Core,
         run: run_complete_task,
     },
     Tool {
@@ -294,6 +327,7 @@ Tool {
         input_schema: schema_decide_process,
         scope: Scope::App(AppAction::Read),
         read_only: false,
+        toolset: Toolset::Data,
         run: run_decide_process,
     },
     Tool {
@@ -302,6 +336,7 @@ Tool {
         input_schema: schema_list_views,
         scope: Scope::App(AppAction::Read),
         read_only: true,
+        toolset: Toolset::Data,
         run: run_list_views,
     },
     Tool {
@@ -310,6 +345,7 @@ Tool {
         input_schema: schema_save_view,
         scope: Scope::App(AppAction::Read),
         read_only: false,
+        toolset: Toolset::Data,
         run: run_save_view,
     },
     Tool {
@@ -318,6 +354,7 @@ Tool {
         input_schema: schema_delete_view,
         scope: Scope::App(AppAction::Read),
         read_only: false,
+        toolset: Toolset::Data,
         run: run_delete_view,
     },
     Tool {
@@ -326,6 +363,7 @@ Tool {
         input_schema: schema_get_job,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Core,
         run: run_get_job,
     },
     Tool {
@@ -334,6 +372,7 @@ Tool {
         input_schema: schema_begin_task,
         scope: Scope::SignedIn,
         read_only: false,
+        toolset: Toolset::Core,
         run: run_begin_task,
     },
     Tool {
@@ -342,6 +381,7 @@ Tool {
         input_schema: schema_cancel_job,
         scope: Scope::SignedIn,
         read_only: false,
+        toolset: Toolset::Core,
         run: run_cancel_job,
     },
     Tool {
@@ -350,6 +390,7 @@ Tool {
         input_schema: schema_export_records,
         scope: Scope::App(AppAction::Read),
         read_only: false,
+        toolset: Toolset::Data,
         run: run_export_records,
     },
     Tool {
@@ -358,6 +399,7 @@ Tool {
         input_schema: library_tools::schema_list_policies,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Governance,
         run: library_tools::run_list_policies,
     },
     Tool {
@@ -366,6 +408,7 @@ Tool {
         input_schema: library_tools::schema_read_snapshot,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Governance,
         run: library_tools::run_read_snapshot,
     },
     Tool {
@@ -374,6 +417,7 @@ Tool {
         input_schema: library_tools::schema_find_rules,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Governance,
         run: library_tools::run_find_rules,
     },
     Tool {
@@ -382,6 +426,7 @@ Tool {
         input_schema: library_tools::schema_propose_rules,
         scope: Scope::SignedIn,
         read_only: false,
+        toolset: Toolset::Governance,
         run: library_tools::run_propose_rules,
     },
     Tool {
@@ -390,6 +435,7 @@ Tool {
         input_schema: library_tools::schema_list_questions,
         scope: Scope::SignedIn,
         read_only: true,
+        toolset: Toolset::Governance,
         run: library_tools::run_list_questions,
     },    Tool {
         name: "admin_inventory",
@@ -397,6 +443,7 @@ Tool {
         input_schema: schema_admin_inventory,
         scope: Scope::PlatformAdmin,
         read_only: true,
+        toolset: Toolset::Admin,
         run: run_admin_inventory,
     },
 ];

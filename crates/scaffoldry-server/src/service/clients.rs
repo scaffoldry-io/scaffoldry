@@ -244,7 +244,7 @@ pub fn ceiling_of(row: &ClientRow) -> Ceiling {
 /// is left out, so an empty ceiling is a scope that allows nothing.
 pub fn scope_of(ceiling: &Ceiling) -> scaffoldry_core::TokenScope {
     use scaffoldry_core::TokenOp;
-    let mut scope = scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: None };
+    let mut scope = scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: None, toolsets: None };
     for app in &ceiling.apps {
         for table in &app.tables {
             let ops: Vec<TokenOp> = [
