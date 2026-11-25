@@ -87,6 +87,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
         (ServiceError::ShareNotAllowed("Not on".into()), "share_not_allowed", StatusCode::FORBIDDEN),
         (ServiceError::MasterKeyMissing("No key".into()), "master_key_missing", StatusCode::SERVICE_UNAVAILABLE),
         (ServiceError::TokenScope("Scoped".into()), "token_scope", StatusCode::FORBIDDEN),
+        (ServiceError::ToolsetNotGranted { message: "Not granted".into(), toolset: scaffoldry_core::Toolset::Governance }, "token_scope", StatusCode::FORBIDDEN),
         (ServiceError::ClientScope("Ceiling".into()), "client_scope", StatusCode::FORBIDDEN),
         (ServiceError::LastOwner("Last owner".into()), "last_owner", StatusCode::CONFLICT),
         (ServiceError::FlowGrantExceeded("Outside the grants".into()), "flow_grant_exceeded", StatusCode::CONFLICT),
@@ -108,6 +109,7 @@ fn samples() -> Vec<(ServiceError, &'static str, StatusCode)> {
             | ServiceError::ShareNotAllowed(_)
             | ServiceError::MasterKeyMissing(_)
             | ServiceError::TokenScope(_)
+            | ServiceError::ToolsetNotGranted { .. }
             | ServiceError::ClientScope(_)
             | ServiceError::ClientSensitiveField(_)
             | ServiceError::NotFound(_)

@@ -410,10 +410,12 @@ async fn initialize_gives_the_agent_instructions_for_this_caller() {
 /// so this limit is about 6,000 tokens. A change that needs more raises the limit here, in the open.
 /// Raised from 18,000 to the 24,000 that `agent-coverage.md` phase 2 sets: every tool now lists a closed schema and one
 /// example call, and the destructive and idempotent hints. `mcp_conformance.rs` holds the same budget and the tool count.
+/// The list measured is the largest one a caller can reach: a Platform Admin whose token has no `toolsets`, so every
+/// toolset. A token with fewer toolsets lists a subset (`docs/plans/mcp-toolsets.md`).
 const TOOL_LIST_BYTE_BUDGET: usize = 24_000;
 
 #[tokio::test]
-async fn the_tool_list_stays_inside_its_budget() {
+async fn the_largest_reachable_tool_list_stays_inside_its_budget() {
     let _db = common::TestDb::new();
     let app = seeded_app().await;
     let token = login_user(&app, "jordan.lee@state.edu").await;

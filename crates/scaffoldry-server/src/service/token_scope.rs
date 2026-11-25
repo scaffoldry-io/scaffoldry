@@ -91,6 +91,11 @@ fn session_request(scope: &TokenScope, level: AgentLevel, method: &axum::http::M
 
 /// Checks a tool call against the scope, and lowers a list limit to the cap. `args` is changed in place.
 pub fn check_tool(scope: &TokenScope, name: &str, args: &mut Value, state: &SharedState) -> Result<(), ServiceError> {
+    // A tool outside the granted toolsets is refused first, and says which toolset would allow it.
+    if let Some(tool) = crate::service::tools::TOOLS.iter().find(|t| t.name == name).filter(|t| !scope.allows_toolset(t.toolset)) {
+        let set = tool.toolset.word();
+        return Err(ServiceError::ToolsetNotGranted { message: format!("This token was not granted the {set} toolset, and the tool '{name}' is in it."), toolset: tool.toolset });
+    }
     if let Some(level) = scope.level {
         return if session_allows_tool(level, name) { Ok(()) } else { Err(session_refusal(scope, level, name)) };
     }

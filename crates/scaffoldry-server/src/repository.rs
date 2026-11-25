@@ -4214,7 +4214,7 @@ pub(crate) fn upsert_role_in(
 /// read as a scope that allows nothing.
 fn token_scope_of(stored: Option<serde_json::Value>) -> Option<scaffoldry_core::TokenScope> {
     let value = stored?;
-    Some(serde_json::from_value(value).unwrap_or(scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: Some(Vec::new()), max_rows_per_call: Some(1), level: None }))
+    Some(serde_json::from_value(value).unwrap_or(scaffoldry_core::TokenScope { apps: Vec::new(), tables: Default::default(), tools: Some(Vec::new()), max_rows_per_call: Some(1), level: None, toolsets: None }))
 }
 
 /// A workspace keeps at least one owner. This runs inside every membership writer's transaction, so a route added later

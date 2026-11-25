@@ -316,6 +316,8 @@ async fn every_description_starts_with_a_verb_and_stays_short() {
 
 /// A client loads the whole list into its context on every session. About four bytes make a token, so 24 KB is about
 /// 6,000 tokens. A change that needs more raises these numbers here, in the open, and says why.
+/// The list measured here is the largest one a caller can reach: a Platform Admin with every toolset (a token with no
+/// `toolsets`). Every narrower list is a subset of it (`docs/plans/mcp-toolsets.md`).
 const BYTE_BUDGET: usize = 24_000;
 const TOOL_BUDGET: usize = 45;
 
@@ -344,4 +346,23 @@ async fn the_tool_list_stays_inside_the_budget_and_a_fixture_tool_pushes_it_over
     // Small tools on their own, so the count is what goes over and the bytes cannot, however near the real list is to its budget.
     let many: Vec<Value> = (0..=TOOL_BUDGET).map(|_| json!({ "name": "f", "description": "d", "inputSchema": { "type": "object" } })).collect();
     assert!(over_budget(&many).unwrap().contains("tools"), "too many tools is over the count budget");
+}
+
+/// The listed bytes of each toolset in the largest list. Phase 3 turns these into limits. They are printed now so a
+/// change shows what it costs (`cargo test -- --nocapture`).
+#[tokio::test]
+async fn each_toolset_lists_its_own_size_and_the_sizes_add_up_to_the_largest_list() {
+    let _db = common::TestDb::new();
+    let app = app();
+    let tools = listed(&app).await;
+    let mut sum = 0;
+    for set in scaffoldry_core::Toolset::ALL {
+        let mine: Vec<&Value> = tools.iter().filter(|t| TOOLS.iter().any(|r| r.name == t["name"].as_str().unwrap() && r.toolset == set)).collect();
+        let bytes = serde_json::to_vec(&mine).unwrap().len();
+        eprintln!("toolset {:<10} {:>2} tools {:>6} bytes", set.word(), mine.len(), bytes);
+        assert!(!mine.is_empty(), "{} lists no tool", set.word());
+        assert!(bytes <= BYTE_BUDGET, "{} is {bytes} bytes, over the {BYTE_BUDGET} budget on its own", set.word());
+        sum += mine.len();
+    }
+    assert_eq!(sum, tools.len(), "every listed tool is in a toolset");
 }

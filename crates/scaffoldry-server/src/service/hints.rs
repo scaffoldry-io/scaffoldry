@@ -7,6 +7,9 @@ use crate::service::ServiceError;
 pub fn hint_for(err: &ServiceError) -> String {
     let msg = err.message();
     let has = |s: &str| msg.contains(s);
+    if matches!(err, ServiceError::ToolsetNotGranted { .. }) {
+        return "This tool is in a toolset the token was not granted. Ask the person to reconnect and grant it, or call list_workspaces to see what you can do now.".to_string();
+    }
     let h = match err.code() {
         "not_found" => {
             if has("Tool '") {

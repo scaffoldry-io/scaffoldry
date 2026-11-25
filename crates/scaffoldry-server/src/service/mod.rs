@@ -259,6 +259,8 @@ pub enum ServiceError {
     MasterKeyMissing(String),
     /// A token limited to some apps, tables or operations asked for more than its scope allows.
     TokenScope(String),
+    /// A tool call outside the toolsets the token was granted (`docs/plans/mcp-toolsets.md`). It carries the code `token_scope`.
+    ToolsetNotGranted { message: String, toolset: scaffoldry_core::Toolset },
     /// An outside app asked for something its ceiling does not cover.
     ClientScope(String),
     /// A change would leave a workspace with no owner.
@@ -319,7 +321,7 @@ impl ServiceError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ClientScope(_) | Self::ShareNotAllowed(_) => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::GrantOutsideScope(_) | Self::FieldHidden { .. } | Self::FieldReadOnly { .. } | Self::ViewAsReadOnly(_) | Self::ImpersonationNotSynthetic(_) | Self::PreviewReadOnly(_) | Self::TokenScope(_) | Self::ToolsetNotGranted { .. } | Self::ClientScope(_) | Self::ShareNotAllowed(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ConstraintViolation { .. } | Self::GrantTooBroad(_) | Self::ClientSensitiveField(_) | Self::BadRequest(_) | Self::SeparationOfDuties(_) | Self::CitationNotFound(_) | Self::AuthorityLoosens(_) | Self::Invalid { .. } | Self::TooManyIndexes { .. } | Self::FileTypeBlocked(_) => StatusCode::BAD_REQUEST,
             Self::SensitiveContentBlocked(_) => StatusCode::UNPROCESSABLE_ENTITY,
@@ -361,7 +363,7 @@ impl ServiceError {
             Self::MasterKeyMissing(_) => "master_key_missing",
             Self::RateLimited(_) => "rate_limited",
             Self::ShareNotAllowed(_) => "share_not_allowed",
-            Self::TokenScope(_) => "token_scope",
+            Self::TokenScope(_) | Self::ToolsetNotGranted { .. } => "token_scope",
             Self::ClientScope(_) => "client_scope",
             Self::LastOwner(_) => "last_owner",
             Self::FlowGrantExceeded(_) => "flow_grant_exceeded",
@@ -416,7 +418,7 @@ impl ServiceError {
             | Self::ProposalChanged(msg)
             | Self::SeparationOfDuties(msg)
             | Self::Internal(msg) => msg,
-            Self::ConstraintViolation { message, .. } | Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
+            Self::ConstraintViolation { message, .. } | Self::FieldHidden { message, .. } | Self::TooManyIndexes { message, .. } | Self::FieldReadOnly { message, .. } | Self::Forbidden { message, .. } | Self::ToolsetNotGranted { message, .. } | Self::Invalid { message, .. } | Self::StaleVersion { message, .. } | Self::UndoConflict { message, .. } => message,
         }
     }
 
@@ -457,6 +459,10 @@ impl ServiceError {
             }
             Self::TooManyIndexes { unused, .. } => {
                 body.insert("unused".to_string(), serde_json::to_value(unused).unwrap_or(Value::Null));
+            }
+            Self::ToolsetNotGranted { toolset, .. } => {
+                body.insert("required_toolset".to_string(), Value::String(toolset.word().to_string()));
+                body.insert("request_path".to_string(), Value::String(format!("Ask the person to reconnect this tool and grant the {} toolset, then call it again.", toolset.word())));
             }
             Self::ImpersonationNotSynthetic(_) => {
                 body.insert("remedy".to_string(), Value::String(IMPERSONATION_REMEDY.to_string()));
