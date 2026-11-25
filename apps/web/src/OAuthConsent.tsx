@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { apiClient, type OAuthConsent as Consent } from "./api";
 
+/** A token holds core and at most this many chosen toolsets. The server refuses more. */
+const MAX_TOOLSETS = 3;
+
 /** The sign-in request an outside app sent, taken from the address of this page. */
 function requestParams(): Record<string, string> {
   return Object.fromEntries(new URLSearchParams(window.location.search));
@@ -111,14 +114,14 @@ export function OAuthConsent() {
               <input
                 type="checkbox"
                 checked={t.always_on || ticked.includes(t.id)}
-                disabled={t.always_on}
+                disabled={t.always_on || (!ticked.includes(t.id) && ticked.length >= MAX_TOOLSETS)}
                 onChange={(e) => setTicked((now) => (e.target.checked ? [...now, t.id] : now.filter((id) => id !== t.id)))}
               />
               {t.sentence}
             </label>
           ))}
           <p className="text-xs text-slate-500">
-            Core is always on. If nothing is ticked, it gets Data. A tool outside these is refused, and the app can ask you again.
+            Up to three areas. Core is always on and does not count. If nothing is ticked, it gets Data. A tool outside these is refused, and the app can ask you again.
           </p>
         </fieldset>
       )}

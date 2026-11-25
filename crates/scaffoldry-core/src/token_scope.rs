@@ -168,6 +168,10 @@ pub struct TokenScope {
     pub toolsets: Option<Vec<Toolset>>,
 }
 
+/// An agent token holds `core` plus at most this many chosen toolsets. With the per-toolset byte limits, that keeps every
+/// list an agent can receive inside the 24 KB budget (`docs/plans/mcp-toolsets.md`, phase 3).
+pub const MAX_TOOLSETS: usize = 3;
+
 impl TokenScope {
     /// Reads a scope from what a client sent. The error is a sentence for the person who sent it.
     pub fn parse(value: &serde_json::Value) -> Result<TokenScope, String> {
@@ -179,6 +183,9 @@ impl TokenScope {
     fn validate(&self) -> Result<(), String> {
         if self.toolsets.as_ref().is_some_and(|sets| sets.contains(&Toolset::Core)) {
             return Err("The toolset 'core' is always on, so a scope does not name it.".to_string());
+        }
+        if self.toolsets.as_ref().is_some_and(|sets| sets.len() > MAX_TOOLSETS) {
+            return Err(format!("A token holds at most {MAX_TOOLSETS} toolsets besides core, so a scope names at most {MAX_TOOLSETS}."));
         }
         if self.apps.is_empty() || self.apps.iter().any(|a| a.trim().is_empty()) {
             return Err("A scope must name at least one app.".to_string());

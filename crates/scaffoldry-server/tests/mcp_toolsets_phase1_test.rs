@@ -244,6 +244,12 @@ async fn minting_a_token_accepts_toolsets_and_refuses_core() {
     let (status, body) = post(&w, "/api/v1/auth/tokens", &owner, scope(json!(["data"]))).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["scope"]["toolsets"], json!(["data"]));
+    let (status, body) = post(&w, "/api/v1/auth/tokens", &owner, scope(json!(["data", "build", "governance"]))).await;
+    assert_eq!(status, StatusCode::CREATED, "three toolsets are the most: {body}");
+    // Phase 3: an agent holds `core` plus at most 3 toolsets, so a fourth is refused with a sentence.
+    let (status, body) = post(&w, "/api/v1/auth/tokens", &owner, scope(json!(["data", "build", "access", "governance"]))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("at most 3"), "{body}");
     for bad in [json!(["core"]), json!(["nope"])] {
         let (status, body) = post(&w, "/api/v1/auth/tokens", &owner, scope(bad)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -251,14 +257,18 @@ async fn minting_a_token_accepts_toolsets_and_refuses_core() {
 }
 
 #[tokio::test]
-async fn the_largest_reachable_list_stays_inside_24_kb_and_45_tools() {
+async fn the_largest_agent_list_stays_inside_24_kb_and_45_tools() {
     let w = world();
-    // The largest list is a Platform Admin with every toolset: no scope, so every toolset.
-    let listed = list(&w, &issue_test_token_and_user(ADMIN)).await;
+    // An agent holds `core` and at most 3 toolsets. The largest list is a Platform Admin session with the 3 biggest.
+    let agent = token_with(&w, ADMIN, Some(session(AgentLevel::Write, Some(vec![Toolset::Data, Toolset::Build, Toolset::Governance]))));
+    let listed = list(&w, &agent).await;
     let bytes = serde_json::to_vec(&listed).unwrap().len();
-    eprintln!("largest reachable list: {} tools, {bytes} bytes", listed.len());
+    eprintln!("largest agent list: {} tools, {bytes} bytes", listed.len());
     assert!(bytes <= BYTE_BUDGET, "{bytes} bytes is over {BYTE_BUDGET}");
     assert!(listed.len() <= TOOL_BUDGET, "{} tools is over {TOOL_BUDGET}", listed.len());
-    let sets: BTreeSet<&str> = listed.iter().map(|t| toolset_of(t["name"].as_str().unwrap()).word()).collect();
-    assert_eq!(sets.len(), Toolset::ALL.len(), "every toolset is in the largest list");
+
+    // A desk sign-in token is a person's, not an agent's context. It lists every toolset and is not capped.
+    let desk = list(&w, &issue_test_token_and_user(ADMIN)).await;
+    let sets: BTreeSet<&str> = desk.iter().map(|t| toolset_of(t["name"].as_str().unwrap()).word()).collect();
+    assert_eq!(sets.len(), Toolset::ALL.len(), "the desk list has every toolset");
 }

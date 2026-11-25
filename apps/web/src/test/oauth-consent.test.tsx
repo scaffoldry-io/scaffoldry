@@ -139,6 +139,21 @@ describe("External apps phase 2: the consent screen", () => {
       expect(posts[0].toolsets).toEqual(["data"]);
     });
 
+    it("stops at three ticks, says so, and frees a box when one is unticked", async () => {
+      const ticked = TOOLSETS.map((t) => ({ ...t, selected: t.id === "core" || t.id === "data" || t.id === "build" || t.id === "governance" }));
+      const six = [...ticked, { id: "access", sentence: "Access: draft access changes.", always_on: false, selected: false }];
+      mock({ ...AGENT, toolsets: six });
+      render(<OAuthConsent />);
+      expect(await screen.findByTestId("oauth-toolsets")).toHaveTextContent(/Up to three areas/);
+      // Three are ticked, so the one that is not ticked cannot be.
+      const access = screen.getByRole("checkbox", { name: /Access:/ });
+      expect(access).toBeDisabled();
+      expect(screen.getByRole("checkbox", { name: /Data:/ })).toBeEnabled();
+      expect(screen.getByRole("checkbox", { name: /Core:/ })).toBeDisabled();
+      fireEvent.click(screen.getByRole("checkbox", { name: /Data:/ }));
+      expect(screen.getByRole("checkbox", { name: /Access:/ })).toBeEnabled();
+    });
+
     it("says what happens when nothing is ticked", async () => {
       mock(AGENT);
       render(<OAuthConsent />);

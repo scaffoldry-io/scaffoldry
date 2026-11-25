@@ -186,6 +186,34 @@ async fn an_oauth_scope_pre_ticks_a_toolset_and_unknown_values_are_ignored() {
 }
 
 #[tokio::test]
+async fn an_oauth_scope_for_more_than_three_pre_ticks_the_first_three_in_order() {
+    let w = world();
+    let id = agent_client(&w).await;
+    let all = "mcp:admin mcp:governance mcp:access mcp:build mcp:data";
+    let c = consent(&w, &w.platform, &id, Some(all)).await;
+    assert_eq!(selected(&c), ["core", "data", "build", "access"], "data, build and access come first, so governance and admin are not ticked");
+    let four = consent(&w, &w.owner, &id, Some("mcp:governance mcp:build mcp:access mcp:data")).await;
+    assert_eq!(selected(&four), ["core", "data", "build", "access"]);
+}
+
+#[tokio::test]
+async fn signing_in_with_more_than_three_toolsets_is_a_plain_400() {
+    let w = world();
+    let id = agent_client(&w).await;
+    let body = |sets: Value| {
+        json!({
+            "client_id": id, "redirect_uri": CALLBACK, "response_type": "code", "state": "s", "code_challenge": challenge(),
+            "code_challenge_method": "S256", "resource": ISSUER, "decision": "allow", "access": "read", "toolsets": sets
+        })
+    };
+    let r = send(&w.app, "POST", "/oauth/authorize", &w.platform, Some(body(json!(["data", "build", "access", "governance"])))).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.body);
+    assert!(r.body.to_string().contains("Choose at most 3 toolsets"), "{}", r.body);
+    let ok = send(&w.app, "POST", "/oauth/authorize", &w.platform, Some(body(json!(["data", "build", "access"])))).await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+}
+
+#[tokio::test]
 async fn a_new_session_that_picks_nothing_gets_core_and_data() {
     let w = world();
     let id = agent_client(&w).await;
@@ -290,8 +318,11 @@ async fn instructions_name_the_missing_toolsets_and_stay_short() {
     assert!(line.to_lowercase().contains("reconnect"), "{line}");
     assert!(text.len() <= 1800, "{} bytes", text.len());
 
-    // A session with every toolset has nothing to say, and nor does a plain desk token.
-    let all = sign_in(&w, &w.platform, &id, "write", Some(&["data", "build", "access", "governance", "admin"])).await;
+    // A session cannot hold more than 3 toolsets any more. A session from before phase 2 holds every toolset, so it has
+    // nothing to say, and nor does a plain desk token.
+    let all = sign_in(&w, &w.platform, &id, "write", Some(&["data"])).await;
+    sql(&w, "UPDATE oauth_sessions SET toolsets = NULL");
+    let all = refresh(&w, &id, all["refresh_token"].as_str().unwrap()).await;
     let text = rpc(&w, access_of(&all), "initialize", json!({})).await.body["result"]["instructions"].as_str().unwrap().to_string();
     assert!(!text.contains("toolset"), "{text}");
     let desk = rpc(&w, &w.owner, "initialize", json!({})).await.body["result"]["instructions"].as_str().unwrap().to_string();
