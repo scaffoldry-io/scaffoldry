@@ -26,7 +26,7 @@ Johann asked whether the tool problem needs a scoped MCP server for each area of
 - `tools/list` already varies by authorization in `routes/mcp.rs`. It hides Platform Admin tools from others, hides tools an administrator turned off, and narrows to a limited token's scope (`token_scope::lists_tool`).
 - The consent screen already asks the person to choose an access level for an agent session: read, propose or write. `oauth::scope_for` stores that level on the token.
 - `/.well-known/oauth-protected-resource` lists seven scopes. None of them names a set of tools.
-- The budget tests (`mcp_conformance`, `mcp_authoritative_api_test`) measure one list: everything a Platform Admin sees.
+- Before phase 3, the budget tests (`mcp_conformance`, `mcp_authoritative_api_test`) measured one list: everything a desk token sees. That list is not an agent's context, so phase 3 measures the lists an agent can receive instead.
 
 ## The toolsets
 
@@ -57,8 +57,8 @@ Every tool is in exactly one toolset. A test holds that.
 
 ## The budget
 
-- **Per list.** Every list a caller can receive must stay inside 24,000 bytes and 45 tools. The test builds the largest possible list: every toolset, as a Platform Admin. That list keeps today's limit, so nothing grows unchecked.
-- **Per toolset.** Each toolset gets its own byte limit. Together they are what lets a new tool in. A new tool must fit inside its toolset's limit, and the largest combined list must still be under 24 KB. If the largest combined list cannot hold all toolsets, phase 3 makes some toolsets exclusive, so that a token may hold `governance` or `admin` but not both. That keeps every reachable list under the cap without raising it.
+- **Per list.** Every list an agent can receive must stay inside 24,000 bytes and 45 tools. An agent token holds `core` plus at most 3 chosen toolsets (phase 3). The test lists every such combination for a Platform Admin agent session. A desk sign-in token belongs to a person, lists everything, and is not capped.
+- **Per toolset.** Each toolset gets its own byte limit. Together they are what lets a new tool in. A new tool must fit inside its toolset's limit, and the largest agent list must still be under 24 KB. The at-most-3 rule keeps every reachable agent list under the cap without raising it. Phase 3 does not add exclusive toolsets, because that rule replaces them.
 - **The default list**, `core` plus `data`, is about 12 KB listed. That halves what a typical session loads today.
 
 ## Phases
@@ -67,7 +67,7 @@ Every tool is in exactly one toolset. A test holds that.
 | --- | --- | --- |
 | 1 | Every tool is in exactly one toolset. A token whose `toolsets` is `["data", "governance"]` lists `core`, `data` and `governance` only. A token with no `toolsets` value lists what it lists today. A call to a tool outside the granted toolsets is refused with `required_toolset`. `admin` is never listed to a non-admin, even when it is asked for. The largest reachable list stays inside 24 KB and 45 tools | `Toolset` enum and `TOOLS[*].toolset`. `TokenScope.toolsets`, `None` meaning the default. The filter in `tools/list` and the check in `tools/call`. Budget tests measure the largest reachable list and each toolset |
 | 2 | The consent screen lists the toolsets with a sentence each. An OAuth `scope` of `mcp:governance` pre-ticks it. The session stores the choice, and a refreshed token keeps it. `scopes_supported` lists the toolsets. A call outside the toolsets over HTTP gets `403` with `insufficient_scope` and the scope to ask for | Consent and the session column. Discovery. The `WWW-Authenticate` header. `instructions` names the missing toolsets |
-| 3 | A new tool added to a toolset over its byte limit fails the build. A token cannot hold two exclusive toolsets | Per-toolset limits in the conformance test. An exclusivity rule if the largest list needs one |
+| 3 | A new tool added to a toolset over its byte limit fails the build. A token cannot hold more than 3 toolsets. Every agent combination stays inside 24 KB and 45 tools | Per-toolset limits in the conformance test. The at-most-3 rule, in place of exclusivity rules |
 
 Phase 1 changes no client. A token with no `toolsets` value keeps every toolset, so every call that worked before still works. Only a token with an explicit `toolsets` value is narrowed. Before phase 2, a client has no way to ask for fewer toolsets, so it could not ask for more either. Phase 2 adds the choice at consent, and only then do new sessions default to `core` and `data`. Tokens issued earlier keep every toolset until they expire.
 
@@ -81,7 +81,7 @@ Phase 1 is in. Tests: `crates/scaffoldry-server/tests/mcp_toolsets_phase1_test.r
 - `tools/call` is checked first in `token_scope::check_tool`. The refusal is `ServiceError::ToolsetNotGranted`, with the code `token_scope`, the phase 2 `hint`, `required_toolset` and a `request_path` that says to reconnect and grant the toolset. It adds no error code.
 - A toolset narrows a session or a limited token. It does not widen one. A read session with `toolsets` of `["governance"]` lists the governance tools a read session lists, and no more.
 - Sessions made by consent keep `toolsets: None`. Tests build the others.
-- The budget tests measure the largest reachable list: a Platform Admin with every toolset.
+- The budget tests measured the largest list: a Platform Admin with every toolset. Phase 3 changed that to the largest agent list.
 
 Listed size of each toolset, measured on 2026-11-25 as the bytes of its entries in `tools/list` (`mcp_conformance`, `each_toolset_lists_its_own_size...`):
 
@@ -95,7 +95,7 @@ Listed size of each toolset, measured on 2026-11-25 as the bytes of its entries 
 | `admin` | 1 | 542 |
 | Largest list (all) | 45 | 23,995 |
 
-The default list in phase 2, `core` plus `data`, is 12,202 bytes before separators. The largest list is 5 bytes under the cap, so phase 3 must decide on exclusive toolsets before any tool is added.
+The default list in phase 2, `core` plus `data`, is 12,202 bytes before separators. The desk list (every tool) is 5 bytes under the cap. Phase 3 decided that the cap applies to agent lists, which hold at most 3 toolsets.
 
 ## Phase 2, as built
 
@@ -112,6 +112,40 @@ Phase 2 is in. Tests: `crates/scaffoldry-server/tests/mcp_toolsets_phase2_test.r
 - **Tests that signed in an agent.** `agent_clients_test` and `access_drafts_test` now tick every toolset, since they are about levels and need `build` and `access` tools.
 
 Listed size of the default list, measured as the bytes of its entries in `tools/list` for a non-admin Write session: 19 tools, 8,652 bytes. A Read or Propose session lists fewer, and a Platform Admin with the same toolsets sees all 25 `core` and `data` tools, 12,202 bytes.
+
+## Phase 3, as built
+
+Phase 3 is in. Tests: `mcp_conformance`, `mcp_toolsets_phase1_test`, `mcp_toolsets_phase2_test`, `mcp_authoritative_api_test` and `apps/web/src/test/oauth-consent.test.tsx`.
+
+**The decision (Johann).**
+
+- The 24,000-byte and 45-tool cap applies to every list an agent can receive.
+- An agent token holds `core` plus at most 3 chosen toolsets.
+- A desk sign-in token belongs to a person and is not an agent's context. It lists everything (its `toolsets` is `None`) and is not capped. The budget test only prints its size, 23,995 bytes today.
+- There are no exclusivity rules. The at-most-3 rule replaces them, and the first design of the budget section no longer applies.
+
+**The rule.**
+
+- `TokenScope::validate` refuses more than 3 toolsets (`MAX_TOOLSETS`). `POST /auth/tokens` answers 400.
+- `POST /oauth/authorize` answers 400 with "Choose at most 3 toolsets. Core is always on and does not count."
+- The consent screen disables the unticked boxes once 3 are ticked and says "Up to three areas".
+- If an OAuth `scope` asks for more than 3, the server pre-ticks the first 3 in the order `data`, `build`, `access`, `governance`, `admin`.
+- A session from before phase 2 has no stored toolsets and lists every toolset until it expires. It is the one agent list the rule does not bound.
+
+**The limits.** Each is measured as the toolset's entries in `tools/list`, the way phase 1 did.
+
+| Toolset | Limit (bytes) | Listed today (bytes) | Free |
+| --- | --- | --- | --- |
+| `core` | 5,000 | 4,872 | 128 |
+| `data` | 7,600 | 7,330 | 270 |
+| `build` | 6,200 | 5,971 | 229 |
+| `governance` | 5,000 | 4,277 | 723 |
+| `access` | 2,000 | 1,008 | 992 |
+| `admin` | 1,500 | 542 | 958 |
+
+**The structural check.** `core` (5,000) plus the 3 largest other limits (`data`, `build`, `governance`: 18,800) plus the JSON separators (2 brackets and one comma for each of 45 tools, 47 bytes) is 23,847. That is at most 24,000, so no limits were lowered. A test holds the sum.
+
+**The combination check.** A test lists `tools/list` for a Platform Admin Write session granted each of the 26 choices of up to 3 toolsets beyond `core`, and holds every list to 24,000 bytes and 45 tools. A session lists only the tools its level allows, so the largest served list is smaller than the limits allow: 30 tools and 14,026 bytes. The limits are the bound a new tool must respect, and the served lists have room beyond it.
 
 ## Enterprise objections
 

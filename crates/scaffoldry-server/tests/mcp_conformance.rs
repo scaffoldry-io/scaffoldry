@@ -7,9 +7,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use scaffoldry_server::build_app_with_state;
-use scaffoldry_server::service::identity::issue_test_token_and_user;
+use scaffoldry_core::{AgentLevel, TokenScope, Toolset};
+use scaffoldry_server::service::identity::{hash_token, issue_test_token_and_user};
 use scaffoldry_server::service::tools::TOOLS;
-use scaffoldry_server::state::ServerState;
+use scaffoldry_server::state::{ApiToken, ServerState};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -316,10 +317,27 @@ async fn every_description_starts_with_a_verb_and_stays_short() {
 
 /// A client loads the whole list into its context on every session. About four bytes make a token, so 24 KB is about
 /// 6,000 tokens. A change that needs more raises these numbers here, in the open, and says why.
-/// The list measured here is the largest one a caller can reach: a Platform Admin with every toolset (a token with no
-/// `toolsets`). Every narrower list is a subset of it (`docs/plans/mcp-toolsets.md`).
+/// The cap applies to every list an AGENT can receive. An agent token holds `core` plus at most 3 chosen toolsets, so
+/// the largest agent list is a Platform Admin session with the 3 biggest toolsets. A desk sign-in token belongs to a
+/// person, lists everything and is not capped. Its size is only printed (`docs/plans/mcp-toolsets.md`, phase 3).
 const BYTE_BUDGET: usize = 24_000;
 const TOOL_BUDGET: usize = 45;
+const MAX_CHOSEN_TOOLSETS: usize = 3;
+
+/// The byte limit of each toolset, measured as its entries in `tools/list` (a JSON array, as `serde_json` writes it).
+/// A new tool goes inside its toolset's limit. Raising a limit is a decision, made here, in the open.
+const TOOLSET_LIMITS: [(Toolset, usize); 6] = [
+    (Toolset::Core, 5_000),
+    (Toolset::Data, 7_600),
+    (Toolset::Build, 6_200),
+    (Toolset::Governance, 5_000),
+    (Toolset::Access, 2_000),
+    (Toolset::Admin, 1_500),
+];
+
+fn limit_of(set: Toolset) -> usize {
+    TOOLSET_LIMITS.iter().find(|(s, _)| *s == set).map(|(_, l)| *l).expect("every toolset has a limit")
+}
 
 fn over_budget(tools: &[Value]) -> Option<String> {
     let bytes = serde_json::to_vec(tools).unwrap().len();
@@ -332,15 +350,79 @@ fn over_budget(tools: &[Value]) -> Option<String> {
     None
 }
 
-#[tokio::test]
-async fn the_tool_list_stays_inside_the_budget_and_a_fixture_tool_pushes_it_over() {
-    let _db = common::TestDb::new();
-    let app = app();
-    let tools = listed(&app).await;
-    eprintln!("tool list: {} tools, {} bytes", tools.len(), serde_json::to_vec(&tools).unwrap().len());
-    assert_eq!(over_budget(&tools), None);
+fn bytes_of(tools: &[&Value]) -> usize {
+    serde_json::to_vec(tools).unwrap().len()
+}
 
-    let mut fat = tools.clone();
+fn in_set(tool: &Value, set: Toolset) -> bool {
+    TOOLS.iter().any(|r| r.name == tool["name"].as_str().unwrap() && r.toolset == set)
+}
+
+/// A Platform Admin agent session at the Write level that was granted `sets` besides `core`.
+fn agent_list_token(state: &scaffoldry_server::state::SharedState, sets: &[Toolset]) -> String {
+    let _ = issue_test_token_and_user(ADMIN);
+    let raw = format!("raw-{}", uuid::Uuid::new_v4());
+    let scope = TokenScope { apps: Vec::new(), tables: Default::default(), tools: None, max_rows_per_call: None, level: Some(AgentLevel::Write), toolsets: Some(sets.to_vec()) };
+    state
+        .persist_api_token(&ApiToken {
+            token_hash: hash_token(&raw),
+            id: uuid::Uuid::new_v4(),
+            kind: "agent".to_string(),
+            eppn: ADMIN.to_string(),
+            label: "budget test".to_string(),
+            original_admin: None,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            last_used_at: None,
+            revoked_at: None,
+            app_slug: None,
+            scope: Some(scope),
+        })
+        .expect("persisted");
+    raw
+}
+
+async fn list_with(app: &axum::Router, token: &str) -> Vec<Value> {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/mcp")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::from(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice::<Value>(&bytes).unwrap()["result"]["tools"].as_array().cloned().unwrap_or_default()
+}
+
+/// Every choice of up to 3 toolsets beyond `core`, as a list of toolsets.
+fn choices() -> Vec<Vec<Toolset>> {
+    let others: Vec<Toolset> = Toolset::ALL.into_iter().filter(|t| *t != Toolset::Core).collect();
+    let mut out = Vec::new();
+    for mask in 0u32..(1 << others.len()) {
+        if mask.count_ones() as usize <= MAX_CHOSEN_TOOLSETS {
+            out.push(others.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, t)| *t).collect());
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn the_largest_agent_list_stays_inside_the_budget_and_a_fixture_tool_pushes_it_over() {
+    let db = common::TestDb::new();
+    let state = db.state();
+    let app = build_app_with_state(state.clone()).expect("router");
+    let mut largest: Vec<Value> = Vec::new();
+    for sets in choices() {
+        let tools = list_with(&app, &agent_list_token(&state, &sets)).await;
+        if serde_json::to_vec(&tools).unwrap().len() > serde_json::to_vec(&largest).unwrap().len() {
+            largest = tools;
+        }
+    }
+    eprintln!("largest agent list: {} tools, {} bytes", largest.len(), serde_json::to_vec(&largest).unwrap().len());
+    assert_eq!(over_budget(&largest), None);
+
+    let mut fat = largest.clone();
     fat.push(json!({ "name": "fixture", "description": "x".repeat(BYTE_BUDGET), "inputSchema": { "type": "object" } }));
     assert!(over_budget(&fat).unwrap().contains("bytes"), "a big tool is over the byte budget");
     // Small tools on their own, so the count is what goes over and the bytes cannot, however near the real list is to its budget.
@@ -348,21 +430,62 @@ async fn the_tool_list_stays_inside_the_budget_and_a_fixture_tool_pushes_it_over
     assert!(over_budget(&many).unwrap().contains("tools"), "too many tools is over the count budget");
 }
 
-/// The listed bytes of each toolset in the largest list. Phase 3 turns these into limits. They are printed now so a
-/// change shows what it costs (`cargo test -- --nocapture`).
+/// A desk sign-in token belongs to a person. It lists everything and is not capped, so this only prints its size.
 #[tokio::test]
-async fn each_toolset_lists_its_own_size_and_the_sizes_add_up_to_the_largest_list() {
+async fn the_desk_list_prints_its_size_and_is_not_capped() {
+    let _db = common::TestDb::new();
+    let app = app();
+    let tools = listed(&app).await;
+    eprintln!("desk list: {} tools, {} bytes (not capped: a desk token is a person, not an agent)", tools.len(), serde_json::to_vec(&tools).unwrap().len());
+    assert_eq!(tools.len(), TOOLS.len(), "a desk token lists every tool");
+}
+
+/// The listed bytes of each toolset, each held to its limit. Printed so a change shows what it costs
+/// (`cargo test -- --nocapture`).
+#[tokio::test]
+async fn each_toolset_stays_inside_its_own_limit() {
     let _db = common::TestDb::new();
     let app = app();
     let tools = listed(&app).await;
     let mut sum = 0;
-    for set in scaffoldry_core::Toolset::ALL {
-        let mine: Vec<&Value> = tools.iter().filter(|t| TOOLS.iter().any(|r| r.name == t["name"].as_str().unwrap() && r.toolset == set)).collect();
-        let bytes = serde_json::to_vec(&mine).unwrap().len();
-        eprintln!("toolset {:<10} {:>2} tools {:>6} bytes", set.word(), mine.len(), bytes);
+    for set in Toolset::ALL {
+        let mine: Vec<&Value> = tools.iter().filter(|t| in_set(t, set)).collect();
+        let bytes = bytes_of(&mine);
+        let limit = limit_of(set);
+        eprintln!("toolset {:<10} {:>2} tools {:>6} bytes of {:>6} ({} free)", set.word(), mine.len(), bytes, limit, limit.saturating_sub(bytes));
         assert!(!mine.is_empty(), "{} lists no tool", set.word());
-        assert!(bytes <= BYTE_BUDGET, "{} is {bytes} bytes, over the {BYTE_BUDGET} budget on its own", set.word());
+        assert!(bytes <= limit, "{} is {bytes} bytes, over its limit of {limit}", set.word());
         sum += mine.len();
     }
     assert_eq!(sum, tools.len(), "every listed tool is in a toolset");
+}
+
+/// The limits hold the cap by arithmetic: `core`, the 3 largest limits beyond it, and the JSON separators fit in 24,000.
+#[test]
+fn the_limits_add_up_to_inside_the_budget() {
+    let mut others: Vec<usize> = TOOLSET_LIMITS.iter().filter(|(s, _)| *s != Toolset::Core).map(|(_, l)| *l).collect();
+    others.sort_unstable_by(|a, b| b.cmp(a));
+    let biggest: usize = others.iter().take(MAX_CHOSEN_TOOLSETS).sum();
+    // The two brackets of the array, and a comma for each of the tools at most.
+    let separators = 2 + TOOL_BUDGET;
+    let total = limit_of(Toolset::Core) + biggest + separators;
+    assert!(total <= BYTE_BUDGET, "core plus the 3 largest limits plus separators is {total}, over {BYTE_BUDGET}");
+}
+
+/// Every real grant is inside the cap: `core` plus any choice of up to 3 toolsets, as a Platform Admin agent session lists it.
+#[tokio::test]
+async fn every_agent_combination_stays_inside_24_kb_and_45_tools() {
+    let db = common::TestDb::new();
+    let state = db.state();
+    let app = build_app_with_state(state.clone()).expect("router");
+    let mut seen = 0;
+    for sets in choices() {
+        let tools = list_with(&app, &agent_list_token(&state, &sets)).await;
+        let bytes = serde_json::to_vec(&tools).unwrap().len();
+        let label: Vec<&str> = sets.iter().map(|s| s.word()).collect();
+        assert!(bytes <= BYTE_BUDGET, "core + {label:?} lists {bytes} bytes, over {BYTE_BUDGET}");
+        assert!(tools.len() <= TOOL_BUDGET, "core + {label:?} lists {} tools, over {TOOL_BUDGET}", tools.len());
+        seen += 1;
+    }
+    assert_eq!(seen, 26, "1 + 5 + 10 + 10 choices of up to 3 of the 5 toolsets beyond core");
 }

@@ -12,7 +12,7 @@ use crate::service::identity::{generate_raw_token, hash_token, resolve_user};
 use crate::service::ServiceError;
 use crate::state::{ApiToken, AuthUser, RecordDecisionInput, SharedState};
 use base64::Engine;
-use scaffoldry_core::{AgentLevel, DecisionType, TokenScope, Toolset};
+use scaffoldry_core::{AgentLevel, DecisionType, TokenScope, Toolset, MAX_TOOLSETS};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -108,10 +108,11 @@ fn offered(user: &AuthUser, state: &SharedState) -> Vec<Toolset> {
 }
 
 /// The toolsets a client's `scope` asks for: each `mcp:<toolset>` that is offered. Other values, and `mcp:` names that
-/// are not toolsets, are ignored. `core` is never asked for.
+/// are not toolsets, are ignored. `core` is never asked for. Asking for more than the most a token may hold ticks the
+/// first ones in the order of `Toolset::ALL`: data, build, access, governance, admin.
 fn asked_toolsets(scope: &str, offered: &[Toolset]) -> Vec<Toolset> {
     let asked: Vec<Toolset> = scope.split_whitespace().filter_map(|s| s.strip_prefix("mcp:")).filter_map(Toolset::parse).filter(|t| *t != Toolset::Core && offered.contains(t)).collect();
-    Toolset::ALL.into_iter().filter(|t| asked.contains(t)).collect()
+    Toolset::ALL.into_iter().filter(|t| asked.contains(t)).take(MAX_TOOLSETS).collect()
 }
 
 /// What the person ticked, checked: an unknown name is refused, `core` and a toolset they are not offered are dropped,
@@ -125,6 +126,9 @@ fn picked_toolsets(picked: &[String], offered: &[Toolset]) -> Result<Vec<Toolset
         }
     }
     let mut chosen: Vec<Toolset> = Toolset::ALL.into_iter().filter(|t| chosen.contains(t)).collect();
+    if chosen.len() > MAX_TOOLSETS {
+        return Err(ServiceError::bad_request(format!("Choose at most {MAX_TOOLSETS} toolsets. Core is always on and does not count.")));
+    }
     if chosen.is_empty() {
         chosen.push(Toolset::Data);
     }

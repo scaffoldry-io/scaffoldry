@@ -28,6 +28,6 @@ pub use dataset::*;
 pub use guards::*;
 pub use ledger::*;
 pub use standards::{ceds, eduperson, herm};
-pub use token_scope::{AgentLevel, TokenOp, TokenScope, Toolset};
+pub use token_scope::{AgentLevel, TokenOp, TokenScope, Toolset, MAX_TOOLSETS};
 pub use tree::{OrgClosureRow, OrgTree};
 pub use workflow::*;

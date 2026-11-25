@@ -349,11 +349,15 @@ fn dummy_args(tool: &scaffoldry_server::service::tools::Tool, target: (&str, &st
     Value::Object(args)
 }
 
-async fn seeded_app() -> Router {
+async fn seeded_state() -> scaffoldry_server::state::SharedState {
     reset_test_db().await;
     let state = std::sync::Arc::new(scaffoldry_server::state::ServerState::new().expect("state"));
     state.seed_demo().expect("seed");
-    scaffoldry_server::build_app_with_state(state).expect("router")
+    state
+}
+
+async fn seeded_app() -> Router {
+    scaffoldry_server::build_app_with_state(seeded_state().await).expect("router")
 }
 
 /// The catalog is metadata (connections phase 1). The tool answers with each dataset's fields and owner and never with
@@ -410,19 +414,50 @@ async fn initialize_gives_the_agent_instructions_for_this_caller() {
 /// so this limit is about 6,000 tokens. A change that needs more raises the limit here, in the open.
 /// Raised from 18,000 to the 24,000 that `agent-coverage.md` phase 2 sets: every tool now lists a closed schema and one
 /// example call, and the destructive and idempotent hints. `mcp_conformance.rs` holds the same budget and the tool count.
-/// The list measured is the largest one a caller can reach: a Platform Admin whose token has no `toolsets`, so every
-/// toolset. A token with fewer toolsets lists a subset (`docs/plans/mcp-toolsets.md`).
+/// The cap applies to every list an AGENT can receive. An agent token holds `core` plus at most 3 toolsets, so the list
+/// measured is a Platform Admin agent session with the 3 biggest toolsets. The desk sign-in token lists every tool, belongs
+/// to a person and is not an agent's context, so its size is printed and not capped (`docs/plans/mcp-toolsets.md`).
 const TOOL_LIST_BYTE_BUDGET: usize = 24_000;
 
 #[tokio::test]
-async fn the_largest_reachable_tool_list_stays_inside_its_budget() {
+async fn the_largest_agent_tool_list_stays_inside_its_budget() {
+    use scaffoldry_core::{AgentLevel, TokenScope, Toolset};
     let _db = common::TestDb::new();
-    let app = seeded_app().await;
-    let token = login_user(&app, "jordan.lee@state.edu").await;
-    let (_, res) = mcp_call(&app, &token, "tools/list", None).await;
+    let state = seeded_state().await;
+    let app = scaffoldry_server::build_app_with_state(state.clone()).expect("router");
+    let desk = login_user(&app, "jordan.lee@state.edu").await;
+    let (_, res) = mcp_call(&app, &desk, "tools/list", None).await;
+    eprintln!("desk tool list: {} tools, {} bytes (not capped)", res["result"]["tools"].as_array().unwrap().len(), serde_json::to_vec(&res["result"]["tools"]).unwrap().len());
+
+    let raw = "raw-budget-agent-token".to_string();
+    let scope = TokenScope {
+        apps: Vec::new(),
+        tables: Default::default(),
+        tools: None,
+        max_rows_per_call: None,
+        level: Some(AgentLevel::Write),
+        toolsets: Some(vec![Toolset::Data, Toolset::Build, Toolset::Governance]),
+    };
+    state
+        .persist_api_token(&scaffoldry_server::state::ApiToken {
+            token_hash: scaffoldry_server::service::identity::hash_token(&raw),
+            id: uuid::Uuid::new_v4(),
+            kind: "agent".to_string(),
+            eppn: "jordan.lee@state.edu".to_string(),
+            label: "budget".to_string(),
+            original_admin: None,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            last_used_at: None,
+            revoked_at: None,
+            app_slug: None,
+            scope: Some(scope),
+        })
+        .expect("persisted");
+    let (_, res) = mcp_call(&app, &raw, "tools/list", None).await;
     let bytes = serde_json::to_vec(&res["result"]["tools"]).unwrap().len();
-    eprintln!("tool list: {} tools, {bytes} bytes", TOOLS.len());
-    assert!(bytes <= TOOL_LIST_BYTE_BUDGET, "the tool list is {bytes} bytes, over the {TOOL_LIST_BYTE_BUDGET} budget");
+    eprintln!("largest agent tool list: {} tools, {bytes} bytes", res["result"]["tools"].as_array().unwrap().len());
+    assert!(bytes <= TOOL_LIST_BYTE_BUDGET, "the agent tool list is {bytes} bytes, over the {TOOL_LIST_BYTE_BUDGET} budget");
 }
 
 #[tokio::test]

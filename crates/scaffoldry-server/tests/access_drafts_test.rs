@@ -89,7 +89,7 @@ impl World {
         let (s, d) = raw(&self.app, "POST", &format!("/api/v1/clients/{id}/decide"), &admin, Some(json!({ "decision": "approve", "rationale": "An allowed tool" }))).await;
         assert_eq!(s, StatusCode::OK, "{d}");
         let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()));
-        let body = json!({ "client_id": id, "redirect_uri": CALLBACK, "response_type": "code", "state": "s", "code_challenge": challenge, "code_challenge_method": "S256", "resource": ISSUER, "decision": "allow", "access": access, "toolsets": ["data", "build", "access", "governance"] });
+        let body = json!({ "client_id": id, "redirect_uri": CALLBACK, "response_type": "code", "state": "s", "code_challenge": challenge, "code_challenge_method": "S256", "resource": ISSUER, "decision": "allow", "access": access, "toolsets": ["data", "build", "access"] });
         let (s, allowed) = raw(&self.app, "POST", "/oauth/authorize", &issue_test_token_and_user(user), Some(body)).await;
         assert_eq!(s, StatusCode::OK, "{allowed}");
         let code = allowed["redirect_to"].as_str().unwrap().split_once('?').unwrap().1.split('&').find_map(|p| p.strip_prefix("code=")).unwrap().to_string();
