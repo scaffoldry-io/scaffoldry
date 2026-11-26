@@ -10,4 +10,5 @@ pub mod index;
 pub mod keys;
 pub mod labels;
 pub mod records;
+pub mod specs;
 pub mod units;

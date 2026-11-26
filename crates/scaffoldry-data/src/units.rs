@@ -86,7 +86,13 @@ pub fn spec_for<C: GenericClient>(c: &mut C, app_slug: &str, table_id: &str) -> 
 /// unit of the field's hierarchy is refused, and [`is_refused`] names the error. Nothing is read or written for a table that
 /// names no unit column.
 pub fn write<C: GenericClient>(tx: &mut C, app_slug: &str, table_id: &str, record_id: &str, data: &Value) -> Result<(), postgres::Error> {
-    let Some(spec) = spec_for(tx, app_slug, table_id)? else { return Ok(()) };
+    let spec = spec_for(tx, app_slug, table_id)?;
+    write_with(tx, spec.as_ref(), record_id, data)
+}
+
+/// [`write`] with the unit column already read, so a caller that reads both specs pays one round trip (`crate::specs`).
+pub fn write_with<C: GenericClient>(tx: &mut C, spec: Option<&UnitSpec>, record_id: &str, data: &Value) -> Result<(), postgres::Error> {
+    let Some(spec) = spec else { return Ok(()) };
     let raw = raw_of(data.get(&spec.field));
     let unit: Option<Uuid> = raw.as_deref().and_then(|r| Uuid::parse_str(r).ok());
     tx.execute("SELECT set_record_unit($1, $2, $3, $4, $5)", &[&record_id, &unit, &raw, &spec.hierarchy, &spec.field])?;
