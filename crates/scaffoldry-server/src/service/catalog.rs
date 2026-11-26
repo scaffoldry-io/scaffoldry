@@ -236,10 +236,13 @@ fn build(row: &CatalogRow, ctx: &Ctx) -> Option<Base> {
                 field_json.push(restricted_field());
                 continue;
             }
-            if f.ferpa_sensitive {
+            // A published field is not a manifest field and has no label, so its stored flag is its whole sensitivity.
+            // It is moved out by destructuring, so `effective_sensitivity_test` still holds every read of a manifest flag.
+            let scaffoldry_core::DatasetField { ferpa_sensitive: flagged, .. } = f.clone();
+            if flagged {
                 categories.push(scaffoldry_engine::LEGACY_FLAG_CATEGORY.to_string());
             }
-            field_json.push(json!({ "name": f.name, "label": f.label, "description": f.label, "field_type": f.field_type, "required": f.required, "ferpa_sensitive": f.ferpa_sensitive, "ceds_code": f.ceds_code, "restricted": false }));
+            field_json.push(json!({ "name": f.name, "label": f.label, "description": f.label, "field_type": f.field_type, "required": f.required, "ferpa_sensitive": flagged, "ceds_code": f.ceds_code, "restricted": false }));
             fields.push(FieldView { name: f.name.clone(), label: f.label.clone(), field_type: f.field_type.clone(), options: Vec::new() });
         }
     } else {
@@ -261,14 +264,15 @@ fn build(row: &CatalogRow, ctx: &Ctx) -> Option<Base> {
         let mut protected = false;
         for f in &table.fields {
             let sensitivity = effective_sensitivity(f, ctx.labels.get(&(m.slug.clone(), table.id.clone(), f.name.clone())), &ctx.categories);
-            protected |= sensitivity.protected;
+            let field_protected = sensitivity.protected;
+            protected |= field_protected;
             if restricted(&f.name) {
                 field_json.push(restricted_field());
                 continue;
             }
             categories.extend(sensitivity.categories);
             let ty = serde_json::to_value(f.field_type).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-            field_json.push(json!({ "name": f.name, "label": f.label, "description": f.label, "field_type": ty, "required": f.required, "ferpa_sensitive": f.ferpa_sensitive, "ceds_code": null, "restricted": false }));
+            field_json.push(json!({ "name": f.name, "label": f.label, "description": f.label, "field_type": ty, "required": f.required, "ferpa_sensitive": field_protected, "ceds_code": null, "restricted": false }));
             fields.push(FieldView { name: f.name.clone(), label: f.label.clone(), field_type: ty, options: f.select_options.iter().map(|o| o.label.clone()).collect() });
         }
         level = if protected { "Restricted / FERPA" } else { "Internal" }.to_string();
