@@ -796,6 +796,11 @@ pub struct AppTable {
     /// The declared key (data layer phase 2b). Setting or changing it is a manifest change, so a proposal carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<TableKey>,
+    /// The unit column (data layer phase 2c): the name of one of the table's Unit fields. Each row's value is copied to an
+    /// indexed column, and a value that is not a unit of the field's hierarchy is refused. Naming it is a manifest change,
+    /// so a proposal carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_field: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

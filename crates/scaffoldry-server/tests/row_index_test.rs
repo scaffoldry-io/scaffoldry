@@ -87,7 +87,7 @@ fn manifest(slug: &str, views: Vec<AppView>) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
-            retired_fields: Vec::new(), key: None,
+            retired_fields: Vec::new(), key: None, unit_field: None,
             id: "t1".to_string(),
             name: "Things".to_string(),
             slug: "things".to_string(),
@@ -284,6 +284,7 @@ fn desc_query(slug: &str) -> IndexedQuery {
         search: None,
         expr: None,
         offset: 0,
+        unit: None,
     }
 }
 
@@ -415,6 +416,7 @@ async fn a_filter_on_an_indexed_field_returns_the_predicted_rows_without_scannin
         search: None,
         expr: None,
         offset: 0,
+        unit: None,
     };
     let (sql, params) = build_indexed_sql(&query, IndexPhase::All);
     let plan = repo.explain(&sql, &params).unwrap();

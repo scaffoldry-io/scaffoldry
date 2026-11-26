@@ -93,7 +93,7 @@ fn manifest(slug: &str) -> AppManifest {
         coordinates: None, sealed: false, integrations: Default::default(), kind: Default::default(),
         custom_domain: None,
         custom_domain_verified: false,
-        tables: vec![AppTable { retired_fields: Vec::new(), key: None, id: "t1".to_string(), name: "Things".to_string(), slug: "things".to_string(), description: None, icon: None, fields, primary_field: None, sample_records: vec![] , coordinates: None, sealed: false, row_place: Default::default() }],
+        tables: vec![AppTable { retired_fields: Vec::new(), key: None, unit_field: None, id: "t1".to_string(), name: "Things".to_string(), slug: "things".to_string(), description: None, icon: None, fields, primary_field: None, sample_records: vec![] , coordinates: None, sealed: false, row_place: Default::default() }],
         relationships: vec![],
         views: vec![],
         ceds_mappings: Default::default(),
@@ -373,6 +373,7 @@ async fn million_rows() {
         search: None,
         expr,
         offset: 0,
+        unit: None,
     };
     let after = Some((scaffoldry_server::repository_index::IndexedValue::Num((ROWS - 200) as f64), format!("rec-{}-{:08}", w.slug, ROWS - 200)));
     let (sql, params) = build_indexed_sql(&query(sort.clone(), after, None), IndexPhase::All);
@@ -398,7 +399,7 @@ async fn million_rows() {
     plans.push(("count grouped by a five-value field", plan_of(&w, &sql, &params)));
     let (sql, params) = build_record_query(
         &appslug,
-        &RecordQuery { table_id: t.clone(), any: false, clauses: vec![], sort: None, after: None, limit: 201, scope: None, search: Some("zebrafish".into()), expr: None },
+        &RecordQuery { table_id: t.clone(), any: false, clauses: vec![], sort: None, after: None, limit: 201, scope: None, search: Some("zebrafish".into()), expr: None, unit: None },
     );
     plans.push(("Search for a word in ten rows", plan_of(&w, &sql, &params)));
 
@@ -696,7 +697,7 @@ async fn million_rows_with_grants() {
         op: scaffoldry_core::access::Op::In,
         value: scaffoldry_core::access::Operand::Literal(Value::Array(ids.into_iter().map(Value::String).collect())),
     };
-    let scoped = |pred| RecordQuery { table_id: "t1".into(), any: false, clauses: vec![], sort: None, after: None, limit: 101, scope: Some(ScopePlan { pred, indexed: fields.clone() }), search: None, expr: None };
+    let scoped = |pred| RecordQuery { table_id: "t1".into(), any: false, clauses: vec![], sort: None, after: None, limit: 101, scope: Some(ScopePlan { pred, indexed: fields.clone() }), search: None, expr: None, unit: None };
     let owners: Vec<String> = (0..REACHED_PEOPLE).map(|i| format!("person{i}@gate.example")).collect();
     let mut plans: Vec<(&str, String)> = Vec::new();
     for (name, pred) in [

@@ -496,6 +496,10 @@ pub struct IndexedQuery {
     pub expr: Option<Expr>,
     /// Rows to skip after `after`. Only a window reads it (`build_window_sql`).
     pub offset: usize,
+    /// Only the records whose unit column holds this unit id (data layer phase 2c). Only a page reads it
+    /// (`build_indexed_sql`), which joins the records. A window, a count and an anchor read the index alone and leave it to the
+    /// filter tree.
+    pub unit: Option<String>,
 }
 
 /// A filter tree whose leaves are typed clauses.
@@ -611,6 +615,11 @@ pub fn build_indexed_sql(q: &IndexedQuery, phase: IndexPhase) -> (String, Vec<Sq
         }
     }
 
+    if let Some(u) = &q.unit {
+        let n = push(&mut params, SqlParam::Text(u.clone()));
+        wheres.push(format!("r.unit_id = ${n}::text::uuid"));
+    }
+
     // The cursor and the order.
     // A cursor is a row comparison on the two columns the index ends with, so it is a boundary in the index and the scan
     // starts there. The older form, `value > v OR (value = v AND id > x) OR value IS NULL`, was a filter: the scan read
@@ -714,6 +723,7 @@ impl AnchorSpec {
             search: None,
             expr: self.expr.clone(),
             offset: 0,
+            unit: None,
         }
     }
 }
@@ -728,6 +738,7 @@ pub const COUNT_CAP: i64 = 250_000;
 /// The conditions every window and count over a walked field share, and their parameters. A row of the walked field
 /// at `ord = 0` stands for each record, so one row is one record.
 fn window_wheres(q: &IndexedQuery, params: &mut Vec<SqlParam>) -> String {
+    debug_assert!(q.unit.is_none(), "a window reads the index alone, so it cannot read the unit column");
     let s = q.sort.as_ref().expect("a window walks a sort");
     let f = push_param(params, SqlParam::Text(s.field.clone()));
     let mut wheres = vec![format!("i.app_slug = $1 AND i.table_id = $2 AND i.field = ${f} AND i.ord = 0")];

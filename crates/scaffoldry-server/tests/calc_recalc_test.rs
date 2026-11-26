@@ -72,7 +72,7 @@ fn manifest(slug: &str, formula: &str, code: FieldType) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
-            retired_fields: Vec::new(), key: None,
+            retired_fields: Vec::new(), key: None, unit_field: None,
             id: "t1".to_string(),
             name: "Things".to_string(),
             slug: "things".to_string(),

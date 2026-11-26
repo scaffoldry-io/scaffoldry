@@ -132,6 +132,13 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                 }
             }
         }
+        if let Some(name) = &table.unit_field {
+            match table.fields.iter().find(|f| f.name == *name) {
+                None => problems.push(format!("table '{}': the unit column names field '{name}', which the table does not have", table.id)),
+                Some(f) if f.field_type != FieldType::Unit => problems.push(format!("table '{}': the unit column '{name}' must be a Unit field", table.id)),
+                Some(_) => {}
+            }
+        }
         for (hierarchy, field) in &table.row_place {
             // A hierarchy of units places a row by a Unit field of that hierarchy. A hierarchy of people places it by a
             // Collaborator field, because the people a unit holds are the ones its reach names.

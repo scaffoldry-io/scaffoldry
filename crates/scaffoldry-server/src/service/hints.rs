@@ -67,6 +67,8 @@ pub fn hint_for(err: &ServiceError) -> String {
             }
         }
         "constraint_violated" if has("key is already used") => "Another record holds that key. Send a different key, or call list_records to find the record that has it and update that one.",
+        "constraint_violated" if has("is not a unit of the") => "Send the id of a unit of that hierarchy. The message names the nearest units you may see. If it names none, ask the administrator of your unit.",
+        "constraint_violated" if has("rows hold a value that is not a unit") => "Fix or delete the rows the message lists, then call decide_proposal again with the same digest.",
         "constraint_violated" if has("records share a key") => "Change or delete the extra records the message lists, then call decide_proposal again with the same digest.",
         other => hint_for_code(other).unwrap_or("Retry once, and call list_workspaces to check that the server is answering."),
     };

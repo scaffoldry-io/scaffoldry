@@ -88,7 +88,7 @@ fn manifest(slug: &str) -> AppManifest {
         FieldSpec::simple("note", "Note", FieldType::Text, false, false),
     ];
     let table = |id: &str, fields: Vec<FieldSpec>, primary: &str| AppTable {
-        retired_fields: Vec::new(), key: None,
+        retired_fields: Vec::new(), key: None, unit_field: None,
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),
@@ -369,6 +369,7 @@ async fn a_calendar_range_shows_five_hundred_events_and_counts_the_rest() {
         search: None,
         expr: Some(Expr::Leaf(IndexedClause { field: "due".into(), column: IndexColumn::Ts, multi: false, op: Between, value: "2026-03-01..2026-03-31".into() })),
         offset: 0,
+        unit: None,
     };
     let (sql, params) = build_indexed_sql(&q, IndexPhase::All);
     let plan = w.state.repository.explain(&sql, &params).unwrap();

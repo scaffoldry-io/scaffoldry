@@ -17,6 +17,86 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use uuid::Uuid;
 
+/// A table's unit column as an import job is given it (data layer phase 2c).
+#[derive(Clone)]
+struct UnitColumn {
+    field: String,
+    hierarchy: String,
+    /// The unit the dataset sits at in the field's hierarchy. A blank value takes it.
+    default_unit: Option<String>,
+    default_name: Option<String>,
+    /// The units the caller may see. A refusal names none other.
+    visible: scaffoldry_data::units::Visible,
+}
+
+impl UnitColumn {
+    fn from_payload(payload: &Value) -> Option<Self> {
+        let c = payload.get("unit_column")?;
+        let visible = match c.get("visible")? {
+            Value::String(_) => scaffoldry_data::units::Visible::All,
+            Value::Array(roots) => scaffoldry_data::units::Visible::Under(roots.iter().filter_map(|r| r.as_str().and_then(|r| Uuid::parse_str(r).ok())).collect()),
+            _ => return None,
+        };
+        Some(Self {
+            field: c.get("field")?.as_str()?.to_string(),
+            hierarchy: c.get("hierarchy")?.as_str()?.to_string(),
+            default_unit: c.get("default_unit").and_then(Value::as_str).map(str::to_string),
+            default_name: c.get("default_unit_name").and_then(Value::as_str).map(str::to_string),
+            visible,
+        })
+    }
+}
+
+/// What a row's unit came to: the unit was blank and took the dataset's, or it was a unit, or it was refused with these words.
+enum RowUnit {
+    Given,
+    Defaulted,
+    Refused(String),
+}
+
+/// Applies the unit column to one row of an import. A blank value takes the dataset's unit, if it has one in the hierarchy.
+/// A value that is not a unit of the hierarchy is refused in the words of every other door, naming the nearest units the
+/// caller may see. `judge` asks the database about a value, and returns the words of a refusal, or `None` for a unit. `seen`
+/// remembers each value already judged, so a file of many rows asks the database once for each unit.
+fn apply_unit_column<E>(
+    uc: &UnitColumn,
+    row: &mut Map<String, Value>,
+    seen: &mut HashMap<String, Option<String>>,
+    mut judge: impl FnMut(&str) -> Result<Option<String>, E>,
+) -> Result<RowUnit, E> {
+    let text = match row.get(&uc.field) {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(s)) => s.trim().to_string(),
+        Some(other) => other.to_string(),
+    };
+    if text.is_empty() {
+        return Ok(match &uc.default_unit {
+            Some(d) => {
+                row.insert(uc.field.clone(), Value::String(d.clone()));
+                RowUnit::Defaulted
+            }
+            None => RowUnit::Given,
+        });
+    }
+    if !seen.contains_key(&text) {
+        let verdict = judge(&text)?;
+        seen.insert(text.clone(), verdict);
+    }
+    Ok(match seen.get(&text).cloned().flatten() {
+        Some(words) => RowUnit::Refused(words),
+        None => RowUnit::Given,
+    })
+}
+
+/// The words that refuse a value that is not a unit, or `None` for a unit.
+fn judge_unit<C: postgres::GenericClient>(c: &mut C, uc: &UnitColumn, text: &str) -> Result<Option<String>, postgres::Error> {
+    if scaffoldry_data::units::on_list(c, &uc.hierarchy, text)? {
+        return Ok(None);
+    }
+    let near = scaffoldry_data::units::nearest(c, &uc.hierarchy, text, &uc.visible)?;
+    Ok(Some(format!("field '{}': {}", uc.field, scaffoldry_data::units::sentence(text, &uc.hierarchy, &near))))
+}
+
 pub const DEFAULT_MAX_ROWS: u64 = 500_000;
 pub const DEFAULT_MAX_MB: u64 = 100;
 
@@ -514,6 +594,9 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
     let mut update_count: usize = 0;
     let mut errors: Vec<Value> = Vec::new();
     let mut proposed_options: HashMap<String, HashSet<String>> = HashMap::new();
+    let unit_column = UnitColumn::from_payload(&payload);
+    let mut units_seen: HashMap<String, Option<String>> = HashMap::new();
+    let mut blank_unit_rows: usize = 0;
 
     for (row_idx, row) in rows.iter().enumerate() {
         let row_num = row_idx + 1;
@@ -646,6 +729,25 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
             }
         }
 
+        // The unit column (data layer phase 2c): a blank value takes the dataset's unit, and a value that is not a unit is refused.
+        if let (false, Some(uc)) = (row_has_error, &unit_column) {
+            let verdict = apply_unit_column(uc, &mut row_data, &mut units_seen, |text| {
+                let (uc, text) = (uc.clone(), text.to_string());
+                repo.with_client(move |c| Ok(judge_unit(c, &uc, &text)?)).map_err(|e| JobError::Retry(e.to_string()))
+            })?;
+            match verdict {
+                RowUnit::Defaulted => blank_unit_rows += 1,
+                RowUnit::Refused(words) => {
+                    row_has_error = true;
+                    if errors.len() < 100 {
+                        let column = field_map.iter().find(|(_, f)| **f == uc.field).map(|(c, _)| c.clone()).unwrap_or_else(|| uc.field.clone());
+                        errors.push(json!({ "row": row_num, "column": column, "message": format!("Row {row_num}: {words}") }));
+                    }
+                }
+                RowUnit::Given => {}
+            }
+        }
+
         if preset_plan.is_some() && preview.len() < 5 {
             preview.push(Value::Object(row_data.clone()));
         }
@@ -762,6 +864,15 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
         "errors": errors,
         "proposed_options": proposed_options,
     });
+    // The rows that left the unit column blank, and the unit they take (data layer phase 2c).
+    if let (Some(uc), true) = (&unit_column, blank_unit_rows > 0) {
+        let rows = if blank_unit_rows == 1 { "1 row leaves".to_string() } else { format!("{blank_unit_rows} rows leave") };
+        let message = match (&uc.default_unit, &uc.default_name) {
+            (Some(_), Some(name)) => format!("{rows} '{}' blank and take the dataset's unit, {name}.", uc.field),
+            _ => format!("{rows} '{}' blank and take the dataset's unit.", uc.field),
+        };
+        result["unit_default"] = json!({ "field": uc.field, "unit_id": uc.default_unit, "unit_name": uc.default_name, "blank_rows": blank_unit_rows, "message": message });
+    }
     // For each column, the detectors that matched and how many rows. Never a value.
     let actions: HashMap<(String, String), &'static str> = guard
         .as_ref()
@@ -842,6 +953,7 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         .ok_or_else(|| JobError::Permanent(format!("Table {} not found in app", target_table_id)))?;
 
     let upsert_key = mapping.get("upsert_key").and_then(|v| v.as_str()).map(str::to_string);
+    let unit_column = UnitColumn::from_payload(&payload);
 
     let mut field_map: HashMap<String, String> = HashMap::new();
     if let Some(col_map) = mapping.get("fields").or_else(|| mapping.get("column_mappings")).or_else(|| mapping.get("columns")).and_then(|v| v.as_object()) {
@@ -934,6 +1046,7 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         let b_person = person.clone();
         let b_preset = preset_plan.clone();
         let b_guard = content_guard.clone();
+        let b_unit_column = unit_column.clone();
 
         let (batch_created, batch_updated, batch_rejected, batch_hits) = repo.with_client(move |c| {
             let mut tx = c.transaction()?;
@@ -943,6 +1056,7 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
             let mut updated = 0;
             let mut rejected = Vec::new();
             let mut flagged: Vec<crate::content_scan::Hit> = Vec::new();
+            let mut units_seen: HashMap<String, Option<String>> = HashMap::new();
 
             for (offset, row) in batch_slice.iter().enumerate() {
                 let row_num = b_processed_offset + offset + 1;
@@ -1034,6 +1148,13 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
                         }
                     } else {
                         row_data.insert(target_field_name.clone(), Value::String(cell_value.to_string()));
+                    }
+                }
+
+                // The unit column (data layer phase 2c): a blank value takes the dataset's unit, and a value that is not a unit is refused.
+                if let (None, Some(uc)) = (&row_has_error, &b_unit_column) {
+                    if let RowUnit::Refused(words) = apply_unit_column(uc, &mut row_data, &mut units_seen, |text| judge_unit(&mut tx, uc, text))? {
+                        row_has_error = Some(words);
                     }
                 }
 

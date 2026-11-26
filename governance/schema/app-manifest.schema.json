@@ -134,7 +134,8 @@
             "Duration",
             "DateTime",
             "Attachment",
-            "Button"
+            "Button",
+            "Unit"
           ]
         },
         {
@@ -212,6 +213,11 @@
             "type": "string"
           },
           "description": "Sensitivity category ids."
+        },
+        "hierarchy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For a Unit field: the key of the hierarchy whose units the field holds. A table's unit column is a Unit field."
         },
         "linked_dataset_id": {
           "type": [
@@ -390,6 +396,11 @@
             "fields": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
             "case_fold": { "type": "boolean" }
           }
+        },
+        "unit_field": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The unit column: the name of one of the table's Unit fields. Each row's value is copied to an indexed column, and a value that is not a unit of the field's hierarchy is refused. A row that leaves it blank is the dataset's own. Setting it needs a proposal, and it is refused while a row holds a value that is not a unit."
         },
         "retired_fields": {
           "type": "array",

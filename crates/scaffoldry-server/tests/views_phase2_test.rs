@@ -98,7 +98,7 @@ fn manifest(slug: &str) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
-            retired_fields: Vec::new(), key: None,
+            retired_fields: Vec::new(), key: None, unit_field: None,
             id: "t1".to_string(),
             name: "Things".to_string(),
             slug: "things".to_string(),
@@ -288,6 +288,7 @@ async fn a_nested_filter_returns_the_right_rows_and_its_plan_has_no_sequential_s
             Expr::Or(vec![leaf("status", IndexColumn::Txt, Equals, "s1"), leaf("status", IndexColumn::Txt, Equals, "s2")]),
         ])),
         offset: 0,
+        unit: None,
     };
     let (sql, params) = build_indexed_sql(&q, IndexPhase::All);
     let plan = w.state.repository.explain(&sql, &params).unwrap();

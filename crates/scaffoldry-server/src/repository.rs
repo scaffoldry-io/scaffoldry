@@ -120,6 +120,7 @@ const SCHEMA_0113: &str = include_str!("../../scaffoldry-core/migrations/0113_le
 const SCHEMA_0114: &str = include_str!("../../scaffoldry-core/migrations/0114_datasets.sql");
 const SCHEMA_0115: &str = include_str!("../../scaffoldry-core/migrations/0115_session_toolsets.sql");
 const SCHEMA_0116: &str = include_str!("../../scaffoldry-core/migrations/0116_record_keys.sql");
+const SCHEMA_0117: &str = include_str!("../../scaffoldry-core/migrations/0117_record_units.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -166,6 +167,9 @@ pub enum RepositoryError {
     /// A key was declared over rows that already share it. The text lists the groups, for the steward.
     #[error("{0}")]
     KeyDuplicates(String),
+    /// A unit column was named over rows whose value is not a unit. The text lists the rows, for the steward.
+    #[error("{0}")]
+    UnitValues(String),
 }
 
 /// A second row taking a key is a constraint violation that says nothing about the row that holds it (data layer
@@ -174,6 +178,10 @@ impl From<postgres::Error> for RepositoryError {
     fn from(e: postgres::Error) -> Self {
         if scaffoldry_data::keys::is_taken(&e) {
             RepositoryError::ConstraintViolation { message: scaffoldry_data::keys::TAKEN.to_string(), field: "key".to_string(), constraint: "unique_key".to_string() }
+        } else if let Some(r) = scaffoldry_data::units::refusal(&e) {
+            // A value that is not a unit, from a door that does not know who is asking: no unit is named.
+            let message = scaffoldry_data::units::sentence(&r.value, &r.hierarchy, &[]);
+            RepositoryError::ConstraintViolation { message, field: r.field, constraint: scaffoldry_data::units::REFUSED.to_string() }
         } else {
             RepositoryError::Db(e)
         }
@@ -411,6 +419,7 @@ pub(crate) fn insert_record_in_tx(
     let table = table_id_of(&rec.data);
     scaffoldry_data::records::insert(tx, &new_record(&rec, &table))?;
     scaffoldry_data::keys::write(tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
+    scaffoldry_data::units::write(tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
     crate::repository_index::write_record_index(
         tx,
         &rec.app_slug,
@@ -462,6 +471,7 @@ pub(crate) fn update_record_in_tx(
     let new_table = table_id_of(&data);
     let next = scaffoldry_data::records::save_data(tx, slug, id, &data, &new_table)?;
     scaffoldry_data::keys::write(tx, slug, &new_table, id, &data)?;
+    scaffoldry_data::units::write(tx, slug, &new_table, id, &data)?;
     crate::repository_index::write_record_index(
         tx,
         slug,
@@ -551,6 +561,7 @@ pub(crate) fn restore_record_in_tx(
         return Ok(false);
     };
     scaffoldry_data::keys::write(tx, slug, &table, id, &data)?;
+    scaffoldry_data::units::write(tx, slug, &table, id, &data)?;
     crate::repository_index::write_record_index(tx, slug, &table, id, &data, &ctx.index_fields)?;
     let action = ctx.action.unwrap_or("restore");
     write_history(
@@ -642,6 +653,8 @@ pub struct RecordQuery {
     pub search: Option<String>,
     /// A filter tree, read from each record's JSON. Used instead of `clauses` when set.
     pub expr: Option<crate::repository_index::Expr>,
+    /// Only the records whose unit column holds this unit id (data layer phase 2c).
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -834,6 +847,13 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
         }
         _ => String::new(),
     };
+    let unit_clause = match &q.unit {
+        Some(u) => {
+            let n = push(&mut params, SqlParam::Text(u.clone()));
+            format!(" AND unit_id = ${n}::text::uuid")
+        }
+        None => String::new(),
+    };
     let scope = match &q.scope {
         Some(plan) => {
             let (app, table) = (
@@ -855,7 +875,7 @@ pub fn build_record_query(app_slug: &str, q: &RecordQuery) -> (String, Vec<SqlPa
     );
     let sql = format!(
         "SELECT id, app_slug, data, ceds_mapping, is_ferpa_sensitive, created_at::text AS created_at_text, created_by, version \
-         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){search_clause}{after}{scope} \
+         FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND ({joined}){search_clause}{unit_clause}{after}{scope} \
          ORDER BY {order} LIMIT ${limit}::bigint"
     );
     (sql, params)
@@ -1230,6 +1250,7 @@ impl PostgresRepository {
                             ("0114_datasets.sql", SCHEMA_0114),
                             ("0115_session_toolsets.sql", SCHEMA_0115),
                             ("0116_record_keys.sql", SCHEMA_0116),
+                            ("0117_record_units.sql", SCHEMA_0117),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -2357,6 +2378,7 @@ impl PostgresRepository {
             let table = table_id_of(&rec.data);
             let version = scaffoldry_data::records::upsert(&mut tx, &new_record(&rec, &table))?;
             scaffoldry_data::keys::write(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
+            scaffoldry_data::units::write(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
             crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
             crate::repository_links::write_record_links(&mut tx, &rec.app_slug, &rec.id, old.as_ref(), &rec.data, &ctx)?;
             let changes = diff_fields(old.as_ref(), Some(&rec.data), &ctx.computed_fields);
