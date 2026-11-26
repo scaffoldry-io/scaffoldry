@@ -61,6 +61,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "guests.captcha_hook",
     "guests.max_file_mb",
     "forms.disabled",
+    "catalog.small_group_min",
 ];
 
 pub fn router() -> Router<SharedState> {
@@ -96,6 +97,8 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         "guests.max_file_mb" => value.as_i64().is_some_and(|n| (1..=crate::files::MAX_MAX_MB as i64).contains(&n)),
         "files.max_mb" => value.as_i64().is_some_and(|n| (1..=crate::files::MAX_MAX_MB as i64).contains(&n)),
         "files.app_quota_mb" => value.as_i64().is_some_and(|n| (1..=10_000_000).contains(&n)),
+        // The smallest group a catalog count may show. A smaller group shows "fewer than" this many.
+        "catalog.small_group_min" => value.as_i64().is_some_and(|n| (2..=10_000).contains(&n)),
         "import.max_rows" => value.as_i64().is_some_and(|n| (1..=10_000_000).contains(&n)),
         "import.max_mb" => value.as_i64().is_some_and(|n| (1..=10_000).contains(&n)),
         "preview.trials_per_person" => value.as_i64().is_some_and(|n| (1..=20).contains(&n)),

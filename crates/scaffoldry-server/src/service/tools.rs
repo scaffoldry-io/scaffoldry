@@ -7,7 +7,7 @@
 
 use crate::service::access::{authorize_app, authorize_workspace, AppAction};
 use crate::service::history::Origin;
-use crate::service::{library_tools, records, workspaces, ServiceError};
+use crate::service::{catalog, library_tools, records, workspaces, ServiceError};
 use crate::state::{AuthUser, SharedState};
 use scaffoldry_core::{DecisionType, Toolset};
 use scaffoldry_engine::HostRouter;
@@ -610,7 +610,8 @@ fn schema_list_datasets() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "department": { "type": "string" }
+            "department": { "type": "string" },
+            "query": { "type": "string" }
         }
     })
 }
@@ -694,16 +695,11 @@ fn run_create_record(caller: &AuthUser, origin: &Origin, args: Value, state: &Sh
     to_value(&records::create_record(caller, origin, app_slug, &data, state)?)
 }
 
-fn run_list_datasets(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    let datasets = state.datasets.read().unwrap_or_else(|p| p.into_inner());
-    let dept_filter = args.get("department").and_then(|v| v.as_str());
-    // Metadata only, as the HTTP route. Rows are read through the dataset's own app.
-    let list: Vec<Value> = datasets
-        .values()
-        .filter(|d| dept_filter.is_none_or(|f| d.department.eq_ignore_ascii_case(f)))
-        .map(|d| serde_json::to_value(d).unwrap_or(Value::Null))
-        .collect();
-    to_value(&list)
+fn run_list_datasets(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    // The catalog, as the HTTP route returns it: the entries the caller may discover, metadata and synthetic samples, never rows.
+    let search = catalog::Search { query: text(&args, "query"), department: text(&args, "department") };
+    let mut found = catalog::search(caller, &search, state)?;
+    to_value(&found["datasets"].take())
 }
 
 fn run_simulate_cedar_policy(_caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {

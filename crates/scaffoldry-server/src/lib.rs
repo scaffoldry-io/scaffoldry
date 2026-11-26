@@ -58,6 +58,7 @@ pub mod repository_imports;
 pub mod repository_content;
 pub mod repository_labels;
 pub mod repository_datasets;
+pub mod repository_catalog;
 pub mod repository_policy;
 pub mod repository_views;
 pub mod routes;

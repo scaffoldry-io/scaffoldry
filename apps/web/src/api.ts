@@ -131,7 +131,7 @@ export interface AdminJobDetail extends AdminJobRow {
   finished_at?: string | null;
 }
 
-import { Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, PublishedDataset, Workspace } from "./types";
+import { CatalogResult, Collaborator, LedgerEntryItem, OrganizationNode, OrgRole, PublishedDataset, Workspace } from "./types";
 export type { OrganizationNode };
 
 export interface PolicyRef {
@@ -2344,11 +2344,19 @@ export const apiClient = {
     return res.apps;
   },
 
-  /** The published datasets, with their fields and record counts. */
+  /** The published datasets, with their fields and record counts. An app table in the catalog is not one: it cannot be linked to by id. */
   listDatasets: async (): Promise<PublishedDataset[]> => {
-    const res = await request<{ datasets: PublishedDataset[] }>("/datasets");
+    const res = await request<{ datasets: (PublishedDataset & { kind?: string })[] }>("/datasets");
     if (!res || !Array.isArray(res.datasets)) throw new ApiError(0, "The server's dataset list was not in the expected form.");
-    return res.datasets;
+    return res.datasets.filter((d) => d.kind !== "table");
+  },
+
+  /** The data catalog. With words, it returns the entries that match them: by name, description, function, unit, category or field name. */
+  searchCatalog: async (query = ""): Promise<CatalogResult> => {
+    const words = query.trim();
+    const res = await request<CatalogResult>(words ? `/datasets?query=${encodeURIComponent(words)}` : "/datasets");
+    if (!res || !Array.isArray(res.datasets)) throw new ApiError(0, "The server's dataset list was not in the expected form.");
+    return res;
   },
 
   /** Creates an app in a workspace. 201 means it is live. 202 means it is a proposal waiting for approval. */

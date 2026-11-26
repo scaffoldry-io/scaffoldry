@@ -68,6 +68,7 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/admin/authorized-stores".into(), case!(authorized_store_put));
     m.insert("DELETE /api/v1/admin/authorized-stores".into(), case!(authorized_store_delete));
     m.insert("PUT /api/v1/admin/datasets/{id}/classification".into(), case!(dataset_classify));
+    m.insert("PUT /api/v1/admin/datasets/{id}/discoverability".into(), case!(dataset_discoverability));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
     m.insert("POST /api/v1/admin/guests/{id}/disable".into(), case!(guest_disable));
@@ -835,6 +836,22 @@ async fn dataset_classify(w: World) -> Outcome {
     let seen = status(w.rb("GET", "/api/v1/admin/datasets", ADMIN, None).await, StatusCode::OK, "B lists the datasets")?;
     let row = seen["datasets"].as_array().and_then(|l| l.iter().find(|d| d["id"] == id.as_str())).ok_or("the dataset on B")?;
     ensure(row["sensitivity_level"] == "Internal", format!("B shows the level A set: {row}"))
+}
+
+/// Data layer phase 2d: A hides a dataset from the catalog. B, which has never been asked, hides it from an ordinary caller
+/// and still shows it to the administrator.
+async fn dataset_discoverability(w: World) -> Outcome {
+    let listed = status(w.wa("GET", "/api/v1/datasets", ADMIN, None).await, StatusCode::OK, "A lists the catalog")?;
+    let pick = listed["datasets"].as_array().and_then(|l| l.first()).ok_or("a dataset")?;
+    let (id, name) = (pick["dataset_id"].as_str().ok_or("a dataset id")?.to_string(), pick["name"].as_str().ok_or("a name")?.to_string());
+    let before = status(w.rb("GET", "/api/v1/datasets", EDITOR, None).await, StatusCode::OK, "B lists the catalog for the editor")?;
+    ensure(has(&before, &id), "the editor sees it before")?;
+    status(w.wa("PUT", &format!("/api/v1/admin/datasets/{id}/discoverability"), ADMIN, Some(json!({ "discoverability": "hidden", "reason": "Not for the catalog." }))).await, StatusCode::OK, "A hides it")?;
+    let after = status(w.rb("GET", "/api/v1/datasets", EDITOR, None).await, StatusCode::OK, "B lists the catalog for the editor again")?;
+    ensure(!has(&after, &id) && !has(&after, &format!("\"{name}\"")), format!("B hides it from the editor: {after}"))?;
+    ensure(after["total"].as_i64() == before["total"].as_i64().map(|n| n - 1), "the total drops by one")?;
+    let admin = status(w.rb("GET", &format!("/api/v1/datasets/{id}"), ADMIN, None).await, StatusCode::OK, "B still shows it to the administrator")?;
+    ensure(admin["discoverability"] == "hidden", format!("B shows the policy A set: {admin}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {

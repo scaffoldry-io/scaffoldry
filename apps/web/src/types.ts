@@ -337,6 +337,57 @@ export interface DatasetField {
   ceds_code?: string;
 }
 
+/** One field of a catalog entry. A restricted field has no name, type or flags: only its label, "a restricted field". */
+export interface CatalogField {
+  name?: string;
+  label: string;
+  description?: string;
+  field_type?: string;
+  required?: boolean;
+  ferpa_sensitive?: boolean;
+  ceds_code?: string | null;
+  restricted?: boolean;
+}
+
+/** An entry of the data catalog (data layer phase 2d): metadata and a synthetic sample, never a stored value. */
+export interface CatalogEntry {
+  /** The id older routes use: the published id for a published dataset, the dataset id for an app table. */
+  id: string;
+  dataset_id?: string;
+  kind?: "table" | "published";
+  name: string;
+  description: string;
+  department: string;
+  organization: string;
+  sensitivity_level: string;
+  herm_capability_id?: string | null;
+  unit?: { id: string | null; name: string; code: string | null };
+  /** The steward position. Null when none is set. */
+  steward?: { position_key: string; position: string | null } | null;
+  fields: CatalogField[];
+  categories?: { id: string; name: string }[];
+  used_by_apps?: number;
+  /** Null when the group is under the threshold. */
+  record_count: number | null;
+  size?: { masked: boolean; approx?: number; label: string };
+  freshness?: string | null;
+  sample?: { synthetic: boolean; note: string; rows: Record<string, unknown>[] };
+  published_at?: string;
+  app_title?: string;
+}
+
+export interface CatalogFacet {
+  name: string;
+  count: number;
+}
+
+export interface CatalogResult {
+  total: number;
+  truncated: boolean;
+  datasets: CatalogEntry[];
+  facets: { units: CatalogFacet[]; functions: CatalogFacet[]; categories: CatalogFacet[] };
+}
+
 export interface PublishedDataset {
   id: string;
   name: string;

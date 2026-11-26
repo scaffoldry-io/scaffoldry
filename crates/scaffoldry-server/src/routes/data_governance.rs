@@ -1,6 +1,6 @@
 //! Admin console phase 4: data governance. Each route is for a Platform Admin or a compliance officer, and the service checks that first.
 
-use crate::service::{data_governance, ServiceError};
+use crate::service::{catalog, data_governance, ServiceError};
 use crate::state::{AuthUser, SharedState};
 use axum::{
     extract::{Path, Query, State},
@@ -18,6 +18,7 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/labels", put(labels))
         .route("/admin/datasets", get(datasets))
         .route("/admin/datasets/{id}/classification", put(classify))
+        .route("/admin/datasets/{id}/discoverability", put(discoverability))
 }
 
 fn caller(user: Option<Extension<AuthUser>>, headers: &HeaderMap, state: &SharedState) -> Result<AuthUser, ServiceError> {
@@ -51,4 +52,11 @@ async fn classify(State(state): State<SharedState>, user: Option<Extension<AuthU
     let caller = caller(user, &headers, &state)?;
     let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
     Ok(Json(tokio::task::spawn_blocking(move || data_governance::classify(&caller, &id, &body, &state)).await.map_err(stopped)??))
+}
+
+/// Data layer phase 2d: who may discover a dataset, which fields are shown as restricted, and its steward position.
+async fn discoverability(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    Ok(Json(tokio::task::spawn_blocking(move || catalog::set_policy(&caller, &id, &body, &state)).await.map_err(stopped)??))
 }

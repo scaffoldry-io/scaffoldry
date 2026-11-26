@@ -121,6 +121,7 @@ const SCHEMA_0114: &str = include_str!("../../scaffoldry-core/migrations/0114_da
 const SCHEMA_0115: &str = include_str!("../../scaffoldry-core/migrations/0115_session_toolsets.sql");
 const SCHEMA_0116: &str = include_str!("../../scaffoldry-core/migrations/0116_record_keys.sql");
 const SCHEMA_0117: &str = include_str!("../../scaffoldry-core/migrations/0117_record_units.sql");
+const SCHEMA_0118: &str = include_str!("../../scaffoldry-core/migrations/0118_catalog.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1251,6 +1252,7 @@ impl PostgresRepository {
                             ("0115_session_toolsets.sql", SCHEMA_0115),
                             ("0116_record_keys.sql", SCHEMA_0116),
                             ("0117_record_units.sql", SCHEMA_0117),
+                            ("0118_catalog.sql", SCHEMA_0118),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -2800,6 +2802,7 @@ impl PostgresRepository {
                     &payload_json,
                 ],
             )?;
+            crate::repository_catalog::ensure_published_in_tx(&mut tx, &ds.id)?;
             crate::cache::bump(&mut tx, "datasets")?;
             tx.commit()?;
             Ok(())
