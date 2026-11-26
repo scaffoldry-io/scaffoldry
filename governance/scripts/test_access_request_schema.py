@@ -30,6 +30,10 @@ class AccessRequestSchema(unittest.TestCase):
         self.assertEqual(check("rule", {**DEFAULT_RULE, "affiliations": ["staff"]}), [])
         self.assertEqual(check("request", {"object_kind": "app", "object_id": "scholarships", "role": "viewer", "reason": "Audit", "days": 14}), [])
         self.assertEqual(check("request", {"object_kind": "workspace", "object_id": "ws-1", "role": "editor", "clearance": "Internal", "reason": "Work", "days": 30}), [])
+        self.assertEqual(check("dataset_request", {"object_kind": "dataset", "object_id": "ds_1"}), [])
+        self.assertEqual(
+            check("dataset_request", {"object_kind": "dataset", "object_id": "ds_1", "role": "viewer", "reason": "Study", "project": "P1", "days": 14, "agreement_reference": "DUA-1"}), []
+        )
 
     def test_what_the_server_refuses_the_schema_refuses_too(self):
         bad = [
@@ -46,6 +50,11 @@ class AccessRequestSchema(unittest.TestCase):
             ("request", {"object_kind": "app", "object_id": "a", "role": "viewer", "reason": "", "days": 7}),
             ("request", {"object_kind": "app", "object_id": "a", "role": "viewer", "reason": "r", "days": 0}),
             ("request", {"object_kind": "app", "object_id": "a", "role": "viewer", "days": 7}),
+            ("request", {"object_kind": "dataset", "object_id": "ds_1", "role": "viewer", "reason": "r", "days": 7}),
+            ("dataset_request", {"object_kind": "app", "object_id": "ds_1"}),
+            ("dataset_request", {"object_kind": "dataset", "object_id": "ds_1", "budget": "x"}),
+            ("dataset_request", {"object_kind": "dataset", "object_id": "ds_1", "days": 0}),
+            ("dataset_request", {"object_kind": "dataset", "object_id": "ds_1", "project": ""}),
         ]
         for name, doc in bad:
             self.assertNotEqual(check(name, doc), [], f"{name} should fail: {doc}")

@@ -35,6 +35,13 @@ pub struct RequestRow {
     /// The grant's end, when the request has one. A request whose grant has ended reads as `Expired`.
     pub grant_ends: Option<String>,
     pub grant_ended: bool,
+    /// The catalog dataset the request was made on, when it was made from the catalog. `object_kind` and `object_id` then
+    /// name the dataset's app.
+    pub dataset_id: Option<String>,
+    /// The answers to the dataset's request form: `reason`, `project`, `duration`, `agreement_reference`, as asked.
+    pub answers: Value,
+    /// The reason a person gave when they decided it.
+    pub decision_note: Option<String>,
 }
 
 impl RequestRow {
@@ -53,7 +60,7 @@ impl RequestRow {
             "object_kind": self.object_kind, "object_id": self.object_id, "role": self.role, "clearance": self.clearance,
             "reason": self.reason, "days": self.days, "route": self.route, "rule_id": self.rule_id, "status": self.shown_status(),
             "decided_by": self.decided_by, "decided_at": self.decided_at, "grant_id": self.grant_id, "created_at": self.created_at,
-            "ends_at": self.grant_ends,
+            "ends_at": self.grant_ends, "dataset_id": self.dataset_id, "answers": self.answers, "decision_note": self.decision_note,
         })
     }
 }
@@ -75,7 +82,7 @@ fn ts(col: &str) -> String {
 fn columns() -> String {
     format!(
         "r.id, r.requester, r.filed_by_client, r.session_id, r.task, r.object_kind, r.object_id, r.role, r.clearance, r.reason, r.days, r.route, \
-         r.rule_id, r.status, r.decided_by, {}, r.grant_id, {}, {}, COALESCE(g.valid_until <= NOW(), false)",
+         r.rule_id, r.status, r.decided_by, {}, r.grant_id, {}, {}, COALESCE(g.valid_until <= NOW(), false), r.dataset_id, r.answers, r.decision_note",
         ts("r.decided_at"),
         ts("r.created_at"),
         ts("g.valid_until")
@@ -106,6 +113,9 @@ fn row_of(r: &postgres::Row) -> RequestRow {
         created_at: r.get(17),
         grant_ends: r.get(18),
         grant_ended: r.get(19),
+        dataset_id: r.get(20),
+        answers: r.get(21),
+        decision_note: r.get(22),
     }
 }
 
@@ -123,6 +133,8 @@ pub struct RequestGrant {
 /// What an approval changes besides the request: a grant it makes, or the session it widens to a level.
 #[derive(Default)]
 pub struct Effects<'a> {
+    /// The reason a person gave, kept on the request so the requester can read it.
+    pub note: &'a str,
     pub grant: Option<&'a RequestGrant>,
     pub widen: Option<(Uuid, &'a str)>,
 }
@@ -162,9 +174,9 @@ impl PostgresRepository {
         let r = r.clone();
         self.with_client(move |c| {
             c.execute(
-                "INSERT INTO access_requests (id, requester, filed_by_client, session_id, task, object_kind, object_id, role, clearance, reason, days, route, rule_id, status) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
-                &[&r.id, &r.requester, &r.filed_by_client, &r.session_id, &r.task, &r.object_kind, &r.object_id, &r.role, &r.clearance, &r.reason, &r.days, &r.route, &r.rule_id, &r.status],
+                "INSERT INTO access_requests (id, requester, filed_by_client, session_id, task, object_kind, object_id, role, clearance, reason, days, route, rule_id, status, dataset_id, answers) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+                &[&r.id, &r.requester, &r.filed_by_client, &r.session_id, &r.task, &r.object_kind, &r.object_id, &r.role, &r.clearance, &r.reason, &r.days, &r.route, &r.rule_id, &r.status, &r.dataset_id, &r.answers],
             )?;
             Ok(())
         })
@@ -196,9 +208,11 @@ impl PostgresRepository {
     }
 
     /// Ends a request that is not approved. `from` names the states it may leave.
-    pub fn close_request(&self, id: Uuid, from: &[&str], to: &str, by: &str) -> Result<bool, RepositoryError> {
-        let (from, to, by): (Vec<String>, String, String) = (from.iter().map(|s| s.to_string()).collect(), to.to_string(), by.to_string());
-        self.with_client(move |c| Ok(c.execute("UPDATE access_requests SET status = $3, decided_by = $4, decided_at = NOW() WHERE id = $1 AND status = ANY($2)", &[&id, &from, &to, &by])? == 1))
+    pub fn close_request(&self, id: Uuid, from: &[&str], to: &str, by: &str, note: &str) -> Result<bool, RepositoryError> {
+        let (from, to, by, note): (Vec<String>, String, String, String) = (from.iter().map(|s| s.to_string()).collect(), to.to_string(), by.to_string(), note.to_string());
+        self.with_client(move |c| {
+            Ok(c.execute("UPDATE access_requests SET status = $3, decided_by = $4, decided_at = NOW(), decision_note = $5 WHERE id = $1 AND status = ANY($2)", &[&id, &from, &to, &by, &note])? == 1)
+        })
     }
 
     /// Approves a request in one transaction. With a grant, the grant is stored and named. With a session, that session is
@@ -207,6 +221,7 @@ impl PostgresRepository {
         let (from, route, by): (Vec<String>, String, String) = (from.iter().map(|s| s.to_string()).collect(), route.to_string(), by.to_string());
         let grant = effects.grant.map(|g| (g.holder.clone(), g.role.clone(), g.anchor_id.clone(), g.clearance.clone(), g.days, g.reason.clone(), g.created_by.clone()));
         let widen = effects.widen.map(|(s, l)| (s, l.to_string()));
+        let note = effects.note.to_string();
         self.with_client(move |c| {
             let mut tx = c.transaction()?;
             let Some(row) = tx.query_opt("SELECT status FROM access_requests WHERE id = $1 FOR UPDATE", &[&id])? else { return Ok(Approved::Missing) };
@@ -234,11 +249,28 @@ impl PostgresRepository {
                 )?;
             }
             tx.execute(
-                "UPDATE access_requests SET status = 'Approved', route = $2, rule_id = $3, decided_by = $4, decided_at = NOW(), grant_id = $5 WHERE id = $1",
-                &[&id, &route, &rule, &by, &grant_id],
+                "UPDATE access_requests SET status = 'Approved', route = $2, rule_id = $3, decided_by = $4, decided_at = NOW(), grant_id = $5, decision_note = $6 WHERE id = $1",
+                &[&id, &route, &rule, &by, &grant_id, &note],
             )?;
             tx.commit()?;
             Ok(Approved::Done { grant_id })
+        })
+    }
+
+    /// The catalog requests that have waited since `cutoff` with no reminder since, marked as reminded at `now` in the same
+    /// statement, so two workers never remind for the same wait. A request that waits again is reminded again, `cutoff`
+    /// later.
+    pub fn claim_requests_to_remind(&self, cutoff: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>, limit: i64) -> Result<Vec<Uuid>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query(
+                "UPDATE access_requests SET reminded_at = $2 WHERE id IN ( \
+                   SELECT id FROM access_requests WHERE status = 'Pending' AND dataset_id IS NOT NULL AND COALESCE(reminded_at, created_at) <= $1 \
+                   ORDER BY created_at, id LIMIT $3 FOR UPDATE SKIP LOCKED) RETURNING id",
+                &[&cutoff, &now, &limit],
+            )?
+            .iter()
+            .map(|r| r.get(0))
+            .collect())
         })
     }
 }

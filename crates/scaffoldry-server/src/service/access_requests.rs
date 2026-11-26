@@ -188,9 +188,43 @@ fn need_for(state: &SharedState, obj: &Object, requester: &str, raised: &[&str])
     authority::requirement_for(state, &obj.workspace.id, &checks_of(raised), requester)
 }
 
+/// Where a request made from the catalog goes (data layer phase 2e).
+enum Where {
+    /// The people who hold the dataset's steward position now, found from the dataset's unit up. The requester is never one.
+    Steward { key: String, name: String, holders: Vec<String> },
+    /// The dataset has no steward position, or nobody holds it. The access rules route the request as for any other, and the
+    /// reason is shown to the requester.
+    Fallback(String),
+}
+
+/// Where a catalog request goes. `None` for a request that was not made from the catalog.
+fn routed(state: &SharedState, req: &RequestRow) -> Option<Where> {
+    use scaffoldry_core::approver::{ApproverSpec, Origin};
+    let id = req.dataset_id.as_deref()?;
+    let Some(row) = state.repository.catalog_row(id).ok().flatten() else { return Some(Where::Fallback("The dataset is no longer in the catalog, so the access rules route this request".to_string())) };
+    let Some(key) = row.steward_position.clone() else { return Some(Where::Fallback("The dataset has no steward position, so the access rules route this request".to_string())) };
+    let name = state.position_types.read().ok().and_then(|p| p.get(&key).map(|t| t.name.clone())).unwrap_or_else(|| key.clone());
+    let Some(unit) = crate::service::catalog::unit_of(state, &row) else {
+        return Some(Where::Fallback(format!("The dataset sits at no unit, so no holder of '{name}' can be found and the access rules route this request")));
+    };
+    let spec = ApproverSpec::Position { key: key.clone(), from: Origin::Workspace, walk_up: true };
+    let mut holders: Vec<String> = crate::service::approvers::resolved_approvers(state, &spec, unit, &[], Some(&req.requester));
+    holders.retain(|h| !h.eq_ignore_ascii_case(&req.requester));
+    holders.sort();
+    holders.dedup();
+    if holders.is_empty() {
+        return Some(Where::Fallback(format!("Nobody holds the steward position '{name}' for this dataset now, so the access rules route this request")));
+    }
+    Some(Where::Steward { key, name, holders })
+}
+
 /// The people whose decision the request waits for.
-fn waiting_on(state: &SharedState, obj: &Object, requester: &str, need: &authority::Need) -> Vec<String> {
+fn waiting_on(state: &SharedState, req: &RequestRow, obj: &Object, need: &authority::Need) -> Vec<String> {
     use scaffoldry_core::authority::Path;
+    if let Some(Where::Steward { holders, .. }) = routed(state, req) {
+        return holders;
+    }
+    let requester = req.requester.as_str();
     let mut people: Vec<String> = match need.requirement.path {
         Path::Approver => need.resolved.iter().map(|a| a.eppn.clone()).collect(),
         _ => members::people_with_roles(&obj.workspace.id, state).into_iter().filter(|(_, role)| *role >= Role::Admin).map(|(eppn, _)| eppn).collect(),
@@ -201,11 +235,15 @@ fn waiting_on(state: &SharedState, obj: &Object, requester: &str, need: &authori
     people
 }
 
-/// Whether `caller` may decide a request, as the matrix stands now.
+/// Whether `caller` may decide a request, as the matrix stands now. A catalog request that goes to a steward position is
+/// decided by its holders and by nobody else.
 fn may_decide(state: &SharedState, caller: &AuthUser, req: &RequestRow, obj: &Object, need: &authority::Need) -> bool {
     use scaffoldry_core::authority::Path;
     if req.requester.eq_ignore_ascii_case(&caller.eppn) {
         return false;
+    }
+    if let Some(Where::Steward { holders, .. }) = routed(state, req) {
+        return holders.iter().any(|h| h.eq_ignore_ascii_case(&caller.eppn));
     }
     match need.requirement.path {
         Path::Approver => need.resolved.iter().any(|a| a.eppn.eq_ignore_ascii_case(&caller.eppn)),
@@ -231,10 +269,22 @@ fn view(state: &SharedState, req: &RequestRow) -> Result<Value, ServiceError> {
         if let Ok(obj) = find(state, &input) {
             let a = assess(state, &req.requester, "", &obj, input.role, input.clearance.as_deref(), input.days);
             let need = need_for(state, &obj, &req.requester, &a.raised)?;
-            out["authority"] = need.to_json(state);
-            out["waiting_on"] = json!(waiting_on(state, &obj, &req.requester, &need));
+            out["waiting_on"] = json!(waiting_on(state, req, &obj, &need));
             out["object"] = json!(obj.sentence());
+            match routed(state, req) {
+                Some(Where::Steward { key, name, holders }) => {
+                    out["routing"] = json!({ "to": "steward", "position": key, "position_name": name, "holders": holders, "sentence": format!("Waiting for {}: {}.", name, holders.join(", ")) });
+                }
+                Some(Where::Fallback(why)) => {
+                    out["routing"] = json!({ "to": "approver", "fallback": true, "sentence": why });
+                    out["authority"] = need.to_json(state);
+                }
+                None => out["authority"] = need.to_json(state),
+            }
         }
+    }
+    if let Some(name) = req.dataset_id.as_deref().and_then(|d| crate::service::catalog::name_of(state, d)) {
+        out["object"] = json!(format!("the dataset '{name}'"));
     }
     Ok(out)
 }
@@ -243,7 +293,7 @@ fn ledger_payload(req: &RequestRow, outcome: &str, route: &str, rule: Option<Uui
     json!({
         "action": "access_request_decided", "request_id": req.id, "outcome": outcome, "route": route, "rule_id": rule, "decided_by": by,
         "requester": req.requester, "object_kind": req.object_kind, "object_id": req.object_id, "role": req.role, "clearance": req.clearance,
-        "days": req.days, "filed_by_client": req.filed_by_client, "grant": grant.map(|g| json!({ "holder": g.holder, "role": g.role, "anchor": g.anchor_id, "days": g.days })),
+        "days": req.days, "filed_by_client": req.filed_by_client, "dataset": req.dataset_id, "answers": req.answers, "grant": grant.map(|g| json!({ "holder": g.holder, "role": g.role, "anchor": g.anchor_id, "days": g.days })),
     })
 }
 
@@ -273,7 +323,7 @@ fn approve(state: &SharedState, actor: &AuthUser, req: &RequestRow, obj: &Object
     };
     let payload = ledger_payload(req, "Approved", route, rule, &actor.eppn, grant.as_ref());
     let outcome = admin_write(state, actor, DecisionType::AccessRequestDecided, OSCAL_CONTROL, note, &payload, || {
-        state.repository.approve_request(req.id, from, route, rule, &actor.eppn, Effects { grant: grant.as_ref(), widen }).map_err(internal)
+        state.repository.approve_request(req.id, from, route, rule, &actor.eppn, Effects { note, grant: grant.as_ref(), widen }).map_err(internal)
     })?;
     match outcome {
         Approved::Done { .. } => {
@@ -286,9 +336,109 @@ fn approve(state: &SharedState, actor: &AuthUser, req: &RequestRow, obj: &Object
     }
 }
 
+/// What a request made from the catalog carries beyond an ordinary request.
+struct Catalog {
+    dataset: String,
+    answers: Value,
+}
+
+/// The default length of a catalog request whose form has no duration, in days. It is the default rule's longest ask.
+const DEFAULT_DAYS: i64 = 30;
+
+/// A request on `object_kind: "dataset"` is an ordinary request on the dataset's app, with the form the dataset lists.
+/// `object_id` is the dataset id. A dataset the caller may not discover is the same not found as one that does not exist.
+/// A published dataset with no app is refused: it holds no rows to grant. Any other body is returned as it came.
+fn catalog_input(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<(Value, Option<Catalog>), ServiceError> {
+    if body.get("object_kind").and_then(Value::as_str) != Some("dataset") {
+        return Ok((body.clone(), None));
+    }
+    let mut p = Problems::default();
+    let id = p.text(body, "object_id", 64, true);
+    p.done()?;
+    let row = crate::service::catalog::discoverable(caller, &id.unwrap_or_default(), state)?;
+    if row.published_id.is_some() {
+        return Err(ServiceError::bad_request(
+            "This dataset is published on its own, and no app holds its rows, so there is no access to grant. Ask its steward or a Platform Admin to share it",
+        ));
+    }
+    let listed = |f: &str| row.request_fields.iter().any(|x| x == f);
+    let limit = max_days(state);
+    let mut p = Problems::default();
+    let reason = p.text(body, "reason", 500, listed("reason"));
+    let project = p.text(body, "project", 200, listed("project"));
+    let agreement = p.text(body, "agreement_reference", 200, listed("agreement_reference"));
+    for f in ["project", "agreement_reference"] {
+        if !listed(f) && body.get(f).is_some_and(|v| !v.is_null()) {
+            p.add(f, format!("{f} is not on this dataset's request form"));
+        }
+    }
+    let asked = body.get("duration").or_else(|| body.get("days")).filter(|v| !v.is_null());
+    let days = asked.and_then(Value::as_i64).filter(|d| (1..=limit).contains(d));
+    match (asked, days) {
+        (None, _) if listed("duration") => p.add("duration", format!("duration is required: a whole number of days from 1 to {limit}")),
+        (Some(_), None) => p.add("duration", format!("duration is a whole number of days from 1 to {limit}")),
+        _ => {}
+    }
+    p.done()?;
+    let mut answers = serde_json::Map::new();
+    for (key, value) in [("reason", reason.clone().map(Value::from)), ("project", project.map(Value::from)), ("duration", days.map(Value::from)), ("agreement_reference", agreement.map(Value::from))] {
+        if let Some(v) = value {
+            answers.insert(key.to_string(), v);
+        }
+    }
+    let name = crate::service::catalog::name_of(state, &row.id).unwrap_or_else(|| "a dataset".to_string());
+    let mapped = json!({
+        "object_kind": "app", "object_id": row.app_slug,
+        "role": body.get("role").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!("viewer")),
+        "clearance": body.get("clearance").cloned().unwrap_or(Value::Null),
+        "reason": reason.unwrap_or_else(|| format!("Access to {name}, asked for from the catalog")),
+        "days": days.unwrap_or_else(|| DEFAULT_DAYS.min(limit)),
+    });
+    Ok((mapped, Some(Catalog { dataset: row.id, answers: Value::Object(answers) })))
+}
+
+/// How long a catalog request waits before the steward is reminded, and again between reminders.
+const REMIND_AFTER_DAYS: i64 = 3;
+
+/// Tells the people a catalog request waits for, through the inbox and, as each person chose, email. A request that was not
+/// made from the catalog tells nobody here. A failure to tell never undoes the request: the request is the record.
+fn tell_waiting(state: &SharedState, req: &RequestRow, reminder: bool) {
+    use crate::notifications::{notify, DatasetRef, Flag, Notice, PersonRef, Recipients};
+    let Some(dataset) = req.dataset_id.clone() else { return };
+    let Ok(input) = input_of(req) else { return };
+    let Ok(obj) = find(state, &input) else { return };
+    let a = assess(state, &req.requester, "", &obj, input.role, input.clearance.as_deref(), input.days);
+    let Ok(need) = need_for(state, &obj, &req.requester, &a.raised) else { return };
+    let people = waiting_on(state, req, &obj, &need);
+    let notice = Notice::AccessRequestWaiting { by: PersonRef(req.requester.clone()), dataset: DatasetRef(dataset), reminder: Flag(reminder) };
+    if let Err(e) = notify(state, &Recipients::People(people), Some(&req.requester), &notice) {
+        eprintln!("Warning: the people a request waits for could not be told: {e}");
+    }
+}
+
+/// Reminds the people each waiting catalog request waits for, once for each `REMIND_AFTER_DAYS` it has waited. Returns how
+/// many requests were reminded.
+pub fn remind_due(state: &SharedState, now: chrono::DateTime<chrono::Utc>) -> Result<usize, String> {
+    let ids = state.repository.claim_requests_to_remind(now - chrono::Duration::days(REMIND_AFTER_DAYS), now, 200).map_err(|e| e.to_string())?;
+    for id in &ids {
+        if let Some(req) = state.repository.get_request(*id).map_err(|e| e.to_string())? {
+            tell_waiting(state, &req, true);
+        }
+    }
+    Ok(ids.len())
+}
+
+/// The `remind_requests` job, run every hour.
+pub fn remind_job(ctx: &crate::jobs::JobCtx, _payload: Value) -> Result<Value, crate::jobs::JobError> {
+    let state = ctx.state().ok_or_else(|| crate::jobs::JobError::Permanent("the reminders need the server's state, and this runner has none".to_string()))?;
+    let reminded = remind_due(state, chrono::Utc::now()).map_err(crate::jobs::JobError::Retry)?;
+    Ok(json!({ "reminded": reminded }))
+}
+
 /// Files a request for `caller`. Returns the request as it stands: approved at once when a rule allows it.
 pub fn file(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Value) -> Result<Value, ServiceError> {
-    let input = parse(state, body)?;
+    let (body, catalog) = catalog_input(state, caller, body)?;
+    let input = parse(state, &body)?;
     let obj = find(state, &input)?;
     let a = assess(state, &caller.eppn, &caller.affiliation, &obj, input.role, input.clearance.as_deref(), input.days);
 
@@ -320,6 +470,9 @@ pub fn file(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Valu
         created_at: String::new(),
         grant_ends: None,
         grant_ended: false,
+        dataset_id: catalog.as_ref().map(|c| c.dataset.clone()),
+        answers: catalog.map_or_else(|| json!({}), |c| c.answers),
+        decision_note: None,
     };
     state.repository.insert_request(&row).map_err(internal)?;
     if by_tool {
@@ -344,7 +497,8 @@ pub fn own_only(caller: &AuthUser, body: &Value) -> Result<(), ServiceError> {
 /// grants and policy come from the access explanation of phase 7 (`access_review::explain`).
 pub fn explain(state: &SharedState, caller: &AuthUser, body: &Value) -> Result<Value, ServiceError> {
     own_only(caller, body)?;
-    let mut filled = body.clone();
+    let (body, _) = catalog_input(state, caller, body)?;
+    let mut filled = body;
     for (key, fill) in [("reason", json!("explain")), ("days", json!(1))] {
         if filled.get(key).is_none_or(Value::is_null) {
             filled[key] = fill;
@@ -408,7 +562,9 @@ fn settle(state: &SharedState, caller: &AuthUser, req: &RequestRow, obj: &Object
             if req.status == WAITING {
                 state.repository.confirm_request(req.id, "approver", "Pending").map_err(internal)?;
             }
-            view(state, &row_of(state, req.id)?)
+            let stored = row_of(state, req.id)?;
+            tell_waiting(state, &stored, false);
+            view(state, &stored)
         }
     }
 }
@@ -445,7 +601,7 @@ pub fn decide(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Value) ->
     let a = assess(state, &req.requester, "", &obj, input.role, input.clearance.as_deref(), input.days);
     let need = need_for(state, &obj, &req.requester, &a.raised)?;
     if !may_decide(state, caller, &req, &obj, &need) {
-        let who = waiting_on(state, &obj, &req.requester, &need);
+        let who = waiting_on(state, &req, &obj, &need);
         return Err(ServiceError::forbidden(if who.is_empty() { "Nobody can decide this request yet: the approver it needs resolves to no one".to_string() } else { format!("You are not one of the people who decide this request: {}", who.join(", ")) }));
     }
     let decision = match body.get("decision").and_then(Value::as_str) {
@@ -465,7 +621,7 @@ pub fn decide(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Value) ->
     }
     let payload = ledger_payload(&req, "Rejected", "approver", None, &caller.eppn, None);
     admin_write(state, caller, DecisionType::AccessRequestDecided, OSCAL_CONTROL, &note, &payload, || {
-        state.repository.close_request(req.id, &["Pending"], "Rejected", &caller.eppn).map_err(internal)
+        state.repository.close_request(req.id, &["Pending"], "Rejected", &caller.eppn, &note).map_err(internal)
     })?
     .then_some(())
     .ok_or_else(|| ServiceError::conflict("That request has already been decided"))?;
@@ -477,7 +633,7 @@ pub fn withdraw(state: &SharedState, caller: &AuthUser, id: Uuid) -> Result<Valu
     let req = row_of(state, id).ok().filter(|r| r.requester.eq_ignore_ascii_case(&caller.eppn)).ok_or_else(|| ServiceError::not_found("Request not found"))?;
     let payload = ledger_payload(&req, "Withdrawn", &req.route, None, &caller.eppn, None);
     let closed = admin_write(state, caller, DecisionType::AccessRequestDecided, OSCAL_CONTROL, "The requester withdrew the request", &payload, || {
-        state.repository.close_request(req.id, &["Pending", WAITING], "Withdrawn", &caller.eppn).map_err(internal)
+        state.repository.close_request(req.id, &["Pending", WAITING], "Withdrawn", &caller.eppn, "The requester withdrew the request").map_err(internal)
     })?;
     if !closed {
         return Err(ServiceError::conflict(format!("That request is {}", req.status)));

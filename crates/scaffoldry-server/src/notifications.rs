@@ -38,6 +38,9 @@ pub struct Count(pub u32);
 /// A yes or no.
 #[derive(Debug, Clone, Copy)]
 pub struct Flag(pub bool);
+/// A catalog dataset, by dataset id. Rendered as its name, or "a dataset".
+#[derive(Debug, Clone)]
+pub struct DatasetRef(pub String);
 /// A workspace, by id. Rendered as its name, or "a workspace".
 #[derive(Debug, Clone)]
 pub struct WorkspaceRef(pub String);
@@ -82,6 +85,9 @@ notices! {
     ViewShared => "view_shared" { by: PersonRef, app: AppRef, table: TableRef },
     // A rule's Notify effect (notifications phase 4). The rule's message text is not shown: a notice holds names only.
     ProcessNotice => "process_notice" { app: AppRef, table: TableRef },
+    // Data layer phase 2e: a request for access to a catalog dataset waits for a steward. `reminder` is true when it has
+    // waited. It carries no app, so it reaches a steward who cannot read the dataset's app.
+    AccessRequestWaiting => "access_request_waiting" { by: PersonRef, dataset: DatasetRef, reminder: Flag },
 }
 
 /// Who is told.
@@ -114,7 +120,7 @@ impl Notice {
             | Notice::Assigned { app, .. }
             | Notice::ViewShared { app, .. }
             | Notice::ProcessNotice { app, .. } => Some(app.0.as_str()),
-            Notice::JobFinished { .. } | Notice::DelegationReceived { .. } | Notice::AccessChanged { .. } => None,
+            Notice::JobFinished { .. } | Notice::DelegationReceived { .. } | Notice::AccessChanged { .. } | Notice::AccessRequestWaiting { .. } => None,
         }
     }
 }
@@ -127,6 +133,7 @@ pub const CHANNELS: &[&str] = &["in_app", "email", "both", "digest", "off"];
 pub const FORCED: &[(&str, &str)] = &[
     ("decision_waiting", "A decision waiting on you always reaches your inbox, so nothing stalls unseen."),
     ("access_changed", "A change to your own access always reaches your inbox."),
+    ("access_request_waiting", "A request for access that waits on you always reaches your inbox, so nobody waits unseen."),
     ("file_infected", "An infected file always reaches your inbox."),
 ];
 
@@ -157,6 +164,7 @@ pub fn label(kind: &str) -> &'static str {
         "access_changed" => "Your access changes",
         "view_shared" => "Someone shares a view with you",
         "process_notice" => "A rule notifies you",
+        "access_request_waiting" => "A request for access to a dataset waits on you",
         _ => "Other notices",
     }
 }
@@ -390,6 +398,14 @@ pub fn render(state: &SharedState, notice: &Notice) -> (String, String, Value) {
             format!("A rule in {} asked that you be told about a change in {}.", app(a), table(a, t)),
             link(app_path(a), json!({ "app": a.0 })),
         ),
+        Notice::AccessRequestWaiting { by, dataset, reminder } => {
+            let name = crate::service::catalog::name_of(state, &dataset.0).unwrap_or_else(|| "a dataset".to_string());
+            (
+                format!("{}: {name}", if reminder.0 { "Still waiting: access requested" } else { "Access requested" }),
+                format!("{} asked for access to {name}. {}", who(by), if reminder.0 { "The request is still waiting for a decision." } else { "It waits for your decision." }),
+                link("/me/access/requests".to_string(), json!({ "dataset": dataset.0 })),
+            )
+        }
         Notice::ViewShared { by, app: a, table: t } => (
             format!("{} shared a view with you", who(by)),
             format!("{} shared a view of {} in {}.", who(by), table(a, t), app(a)),

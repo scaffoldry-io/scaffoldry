@@ -1275,12 +1275,14 @@ fn schema_request_access() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "object_kind": { "type": "string", "description": "app or workspace" },
+            "object_kind": { "type": "string", "description": "app, workspace or dataset" },
             "object_id": { "type": "string" },
             "role": { "type": "string" },
             "clearance": { "type": "string" },
             "reason": { "type": "string" },
             "days": { "type": "integer" },
+            "project": { "type": "string" },
+            "agreement_reference": { "type": "string" },
             "explain": { "type": "boolean" },
             "person": { "type": "string" }
         },

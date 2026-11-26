@@ -21,6 +21,8 @@ pub struct CatalogRow {
     pub discoverability: Value,
     pub restricted_fields: Vec<String>,
     pub steward_position: Option<String>,
+    /// The fields a request for access on this dataset carries, from `REQUEST_FIELDS`.
+    pub request_fields: Vec<String>,
 }
 
 /// A change to the policy. A part left `None` stays as it is. A steward of `Some(None)` clears it.
@@ -29,9 +31,10 @@ pub struct PolicyChange {
     pub discoverability: Option<Value>,
     pub restricted_fields: Option<Vec<String>>,
     pub steward_position: Option<Option<String>>,
+    pub request_fields: Option<Vec<String>>,
 }
 
-const COLUMNS: &str = "id, app_slug, table_id, published_id, discoverability, restricted_fields, steward_position";
+const COLUMNS: &str = "id, app_slug, table_id, published_id, discoverability, restricted_fields, steward_position, request_fields";
 
 fn row_of(r: &postgres::Row) -> CatalogRow {
     CatalogRow {
@@ -42,6 +45,7 @@ fn row_of(r: &postgres::Row) -> CatalogRow {
         discoverability: r.get(4),
         restricted_fields: r.get(5),
         steward_position: r.get(6),
+        request_fields: r.get(7),
     }
 }
 
@@ -108,9 +112,12 @@ impl PostgresRepository {
             if let Some(s) = change.steward_position {
                 now.steward_position = s;
             }
+            if let Some(f) = change.request_fields {
+                now.request_fields = f;
+            }
             tx.execute(
-                "UPDATE datasets SET discoverability = $2, restricted_fields = $3, steward_position = $4 WHERE id = $1",
-                &[&now.id, &now.discoverability, &now.restricted_fields, &now.steward_position],
+                "UPDATE datasets SET discoverability = $2, restricted_fields = $3, steward_position = $4, request_fields = $5 WHERE id = $1",
+                &[&now.id, &now.discoverability, &now.restricted_fields, &now.steward_position, &now.request_fields],
             )?;
             append_ledger_in_tx(&mut tx, ledger(&was, &now))?;
             tx.commit()?;
