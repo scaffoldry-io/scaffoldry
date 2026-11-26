@@ -188,7 +188,60 @@ fn apply_set_on_change(
     }
 }
 
+/// What an import job needs to know of a table's unit column (data layer phase 2c): the field and its hierarchy, the unit the
+/// dataset sits at in that hierarchy, which a blank value takes, and the units the caller may see, which a refusal may name.
+/// `None` for a table that names no unit column. The job has no access to the server's state, so it is given this.
+pub fn unit_column_context(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> Option<Value> {
+    use scaffoldry_engine::HostRouter;
+    let (manifest, table_id, field, hierarchy) = {
+        let engine = state.engine.read().ok()?;
+        let m = engine.resolve_by_slug(app_slug)?.clone();
+        let t = m.tables.iter().find(|t| t.id == table || t.slug == table)?.clone();
+        let field = t.unit_field.clone()?;
+        let hierarchy = t.fields.iter().find(|f| f.name == field)?.hierarchy.clone()?;
+        (m, t.id, field, hierarchy)
+    };
+    let workspace = manifest.workspace_id.as_ref().and_then(|id| state.workspaces.read().ok().and_then(|w| w.get(id).cloned()));
+    let unit = workspace.and_then(|ws| {
+        crate::service::coordinates::with_world(state, |places, tree| crate::service::coordinates::table_place(places, tree, &ws, &manifest, &table_id).0.get(&hierarchy).copied()).ok().flatten()
+    });
+    let unit_name = unit.and_then(|u| state.organizations.read().ok().and_then(|o| o.get(&u).map(|n| n.name.clone())));
+    let who = crate::service::organizations::OrgCaller { eppn: caller.eppn.clone(), affiliation: caller.affiliation.clone() };
+    let visible = {
+        let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+        crate::service::organizations::visible_units(&who, &tree, &state.roles_of(&caller.eppn))
+    };
+    Some(json!({
+        "field": field,
+        "hierarchy": hierarchy,
+        "default_unit": unit.map(|u| u.to_string()),
+        "default_unit_name": unit_name,
+        "visible": match visible {
+            scaffoldry_data::units::Visible::All => json!("all"),
+            scaffoldry_data::units::Visible::Under(roots) => json!(roots.iter().map(|r| r.to_string()).collect::<Vec<_>>()),
+        },
+    }))
+}
+
+/// The refusal of a value that is not a unit of the hierarchy. It names the nearest units the caller may see (data layer
+/// phase 2c), and none the caller may not.
+pub(crate) fn unit_refusal(caller: &AuthUser, hierarchy: &str, field: &str, value: &str, state: &SharedState) -> ServiceError {
+    let who = crate::service::organizations::OrgCaller { eppn: caller.eppn.clone(), affiliation: caller.affiliation.clone() };
+    let visible = {
+        let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
+        crate::service::organizations::visible_units(&who, &tree, &state.roles_of(&caller.eppn))
+    };
+    let (h, v) = (hierarchy.to_string(), value.to_string());
+    let near = state.repository.with_client(move |c| Ok(scaffoldry_data::units::nearest(c, &h, &v, &visible)?)).unwrap_or_default();
+    ServiceError::ConstraintViolation {
+        message: format!("field '{field}': {}", scaffoldry_data::units::sentence(value, hierarchy, &near)),
+        field: field.to_string(),
+        constraint: scaffoldry_data::units::REFUSED.to_string(),
+    }
+}
+
 fn validate_record_constraints(
+    caller: &AuthUser,
     app_slug: &str,
     table: &str,
     data: &Value,
@@ -214,10 +267,10 @@ fn validate_record_constraints(
             }
         }
         if f.field_type == scaffoldry_engine::FieldType::Unit {
-            if let (Some(hierarchy), Some(unit)) = (f.hierarchy.as_deref(), val.and_then(Value::as_str).filter(|u| !u.is_empty())) {
+            if let (Some(hierarchy), Some(unit)) = (f.hierarchy.as_deref(), val.and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty())) {
                 let there = crate::service::coordinates::with_places(state, |p| p.unit_within(hierarchy, unit, unit))?;
                 if !there {
-                    return Err(ServiceError::BadRequest(format!("field '{}': '{unit}' is not a unit of the '{hierarchy}' hierarchy", f.name)));
+                    return Err(unit_refusal(caller, hierarchy, &f.name, unit, state));
                 }
             }
         }
@@ -828,7 +881,7 @@ pub fn create_record_noted(
     let table = cleaned.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     apply_defaults_and_set_on_create(app_slug, &table, &mut cleaned, state);
     validate_known_fields_and_types(app_slug, &table, &cleaned, state)?;
-    validate_record_constraints(app_slug, &table, &cleaned, skip_required, state)?;
+    validate_record_constraints(caller, app_slug, &table, &cleaned, skip_required, state)?;
     let data_payload = &cleaned;
     validate_links(caller, app_slug, None, None, data_payload, state)?;
     let guarded = guard_content(app_slug, &table, data_payload, None, state)?;
@@ -1135,7 +1188,7 @@ pub fn update_record_noted(
 
     apply_set_on_change(app_slug, &table, &current.data, &mut new_data, state);
     validate_known_fields_and_types(app_slug, &table, &new_data, state)?;
-    validate_record_constraints(app_slug, &table, &new_data, &[], state)?;
+    validate_record_constraints(caller, app_slug, &table, &new_data, &[], state)?;
     validate_select_options(app_slug, &table, &new_data, state)?;
     validate_collaborators(app_slug, &table, &new_data, state)?;
     validate_long_text(app_slug, &table, &new_data, state)?;
@@ -1991,6 +2044,25 @@ fn indexed_key(row: &DatasetRecord, spec: &FieldSpec) -> Value {
     }
 }
 
+/// A filter that asks for one unit of the table's unit column, split from the rest (data layer phase 2c). The filter must
+/// be an AND of clauses, with no group, with a clause `Equals` on the unit field and a value that is a unit id. That clause becomes the unit, which
+/// a page reads from the indexed column of the row, and the rest of the filter is what is left. Any other filter is left as
+/// it is and reads the index of the field, as before.
+fn split_unit_filter(app_slug: &str, table: &str, filter: Option<CompoundFilter>, state: &SharedState) -> (Option<CompoundFilter>, Option<String>) {
+    let Some(mut f) = filter else { return (None, None) };
+    let unit_field = state.engine.read().ok().and_then(|e| {
+        use scaffoldry_engine::HostRouter;
+        e.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table).and_then(|t| t.unit_field.clone()))
+    });
+    let Some(unit_field) = unit_field else { return (Some(f), None) };
+    if !f.groups.is_empty() || (f.conjunction == FilterConjunction::Or && f.clauses.len() > 1) {
+        return (Some(f), None);
+    }
+    let Some(at) = f.clauses.iter().position(|c| c.field_name == unit_field && c.operator == FilterOperator::Equals && uuid::Uuid::parse_str(c.value.trim()).is_ok()) else { return (Some(f), None) };
+    let unit = uuid::Uuid::parse_str(f.clauses.remove(at).value.trim()).map(|u| u.to_string()).ok();
+    (Some(f).filter(|f| !scaffoldry_engine::clauses_of(f).is_empty()), unit)
+}
+
 /// One page of a table. With no filter and no sort it walks the paging index. A filter or sort on
 /// indexed fields reads the pivot index. Any other filter or sort is allowed only on a table of
 /// 10,000 rows or fewer.
@@ -2018,15 +2090,17 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     };
     let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
     let filter = prepared_filter(query.filter.as_ref(), state)?;
+    for c in filter.iter().flat_map(scaffoldry_engine::clauses_of) {
+        check(&c.field_name)?;
+    }
+    // A filter that asks for one unit of the unit column reads the column, in SQL, and the rest of the filter reads the index.
+    let (filter, unit_filter) = split_unit_filter(app_slug, &table, filter, state);
     let tree: Option<Expr> = filter.as_ref().filter(|f| !scaffoldry_engine::is_flat(f)).map(|f| expr_of(&fields, f));
     let clauses: Vec<_> = if tree.is_some() {
         Vec::new()
     } else {
         filter.as_ref().map(|f| f.clauses.iter().map(|c| (c.field_name.clone(), c.operator, c.value.clone())).collect()).unwrap_or_default()
     };
-    for c in filter.iter().flat_map(scaffoldry_engine::clauses_of) {
-        check(&c.field_name)?;
-    }
     if let Some(sort) = &query.sort {
         check(&sort.field_name)?;
     }
@@ -2060,10 +2134,13 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     let has_search = query.search.as_ref().is_some_and(|s| !s.trim().is_empty());
     let mut walk_spec: Option<FieldSpec> = None;
     let mut rows = if clauses.is_empty() && tree.is_none() && query.sort.is_none() && !has_search {
-        match &scope {
-            // The paging index cannot apply a scope, so a scoped walk goes through the same statement
-            // as a filtered one, in the same order.
-            Some(plan) => state
+        match (&scope, &unit_filter) {
+            // The paging index cannot apply a scope or a unit, so a scoped or unit walk goes through the same statement
+            // as a filtered one, in the same order. A unit reads the unit column through its index.
+            (None, None) => state
+                .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
+                .map_err(ServiceError::Internal)?,
+            _ => state
                 .query_records(
                     app_slug,
                     &crate::repository::RecordQuery {
@@ -2073,14 +2150,12 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
                         sort: None,
                         after,
                         limit: query.limit + 1,
-                        scope: Some(plan.clone()),
+                        scope: scope.clone(),
                         search: None,
                         expr: None,
+                        unit: unit_filter.clone(),
                     },
                 )
-                .map_err(ServiceError::Internal)?,
-            None => state
-                .list_records_page(app_slug, &table, query.limit + 1, after.map(|c| (c.created_at, c.id)))
                 .map_err(ServiceError::Internal)?,
         }
     } else if let Some((iclauses, isort)) = plan.as_ref().ok().filter(|(c, s)| !c.is_empty() || s.is_some()) {
@@ -2104,6 +2179,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             search: query.search.clone(),
             expr: tree.clone(),
             offset: 0,
+            unit: unit_filter.clone(),
         };
         if let Some((name, column, _)) = crate::repository_index::walk_of(&iq) {
             walk_spec = fields.iter().find(|f| f.name == name).cloned();
@@ -2127,6 +2203,7 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             scope: scope.clone(),
             search: query.search.clone(),
             expr: tree.clone(),
+            unit: unit_filter.clone(),
         };
         state.query_records(app_slug, &q).map_err(ServiceError::Internal)?
     };
@@ -2707,6 +2784,7 @@ fn walk_of(caller: &AuthUser, app_slug: &str, q: &WindowQuery, state: &SharedSta
         search: None,
         expr,
         offset: 0,
+        unit: None,
     };
     Ok(Walk { query, spec })
 }

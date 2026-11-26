@@ -341,7 +341,7 @@ Johann said "keep going" on 2026-11-26. The keys and catalog rows now have plain
 | Order | Brief | Phase | What is true after it | Status |
 | --- | --- | --- | --- | --- |
 | 201 | [data-layer.md](data-layer.md) | 2b | A dataset declares a key, enforced by `record_keys`. A duplicate is refused without naming a row. Syncs and imports match on the key | **COMPLETED** |
-| 202 | [data-layer.md](data-layer.md) | 2c | A row's unit is a column from the governed list. A bad value is refused with the nearest valid units. Lists filter on it in SQL |
+| 202 | [data-layer.md](data-layer.md) | 2c | A row's unit is a column from the governed list. A bad value is refused with the nearest valid units. Lists filter on it in SQL | **COMPLETED** |
 | 203 | [data-layer.md](data-layer.md) | 2d | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy |
 | 204 | [data-layer.md](data-layer.md) | 2e | Request access starts from a catalog entry, as an `access-model.md` phase 13 request, with the inbox and email |
 | 205 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label |

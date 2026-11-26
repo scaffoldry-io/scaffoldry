@@ -15,7 +15,35 @@ pub fn ensure_datasets_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest
          ON CONFLICT (app_slug, table_id) DO NOTHING",
         &[&m.slug, &tables],
     )?;
-    sync_keys_in_tx(tx, m)
+    sync_keys_in_tx(tx, m)?;
+    sync_units_in_tx(tx, m)
+}
+
+/// The unit column each table names is the one its dataset holds (data layer phase 2c). A table whose column is new or
+/// changed has the unit of every live row copied to the column. If a live row holds a value that is not a unit, the
+/// transaction is left to roll back and the error lists the rows. A table that names what its dataset already holds is not
+/// touched.
+fn sync_units_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest) -> Result<(), RepositoryError> {
+    use scaffoldry_data::units::{declare, spec_for, UnitSpec};
+    for table in &m.tables {
+        let want = table.unit_field.as_ref().and_then(|name| {
+            let hierarchy = table.fields.iter().find(|f| &f.name == name)?.hierarchy.clone()?;
+            Some(UnitSpec { field: name.clone(), hierarchy })
+        });
+        if spec_for(tx, &m.slug, &table.id)? == want {
+            continue;
+        }
+        if let Err(ids) = declare(tx, &m.slug, &table.id, want.as_ref())? {
+            let more = if ids.len() >= scaffoldry_data::units::MAX_LISTED { " (the list is cut here)" } else { "" };
+            return Err(RepositoryError::UnitValues(format!(
+                "The unit column cannot be set on the table '{}' while rows hold a value that is not a unit of the '{}' hierarchy. Fix or delete these rows, then approve again. Rows, by id: {}{more}",
+                table.name,
+                want.map(|w| w.hierarchy).unwrap_or_default(),
+                ids.join(", ")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The key each table declares is the key its dataset holds (data layer phase 2b). A table whose key is new or changed is

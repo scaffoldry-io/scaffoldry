@@ -188,6 +188,20 @@ async fn set_mapping(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Gives the job what it needs of the table's unit column: the dataset's unit, which a blank value takes, and the units the
+/// caller may see, which a refusal may name (data layer phase 2c). A table that names no unit column adds nothing.
+fn attach_unit_column(state: &SharedState, user: &crate::state::AuthUser, slug: &str, import_id: Uuid, payload: &mut Value) {
+    let table = payload
+        .get("mapping")
+        .and_then(|m| m.get("target_table").or_else(|| m.get("target_table_id")))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| state.repository.get_import(slug, import_id).ok().flatten().and_then(|i| i.target_table_id));
+    if let Some(context) = table.and_then(|t| crate::service::records::unit_column_context(user, slug, &t, state)) {
+        payload["unit_column"] = context;
+    }
+}
+
 async fn dry_run_import(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -233,6 +247,7 @@ async fn dry_run_import(
         }
         job_payload["mapping"] = mapping_val;
     }
+    attach_unit_column(&state, &user, &slug, id, &mut job_payload);
 
     let job_id = crate::jobs::enqueue(
         &state.repository,
@@ -298,6 +313,7 @@ async fn run_import(
         }
         job_payload["mapping"] = mapping_val;
     }
+    attach_unit_column(&state, &user, &slug, id, &mut job_payload);
 
     let job_id = crate::jobs::enqueue(
         &state.repository,

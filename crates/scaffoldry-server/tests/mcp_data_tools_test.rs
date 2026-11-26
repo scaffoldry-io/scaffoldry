@@ -93,7 +93,7 @@ async fn fixture() -> Fixture {
         access: Default::default(),
             ceds_mappings: Default::default(),
             tables: vec![AppTable {
-                retired_fields: Vec::new(), key: None,
+                retired_fields: Vec::new(), key: None, unit_field: None,
                 id: "t1".to_string(),
                 name: "Things".to_string(),
                 slug: "things".to_string(),
@@ -409,7 +409,7 @@ fn the_statement_holds_no_text_the_caller_sent() {
         after: None,
         limit: 10,
         scope: None,
-        search: None, expr: None,
+        search: None, expr: None, unit: None,
     };
     let (sql, params) = build_record_query("app", &q);
     assert!(!sql.contains("DROP") && !sql.contains(hostile), "{sql}");

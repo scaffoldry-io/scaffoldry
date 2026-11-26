@@ -171,6 +171,12 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
                         None => format!("The key of table \"{}\" is removed.", t.name),
                     });
                 }
+                if l.unit_field != t.unit_field {
+                    out.push(match &t.unit_field {
+                        Some(f) => format!("The unit column of table \"{}\" is set to {f}. A row's value must be a unit of its hierarchy. The approval is refused while a row holds a value that is not.", t.name),
+                        None => format!("The unit column of table \"{}\" is removed.", t.name),
+                    });
+                }
                 for f in &t.fields {
                     match l.fields.iter().find(|x| x.name == f.name) {
                         None if l.retired_fields.iter().any(|x| x.name == f.name) => {
@@ -1431,7 +1437,7 @@ pub fn decide_as(caller: &AuthUser, proposal_id: &str, decision: &str, rationale
                 // The approval would start more background work than the person may have. Nothing was kept.
                 crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
                 // A key cannot be set while records share one. The steward is told which, and the proposal stays pending.
-                crate::repository::RepositoryError::KeyDuplicates(message) => ServiceError::ConstraintViolated(message),
+                crate::repository::RepositoryError::KeyDuplicates(message) | crate::repository::RepositoryError::UnitValues(message) => ServiceError::ConstraintViolated(message),
                 other => ServiceError::Internal(format!("The approval was not kept: {other}")),
             })? {
                 Approval::Approved(_) => {

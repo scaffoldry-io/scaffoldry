@@ -59,6 +59,17 @@ pub fn unit_in_reach(
     })
 }
 
+/// The units a caller may see, by the rule `unit_in_reach` applies to the list of units: every unit for a Platform Admin,
+/// and otherwise the units at and below those the caller administers. A refusal that names units names only these.
+pub fn visible_units(caller: &OrgCaller, tree: &scaffoldry_core::tree::OrgTree, roles: &[RoleRow]) -> scaffoldry_data::units::Visible {
+    use scaffoldry_data::units::Visible;
+    let mine = || roles.iter().filter(|r| r.eppn == caller.eppn);
+    if caller.affiliation == "central_admin" || mine().any(|r| r.scoped_affiliation == "platform_admin" && tree.parent_of(r.organization_id).is_none()) {
+        return Visible::All;
+    }
+    Visible::Under(mine().filter(|r| r.scoped_affiliation == "unit_admin").map(|r| r.organization_id).collect())
+}
+
 pub fn build_hierarchy_tree(state: &SharedState, hierarchy_key: &str) -> Option<HierarchyTreeNode> {
     let orgs = state
         .organizations
