@@ -36,6 +36,22 @@
         "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
         "days": { "type": "integer", "minimum": 1, "maximum": 365 }
       }
+    },
+    "dataset_request": {
+      "description": "A request made from a catalog entry (data layer phase 2e). object_id is the dataset id. The dataset's request form lists which of reason, project, duration (as days) and agreement_reference a request must carry.",
+      "type": "object",
+      "required": ["object_kind", "object_id"],
+      "additionalProperties": false,
+      "properties": {
+        "object_kind": { "const": "dataset" },
+        "object_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "role": { "$ref": "#/$defs/role" },
+        "clearance": { "oneOf": [{ "$ref": "#/$defs/sensitivity" }, { "type": "null" }] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "project": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "days": { "type": "integer", "minimum": 1, "maximum": 365 },
+        "agreement_reference": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
     }
   }
 }

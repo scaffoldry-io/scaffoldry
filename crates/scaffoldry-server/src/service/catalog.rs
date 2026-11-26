@@ -34,6 +34,8 @@ const MAX_QUERY: usize = 200;
 /// The setting that names the smallest group a count may show, and its default.
 pub const MIN_SETTING: &str = "catalog.small_group_min";
 pub const DEFAULT_MIN: i64 = 11;
+/// The fields a request form may list, in the order a form shows them. A dataset's `request_fields` is a subset.
+pub const REQUEST_FIELDS: [&str; 4] = ["reason", "project", "duration", "agreement_reference"];
 /// What a restricted field is called.
 pub const RESTRICTED: &str = "a restricted field";
 
@@ -304,6 +306,7 @@ fn build(row: &CatalogRow, ctx: &Ctx) -> Option<Base> {
     entry.insert("organization".into(), json!(organization));
     entry.insert("unit".into(), unit);
     entry.insert("steward".into(), steward.unwrap_or(Value::Null));
+    entry.insert("request_fields".into(), json!(row.request_fields));
     entry.insert("sensitivity_level".into(), json!(level));
     entry.insert("herm_capability_id".into(), json!(herm));
     entry.insert("fields".into(), Value::Array(field_json));
@@ -480,18 +483,55 @@ pub fn search(caller: &AuthUser, s: &Search, state: &SharedState) -> Result<Valu
     }))
 }
 
+/// The dataset the caller may discover, named by its dataset id or its published id. A dataset the caller may not discover
+/// is the same not found as one that does not exist.
+pub fn discoverable(caller: &AuthUser, id: &str, state: &SharedState) -> Result<CatalogRow, ServiceError> {
+    let row = state.repository.catalog_row(id).map_err(storage)?.ok_or_else(not_found)?;
+    let tree = state.tree.read().unwrap_or_else(|p| p.into_inner()).clone();
+    if !Who::of(caller, state).may(&row.discoverability, &tree) {
+        return Err(not_found());
+    }
+    Ok(row)
+}
+
+/// The name an entry shows, for a notice. It reads no row and checks nobody's access, so it is only for people who are
+/// already told about the dataset. `None` when its source is gone.
+pub fn name_of(state: &SharedState, id: &str) -> Option<String> {
+    let row = state.repository.catalog_row(id).ok()??;
+    if let Some(pid) = &row.published_id {
+        return state.datasets.read().ok()?.get(pid).map(|d| d.name.clone());
+    }
+    let engine = state.engine.read().ok()?;
+    use scaffoldry_engine::HostRouter;
+    engine.resolve_by_slug(&row.app_slug)?.tables.iter().find(|t| t.id == row.table_id).map(|t| t.name.clone())
+}
+
+/// The unit a table dataset sits at: the unit its app names by code or name, else its workspace's unit. `None` for a
+/// published dataset, which has no app.
+pub fn unit_of(state: &SharedState, row: &CatalogRow) -> Option<Uuid> {
+    use scaffoldry_engine::HostRouter;
+    if row.published_id.is_some() {
+        return None;
+    }
+    let (code, workspace) = {
+        let engine = state.engine.read().ok()?;
+        let m = engine.resolve_by_slug(&row.app_slug)?;
+        (m.organization_code.clone(), m.workspace_id.clone())
+    };
+    let named = {
+        let orgs = state.organizations.read().ok()?;
+        orgs.values().find(|o| o.code.eq_ignore_ascii_case(&code)).or_else(|| orgs.values().find(|o| o.name.eq_ignore_ascii_case(&code))).map(|o| o.id)
+    };
+    named.or_else(|| state.workspaces.read().ok()?.get(&workspace?)?.organization_id)
+}
+
 /// One entry, named by its dataset id or its published id. A dataset the caller may not discover is the same not found as
 /// one that does not exist.
 pub fn get(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, ServiceError> {
-    let row = state.repository.catalog_row(id).map_err(storage)?.ok_or_else(not_found)?;
-    let who = Who::of(caller, state);
-    let tree = state.tree.read().unwrap_or_else(|p| p.into_inner()).clone();
-    if !who.may(&row.discoverability, &tree) {
-        return Err(not_found());
-    }
+    let row = discoverable(caller, id, state)?;
     let ctx = Ctx::of(state)?;
     let base = build(&row, &ctx).ok_or_else(not_found)?;
-    finish(&row, base, &ctx, who.manager, state)
+    finish(&row, base, &ctx, Who::of(caller, state).manager, state)
 }
 
 /// Adds the size, the freshness and the sample. The policy is added for the people who set it.
@@ -519,8 +559,8 @@ fn finish(row: &CatalogRow, base: Base, ctx: &Ctx, manager: bool, state: &Shared
 // The policy
 // ---------------------------------------------------------------------------------------------------------------------
 
-/// `PUT /admin/datasets/{id}/discoverability`. The body names any of `discoverability`, `restricted_fields` and
-/// `steward_position`, and a `reason`. A part left out stays as it is. A `steward_position` of null clears it.
+/// `PUT /admin/datasets/{id}/discoverability`. The body names any of `discoverability`, `restricted_fields`,
+/// `steward_position` and `request_fields`, and a `reason`. A part left out stays as it is. A `steward_position` of null clears it.
 pub fn set_policy(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
     require_platform_admin_or_compliance(caller, state)?;
     let reason = body.get("reason").and_then(Value::as_str).map(str::trim).unwrap_or("");
@@ -567,8 +607,14 @@ pub fn set_policy(caller: &AuthUser, id: &str, body: &Value, state: &SharedState
         }
         Some(_) => return Err(bad("steward_position is a position key or null")),
     }
-    if change.discoverability.is_none() && change.restricted_fields.is_none() && change.steward_position.is_none() {
-        return Err(bad("Name discoverability, restricted_fields or steward_position"));
+    if let Some(v) = body.get("request_fields") {
+        let names: Option<Vec<&str>> = v.as_array().and_then(|a| a.iter().map(Value::as_str).collect());
+        let names = names.filter(|n| n.iter().all(|f| REQUEST_FIELDS.contains(f))).ok_or_else(|| bad(format!("request_fields is a list of {}", REQUEST_FIELDS.join(", "))))?;
+        // Kept in the order a form shows them, each once.
+        change.request_fields = Some(REQUEST_FIELDS.iter().filter(|f| names.contains(f)).map(|f| f.to_string()).collect());
+    }
+    if change.discoverability.is_none() && change.restricted_fields.is_none() && change.steward_position.is_none() && change.request_fields.is_none() {
+        return Err(bad("Name discoverability, restricted_fields, steward_position or request_fields"));
     }
 
     let (principal, why) = (caller.eppn.clone(), reason.to_string());
@@ -583,15 +629,15 @@ pub fn set_policy(caller: &AuthUser, id: &str, body: &Value, state: &SharedState
             rationale: why,
             payload: json!({
                 "dataset": was.id, "setting": "discoverability",
-                "from": { "discoverability": was.discoverability, "restricted_fields": was.restricted_fields, "steward_position": was.steward_position },
-                "to": { "discoverability": now.discoverability, "restricted_fields": now.restricted_fields, "steward_position": now.steward_position },
+                "from": { "discoverability": was.discoverability, "restricted_fields": was.restricted_fields, "steward_position": was.steward_position, "request_fields": was.request_fields },
+                "to": { "discoverability": now.discoverability, "restricted_fields": now.restricted_fields, "steward_position": now.steward_position, "request_fields": now.request_fields },
             }),
         })
         .map_err(storage)?
         .ok_or_else(not_found)?;
     Ok(json!({
         "id": id, "dataset_id": now.id, "discoverability": now.discoverability,
-        "restricted_fields": now.restricted_fields, "steward_position": now.steward_position,
+        "restricted_fields": now.restricted_fields, "steward_position": now.steward_position, "request_fields": now.request_fields,
     }))
 }
 

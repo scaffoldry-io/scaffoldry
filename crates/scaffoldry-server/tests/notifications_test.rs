@@ -13,7 +13,7 @@ use common::TestDb;
 use http_body_util::BodyExt;
 use scaffoldry_core::approver::{resolve_approvers, ApproverSpec, Delegation, Holding, Origin, Person, ResolveCtx, Unit};
 use scaffoldry_server::build_app_with_state;
-use scaffoldry_server::notifications::{self, AppRef, Count, Notice, PersonRef, Recipients, TableRef};
+use scaffoldry_server::notifications::{self, AppRef, Count, Flag, Notice, PersonRef, Recipients, TableRef};
 use scaffoldry_server::service::identity::issue_test_token_and_user;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -118,9 +118,10 @@ async fn a_person_who_cannot_read_the_app_gets_no_notice_about_it() {
 // or no. The list below is generated from the same macro that defines the kinds, so it cannot drift from them.
 #[test]
 fn no_kind_takes_free_text() {
-    let allowed = ["AppRef", "TableRef", "PersonRef", "RecordRef", "StepRef", "JobRef", "WorkspaceRef", "Count", "Flag"];
-    // The brief's sixteen kinds, and `process_notice` for a rule's Notify effect (notifications phase 4).
-    assert_eq!(notifications::FIELDS.len(), 17, "one entry per kind");
+    let allowed = ["AppRef", "TableRef", "PersonRef", "RecordRef", "StepRef", "JobRef", "WorkspaceRef", "DatasetRef", "Count", "Flag"];
+    // The brief's sixteen kinds, `process_notice` for a rule's Notify effect (notifications phase 4), and
+    // `access_request_waiting` for a catalog request that waits for a steward (data layer phase 2e).
+    assert_eq!(notifications::FIELDS.len(), 18, "one entry per kind");
     for (kind, fields) in notifications::FIELDS {
         assert!(notifications::KINDS.contains(kind), "{kind}");
         for (name, ty) in fields.iter() {
@@ -140,6 +141,9 @@ fn no_kind_takes_free_text() {
     let n = Notice::DelegationReceived { by: PersonRef(secret.into()) };
     let (title, body, _) = notifications::render(&state, &n);
     assert!(!title.contains(secret) && !body.contains(secret), "{title} / {body}");
+    let n = Notice::AccessRequestWaiting { by: PersonRef(secret.into()), dataset: notifications::DatasetRef(secret.into()), reminder: Flag(false) };
+    let (title, body, _) = notifications::render(&state, &n);
+    assert!(!title.contains(secret) && !body.contains(secret) && title.contains("a dataset"), "{title} / {body}");
 }
 
 // 4. A body over 500 characters is cut at a word boundary.

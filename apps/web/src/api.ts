@@ -341,6 +341,29 @@ export interface AccessRequestBody {
   days: number;
 }
 
+/** A request for access made from a catalog entry (data layer phase 2e). Only the fields the dataset's form lists are sent. */
+export interface DatasetAccessRequestBody {
+  object_kind: "dataset";
+  /** The dataset id. */
+  object_id: string;
+  role?: string;
+  reason?: string;
+  project?: string;
+  /** Whole days. */
+  days?: number;
+  agreement_reference?: string;
+}
+
+/** Where a catalog request goes: to the people who hold the steward position, or by the access rules when nobody does. */
+export interface AccessRequestRouting {
+  to: "steward" | "approver";
+  position?: string;
+  position_name?: string;
+  holders?: string[];
+  fallback?: boolean;
+  sentence: string;
+}
+
 export interface AccessRequest {
   id: string;
   status: "Waiting for person" | "Pending" | "Approved" | "Rejected" | "Withdrawn" | "Expired";
@@ -355,6 +378,13 @@ export interface AccessRequest {
   filed_by_client?: string | null;
   waiting_on?: string[];
   ends_at?: string | null;
+  dataset_id?: string | null;
+  answers?: Record<string, unknown>;
+  routing?: AccessRequestRouting;
+  /** The reason a person gave when they decided it. */
+  decision_note?: string | null;
+  /** What the request is for, in words. */
+  object?: string;
 }
 
 export interface AccessRequestRule {
@@ -1863,7 +1893,7 @@ export const apiClient = {
     return request<{ people: Mentionable[] }>(`/apps/${appSlug}/mentionable`);
   },
 
-  fileAccessRequest: async (body: AccessRequestBody) => request<AccessRequest>("/access/requests", { method: "POST", body: JSON.stringify(body) }),
+  fileAccessRequest: async (body: AccessRequestBody | DatasetAccessRequestBody) => request<AccessRequest>("/access/requests", { method: "POST", body: JSON.stringify(body) }),
   myAccessRequests: async () => request<{ requests: AccessRequest[] }>("/me/access/requests"),
   accessRequestsToDecide: async () => request<{ requests: AccessRequest[] }>("/me/access/requests/to-decide"),
   confirmAccessRequest: async (id: string) => request<AccessRequest>(`/access/requests/${encodeURIComponent(id)}/confirm`, { method: "POST" }),

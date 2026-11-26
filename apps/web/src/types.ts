@@ -364,6 +364,8 @@ export interface CatalogEntry {
   unit?: { id: string | null; name: string; code: string | null };
   /** The steward position. Null when none is set. */
   steward?: { position_key: string; position: string | null } | null;
+  /** The fields a request for access must carry: some of reason, project, duration, agreement_reference. */
+  request_fields?: string[];
   fields: CatalogField[];
   categories?: { id: string; name: string }[];
   used_by_apps?: number;

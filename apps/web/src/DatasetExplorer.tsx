@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { apiClient } from "./api";
 import { Banner, EmptyState, StatusBadge } from "./ui";
 import { CatalogEntry, PublishedDataset } from "./types";
+import { RequestAccessDrawer } from "./RequestAccessDrawer";
 
 /** A catalog entry as the "use in an application" step reads it. A restricted field has no name, so it is left out. */
 function asPublished(d: CatalogEntry): PublishedDataset {
@@ -44,6 +45,7 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
   const [asked, setAsked] = useState("");
   const [filterDept, setFilterDept] = useState("all");
   const [activeTab, setActiveTab] = useState<"records" | "schema" | "sample">("records");
+  const [requesting, setRequesting] = useState(false);
   const loaded = useRef(false);
 
   useEffect(() => {
@@ -256,6 +258,13 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRequesting(true)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors"
+                    >
+                      Request access
+                    </button>
                     {canUse && (
                       <button
                         onClick={() => onUseInApp?.(asPublished(selectedDataset))}
@@ -448,6 +457,7 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({ onUseInApp }) 
                   </div>
                 )}
               </div>
+              {requesting && <RequestAccessDrawer key={selectedDataset.id} dataset={selectedDataset} open onClose={() => setRequesting(false)} />}
             </>
           )}
         </div>

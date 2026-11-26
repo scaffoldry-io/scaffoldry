@@ -133,6 +133,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "reconcile_work", 24 * 60 * 60)?;
     // Process timers are applied every minute (process v2 phase 3).
     jobs::register_schedule(repo, "fire_timers", 60)?;
+    // A request for access to a catalog dataset that waits three days reminds the steward again (data layer phase 2e).
+    jobs::register_schedule(repo, "remind_requests", 60 * 60)?;
     // Scheduled flows are checked every five minutes (workflows phase 3).
     jobs::register_schedule(repo, "fire_schedules", 5 * 60)?;
     // Access receipts are sealed into a hash-chained batch every minute.

@@ -276,6 +276,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::service::process_timers::fire_timers_job,
     },
     JobKind {
+        name: "remind_requests",
+        title: "Reminding stewards of waiting requests",
+        description: "Tells the people a request for access to a catalog dataset waits for that it still waits, once for each three days, and decides nothing.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::access_requests::remind_job,
+    },
+    JobKind {
         name: "reresolve_work",
         title: "Updating My Work",
         description: "Resolves who acts on each waiting step again after a change to who holds what, and opens or closes their work items.",
