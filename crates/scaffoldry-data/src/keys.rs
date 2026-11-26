@@ -76,8 +76,14 @@ pub fn spec_for<C: GenericClient>(c: &mut C, app_slug: &str, table_id: &str) -> 
 /// Gives a record its key, or takes it away when the data has none. A key held by another record raises the unique
 /// violation, which [`is_taken`] names. Nothing is written for a table that declares no key.
 pub fn write<C: GenericClient>(tx: &mut C, app_slug: &str, table_id: &str, record_id: &str, data: &Value) -> Result<(), postgres::Error> {
-    let Some(spec) = spec_for(tx, app_slug, table_id)? else { return Ok(()) };
-    match key_text(data, &spec) {
+    let spec = spec_for(tx, app_slug, table_id)?;
+    write_with(tx, spec.as_ref(), app_slug, table_id, record_id, data)
+}
+
+/// [`write`] with the key already read, so a caller that reads both specs pays one round trip (`crate::specs`).
+pub fn write_with<C: GenericClient>(tx: &mut C, spec: Option<&KeySpec>, app_slug: &str, table_id: &str, record_id: &str, data: &Value) -> Result<(), postgres::Error> {
+    let Some(spec) = spec else { return Ok(()) };
+    match key_text(data, spec) {
         Some(text) => {
             tx.execute(
                 "INSERT INTO record_keys (app_slug, table_id, key_text, record_id) VALUES ($1, $2, $3, $4) \

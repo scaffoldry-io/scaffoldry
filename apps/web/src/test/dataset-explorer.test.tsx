@@ -93,4 +93,96 @@ describe("the Datasets screen", () => {
     fireEvent.click(screen.getByText("Retry"));
     await waitFor(() => expect(screen.getAllByText("Room Inventory").length).toBeGreaterThan(0));
   });
+
+  // Data layer phase 2d: the catalog.
+  const entry = (over: Record<string, unknown> = {}) => ({
+    ...dataset("ds_1", "Course Enrollment", "Registrar", 12),
+    dataset_id: "ds_1",
+    kind: "table",
+    unit: { id: null, name: "Chemistry", code: "CHEM" },
+    steward: null,
+    categories: [{ id: "ferpa", name: "FERPA" }],
+    used_by_apps: 2,
+    size: { masked: false, approx: 12, label: "about 12 rows" },
+    freshness: "2026-11-20",
+    sample: { synthetic: true, note: "Made up from the schema. It holds no stored value.", rows: [{ code: "Sample Code 1" }, { code: "Sample Code 2" }] },
+    ...over,
+  });
+
+  it("asks the server for the words typed, and shows only what it returns", async () => {
+    const asked: string[] = [];
+    serve((p) => {
+      asked.push(p);
+      if (p.includes("query=")) return { body: { total: 1, truncated: false, datasets: [entry()], facets: { units: [], functions: [], categories: [] } } };
+      return { body: { total: 2, truncated: false, datasets: [entry(), dataset("rooms", "Room Inventory", "Facilities", 17)], facets: { units: [], functions: [], categories: [] } } };
+    });
+    render(<DatasetExplorer />);
+    await screen.findAllByText("Room Inventory");
+    fireEvent.change(screen.getByLabelText("Search the catalog"), { target: { value: "final_grade ferpa" } });
+    await waitFor(() => expect(asked).toContain("/datasets?query=final_grade%20ferpa"));
+    await waitFor(() => expect(screen.queryByText("Room Inventory")).toBeNull());
+    expect(screen.getAllByText("Course Enrollment").length).toBeGreaterThan(0);
+    expect(await screen.findByText("1 dataset matches")).toBeTruthy();
+  });
+
+  it("says so when a search finds nothing, and keeps the search box", async () => {
+    serve((p) => ({ body: p.includes("query=") ? { total: 0, truncated: false, datasets: [], facets: { units: [], functions: [], categories: [] } } : { total: 1, truncated: false, datasets: [entry()], facets: { units: [], functions: [], categories: [] } } }));
+    render(<DatasetExplorer />);
+    await screen.findAllByText("Course Enrollment");
+    fireEvent.change(screen.getByLabelText("Search the catalog"), { target: { value: "zebra" } });
+    expect(await screen.findByText("No dataset matches")).toBeTruthy();
+    expect(screen.getByLabelText("Search the catalog")).toBeTruthy();
+    expect(screen.queryByText("No datasets are published yet.")).toBeNull();
+  });
+
+  it("shows the metadata of an entry: unit, steward, size, freshness, categories", async () => {
+    serve(() => ({ body: { total: 1, truncated: false, datasets: [entry()], facets: { units: [], functions: [], categories: [] } } }));
+    render(<DatasetExplorer />);
+    await screen.findAllByText("Course Enrollment");
+    expect(screen.getByTestId("catalog-unit").textContent).toContain("Chemistry");
+    expect(screen.getByTestId("catalog-steward").textContent).toContain("No steward position set");
+    expect(screen.getAllByText("about 12 rows").length).toBeGreaterThan(0);
+    expect(screen.getByText("2026-11-20")).toBeTruthy();
+    expect(screen.getByTestId("catalog-categories").textContent).toContain("FERPA");
+  });
+
+  it("shows no number for a small group, and a restricted field as a restricted field", async () => {
+    const small = entry({
+      record_count: null,
+      size: { masked: true, label: "fewer than 11 rows" },
+      fields: [{ label: "a restricted field", description: "a restricted field", restricted: true }, { name: "code", label: "Code", field_type: "Text", required: true, ferpa_sensitive: false }],
+    });
+    serve(() => ({ body: { total: 1, truncated: false, datasets: [small], facets: { units: [], functions: [], categories: [] } } }));
+    render(<DatasetExplorer />);
+    const note = await screen.findByTestId("dataset-records-note");
+    expect(note.textContent).toContain("fewer than 11 rows, read-only");
+    fireEvent.click(screen.getByRole("button", { name: /Schema/ }));
+    expect(screen.getByText(/a restricted field/)).toBeTruthy();
+    expect(screen.getByText("(code)")).toBeTruthy();
+  });
+
+  it("shows the synthetic sample on its own tab, labelled as made up", async () => {
+    serve(() => ({ body: { total: 1, truncated: false, datasets: [entry()], facets: { units: [], functions: [], categories: [] } } }));
+    render(<DatasetExplorer />);
+    await screen.findAllByText("Course Enrollment");
+    fireEvent.click(screen.getByRole("button", { name: "Sample" }));
+    const panel = await screen.findByTestId("catalog-sample");
+    expect(panel.textContent).toContain("Made up from the schema");
+    expect(panel.textContent).toContain("Sample Code 1");
+  });
+
+  it("offers to use a published dataset in an application, and an app table not", async () => {
+    const published = entry({ kind: "published", id: "courses", name: "Courses" });
+    serve((p) => ({ body: { total: 1, truncated: false, datasets: [p === "/datasets" ? entry() : published], facets: { units: [], functions: [], categories: [] } } }));
+    const used = vi.fn();
+    const { unmount } = render(<DatasetExplorer onUseInApp={used} />);
+    await screen.findAllByText("Course Enrollment");
+    expect(screen.queryByText("Use in New Application")).toBeNull();
+    unmount();
+    serve(() => ({ body: { total: 1, truncated: false, datasets: [published], facets: { units: [], functions: [], categories: [] } } }));
+    render(<DatasetExplorer onUseInApp={used} />);
+    await screen.findAllByText("Courses");
+    fireEvent.click(screen.getAllByText("Use in New Application")[0]);
+    expect(used).toHaveBeenCalledWith(expect.objectContaining({ id: "courses", record_count: 12 }));
+  });
 });

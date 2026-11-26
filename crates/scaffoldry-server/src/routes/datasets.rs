@@ -1,7 +1,8 @@
 use crate::guard::session_user;
-use crate::state::{lock_err, SharedState};
+use crate::state::SharedState;
+use std::collections::HashMap;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
@@ -46,34 +47,17 @@ async fn get_dataset_record(
 async fn list_datasets(
     State(state): State<SharedState>,
     headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
-    // The catalog is metadata for a signed-in person. Rows are read through the dataset's own app, under its access rules.
-    session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
-
-    let datasets = state.datasets.read().map_err(|_| lock_err())?;
-
-    let mut list = Vec::new();
-    for ds in datasets.values() {
-        let item = json!({
-            "id": ds.id,
-            "name": ds.name,
-            "description": ds.description,
-            "department": ds.department,
-            "organization": ds.organization,
-            "sensitivity_level": ds.sensitivity_level,
-            "herm_capability_id": ds.herm_capability_id,
-            "fields": ds.fields,
-            "record_count": ds.record_count,
-            "published_at": ds.published_at,
-        });
-
-        list.push(item);
-    }
-
-    Ok(Json(json!({
-        "total": list.len(),
-        "datasets": list
-    })))
+    // The catalog (data layer phase 2d). Metadata and synthetic samples, for the datasets the caller may discover. Rows are
+    // read through the dataset's own app, under its access rules.
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    let search = crate::service::catalog::Search { query: q.get("query").cloned(), department: q.get("department").cloned() };
+    let found = tokio::task::spawn_blocking(move || crate::service::catalog::search(&user, &search, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The search stopped").into_pair())?
+        .map_err(ServiceError::into_pair)?;
+    Ok(Json(found))
 }
 
 async fn get_dataset(
@@ -81,25 +65,12 @@ async fn get_dataset(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
-
-    let datasets = state.datasets.read().map_err(|_| lock_err())?;
-    let ds = datasets.get(&id).ok_or(ServiceError::not_found("Dataset not found").into_pair())?;
-
-    let doc = json!({
-        "id": ds.id,
-        "name": ds.name,
-        "description": ds.description,
-        "department": ds.department,
-        "organization": ds.organization,
-        "sensitivity_level": ds.sensitivity_level,
-        "herm_capability_id": ds.herm_capability_id,
-        "fields": ds.fields,
-        "record_count": ds.record_count,
-        "published_at": ds.published_at,
-    });
-
-    Ok(Json(doc))
+    let user = session_user(&state, &headers).ok_or_else(|| ServiceError::unauthorized("Unauthorized").into_pair())?;
+    tokio::task::spawn_blocking(move || crate::service::catalog::get(&user, &id, &state))
+        .await
+        .map_err(|_| ServiceError::internal("The read stopped").into_pair())?
+        .map(Json)
+        .map_err(ServiceError::into_pair)
 }
 
 async fn publish_dataset(

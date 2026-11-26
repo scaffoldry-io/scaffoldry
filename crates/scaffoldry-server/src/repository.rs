@@ -121,6 +121,7 @@ const SCHEMA_0114: &str = include_str!("../../scaffoldry-core/migrations/0114_da
 const SCHEMA_0115: &str = include_str!("../../scaffoldry-core/migrations/0115_session_toolsets.sql");
 const SCHEMA_0116: &str = include_str!("../../scaffoldry-core/migrations/0116_record_keys.sql");
 const SCHEMA_0117: &str = include_str!("../../scaffoldry-core/migrations/0117_record_units.sql");
+const SCHEMA_0118: &str = include_str!("../../scaffoldry-core/migrations/0118_catalog.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -418,8 +419,7 @@ pub(crate) fn insert_record_in_tx(
     apply_formulas(&mut rec.data, ctx);
     let table = table_id_of(&rec.data);
     scaffoldry_data::records::insert(tx, &new_record(&rec, &table))?;
-    scaffoldry_data::keys::write(tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
-    scaffoldry_data::units::write(tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
+    scaffoldry_data::specs::write(tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
     crate::repository_index::write_record_index(
         tx,
         &rec.app_slug,
@@ -470,8 +470,7 @@ pub(crate) fn update_record_in_tx(
     }
     let new_table = table_id_of(&data);
     let next = scaffoldry_data::records::save_data(tx, slug, id, &data, &new_table)?;
-    scaffoldry_data::keys::write(tx, slug, &new_table, id, &data)?;
-    scaffoldry_data::units::write(tx, slug, &new_table, id, &data)?;
+    scaffoldry_data::specs::write(tx, slug, &new_table, id, &data)?;
     crate::repository_index::write_record_index(
         tx,
         slug,
@@ -560,8 +559,7 @@ pub(crate) fn restore_record_in_tx(
     let Some(scaffoldry_data::records::Deleted { data, version, table_id: table }) = scaffoldry_data::records::restore(tx, slug, id)? else {
         return Ok(false);
     };
-    scaffoldry_data::keys::write(tx, slug, &table, id, &data)?;
-    scaffoldry_data::units::write(tx, slug, &table, id, &data)?;
+    scaffoldry_data::specs::write(tx, slug, &table, id, &data)?;
     crate::repository_index::write_record_index(tx, slug, &table, id, &data, &ctx.index_fields)?;
     let action = ctx.action.unwrap_or("restore");
     write_history(
@@ -1251,6 +1249,7 @@ impl PostgresRepository {
                             ("0115_session_toolsets.sql", SCHEMA_0115),
                             ("0116_record_keys.sql", SCHEMA_0116),
                             ("0117_record_units.sql", SCHEMA_0117),
+                            ("0118_catalog.sql", SCHEMA_0118),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -2377,8 +2376,7 @@ impl PostgresRepository {
             let old: Option<Value> = scaffoldry_data::records::data_for_update(&mut tx, &rec.id)?;
             let table = table_id_of(&rec.data);
             let version = scaffoldry_data::records::upsert(&mut tx, &new_record(&rec, &table))?;
-            scaffoldry_data::keys::write(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
-            scaffoldry_data::units::write(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
+            scaffoldry_data::specs::write(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
             crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
             crate::repository_links::write_record_links(&mut tx, &rec.app_slug, &rec.id, old.as_ref(), &rec.data, &ctx)?;
             let changes = diff_fields(old.as_ref(), Some(&rec.data), &ctx.computed_fields);
@@ -2800,6 +2798,7 @@ impl PostgresRepository {
                     &payload_json,
                 ],
             )?;
+            crate::repository_catalog::ensure_published_in_tx(&mut tx, &ds.id)?;
             crate::cache::bump(&mut tx, "datasets")?;
             tx.commit()?;
             Ok(())
