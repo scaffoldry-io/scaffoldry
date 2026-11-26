@@ -194,15 +194,15 @@ Approved by Johann on 2026-11-19. Rows 1f-1, 1f-2 and 1f-6 are scheduled as rows
 | 1f-0 | [mcp-guidance.md](mcp-guidance.md) | 1 | An agent that connects is told who it acts for, that a person decides, that stored text is untrusted, and where to look | **COMPLETED** |
 | 1f-1 | [data-layer.md](data-layer.md) | 1 | A dataset has an id. Each app table gets one by migration. The app path and the dataset path return the same row | Scheduled as row 193 |
 | 1f-2 | [data-layer.md](data-layer.md) | 2 | A data crate is the single door to rows. The architecture audit fails any other reader of the record or label tables | Scheduled as row 194 |
-| 1f-3 | [data-layer.md](data-layer.md) | keys | A dataset declares a key, enforced by `record_keys`. A row's unit is a column from the governed list, and a bad value is rejected | Proposed |
-| 1f-4 | [data-layer.md](data-layer.md) | catalog | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy | Proposed |
-| 1f-5 | [data-layer.md](data-layer.md) | catalog | Request access can start from a catalog entry, as an `access-model.md` phase 13 request. Needs the inbox and email | Proposed |
+| 1f-3 | [data-layer.md](data-layer.md) | keys | A dataset declares a key, enforced by `record_keys`. A row's unit is a column from the governed list, and a bad value is rejected | Scheduled as rows 201 and 202 |
+| 1f-4 | [data-layer.md](data-layer.md) | catalog | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy | Scheduled as row 203 |
+| 1f-5 | [data-layer.md](data-layer.md) | catalog | Request access can start from a catalog entry, as an `access-model.md` phase 13 request. Needs the inbox and email | Scheduled as row 204 |
 | 1f-6 | [mcp-guidance.md](mcp-guidance.md) | 2 to 4 | Error hints, `explain_decision`, and prompts generated from policy | Scheduled as rows 195 to 197 |
-| 1f-7 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label. Needs the sensitive content rows | Proposed |
-| 1f-8 | [data-layer.md](data-layer.md) | 5, 6, 6b | The AI review proposes. A steward reads the evaluation and decides. A change has an effective date, a notice, and exceptions as grants | Proposed |
-| 1f-9 | [data-layer.md](data-layer.md) | shares | A row share with a reason and an expiry | Proposed |
-| 1f-10 | [data-layer.md](data-layer.md) | 3b, 9 | Relationship access and cross-listing as extra hierarchies. Conditions as clearances with dates. Automations run as service identities | Proposed |
-| 1f-11 | [mcp-guidance.md](mcp-guidance.md) | 5 to 7 | Tools are listed by access. Typed text is marked untrusted. Drafts follow `access-model.md` phase 14 | Proposed |
+| 1f-7 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label. Needs the sensitive content rows | Scheduled as row 205 |
+| 1f-8 | [data-layer.md](data-layer.md) | 5, 6, 6b | The AI review proposes. A steward reads the evaluation and decides. A change has an effective date, a notice, and exceptions as grants | Scheduled as rows 208 to 210 |
+| 1f-9 | [data-layer.md](data-layer.md) | shares | A row share with a reason and an expiry | Scheduled as row 211 |
+| 1f-10 | [data-layer.md](data-layer.md) | 3b, 9 | Relationship access and cross-listing as extra hierarchies. Conditions as clearances with dates. Automations run as service identities | Scheduled as rows 212 and 213 |
+| 1f-11 | [mcp-guidance.md](mcp-guidance.md) | 5 to 7 | Tools are listed by access. Typed text is marked untrusted. Drafts follow `access-model.md` phase 14 | Scheduled as rows 206 and 207 |
 
 Not scheduled: external collaborators, extra unit tags, run-level tracking of what an automation read, an expedited change path, and standing share policies. See "Version 1" in `data-layer.md`.
 
@@ -333,6 +333,28 @@ Johann asked for a better architecture for the full tool list on 2026-11-25 ("ke
 | 198 | [mcp-toolsets.md](mcp-toolsets.md) | 1 | Every tool is in one toolset. A token with explicit toolsets lists and calls only those plus `core`. The largest reachable list stays inside the budget | **COMPLETED** |
 | 199 | [mcp-toolsets.md](mcp-toolsets.md) | 2 | Consent offers the toolsets, an OAuth scope pre-ticks them, and new sessions default to `core` and `data`. A call outside them gets `insufficient_scope` | **COMPLETED** |
 | 200 | [mcp-toolsets.md](mcp-toolsets.md) | 3 | Each toolset has its own byte limit. A token holds `core` plus at most 3 toolsets, so every agent list stays inside the budget. No exclusivity rules | **COMPLETED** |
+
+### Wave 1f, continued
+
+Johann said "keep going" on 2026-11-26. The keys and catalog rows now have plain phase numbers in `data-layer.md` (2b to 2e). The order follows `workplan-v2.md`: keys and the unit column, then the catalog, then labels and grants, then audiences and automations. The MCP rows follow their brief.
+
+| Order | Brief | Phase | What is true after it | Status |
+| --- | --- | --- | --- | --- |
+| 201 | [data-layer.md](data-layer.md) | 2b | A dataset declares a key, enforced by `record_keys`. A duplicate is refused without naming a row. Syncs and imports match on the key |
+| 202 | [data-layer.md](data-layer.md) | 2c | A row's unit is a column from the governed list. A bad value is refused with the nearest valid units. Lists filter on it in SQL |
+| 203 | [data-layer.md](data-layer.md) | 2d | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy |
+| 204 | [data-layer.md](data-layer.md) | 2e | Request access starts from a catalog entry, as an `access-model.md` phase 13 request, with the inbox and email |
+| 205 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label |
+| 206 | [mcp-guidance.md](mcp-guidance.md) | 6 | Typed text is marked untrusted in every result. A tool that would change access returns a proposal and a link |
+| 207 | [mcp-guidance.md](mcp-guidance.md) | 7 | A recorded scenario for each of the five generated prompts passes against the real server |
+| 208 | [data-layer.md](data-layer.md) | 5 | The AI review writes findings for rows that match a category, and changes no tag or access |
+| 209 | [data-layer.md](data-layer.md) | 6 | A steward reads the evaluation and decides. Removing protection takes a second person |
+| 210 | [data-layer.md](data-layer.md) | 6b | A scheduled change has an effective date, a notice period and exceptions as grants |
+| 211 | [data-layer.md](data-layer.md) | 10 | A row share has a reason, an expiry, an AI assessment and a person's approval |
+| 212 | [data-layer.md](data-layer.md) | 3b | Audience fields and conditions, inside the million-row limits |
+| 213 | [data-layer.md](data-layer.md) | 9 | Automations run as system users with their own grants |
+
+`mcp-guidance.md` phase 5 (tools listed by access) is covered by `mcp-toolsets.md` and the existing `tools/list` filters, so it has no row. The 1f table above maps to these rows.
 
 Foundation phases 10 and 11 depend on nothing after phase 9. Run them earlier if a pilot date appears.
 
