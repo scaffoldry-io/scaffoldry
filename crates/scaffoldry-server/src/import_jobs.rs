@@ -454,6 +454,11 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
         .ok_or_else(|| JobError::Permanent(format!("Table {} not found in app", target_table_id)))?;
 
     let upsert_key = mapping.get("upsert_key").and_then(|v| v.as_str());
+    // A declared key decides which row an upsert means (data layer phase 2b). The column the file names is not used then.
+    let declared_key = {
+        let (q_app, q_tbl) = (app_slug.to_string(), table.id.clone());
+        repo.with_client(move |c| Ok(scaffoldry_data::keys::spec_for(c, &q_app, &q_tbl)?)).map_err(|e| JobError::Retry(e.to_string()))?
+    };
     // The organization's detectors, read once. A row that holds what a `block` detector looks for is refused, and the rest are reported.
     let guard = crate::content_scan::plan_from_repo(repo, &crate::content_scan::Scope { app_slug: app_slug.to_string(), table_id: table.id.clone() }).ok();
     let mut content_report: std::collections::BTreeMap<(String, String, String, String), i64> = std::collections::BTreeMap::new();
@@ -688,11 +693,37 @@ pub fn import_validate(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> 
             }
         }
 
+        // A table with a declared key and no upsert: a row whose key a stored row holds is refused, as the run will refuse it.
+        if !row_has_error && upsert_key.is_none() {
+            if let Some(text) = declared_key.as_ref().and_then(|spec| scaffoldry_data::keys::key_text(&Value::Object(row_data.clone()), spec)) {
+                let (q_app, q_tbl) = (app_slug.to_string(), table.id.clone());
+                if repo.with_client(move |c| Ok(scaffoldry_data::keys::find(c, &q_app, &q_tbl, &text)?)).unwrap_or(None).is_some() {
+                    row_has_error = true;
+                    if errors.len() < 100 {
+                        errors.push(json!({ "row": row_num, "column": "_row_", "message": format!("Row {}: {}", row_num, scaffoldry_data::keys::TAKEN) }));
+                    }
+                }
+            }
+        }
+
         if row_has_error {
             invalid_count += 1;
         } else {
             valid_count += 1;
-            if let Some(key) = upsert_key {
+            if let (Some(spec), Some(_)) = (&declared_key, upsert_key) {
+                let found = match scaffoldry_data::keys::key_text(&Value::Object(row_data.clone()), spec) {
+                    Some(text) => {
+                        let (q_app, q_tbl) = (app_slug.to_string(), table.id.clone());
+                        repo.with_client(move |c| Ok(scaffoldry_data::keys::find(c, &q_app, &q_tbl, &text)?)).unwrap_or(None).is_some()
+                    }
+                    None => false,
+                };
+                if found {
+                    update_count += 1;
+                } else {
+                    create_count += 1;
+                }
+            } else if let Some(key) = upsert_key {
                 if let Some(key_val) = row_data.get(key).and_then(|v| v.as_str()) {
                     let (q_app, q_tbl, q_key, q_val) = (
                         app_slug.to_string(),
@@ -895,6 +926,7 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
         let b_app_slug = app_slug.to_string();
         let b_caller_eppn = caller_eppn.to_string();
         let b_upsert_key = upsert_key.clone();
+        let b_key_label = table.id.clone();
         let b_select_strategies = select_strategies.clone();
         let b_accept_errors = accept_errors;
         let b_processed_offset = processed_rows;
@@ -905,6 +937,8 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
 
         let (batch_created, batch_updated, batch_rejected, batch_hits) = repo.with_client(move |c| {
             let mut tx = c.transaction()?;
+            // The key the table declares (data layer phase 2b). It decides which row an upsert means.
+            let declared_key = scaffoldry_data::keys::spec_for(&mut tx, &b_app_slug, &b_key_label)?;
             let mut created = 0;
             let mut updated = 0;
             let mut rejected = Vec::new();
@@ -1043,7 +1077,11 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
                 let final_data = Value::Object(row_data);
 
                 let mut existing_rec_id: Option<String> = None;
-                if let Some(ref key) = b_upsert_key {
+                if let (Some(spec), Some(_)) = (&declared_key, &b_upsert_key) {
+                    if let Some(text) = scaffoldry_data::keys::key_text(&final_data, spec) {
+                        existing_rec_id = scaffoldry_data::keys::find(&mut tx, &b_app_slug, &b_table.id, &text)?;
+                    }
+                } else if let Some(ref key) = b_upsert_key {
                     if let Some(key_val) = final_data.get(key).and_then(|v| v.as_str()) {
                         let row_opt = tx.query_opt(
                             "SELECT id FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND data->>$3 = $4 LIMIT 1",
@@ -1055,22 +1093,50 @@ pub fn import_run(ctx: &JobCtx, payload: Value) -> Result<Value, JobError> {
                     }
                 }
 
-                if let Some(rec_id) = existing_rec_id {
-                    crate::repository::update_record_in_tx(&mut tx, &b_app_slug, &rec_id, &final_data, None, &write_ctx)?;
-                    updated += 1;
+                // With a declared key, each row is written in a savepoint. A key that another row holds refuses that
+                // row and no other: the row is rejected, or the import stops, like any other row error.
+                let write_row = |t: &mut postgres::Transaction<'_>| -> Result<(), postgres::Error> {
+                    if let Some(rec_id) = &existing_rec_id {
+                        crate::repository::update_record_in_tx(t, &b_app_slug, rec_id, &final_data, None, &write_ctx).map(|_| ())
+                    } else {
+                        let rec = DatasetRecord {
+                            id: format!("rec_{}", &Uuid::new_v4().to_string().replace('-', "")[..16]),
+                            app_slug: b_app_slug.clone(),
+                            data: final_data.clone(),
+                            ceds_mapping: json!({}),
+                            is_ferpa_sensitive: false,
+                            created_by: Some(b_caller_eppn.clone()),
+                            version: 1,
+                            created_at: Utc::now().to_rfc3339(),
+                        };
+                        crate::repository::insert_record_in_tx(t, &rec, &write_ctx)
+                    }
+                };
+                let written = if declared_key.is_some() {
+                    let mut sp = tx.transaction()?;
+                    let r = write_row(&mut sp);
+                    if r.is_ok() {
+                        sp.commit()?;
+                    }
+                    r
                 } else {
-                    let rec = DatasetRecord {
-                        id: format!("rec_{}", &Uuid::new_v4().to_string().replace('-', "")[..16]),
-                        app_slug: b_app_slug.clone(),
-                        data: final_data,
-                        ceds_mapping: json!({}),
-                        is_ferpa_sensitive: false,
-                        created_by: Some(b_caller_eppn.clone()),
-                        version: 1,
-                        created_at: Utc::now().to_rfc3339(),
-                    };
-                    crate::repository::insert_record_in_tx(&mut tx, &rec, &write_ctx)?;
-                    created += 1;
+                    write_row(&mut tx)
+                };
+                match written {
+                    Ok(()) => {
+                        if existing_rec_id.is_some() {
+                            updated += 1;
+                        } else {
+                            created += 1;
+                        }
+                    }
+                    Err(e) if scaffoldry_data::keys::is_taken(&e) => {
+                        if !b_accept_errors {
+                            return Err(crate::repository::RepositoryError::Conflict(format!("Row {}: {}", row_num, scaffoldry_data::keys::TAKEN)));
+                        }
+                        rejected.push((row.clone(), scaffoldry_data::keys::TAKEN.to_string()));
+                    }
+                    Err(e) => return Err(e.into()),
                 }
             }
 

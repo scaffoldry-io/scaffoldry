@@ -141,7 +141,7 @@ async fn test_duration_inputs_store_5400_and_bad_input_rejected() {
     dur_field.duration_format = Some("h:mm".to_string());
 
     let m = manifest_with_tables(&w.slug, vec![AppTable {
-        retired_fields: Vec::new(),
+        retired_fields: Vec::new(), key: None,
         id: "t1".to_string(),
         name: "Tasks".to_string(),
         slug: "tasks".to_string(),
@@ -215,7 +215,7 @@ async fn test_sum_rollup_over_durations() {
     let w = world().await;
 
     let parent_table = AppTable {
-        retired_fields: Vec::new(),
+        retired_fields: Vec::new(), key: None,
         id: "parents".to_string(),
         name: "Projects".to_string(),
         slug: "projects".to_string(),
@@ -246,7 +246,7 @@ async fn test_sum_rollup_over_durations() {
     };
 
     let child_table = AppTable {
-        retired_fields: Vec::new(),
+        retired_fields: Vec::new(), key: None,
         id: "children".to_string(),
         name: "Work Logs".to_string(),
         slug: "work_logs".to_string(),
@@ -345,7 +345,7 @@ async fn test_date_never_shifts_across_timezone_change() {
     let w = world().await;
 
     let m = manifest_with_tables(&w.slug, vec![AppTable {
-        retired_fields: Vec::new(),
+        retired_fields: Vec::new(), key: None,
         id: "t1".to_string(),
         name: "Events".to_string(),
         slug: "events".to_string(),

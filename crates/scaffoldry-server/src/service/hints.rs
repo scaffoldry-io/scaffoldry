@@ -66,6 +66,8 @@ pub fn hint_for(err: &ServiceError) -> String {
                 "Call request_access with the request this result carries, or call list_workspaces to see where you have access."
             }
         }
+        "constraint_violated" if has("key is already used") => "Another record holds that key. Send a different key, or call list_records to find the record that has it and update that one.",
+        "constraint_violated" if has("records share a key") => "Change or delete the extra records the message lists, then call decide_proposal again with the same digest.",
         other => hint_for_code(other).unwrap_or("Retry once, and call list_workspaces to check that the server is answering."),
     };
     h.to_string()

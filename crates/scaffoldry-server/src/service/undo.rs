@@ -44,7 +44,7 @@ pub fn undo_batch(caller: &AuthUser, origin: &Origin, app_slug: &str, batch_id: 
         ctx.reverts_batch = Some(orig);
         tables.insert(entry.table_id.clone(), UndoTable { ctx });
     }
-    match repo.undo_batch(app_slug, batch_id, tables).map_err(internal)? {
+    match repo.undo_batch(app_slug, batch_id, tables).map_err(ServiceError::from_write)? {
         UndoOutcome::Undone { records } => Ok(json!({ "batch_id": new_batch, "reverts_batch": orig, "records": records })),
         UndoOutcome::Conflicts(found) => Err(ServiceError::UndoConflict {
             message: "Someone changed this since. Undo stopped.".to_string(),
@@ -131,7 +131,7 @@ pub fn restore_record(
     }
     let mut ctx = write_ctx(&caller.eppn, origin, app_slug, &data, state);
     ctx.action = Some("restore");
-    let (outcome, saved) = state.save_record_checked(app_slug, id, &data, expected, &ctx).map_err(internal)?;
+    let (outcome, saved) = state.save_record_checked(app_slug, id, &data, expected, &ctx).map_err(ServiceError::from_write)?;
     match (outcome, saved) {
         (crate::repository::RecordWrite::Saved(_), Some(rec)) => Ok(rec),
         (crate::repository::RecordWrite::Conflict(version), _) => Err(ServiceError::StaleVersion {

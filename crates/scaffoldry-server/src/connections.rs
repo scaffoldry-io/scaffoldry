@@ -341,19 +341,42 @@ pub(crate) fn last_good(state: &SharedState, id: Uuid) -> Result<(Option<String>
     })
 }
 
-/// One batch of the file, written in one transaction.
-pub(crate) fn write_batch(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteCtx, batch: Vec<(String, Value)>, ferpa: bool) -> Result<(i64, i64, i64), RepositoryError> {
-    let (app, ctx, by) = (conn.dataset_app.clone(), ctx.clone(), ctx.actor.clone());
+/// The records a run has written or confirmed so far. A record not in it when the run ends is trashed.
+pub(crate) type Seen = std::sync::Arc<std::sync::Mutex<HashSet<String>>>;
+
+/// One batch of the file, written in one transaction. A row has the record id made from its source key. When the table
+/// declares a key (data layer phase 2b) and that record does not exist, the row goes to the record that holds the same
+/// key, so a source that renumbers its rows and keeps the key keeps each record. Two rows of one run that mean the same
+/// record are refused in the words of any taken key. Each id written goes into `seen`.
+pub(crate) fn write_batch(state: &SharedState, conn: &Conn, ctx: &crate::repository::WriteCtx, batch: Vec<(String, Value)>, ferpa: bool, seen: &Seen) -> Result<(i64, i64, i64), RepositoryError> {
+    let (app, table, ctx, by, seen) = (conn.dataset_app.clone(), conn.dataset_table.clone(), ctx.clone(), ctx.actor.clone(), seen.clone());
     state.repository.with_client(move |c| {
         let mut tx = c.transaction()?;
         tx.execute("SELECT set_config('scaffoldry.sync_writer', 'on', true)", &[])?;
+        let key = scaffoldry_data::keys::spec_for(&mut tx, &app, &table)?;
         let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
         let mut existing: HashMap<String, (Value, bool)> = HashMap::new();
         for r in tx.query("SELECT id, data, deleted_at IS NOT NULL FROM dataset_records WHERE app_slug = $1 AND id = ANY($2) FOR UPDATE", &[&app, &ids])? {
             existing.insert(r.get(0), (r.get(1), r.get(2)));
         }
         let (mut added, mut changed, mut unchanged) = (0, 0, 0);
-        for (id, data) in batch {
+        for (derived, data) in batch {
+            let mut id = derived;
+            if let Some(spec) = &key {
+                if !existing.get(&id).is_some_and(|(_, trashed)| !*trashed) {
+                    if let Some(holder) = scaffoldry_data::keys::key_text(&data, spec).map(|t| scaffoldry_data::keys::find(&mut tx, &app, &table, &t)).transpose()?.flatten() {
+                        if let Some((held, _)) = scaffoldry_data::records::live_for_update(&mut tx, &app, &holder)? {
+                            existing.insert(holder.clone(), (held, false));
+                            id = holder;
+                        }
+                    }
+                }
+                if !seen.lock().map_err(|_| RepositoryError::Conflict("The run's list of records is lost".to_string()))?.insert(id.clone()) {
+                    return Err(RepositoryError::ConstraintViolation { message: scaffoldry_data::keys::TAKEN.to_string(), field: "key".to_string(), constraint: "unique_key".to_string() });
+                }
+            } else {
+                seen.lock().map_err(|_| RepositoryError::Conflict("The run's list of records is lost".to_string()))?.insert(id.clone());
+            }
             match existing.get(&id) {
                 None => {
                     let rec = DatasetRecord { id, app_slug: app.clone(), data, ceds_mapping: json!({}), is_ferpa_sensitive: ferpa, created_at: chrono::Utc::now().to_rfc3339(), created_by: Some(by.clone()), version: 1 };
@@ -472,14 +495,14 @@ fn apply(state: &SharedState, conn: &Conn, opts: &RunOpts) -> Result<(Option<Cou
     let ctx = sync_ctx(state, conn);
     let ferpa = is_sensitive(&conn.sensitivity);
 
-    let mut seen = HashSet::with_capacity(rows.len());
+    let seen: Seen = Default::default();
     let mut n = Counts { added: 0, changed: 0, removed: 0, unchanged: 0 };
     let mut batch: Vec<(String, Value)> = Vec::with_capacity(BATCH);
     let flush = |batch: &mut Vec<(String, Value)>, n: &mut Counts| -> Result<(), String> {
         if batch.is_empty() {
             return Ok(());
         }
-        let (a, c, u) = write_batch(state, conn, &ctx, std::mem::take(batch), ferpa).map_err(|e| format!("A batch could not be written: {e}"))?;
+        let (a, c, u) = write_batch(state, conn, &ctx, std::mem::take(batch), ferpa, &seen).map_err(|e| format!("A batch could not be written: {e}"))?;
         n.added += a;
         n.changed += c;
         n.unchanged += u;
@@ -487,13 +510,13 @@ fn apply(state: &SharedState, conn: &Conn, opts: &RunOpts) -> Result<(Option<Cou
     };
     for (key, data) in rows {
         let id = record_id(conn.id, &conn.dataset_table, &key);
-        seen.insert(id.clone());
         batch.push((id, Value::Object(data)));
         if batch.len() >= BATCH {
             flush(&mut batch, &mut n)?;
         }
     }
     flush(&mut batch, &mut n)?;
+    let seen = std::mem::take(&mut *seen.lock().map_err(|_| "The run's list of records is lost".to_string())?);
     n.removed = trash_removed(state, conn, &ctx, seen).map_err(|e| format!("Removed rows could not be trashed: {e}"))?;
     Ok((Some(n), hash))
 }

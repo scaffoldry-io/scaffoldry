@@ -10,6 +10,8 @@ pub const MAX_TABLES: usize = 50;
 pub const MAX_FIELDS_PER_TABLE: usize = 200;
 pub const MAX_VIEWS: usize = 200;
 pub const MAX_PAGES: usize = 50;
+/// The most fields one table key may name.
+pub const MAX_KEY_FIELDS: usize = 5;
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 
 fn is_slug(s: &str) -> bool {
@@ -110,6 +112,24 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                 (true, None) => problems.push(format!("table '{}': Unit field '{}' must name its hierarchy", table.id, f.name)),
                 (false, Some(_)) => problems.push(format!("table '{}': field '{}' names a hierarchy but is not a Unit field", table.id, f.name)),
                 _ => {}
+            }
+        }
+        if let Some(key) = &table.key {
+            if key.fields.is_empty() || key.fields.len() > MAX_KEY_FIELDS {
+                problems.push(format!("table '{}': a key names 1 to {MAX_KEY_FIELDS} fields, this one names {}", table.id, key.fields.len()));
+            }
+            let mut seen = HashSet::new();
+            for name in &key.fields {
+                if !seen.insert(name.as_str()) {
+                    problems.push(format!("table '{}': the key names field '{name}' twice", table.id));
+                }
+                match table.fields.iter().find(|f| f.name == *name) {
+                    None => problems.push(format!("table '{}': the key names field '{name}', which the table does not have", table.id)),
+                    Some(f) if matches!(f.field_type, FieldType::LongText | FieldType::Lookup | FieldType::Rollup | FieldType::Count) => {
+                        problems.push(format!("table '{}': the key cannot use the {:?} field '{name}'", table.id, f.field_type));
+                    }
+                    Some(_) => {}
+                }
             }
         }
         for (hierarchy, field) in &table.row_place {

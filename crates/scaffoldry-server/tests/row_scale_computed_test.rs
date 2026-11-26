@@ -78,7 +78,7 @@ fn computed(name: &str, t: FieldType, via: &str, target: Option<&str>, function:
 
 fn table(id: &str, fields: Vec<FieldSpec>, primary: &str) -> AppTable {
     AppTable {
-        retired_fields: Vec::new(),
+        retired_fields: Vec::new(), key: None,
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),

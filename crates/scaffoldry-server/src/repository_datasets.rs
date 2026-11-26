@@ -15,7 +15,35 @@ pub fn ensure_datasets_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest
          ON CONFLICT (app_slug, table_id) DO NOTHING",
         &[&m.slug, &tables],
     )?;
+    sync_keys_in_tx(tx, m)
+}
+
+/// The key each table declares is the key its dataset holds (data layer phase 2b). A table whose key is new or changed is
+/// keyed again: the earlier keys go, and every live row gets one. If live rows share a key, the transaction is left to
+/// roll back and the error lists the groups. A table that declares what its dataset already holds is not touched.
+fn sync_keys_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest) -> Result<(), RepositoryError> {
+    use scaffoldry_data::keys::{declare, spec_for, KeySpec};
+    for table in &m.tables {
+        let want = table.key.as_ref().map(|k| KeySpec { fields: k.fields.clone(), case_fold: k.case_fold });
+        if spec_for(tx, &m.slug, &table.id)? == want {
+            continue;
+        }
+        if let Err(dups) = declare(tx, &m.slug, &table.id, want.as_ref())? {
+            return Err(RepositoryError::KeyDuplicates(duplicates_sentence(&table.name, &dups)));
+        }
+    }
     Ok(())
+}
+
+/// What the steward is told: how many groups, and the record ids of each. It names no value of the key.
+fn duplicates_sentence(table: &str, d: &scaffoldry_data::keys::Duplicates) -> String {
+    let groups: Vec<String> = d.groups.iter().enumerate().map(|(i, g)| format!("group {}: {}", i + 1, g.join(", "))).collect();
+    let more = if d.more > 0 { format!(" and {} more records not listed", d.more) } else { String::new() };
+    format!(
+        "The key cannot be set on the table '{table}' while records share a key. {} group(s) of records share one. Change or delete the extra records, then approve again. Records that share a key, by id: {}{more}",
+        d.groups.len(),
+        groups.join("; ")
+    )
 }
 
 impl PostgresRepository {

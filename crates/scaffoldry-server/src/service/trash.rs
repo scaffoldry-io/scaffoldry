@@ -142,6 +142,6 @@ pub fn restore(caller: &AuthUser, origin: &Origin, app_slug: &str, selector: &st
             ctx
         });
     }
-    let restored = repo.restore_trash(app_slug, selector, tables).map_err(internal)?;
+    let restored = repo.restore_trash(app_slug, selector, tables).map_err(ServiceError::from_write)?;
     Ok(json!({ "restored": restored.len(), "records": restored, "batch_id": batch }))
 }

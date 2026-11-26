@@ -66,7 +66,7 @@ fn manifest(slug: &str) -> AppManifest {
     ];
     let cards = vec![FieldSpec::simple("holder", "Holder", FieldType::Text, false, false), FieldSpec::simple("card", "Card", FieldType::Text, false, false)];
     let table = |id: &str, fields: Vec<FieldSpec>, primary: &str| AppTable {
-        retired_fields: Vec::new(),
+        retired_fields: Vec::new(), key: None,
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),

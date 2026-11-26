@@ -381,6 +381,16 @@
           "type": "boolean",
           "description": "A sealed table stops every grant anchored above it, for its rows too. Grants at the table reach. Unsealing needs a second person."
         },
+        "key": {
+          "type": "object",
+          "description": "The table's key: the fields whose text identifies a row. Two live rows cannot share a key. The text is trimmed, and case-folded when case_fold is true. Setting it needs a proposal, and it is refused while rows already share a key.",
+          "required": ["fields"],
+          "additionalProperties": false,
+          "properties": {
+            "fields": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+            "case_fold": { "type": "boolean" }
+          }
+        },
         "retired_fields": {
           "type": "array",
           "maxItems": 200,

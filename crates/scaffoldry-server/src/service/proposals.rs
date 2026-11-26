@@ -165,6 +165,12 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
         match live.tables.iter().find(|l| l.id == t.id) {
             None => out.push(format!("Table \"{}\" is added with {} field(s).", t.name, t.fields.len())),
             Some(l) => {
+                if l.key != t.key {
+                    out.push(match &t.key {
+                        Some(k) => format!("The key of table \"{}\" is set to {}{}. No two rows may share it. The approval is refused while rows do.", t.name, k.fields.join(" + "), if k.case_fold { " (case ignored)" } else { "" }),
+                        None => format!("The key of table \"{}\" is removed.", t.name),
+                    });
+                }
                 for f in &t.fields {
                     match l.fields.iter().find(|x| x.name == f.name) {
                         None if l.retired_fields.iter().any(|x| x.name == f.name) => {
@@ -1424,6 +1430,8 @@ pub fn decide_as(caller: &AuthUser, proposal_id: &str, decision: &str, rationale
             match repo.approve_proposal(id, &caller.eppn, rationale, &stored, other_person, flow_final.clone()).map_err(|e| match e {
                 // The approval would start more background work than the person may have. Nothing was kept.
                 crate::repository::RepositoryError::Quota(message) => ServiceError::QuotaExceeded(message),
+                // A key cannot be set while records share one. The steward is told which, and the proposal stays pending.
+                crate::repository::RepositoryError::KeyDuplicates(message) => ServiceError::ConstraintViolated(message),
                 other => ServiceError::Internal(format!("The approval was not kept: {other}")),
             })? {
                 Approval::Approved(_) => {
