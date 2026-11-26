@@ -22,7 +22,7 @@ const ADMIN: &str = "jordan.lee@state.edu";
 
 fn table(id: &str) -> AppTable {
     AppTable {
-        retired_fields: Vec::new(),
+        retired_fields: Vec::new(), key: None,
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),

@@ -2,7 +2,7 @@
 //! back. The real schema is exercised by the server's own tests. These show each function does what it says.
 
 use postgres::{Client, NoTls, Transaction};
-use scaffoldry_data::{index, labels, records};
+use scaffoldry_data::{index, keys, labels, records};
 use serde_json::json;
 
 const URL: &str = "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry";
@@ -20,7 +20,10 @@ fn shapes(tx: &mut Transaction<'_>) {
            num float8, txt text, ts timestamptz, ord int2 NOT NULL, PRIMARY KEY (record_id, field, ord)) ON COMMIT DROP;
          CREATE TEMP TABLE data_labels (app_slug text NOT NULL, table_id text NOT NULL, field text NOT NULL, ferpa_sensitive boolean NOT NULL, \
            note text NOT NULL, set_by text NOT NULL, categories text[] NOT NULL DEFAULT '{}', set_at timestamptz NOT NULL DEFAULT NOW(), \
-           PRIMARY KEY (app_slug, table_id, field)) ON COMMIT DROP;",
+           PRIMARY KEY (app_slug, table_id, field)) ON COMMIT DROP;
+         CREATE TEMP TABLE datasets (id text PRIMARY KEY, app_slug text NOT NULL, table_id text NOT NULL, key_spec jsonb, UNIQUE (app_slug, table_id)) ON COMMIT DROP;
+         CREATE TEMP TABLE record_keys (app_slug text NOT NULL, table_id text NOT NULL, key_text text NOT NULL, record_id text NOT NULL, \
+           CONSTRAINT uq_record_keys UNIQUE (app_slug, table_id, key_text), CONSTRAINT uq_record_keys_record UNIQUE (record_id)) ON COMMIT DROP;",
     )
     .expect("temporary tables");
 }
@@ -100,4 +103,81 @@ fn labels_are_set_listed_given_a_category_and_removed() {
     assert_eq!((all[1].field.as_str(), all[1].ferpa_sensitive, all[1].categories.clone()), ("ssn", true, vec!["pii".to_string()]));
     labels::remove(&mut tx, "app", "t1", "ssn").unwrap();
     assert_eq!(labels::list(&mut tx).unwrap().len(), 1);
+}
+
+#[test]
+fn a_key_text_is_trimmed_and_folded_by_rule_and_blank_when_a_field_is_empty() {
+    let fold = keys::KeySpec { fields: vec!["a".into(), "b".into()], case_fold: true };
+    let keep = keys::KeySpec { fields: vec!["a".into(), "b".into()], case_fold: false };
+    assert_eq!(keys::key_text(&json!({"a": "  Ab ", "b": 7}), &fold), keys::key_text(&json!({"a": "aB", "b": "7"}), &fold));
+    assert_ne!(keys::key_text(&json!({"a": "Ab", "b": 7}), &keep), keys::key_text(&json!({"a": "aB", "b": 7}), &keep));
+    assert_eq!(keys::key_text(&json!({"a": " x ", "b": "y"}), &keep), keys::key_text(&json!({"a": "x", "b": " y"}), &keep));
+    assert_ne!(keys::key_text(&json!({"a": "xy", "b": ""}), &keep), Some("xy".to_string()), "a blank field leaves no key");
+    for blank in [json!({"a": "x"}), json!({"a": "x", "b": null}), json!({"a": "x", "b": "   "})] {
+        assert_eq!(keys::key_text(&blank, &keep), None);
+    }
+    // Two fields do not run together: ("ab", "c") is not ("a", "bc").
+    assert_ne!(keys::key_text(&json!({"a": "ab", "b": "c"}), &keep), keys::key_text(&json!({"a": "a", "b": "bc"}), &keep));
+}
+
+#[test]
+fn a_key_is_unique_freed_by_clear_and_found_by_its_text() {
+    let mut c = Client::connect(&url(), NoTls).expect("the test server");
+    let mut tx = c.transaction().unwrap();
+    shapes(&mut tx);
+    tx.execute("INSERT INTO datasets (id, app_slug, table_id) VALUES ('ds1', 'app', 't1'), ('ds2', 'app', 't2')", &[]).unwrap();
+    assert!(keys::spec_for(&mut tx, "app", "t1").unwrap().is_none());
+    // A table with no key writes nothing.
+    keys::write(&mut tx, "app", "t1", "r1", &json!({"code": "A"})).unwrap();
+    assert_eq!(tx.query_one("SELECT count(*) FROM record_keys", &[]).unwrap().get::<_, i64>(0), 0);
+
+    let spec = keys::KeySpec { fields: vec!["code".into()], case_fold: true };
+    assert_eq!(keys::declare(&mut tx, "app", "t1", Some(&spec)).unwrap(), Ok(0));
+    assert_eq!(keys::spec_for(&mut tx, "app", "t1").unwrap(), Some(spec.clone()));
+    keys::write(&mut tx, "app", "t1", "r1", &json!({"code": " A1 "})).unwrap();
+    assert_eq!(keys::find(&mut tx, "app", "t1", "a1").unwrap(), Some("r1".to_string()));
+    assert_eq!(keys::find(&mut tx, "app", "t2", "a1").unwrap(), None, "another table has its own keys");
+    // The same record changes its key. Its old text is free.
+    keys::write(&mut tx, "app", "t1", "r1", &json!({"code": "B"})).unwrap();
+    assert_eq!(keys::find(&mut tx, "app", "t1", "a1").unwrap(), None);
+    // A second record cannot take it. The error is the unique violation and says nothing else.
+    let mut sp = tx.transaction().unwrap();
+    let err = keys::write(&mut sp, "app", "t1", "r2", &json!({"code": "b"})).unwrap_err();
+    assert!(keys::is_taken(&err), "{err}");
+    drop(sp);
+    keys::clear(&mut tx, "r1").unwrap();
+    keys::write(&mut tx, "app", "t1", "r2", &json!({"code": "b"})).unwrap();
+    // A record with no key text holds none.
+    keys::write(&mut tx, "app", "t1", "r2", &json!({"code": ""})).unwrap();
+    assert_eq!(keys::find(&mut tx, "app", "t1", "b").unwrap(), None);
+}
+
+#[test]
+fn declaring_a_key_keys_live_rows_and_lists_the_groups_that_share_one() {
+    let mut c = Client::connect(&url(), NoTls).expect("the test server");
+    let mut tx = c.transaction().unwrap();
+    shapes(&mut tx);
+    tx.execute("INSERT INTO datasets (id, app_slug, table_id) VALUES ('ds1', 'app', 't1')", &[]).unwrap();
+    let none = json!({});
+    for (id, code) in [("r1", "A"), ("r2", " a"), ("r3", "B"), ("r4", "b "), ("r5", "C"), ("r6", "a")] {
+        let data = json!({ "code": code });
+        records::insert(&mut tx, &new(id, &data, &none)).unwrap();
+    }
+    // r5 is in trash and holds no key. r7 is in another table.
+    records::soft_delete(&mut tx, "app", "r5", None, "ann", None).unwrap();
+    let spec = keys::KeySpec { fields: vec!["code".into()], case_fold: true };
+    let dups = keys::declare(&mut tx, "app", "t1", Some(&spec)).unwrap().unwrap_err();
+    assert_eq!(dups.groups, vec![vec!["r1".to_string(), "r2".to_string(), "r6".to_string()], vec!["r3".to_string(), "r4".to_string()]]);
+    assert_eq!(dups.more, 0);
+
+    // With the extras gone, the declaration keys the rest. A repeat of the same key does it again from scratch.
+    records::soft_delete(&mut tx, "app", "r2", None, "ann", None).unwrap();
+    records::soft_delete(&mut tx, "app", "r6", None, "ann", None).unwrap();
+    records::soft_delete(&mut tx, "app", "r4", None, "ann", None).unwrap();
+    assert_eq!(keys::declare(&mut tx, "app", "t1", Some(&spec)).unwrap(), Ok(2));
+    assert_eq!(keys::find(&mut tx, "app", "t1", "b").unwrap(), Some("r3".to_string()));
+    // Taking the key off frees all of them.
+    assert_eq!(keys::declare(&mut tx, "app", "t1", None).unwrap(), Ok(0));
+    assert!(keys::spec_for(&mut tx, "app", "t1").unwrap().is_none());
+    assert_eq!(tx.query_one("SELECT count(*) FROM record_keys", &[]).unwrap().get::<_, i64>(0), 0);
 }

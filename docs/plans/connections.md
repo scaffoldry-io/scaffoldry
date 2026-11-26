@@ -32,7 +32,7 @@ Today a "published dataset" holds a few sample rows typed into the code. This br
 
 - **One meaning of "dataset".** A dataset is a governed table with an owning function and unit. Its source is a sync (read-only, as in this brief) or local entry. Everything here describes the synced kind.
 - **Who owns the labels.** A Platform Admin sets the first labels at the connection, as decided here. After that the dataset's function steward owns them, and a change follows the label change process in `data-layer.md`.
-- **Sync matches on a declared key** (`record_keys`), and keeps each record's id stable. A key value that changes at the source is a key change with a history entry. It is never a delete and an insert, or links to the record would be orphaned.
+- **Sync matches on a declared key** (`record_keys`), and keeps each record's id stable. A key value that changes at the source is a key change with a history entry. It is never a delete and an insert, or links to the record would be orphaned. **Built in data layer phase 2b.** A record keeps the id made from its source key, and a changed key value is an update with a history entry. When no record has that id and the dataset's declared key finds another record, the row goes to that record. Two rows of one file with one key fail the run with `this key is already used`.
 - **The catalog.** A connected dataset appears in the catalog with its fields and synthetic samples. The catalog never shows its real rows.
 - **File feeds first, connectors later,** as phases 1 to 4 already order them.
 

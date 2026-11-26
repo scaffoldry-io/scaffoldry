@@ -119,6 +119,7 @@ const SCHEMA_0112: &str = include_str!("../../scaffoldry-core/migrations/0112_po
 const SCHEMA_0113: &str = include_str!("../../scaffoldry-core/migrations/0113_ledger_filters.sql");
 const SCHEMA_0114: &str = include_str!("../../scaffoldry-core/migrations/0114_datasets.sql");
 const SCHEMA_0115: &str = include_str!("../../scaffoldry-core/migrations/0115_session_toolsets.sql");
+const SCHEMA_0116: &str = include_str!("../../scaffoldry-core/migrations/0116_record_keys.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -139,7 +140,7 @@ const SCHEMA_0044: &str = include_str!("../../scaffoldry-core/migrations/0044_jo
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
     #[error("Database error: {0}")]
-    Db(#[from] postgres::Error),
+    Db(postgres::Error),
     #[error("Ledger verification error: {0}")]
     Ledger(#[from] LedgerError),
     #[error("Cryptographic tamper detected in ledger: {0}")]
@@ -162,6 +163,21 @@ pub enum RepositoryError {
     /// A limit on queued or running jobs. The text is a plain sentence for the person.
     #[error("{0}")]
     Quota(String),
+    /// A key was declared over rows that already share it. The text lists the groups, for the steward.
+    #[error("{0}")]
+    KeyDuplicates(String),
+}
+
+/// A second row taking a key is a constraint violation that says nothing about the row that holds it (data layer
+/// phase 2b). Any other database error stays one.
+impl From<postgres::Error> for RepositoryError {
+    fn from(e: postgres::Error) -> Self {
+        if scaffoldry_data::keys::is_taken(&e) {
+            RepositoryError::ConstraintViolation { message: scaffoldry_data::keys::TAKEN.to_string(), field: "key".to_string(), constraint: "unique_key".to_string() }
+        } else {
+            RepositoryError::Db(e)
+        }
+    }
 }
 
 type WorkerJob = Box<dyn FnOnce(&mut Client) + Send>;
@@ -394,6 +410,7 @@ pub(crate) fn insert_record_in_tx(
     apply_formulas(&mut rec.data, ctx);
     let table = table_id_of(&rec.data);
     scaffoldry_data::records::insert(tx, &new_record(&rec, &table))?;
+    scaffoldry_data::keys::write(tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
     crate::repository_index::write_record_index(
         tx,
         &rec.app_slug,
@@ -444,6 +461,7 @@ pub(crate) fn update_record_in_tx(
     }
     let new_table = table_id_of(&data);
     let next = scaffoldry_data::records::save_data(tx, slug, id, &data, &new_table)?;
+    scaffoldry_data::keys::write(tx, slug, &new_table, id, &data)?;
     crate::repository_index::write_record_index(
         tx,
         slug,
@@ -484,6 +502,7 @@ pub(crate) fn delete_record_in_tx(
     let moved = scaffoldry_data::records::soft_delete(tx, slug, id, expected_version, &ctx.actor, Some(batch))?;
     if let Some(scaffoldry_data::records::Deleted { data: old, version, table_id: table }) = moved {
         scaffoldry_data::index::delete_for_record(tx, id)?;
+        scaffoldry_data::keys::clear(tx, id)?;
         crate::repository_links::delete_record_links(tx, slug, id, ctx)?;
         let changes = diff_fields(Some(&old), None, &ctx.computed_fields);
         let action = ctx.action.unwrap_or("delete");
@@ -531,6 +550,7 @@ pub(crate) fn restore_record_in_tx(
     let Some(scaffoldry_data::records::Deleted { data, version, table_id: table }) = scaffoldry_data::records::restore(tx, slug, id)? else {
         return Ok(false);
     };
+    scaffoldry_data::keys::write(tx, slug, &table, id, &data)?;
     crate::repository_index::write_record_index(tx, slug, &table, id, &data, &ctx.index_fields)?;
     let action = ctx.action.unwrap_or("restore");
     write_history(
@@ -1209,6 +1229,7 @@ impl PostgresRepository {
                             ("0113_ledger_filters.sql", SCHEMA_0113),
                             ("0114_datasets.sql", SCHEMA_0114),
                             ("0115_session_toolsets.sql", SCHEMA_0115),
+                            ("0116_record_keys.sql", SCHEMA_0116),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -2335,6 +2356,7 @@ impl PostgresRepository {
             let old: Option<Value> = scaffoldry_data::records::data_for_update(&mut tx, &rec.id)?;
             let table = table_id_of(&rec.data);
             let version = scaffoldry_data::records::upsert(&mut tx, &new_record(&rec, &table))?;
+            scaffoldry_data::keys::write(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data)?;
             crate::repository_index::write_record_index(&mut tx, &rec.app_slug, &table, &rec.id, &rec.data, &ctx.index_fields)?;
             crate::repository_links::write_record_links(&mut tx, &rec.app_slug, &rec.id, old.as_ref(), &rec.data, &ctx)?;
             let changes = diff_fields(old.as_ref(), Some(&rec.data), &ctx.computed_fields);

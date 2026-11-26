@@ -5,7 +5,7 @@
 //! The second pass writes only what changed, 1,000 rows at a time. A source decides how it gives its rows twice: the
 //! database reads its query again inside one snapshot, and the HTTP source keeps what it fetched.
 
-use crate::connections::{key_source_of, last_good, sync_ctx, trash_removed, type_one, write_batch, Conn, Counts, Fault, RunOpts, Source, BATCH, SHRINK_FLOOR_PERCENT};
+use crate::connections::{key_source_of, last_good, sync_ctx, trash_removed, type_one, write_batch, Conn, Counts, Fault, RunOpts, Seen, Source, BATCH, SHRINK_FLOOR_PERCENT};
 use crate::state::SharedState;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -91,14 +91,14 @@ pub(crate) fn drive(state: &SharedState, conn: &Conn, opts: &RunOpts, feed: &mut
     // Second pass: the same rows, written in batches.
     let ctx = sync_ctx(state, conn);
     let ferpa = crate::connections::is_sensitive(&conn.sensitivity);
-    let (mut seen, mut keys) = (HashSet::with_capacity(total), HashSet::new());
+    let (seen, mut keys): (Seen, HashSet<String>) = (Default::default(), HashSet::new());
     let mut n = Counts { added: 0, changed: 0, removed: 0, unchanged: 0 };
     let mut pending: Vec<(String, Value)> = Vec::with_capacity(BATCH);
     let flush = |pending: &mut Vec<(String, Value)>, n: &mut Counts| -> Result<(), String> {
         if pending.is_empty() {
             return Ok(());
         }
-        let (a, c, u) = write_batch(state, conn, &ctx, std::mem::take(pending), ferpa).map_err(|e| format!("A batch could not be written: {e}"))?;
+        let (a, c, u) = write_batch(state, conn, &ctx, std::mem::take(pending), ferpa, &seen).map_err(|e| format!("A batch could not be written: {e}"))?;
         n.added += a;
         n.changed += c;
         n.unchanged += u;
@@ -110,7 +110,6 @@ pub(crate) fn drive(state: &SharedState, conn: &Conn, opts: &RunOpts, feed: &mut
             seen_rows += 1;
             let (key, data) = type_one(conn, &key_source, &as_text(&row), seen_rows + 1, &mut keys)?;
             let id = crate::connections::record_id(conn.id, &conn.dataset_table, &key);
-            seen.insert(id.clone());
             pending.push((id, Value::Object(data)));
             if pending.len() >= BATCH {
                 flush(&mut pending, &mut n)?;
@@ -119,6 +118,7 @@ pub(crate) fn drive(state: &SharedState, conn: &Conn, opts: &RunOpts, feed: &mut
         Ok(())
     })?;
     flush(&mut pending, &mut n)?;
+    let seen = std::mem::take(&mut *seen.lock().map_err(|_| "The run's list of records is lost".to_string())?);
     n.removed = trash_removed(state, conn, &ctx, seen).map_err(|e| format!("Removed rows could not be trashed: {e}"))?;
     Ok((Some(n), hash))
 }

@@ -756,6 +756,15 @@ pub struct TableRelationship {
     pub target_app: Option<String>,
 }
 
+/// The key of a table (data layer phase 2b): the fields whose text identifies a row to the business. Two live rows of the
+/// table cannot share a key. The text is trimmed, and case-folded when `case_fold` is set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableKey {
+    pub fields: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub case_fold: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppTable {
     pub id: String,
@@ -784,6 +793,9 @@ pub struct AppTable {
     /// them: a read, a write, the index and the formula graph see `fields` only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired_fields: Vec<FieldSpec>,
+    /// The declared key (data layer phase 2b). Setting or changing it is a manifest change, so a proposal carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<TableKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

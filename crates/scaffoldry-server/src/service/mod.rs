@@ -318,6 +318,15 @@ impl ServiceError {
         Self::Internal(msg.into())
     }
 
+    /// A failed record write. A key that is taken is a constraint violation that names no row (data layer phase 2b).
+    /// Anything else is an internal error.
+    pub fn from_write(e: crate::repository::RepositoryError) -> Self {
+        match e {
+            crate::repository::RepositoryError::ConstraintViolation { message, field, constraint } => Self::ConstraintViolation { message, field, constraint },
+            other => Self::Internal(other.to_string()),
+        }
+    }
+
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,

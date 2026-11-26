@@ -1,0 +1,37 @@
+{
+  "slug": "advising",
+  "title": "Advising",
+  "description": "Advising notes",
+  "organization_code": "ADV",
+  "department": "advising",
+  "views": [],
+  "tables": [
+    {
+      "id": "students",
+      "name": "Students",
+      "slug": "students",
+      "key": {
+        "fields": [
+          "student_number"
+        ],
+        "case_fold": true
+      },
+      "fields": [
+        {
+          "name": "student_number",
+          "label": "Student number",
+          "field_type": "Text",
+          "required": true,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "name",
+          "label": "Name",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": false
+        }
+      ]
+    }
+  ]
+}
