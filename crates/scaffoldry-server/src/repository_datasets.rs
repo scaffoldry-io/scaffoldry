@@ -16,7 +16,23 @@ pub fn ensure_datasets_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest
         &[&m.slug, &tables],
     )?;
     sync_keys_in_tx(tx, m)?;
-    sync_units_in_tx(tx, m)
+    sync_units_in_tx(tx, m)?;
+    sync_audience_in_tx(tx, m)
+}
+
+/// The audience fields each table declares are the ones its dataset holds (data layer phase 3b). A table whose policy is new or changed
+/// has the rows of `record_audience` rebuilt from the live records, so access follows the policy from the moment it is approved. A table
+/// that declares what its dataset already holds is not touched, and a table that declares none costs one read.
+fn sync_audience_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest) -> Result<(), RepositoryError> {
+    use scaffoldry_data::audience::{declare, spec_for, AudienceSpec};
+    for table in &m.tables {
+        let want = serde_json::to_value(&table.audience).ok().and_then(|v| AudienceSpec::from_json(&v));
+        if spec_for(tx, &m.slug, &table.id)? == want {
+            continue;
+        }
+        declare(tx, &m.slug, &table.id, want.as_ref())?;
+    }
+    Ok(())
 }
 
 /// The unit column each table names is the one its dataset holds (data layer phase 2c). A table whose column is new or

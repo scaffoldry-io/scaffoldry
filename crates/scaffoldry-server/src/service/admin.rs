@@ -58,6 +58,8 @@ pub const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/admin/datasets/{id}/classification"),
     ("PUT", "/admin/datasets/{id}/discoverability"),
     ("PUT", "/admin/datasets/{id}/label-floor"),
+    ("GET", "/admin/people/{eppn}/conditions"),
+    ("PUT", "/admin/people/{eppn}/conditions/{id}"),
     ("GET", "/admin/guests"),
     ("POST", "/admin/guests/forms/{id}/close"),
     ("POST", "/admin/guests/forms/{id}/open"),

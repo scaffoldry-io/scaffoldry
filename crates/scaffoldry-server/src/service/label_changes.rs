@@ -169,7 +169,7 @@ fn ask_of(change: &Change, row: &CatalogRow, state: &SharedState) -> Result<Ask,
 /// A category that protects: marked protected, or carrying a requirement. One that settings no longer define is held to protect, as the
 /// rule for removing a tag holds it.
 fn protective(id: &str, cats: &[Category]) -> bool {
-    cats.iter().find(|c| c.id == id).is_none_or(|c| c.protected || !c.requires.is_empty())
+    cats.iter().find(|c| c.id == id).is_none_or(|c| c.protected || c.has_requirement())
 }
 
 /// Whether the change takes protection away: it lowers the floor (any category leaves it), or it removes a protective tag.
@@ -940,7 +940,7 @@ mod tests {
     }
 
     fn cat(id: &str, protected: bool) -> Category {
-        Category { id: id.to_string(), name: id.to_string(), source: String::new(), protected, detectors: vec![], default_mask: Default::default(), requires: vec![] }
+        Category { id: id.to_string(), name: id.to_string(), source: String::new(), protected, detectors: vec![], default_mask: Default::default(), requires: vec![], conditions: vec![] }
     }
 
     #[test]

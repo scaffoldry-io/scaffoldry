@@ -9,7 +9,7 @@ use serde_json::json;
 use std::collections::BTreeSet;
 
 fn category(id: &str, protected: bool) -> Category {
-    Category { id: id.to_string(), name: id.to_string(), source: String::new(), protected, detectors: vec![], default_mask: Default::default(), requires: vec![] }
+    Category { id: id.to_string(), name: id.to_string(), source: String::new(), protected, detectors: vec![], default_mask: Default::default(), requires: vec![], conditions: vec![] }
 }
 
 fn field(ids: &[&str], protected: bool) -> Sensitivity {

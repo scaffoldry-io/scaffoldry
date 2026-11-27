@@ -142,6 +142,42 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
         if table.unit_required && table.unit_field.is_none() {
             problems.push(format!("table '{}': unit_required needs a unit column, and the table names none", table.id));
         }
+        if table.audience.len() > crate::MAX_AUDIENCE_FIELDS {
+            problems.push(format!("table '{}': at most {} audience fields, this one names {}", table.id, crate::MAX_AUDIENCE_FIELDS, table.audience.len()));
+        }
+        let mut audience_seen = HashSet::new();
+        for rule in &table.audience {
+            if !audience_seen.insert(rule.field.as_str()) {
+                problems.push(format!("table '{}': the audience names field '{}' twice", table.id, rule.field));
+            }
+            match table.fields.iter().find(|f| f.name == rule.field) {
+                None => problems.push(format!("table '{}': the audience names field '{}', which the table does not have", table.id, rule.field)),
+                Some(f) if !matches!(f.field_type, FieldType::Text | FieldType::Collaborator { .. } | FieldType::Unit) => {
+                    problems.push(format!("table '{}': the audience field '{}' must be a Text, Collaborator or Unit field", table.id, rule.field));
+                }
+                Some(_) => {}
+            }
+            if rule.fields.is_empty() {
+                problems.push(format!("table '{}': the audience field '{}' lists no fields, so it grants nothing", table.id, rule.field));
+            }
+            let mut listed = HashSet::new();
+            for name in &rule.fields {
+                if !listed.insert(name.as_str()) {
+                    problems.push(format!("table '{}': the audience field '{}' lists field '{name}' twice", table.id, rule.field));
+                }
+                match table.fields.iter().find(|f| f.name == *name) {
+                    None => problems.push(format!("table '{}': the audience field '{}' lists field '{name}', which the table does not have", table.id, rule.field)),
+                    Some(f) if rule.grants == crate::AudienceGrant::Write && f.field_type.is_computed() => {
+                        problems.push(format!("table '{}': the audience field '{}' grants write on '{name}', which is computed", table.id, rule.field));
+                    }
+                    // A person who could write an audience field could name anyone else, who would then read the row.
+                    Some(_) if rule.grants == crate::AudienceGrant::Write && table.audience.iter().any(|a| a.field == *name) => {
+                        problems.push(format!("table '{}': the audience field '{}' grants write on '{name}', which is an audience field", table.id, rule.field));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
         for (hierarchy, field) in &table.row_place {
             // A hierarchy of units places a row by a Unit field of that hierarchy. A hierarchy of people places it by a
             // Collaborator field, because the people a unit holds are the ones its reach names.

@@ -104,7 +104,7 @@ fn manifest(slug: &str, many_indexed: bool) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
-            retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
+            retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false, audience: Vec::new(),
             id: "students".to_string(),
             name: "students".to_string(),
             slug: "students".to_string(),

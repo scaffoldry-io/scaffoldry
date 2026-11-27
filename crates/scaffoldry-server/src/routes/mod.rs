@@ -19,6 +19,7 @@ pub mod auth;
 pub mod content;
 pub mod data_governance;
 pub mod label_changes;
+pub mod audience;
 pub mod row_shares;
 pub mod policy_admin;
 pub mod datasets;
@@ -113,6 +114,7 @@ pub fn api_router(state: SharedState) -> Router {
         .merge(data_governance::router())
         .merge(label_changes::router())
         .merge(row_shares::router())
+        .merge(audience::router())
         .merge(policy_admin::router())
         .merge(content::router())
         .merge(link_options::router())

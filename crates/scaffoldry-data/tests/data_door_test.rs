@@ -2,7 +2,7 @@
 //! back. The real schema is exercised by the server's own tests. These show each function does what it says.
 
 use postgres::{Client, NoTls, Transaction};
-use scaffoldry_data::{index, keys, labels, records, shares};
+use scaffoldry_data::{audience, index, keys, labels, records, shares};
 use serde_json::json;
 
 const URL: &str = "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry";
@@ -21,7 +21,9 @@ fn shapes(tx: &mut Transaction<'_>) {
          CREATE TEMP TABLE data_labels (app_slug text NOT NULL, table_id text NOT NULL, field text NOT NULL, ferpa_sensitive boolean NOT NULL, \
            note text NOT NULL, set_by text NOT NULL, categories text[] NOT NULL DEFAULT '{}', set_at timestamptz NOT NULL DEFAULT NOW(), \
            PRIMARY KEY (app_slug, table_id, field)) ON COMMIT DROP;
-         CREATE TEMP TABLE datasets (id text PRIMARY KEY, app_slug text NOT NULL, table_id text NOT NULL, key_spec jsonb, UNIQUE (app_slug, table_id)) ON COMMIT DROP;
+         CREATE TEMP TABLE datasets (id text PRIMARY KEY, app_slug text NOT NULL, table_id text NOT NULL, key_spec jsonb, audience_spec jsonb, UNIQUE (app_slug, table_id)) ON COMMIT DROP;
+         CREATE TEMP TABLE record_audience (app_slug text NOT NULL, table_id text NOT NULL, record_id text NOT NULL, field text NOT NULL, kind text NOT NULL, principal text NOT NULL, \
+           accepted boolean NOT NULL DEFAULT TRUE, accepted_by text, accepted_at timestamptz, PRIMARY KEY (record_id, field, principal)) ON COMMIT DROP;
          CREATE TEMP TABLE record_keys (app_slug text NOT NULL, table_id text NOT NULL, key_text text NOT NULL, record_id text NOT NULL, \
            CONSTRAINT uq_record_keys UNIQUE (app_slug, table_id, key_text), CONSTRAINT uq_record_keys_record UNIQUE (record_id)) ON COMMIT DROP;",
     )
@@ -242,4 +244,56 @@ fn a_share_is_live_from_its_approval_to_its_date_and_the_lookup_follows_it() {
     assert_eq!(shares::unnotified(&mut tx, 10).unwrap().len(), 1);
     shares::mark_notified(&mut tx, id).unwrap();
     assert!(shares::unnotified(&mut tx, 10).unwrap().is_empty());
+}
+
+#[test]
+fn audience_rows_follow_the_record_and_a_unit_waits_until_it_is_accepted() {
+    let mut c = Client::connect(&url(), NoTls).expect("the test server");
+    let mut tx = c.transaction().unwrap();
+    shapes(&mut tx);
+    tx.execute("INSERT INTO datasets (id, app_slug, table_id) VALUES ('ds', 'app', 't1')", &[]).unwrap();
+    let unit = uuid::Uuid::from_u128(5);
+    let spec = audience::AudienceSpec::from_json(&json!([{ "field": "who", "grants": "read", "fields": ["a"], "unit_acceptance": true }])).unwrap();
+    let none = json!({});
+    for id in ["r1", "r2"] {
+        records::insert(&mut tx, &new(id, &json!({ "a": 1 }), &none)).unwrap();
+    }
+    let me = vec!["ann@x.edu".to_string(), unit.to_string()];
+    let ids = vec!["r1".to_string(), "r2".to_string()];
+
+    // A person is read at once. A unit waits.
+    audience::write_with(&mut tx, Some(&spec), "app", "t1", "r1", &json!({ "who": ["Ann@X.edu", unit.to_string()] })).unwrap();
+    audience::write_with(&mut tx, Some(&spec), "app", "t1", "r2", &json!({ "who": "bob@x.edu" })).unwrap();
+    assert_eq!(audience::named_in(&mut tx, "app", &ids, &me).unwrap(), vec![("r1".to_string(), "who".to_string(), "t1".to_string())], "the person, and not the unit that waits");
+    let waiting = audience::waiting(&mut tx, "app", "t1", 10).unwrap();
+    assert_eq!(waiting, vec![audience::Waiting { record_id: "r1".into(), field: "who".into(), unit }]);
+    assert!(audience::names_unit(&mut tx, "app", "t1", "r1", unit).unwrap() && !audience::names_unit(&mut tx, "app", "t1", "r2", unit).unwrap());
+
+    // The unit is accepted once. A later write that keeps the name keeps the acceptance, and a name that is gone loses its row.
+    assert_eq!(audience::waiting_fields(&mut tx, "r1", unit).unwrap(), vec!["who".to_string()]);
+    assert_eq!(audience::accept(&mut tx, "r1", unit, "Sam@X.edu").unwrap(), 1);
+    assert_eq!(audience::accept(&mut tx, "r1", unit, "sam@x.edu").unwrap(), 0, "nothing waits any more");
+    audience::write_with(&mut tx, Some(&spec), "app", "t1", "r1", &json!({ "who": [unit.to_string()] })).unwrap();
+    let found = audience::named_in(&mut tx, "app", &ids, &me).unwrap();
+    assert_eq!(found.len(), 1, "the unit is read now, and ann is gone: {found:?}");
+    let by: String = tx.query_one("SELECT accepted_by FROM record_audience WHERE record_id = 'r1' AND principal = $1", &[&unit.to_string()]).unwrap().get(0);
+    assert_eq!(by, "sam@x.edu");
+    audience::write_with(&mut tx, Some(&spec), "app", "t1", "r1", &json!({ "who": unit.to_string() })).unwrap();
+    audience::write_with(&mut tx, None, "app", "t1", "r2", &json!({ "who": "bob@x.edu" })).unwrap();
+    assert!(audience::named_in(&mut tx, "app", &ids, &me).unwrap().iter().all(|(r, _, _)| r == "r1"), "a table with no policy writes no rows");
+
+    // Declaring a policy rebuilds the rows of the live records, and taking it away removes them.
+    tx.execute("UPDATE dataset_records SET data = '{\"who\": \"cat@x.edu\"}' WHERE id = 'r2'", &[]).unwrap();
+    assert_eq!(audience::declare(&mut tx, "app", "t1", Some(&spec)).unwrap(), 1);
+    assert_eq!(audience::spec_for(&mut tx, "app", "t1").unwrap(), Some(spec.clone()));
+    assert_eq!(audience::named_in(&mut tx, "app", &ids, &["cat@x.edu".to_string()]).unwrap().len(), 1);
+    assert_eq!(audience::declare(&mut tx, "app", "t1", None).unwrap(), 0);
+    assert_eq!(tx.query_one("SELECT count(*) FROM record_audience", &[]).unwrap().get::<_, i64>(0), 0);
+    assert_eq!(audience::spec_for(&mut tx, "app", "t1").unwrap(), None);
+
+    // The statement the read adds names the principals, the fields and the app, and reads only accepted rows.
+    let sql = audience::set_sql("$1", "$2", "$3::text[]", "$4::text[]");
+    assert!(sql.contains("ra.accepted") && sql.contains("ra.principal = ANY($3::text[])"));
+    assert!(audience::probe_sql("r.id", "$1", "$2", "$3", "$4").contains("ra.record_id = r.id"));
+    audience::delete_for_records(&mut tx, &ids).unwrap();
 }

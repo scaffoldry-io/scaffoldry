@@ -154,7 +154,7 @@ fn views_pages_and_links_must_point_at_things_that_exist() {
     courses_link.link_target_table = Some("courses".to_string());
     m.tables[0].fields.push(courses_link);
     m.tables.push(AppTable {
-        retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
+        retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false, audience: Vec::new(),
         id: "courses".into(),
         name: "Courses".into(),
         slug: "courses".into(),
@@ -228,4 +228,40 @@ fn a_row_place_may_name_a_collaborator_field_and_not_a_text_field() {
     m.tables[0].row_place.insert("supervisory".to_string(), "note".to_string());
     let problems = validate_manifest(&m).unwrap_err();
     assert!(problems.iter().any(|p| p.contains("row place") && p.contains("note")), "{problems:?}");
+}
+
+// Data layer phase 3b: the audience fields of a table.
+fn with_audience(rules: serde_json::Value) -> AppManifest {
+    let mut m: AppManifest = serde_json::from_str(include_str!("fixtures/manifests/valid/table-audience.json")).unwrap();
+    m.tables[0].audience = serde_json::from_value(rules).unwrap();
+    m
+}
+
+#[test]
+fn an_audience_names_fields_of_its_own_table_and_grants_write_only_where_a_person_can() {
+    let ok = with_audience(serde_json::json!([{ "field": "advisor", "grants": "write", "fields": ["name"] }]));
+    assert!(validate_manifest(&ok).is_ok());
+    let problems = |rules: serde_json::Value| validate_manifest(&with_audience(rules)).unwrap_err();
+    assert!(problems(serde_json::json!([{ "field": "ghost", "fields": ["name"] }])).iter().any(|p| p.contains("'ghost'")), "an audience field the table does not have");
+    assert!(problems(serde_json::json!([{ "field": "advisor", "fields": ["ghost"] }])).iter().any(|p| p.contains("'ghost'")), "a granted field the table does not have");
+    assert!(problems(serde_json::json!([{ "field": "name", "fields": ["name"] }, { "field": "name", "fields": ["name"] }])).iter().any(|p| p.contains("twice")), "the same field twice");
+    let mut m = with_audience(serde_json::json!([{ "field": "advisor", "grants": "write", "fields": ["total"] }]));
+    m.tables[0].fields.push(FieldSpec::simple("total", "Total", FieldType::Formula, false, false));
+    assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("computed")), "write on a computed field");
+    let mut m = with_audience(serde_json::json!([{ "field": "gpa", "fields": ["name"] }]));
+    m.tables[0].fields.push(FieldSpec::simple("gpa", "GPA", FieldType::Number, false, false));
+    assert!(validate_manifest(&m).unwrap_err().iter().any(|p| p.contains("Text, Collaborator or Unit")), "a Number field names nobody");
+    let nine: Vec<serde_json::Value> = (0..9).map(|i| serde_json::json!({ "field": format!("a{i}"), "fields": ["name"] })).collect();
+    assert!(problems(serde_json::Value::Array(nine)).iter().any(|p| p.contains("at most")), "too many audience fields");
+}
+
+#[test]
+fn a_named_person_may_not_write_an_audience_field_so_a_name_never_adds_more_names() {
+    // Writing the field that names you would let you name anyone else, who would then read the row.
+    let own = with_audience(serde_json::json!([{ "field": "advisor", "grants": "write", "fields": ["name", "advisor"] }]));
+    assert!(validate_manifest(&own).unwrap_err().iter().any(|p| p.contains("audience field 'advisor'") && p.contains("grants write on 'advisor'")), "its own field");
+    let other = with_audience(serde_json::json!([{ "field": "advisor", "grants": "write", "fields": ["partner"] }, { "field": "partner", "fields": ["name"] }]));
+    assert!(validate_manifest(&other).unwrap_err().iter().any(|p| p.contains("grants write on 'partner'")), "another audience field");
+    // Reading an audience field is fine: it shows who else the row names.
+    assert!(validate_manifest(&with_audience(serde_json::json!([{ "field": "advisor", "fields": ["name", "advisor"] }]))).is_ok());
 }

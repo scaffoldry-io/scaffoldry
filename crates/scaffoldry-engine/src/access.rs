@@ -281,6 +281,60 @@ pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str,
     Ok((sql, c.params))
 }
 
+/// A way into a scope that is not a test of the index, such as "the record names one of my principals" (data layer phase 3b). The caller
+/// gives it the number its first placeholder takes, and gets back a fragment and the parameters it binds, in order.
+pub type Way<'a> = &'a dyn Fn(usize) -> (String, Vec<Param>);
+
+/// `to_sql` with one more way in. The rows the predicate selects and the rows `way` selects are one set. `way` must return a
+/// `SELECT x AS id ...` over record ids. Its parameters are bound after the predicate's. The caller bound the app and the table first, so
+/// `way` may refer to them by the first two placeholders.
+///
+/// With `as_union`, the two are one set: `id IN ((a) UNION (b))`. That reads well when both are small, because the planner joins the few ids
+/// to the records. With it off, the statement is `id IN (a) OR id IN (b)`. That reads a large set better: the planner may still run it in
+/// parallel and never spills a union of a quarter of the table to disk (measured in `docs/plans/data-layer.md`, phase 3b).
+#[allow(clippy::too_many_arguments)]
+pub fn to_sql_or(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str, table_id: &str, first_param: usize, way: Way<'_>, as_union: bool) -> Result<(String, Vec<Param>), CompileError> {
+    check(pred)?;
+    let mut c = Compiler { indexed, params: vec![Param::Text(app_slug.to_string()), Param::Text(table_id.to_string())], first: first_param };
+    let set = c.pred(pred)?;
+    let (more, bound) = way(first_param + c.params.len());
+    c.params.extend(bound);
+    let sql = match (set, as_union) {
+        (Set::Pos(set), true) => format!("{id_expr} IN (({set}) UNION ({more}))"),
+        (Set::Pos(set), false) => format!("({id_expr} IN ({set}) OR {id_expr} IN ({more}))"),
+        (Set::Neg(set), _) => format!("({id_expr} NOT IN ({set}) OR {id_expr} IN ({more}))"),
+    };
+    Ok((sql, c.params))
+}
+
+/// The sets `probe_sets` finds, and the parameters they bind.
+pub type ProbeSets = (Vec<String>, Vec<Param>);
+
+/// The sets of record ids a predicate selects, one for each test, when it is one test or an OR of equality or membership tests (the shape
+/// `to_sql_probes` reads). The parameters are the app and the table, then each test's. `None` for any other shape. A caller that wants to
+/// know roughly how many records a predicate reaches counts these, with a limit.
+pub fn probe_sets(pred: &Pred, indexed: &[FieldSpec], app_slug: &str, table_id: &str, first_param: usize) -> Result<Option<ProbeSets>, CompileError> {
+    let parts: &[Pred] = match pred {
+        Pred::Or(parts) => parts,
+        Pred::Cmp { .. } => std::slice::from_ref(pred),
+        _ => return Ok(None),
+    };
+    if parts.is_empty() || !parts.iter().all(|p| matches!(p, Pred::Cmp { op: Op::Eq | Op::In, .. })) {
+        return Ok(None);
+    }
+    check(pred)?;
+    let mut c = Compiler { indexed, params: vec![Param::Text(app_slug.to_string()), Param::Text(table_id.to_string())], first: first_param };
+    let mut sets = Vec::with_capacity(parts.len());
+    for part in parts {
+        let Pred::Cmp { field, op, value } = part else { unreachable!("checked above") };
+        let Set::Pos(set) = c.cmp(field, *op, value)? else { unreachable!("an equality selects a positive set") };
+        if set != none() {
+            sets.push(set);
+        }
+    }
+    Ok(Some((sets, c.params)))
+}
+
 /// The same predicate as `to_sql`, for a statement that reads records in order and stops after a page. An OR of
 /// comparisons is probed record by record, so the page stops once it has enough matches. `to_sql` would build the union
 /// of the sets whole, sort it, and only then cut. `None` when the predicate is not an OR of equality or membership tests,
@@ -288,6 +342,11 @@ pub fn to_sql(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str,
 /// would be built whole and could not stop early. Do not use it for a statement that reads every match, such as a count: there the
 /// probes would scan the table.
 pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> Result<Option<(String, Vec<Param>)>, CompileError> {
+    to_sql_probes_or(pred, indexed, id_expr, app_slug, table_id, first_param, None)
+}
+
+/// `to_sql_probes` with one more probe, `way`, which must be a test of the record `id_expr` names, such as `EXISTS (... OFFSET 0)`.
+pub fn to_sql_probes_or(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug: &str, table_id: &str, first_param: usize, way: Option<Way<'_>>) -> Result<Option<(String, Vec<Param>)>, CompileError> {
     // One test, or an OR of them.
     let parts: &[Pred] = match pred {
         Pred::Or(parts) => parts,
@@ -307,6 +366,11 @@ pub fn to_sql_probes(pred: &Pred, indexed: &[FieldSpec], id_expr: &str, app_slug
         if set != none() {
             probes.push(format!("EXISTS ({set} AND i.record_id = {id_expr} OFFSET 0)"));
         }
+    }
+    if let Some(way) = way {
+        let (probe, bound) = way(first_param + c.params.len());
+        c.params.extend(bound);
+        probes.push(probe);
     }
     let sql = if probes.is_empty() { "FALSE".to_string() } else { format!("({})", probes.join(" OR ")) };
     Ok(Some((sql, c.params)))

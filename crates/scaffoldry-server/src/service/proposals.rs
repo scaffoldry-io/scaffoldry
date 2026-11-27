@@ -184,6 +184,18 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
                         format!("Table \"{}\" no longer requires a unit. A row that names none is read by the dataset's unit.", t.name)
                     });
                 }
+                if l.audience != t.audience {
+                    out.push(if t.audience.is_empty() {
+                        format!("The audience fields of table \"{}\" are removed. People they named stop reading its rows through them.", t.name)
+                    } else {
+                        let names: Vec<&str> = t.audience.iter().map(|a| a.field.as_str()).collect();
+                        format!(
+                            "Table \"{}\" names its audience in {}. A person a row names there reads that row, on the fields the policy lists, and writes it where the policy says write. A category's requirement still applies to them.",
+                            t.name,
+                            names.join(", ")
+                        )
+                    });
+                }
                 for f in &t.fields {
                     match l.fields.iter().find(|x| x.name == f.name) {
                         None if l.retired_fields.iter().any(|x| x.name == f.name) => {

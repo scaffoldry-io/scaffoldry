@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://scaffoldry.io/schema/sensitivity-settings.schema.json",
   "title": "SensitivitySettings",
-  "description": "The settings sensitivity.categories, sensitivity.detectors and sensitivity.notice_days, and the preset files that hold one category with its detectors. A category names detector ids that must exist. Ids are unique within their list.",
+  "description": "The settings sensitivity.categories, sensitivity.detectors, sensitivity.notice_days and sensitivity.conditions, and the preset files that hold one category with its detectors. A category names detector ids that must exist. Ids are unique within their list.",
   "$defs": {
     "id": {
       "type": "string",
@@ -53,6 +53,13 @@
           "items": { "$ref": "#/$defs/id" },
           "description": "The detectors whose matches signal this category. The content scan and the AI review both read this list, so it is the one mapping from patterns to categories."
         },
+        "conditions": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" },
+          "description": "Conditions a reader must hold, each an id from sensitivity.conditions. A condition holds while the reader's date for it has not passed. It is checked when the row is read, so a lapse withdraws access with no job. A category with conditions and no requires asks only the conditions."
+        },
         "requires": {
           "type": "array",
           "maxItems": 8,
@@ -92,6 +99,22 @@
       "properties": {
         "protected": { "$ref": "#/$defs/notice_class" },
         "other": { "$ref": "#/$defs/notice_class" }
+      }
+    },
+    {
+      "title": "sensitivity.conditions",
+      "type": "array",
+      "maxItems": 20,
+      "description": "The closed list of conditions an institution switches on, such as FERPA training. A person's record holds a date for each. Each has an owner, the position whose steward maintains it. There is no expression language.",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "owner"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "owner": { "$ref": "#/$defs/id", "description": "A position key, such as registrar." }
+        }
       }
     },
     {

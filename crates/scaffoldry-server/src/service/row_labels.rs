@@ -40,16 +40,26 @@ fn storage(e: crate::repository::RepositoryError) -> ServiceError {
 ///
 /// Returns the covers every row needs, and for each other category with a requirement the cover a row needs when it is tagged.
 pub fn needs(categories: &[Category], fixed: &BTreeSet<String>, held: &[(String, Uuid)]) -> (Vec<Cover>, Vec<(String, Cover)>) {
+    needs_when(categories, fixed, held, &|_| true)
+}
+
+/// `needs`, for a reader whose conditions are known (data layer phase 3b). `conditions_met` says whether the reader holds every condition
+/// a category names. A reader who lacks one is covered by nobody for that category, whatever positions they hold, so the rows that carry it
+/// are closed to them. A category that names conditions and no position asks only the conditions.
+pub fn needs_when(categories: &[Category], fixed: &BTreeSet<String>, held: &[(String, Uuid)], conditions_met: &dyn Fn(&Category) -> bool) -> (Vec<Cover>, Vec<(String, Cover)>) {
     let (mut always, mut by_tag) = (Vec::new(), Vec::new());
-    for category in categories.iter().filter(|c| !c.requires.is_empty()) {
+    for category in categories.iter().filter(|c| c.has_requirement()) {
         let mut cover = Cover::default();
         let mut everywhere = false;
-        for requirement in &category.requires {
-            for (_, unit) in held.iter().filter(|(k, _)| *k == requirement.position) {
-                match requirement.reach {
-                    Reach::Anywhere => everywhere = true,
-                    Reach::Unit => cover.exact.push(*unit),
-                    Reach::UnitAndBelow => cover.below.push(*unit),
+        if conditions_met(category) {
+            everywhere = category.requires.is_empty();
+            for requirement in &category.requires {
+                for (_, unit) in held.iter().filter(|(k, _)| *k == requirement.position) {
+                    match requirement.reach {
+                        Reach::Anywhere => everywhere = true,
+                        Reach::Unit => cover.exact.push(*unit),
+                        Reach::UnitAndBelow => cover.below.push(*unit),
+                    }
                 }
             }
         }
@@ -69,19 +79,26 @@ pub fn needs(categories: &[Category], fixed: &BTreeSet<String>, held: &[(String,
     (always, by_tag)
 }
 
+/// Whether a person holds every condition a category names on `today`: each has a date on their record, and the date has not passed. The
+/// date is the last day it holds. A date that is not a date is not held. This is the whole check: a date comparison, with no job.
+pub fn conditions_hold(category: &Category, dates: &std::collections::BTreeMap<String, String>, today: chrono::NaiveDate) -> bool {
+    category.conditions.iter().all(|id| dates.get(id).and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).is_some_and(|d| d >= today))
+}
+
 /// True when settings hold any requirement. A server with none gates nothing, and does no other work to find out.
 pub fn in_force(state: &SharedState) -> bool {
-    state.sensitivity_categories().iter().any(|c| !c.requires.is_empty())
+    state.sensitivity_categories().iter().any(Category::has_requirement)
 }
 
 /// The positions a person holds today, each with the unit it is held at. A holding outside its dates is not counted. A holding that
 /// cannot be read counts as none, so the gate closes.
 fn held_by(eppn: &str, state: &SharedState) -> Vec<(String, Uuid)> {
+    held_in(state.repository.holdings_of(eppn).unwrap_or_default())
+}
+
+fn held_in(holdings: Vec<(scaffoldry_core::reach::Holding, String)>) -> Vec<(String, Uuid)> {
     let now = chrono::Utc::now().timestamp();
-    state
-        .repository
-        .holdings_of(eppn)
-        .unwrap_or_default()
+    holdings
         .into_iter()
         .filter(|(h, _)| h.effective.is_none_or(|e| e <= now) && h.end.is_none_or(|e| e >= now))
         .filter_map(|(h, _)| h.position_key.map(|k| (k, h.unit)))
@@ -102,7 +119,17 @@ fn gate_for(who: &AuthUser, app_slug: &str, table: &str, categories: &[Category]
         return None;
     }
     let waived = waived_for(&who.eppn, app_slug, table, state);
-    gate_waiving(&held_by(&who.eppn, state), app_slug, table, None, categories, &waived, state)
+    // A reader's conditions sit on their person record, and the positions they hold are read from the same person. When settings name no
+    // condition the positions are read as they always were. When they do, one read gives both, so a check is a date comparison and no more.
+    if categories.iter().any(|c| !c.conditions.is_empty()) {
+        let (held, dates) = match state.repository.standing_of(&who.eppn) {
+            Ok((holdings, dates)) => (held_in(holdings), dates),
+            // A record that cannot be read holds nothing, so the gate closes.
+            Err(_) => (Vec::new(), Default::default()),
+        };
+        return gate_waiving(&held, app_slug, table, None, categories, &waived, Some(&dates), state);
+    }
+    gate_waiving(&held_by(&who.eppn, state), app_slug, table, None, categories, &waived, None, state)
 }
 
 /// The categories a person's approved exceptions waive on this table (data layer phase 6b). An exception is a grant with an expiry that a
@@ -123,12 +150,16 @@ pub fn table_id_of(app_slug: &str, table: &str, state: &SharedState) -> String {
 /// judge by, and `None` reads the stored one. A change's evaluation passes the floor as it would be, so it asks the same question
 /// the gate asks, of a world that does not exist yet.
 pub fn gate_over(held: &[(String, Uuid)], app_slug: &str, table: &str, floor: Option<Vec<String>>, categories: &[Category], state: &SharedState) -> Option<Gate> {
-    gate_waiving(held, app_slug, table, floor, categories, &[], state)
+    gate_waiving(held, app_slug, table, floor, categories, &[], None, state)
 }
 
 /// The same gate for a reader whose exceptions waive the categories in `waived`: the requirement of those categories is not asked of this
 /// reader, on the rows that carry them. The floor and the tags are read as they are, so nothing else about the row changes.
-pub fn gate_waiving(held: &[(String, Uuid)], app_slug: &str, table: &str, floor: Option<Vec<String>>, categories: &[Category], waived: &[String], state: &SharedState) -> Option<Gate> {
+///
+/// `conditions` is the reader's map from condition to last day (data layer phase 3b). `None` asks no condition, which is how an evaluation of
+/// a change reads the world: it names positions, and a person's training is not part of what a label change decides.
+#[allow(clippy::too_many_arguments)]
+pub fn gate_waiving(held: &[(String, Uuid)], app_slug: &str, table: &str, floor: Option<Vec<String>>, categories: &[Category], waived: &[String], conditions: Option<&std::collections::BTreeMap<String, String>>, state: &SharedState) -> Option<Gate> {
     let stored = crate::service::preview::stored_slug(app_slug);
     let (table_id, unit_field, unit_required) = {
         let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
@@ -144,11 +175,13 @@ pub fn gate_waiving(held: &[(String, Uuid)], app_slug: &str, table: &str, floor:
         effective_label(floor.as_deref().unwrap_or_default(), &[], &sens, categories).categories
     };
     let asked: Vec<Category>;
+    let today = chrono::Utc::now().date_naive();
+    let met = |c: &Category| conditions.is_none_or(|dates| conditions_hold(c, dates, today));
     let (mut always, by_tag) = if waived.is_empty() {
-        needs(categories, &fixed, held)
+        needs_when(categories, &fixed, held, &met)
     } else {
         asked = categories.iter().filter(|c| !waived.contains(&c.id)).cloned().collect();
-        needs(&asked, &fixed, held)
+        needs_when(&asked, &fixed, held, &met)
     };
     if floor.is_none() {
         always.push(Cover::default());
@@ -170,7 +203,7 @@ pub fn gate_waiving(held: &[(String, Uuid)], app_slug: &str, table: &str, floor:
 /// viewer's. The row is read only when every one admits it.
 pub fn gates_of(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> Vec<Gate> {
     let categories = state.sensitivity_categories();
-    if !categories.iter().any(|c| !c.requires.is_empty()) {
+    if !categories.iter().any(Category::has_requirement) {
         return Vec::new();
     }
     let mut out: Vec<Gate> = gate_for(caller, app_slug, table, &categories, state).into_iter().collect();
@@ -348,6 +381,7 @@ mod tests {
             detectors: vec![],
             default_mask: Default::default(),
             requires: requires.into_iter().map(|(p, r)| Requirement { position: p.to_string(), reach: r }).collect(),
+            conditions: vec![],
         }
     }
 

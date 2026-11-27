@@ -32,6 +32,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "sensitivity.categories",
     "sensitivity.detectors",
     "sensitivity.notice_days",
+    "sensitivity.conditions",
     "platform.timezone",
     "files.max_mb",
     "files.app_quota_mb",
@@ -127,6 +128,8 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         // The shape of these two is checked in full, with a path, where the state is known.
         "sensitivity.detectors" => scaffoldry_engine::sensitivity::validate_detectors(value).is_ok(),
         "sensitivity.categories" => value.is_array(),
+        // The closed list of conditions (data layer phase 3b). A category names only ids on it.
+        "sensitivity.conditions" => scaffoldry_engine::sensitivity::validate_conditions(value).is_ok(),
         // The shortest notice of a scheduled label change, by class of category (data layer phase 6b).
         "sensitivity.notice_days" => crate::service::label_changes::schedule::valid_notice_days(value),
         _ => false,
@@ -148,8 +151,14 @@ fn stored(state: &SharedState, key: &str) -> Value {
 
 /// Checks a save of either sensitivity setting against the other, so the two never disagree.
 fn validate_sensitivity(state: &SharedState, key: &str, value: &Value) -> Result<(), ServiceError> {
-    use scaffoldry_engine::sensitivity::{check_references, validate_categories, validate_detectors};
-    if key == "sensitivity.detectors" {
+    use scaffoldry_engine::sensitivity::{check_conditions, check_references, validate_categories, validate_conditions, validate_detectors};
+    if key == "sensitivity.conditions" {
+        let listed = validate_conditions(value).map_err(|e| invalid_at(key, e))?;
+        // Every condition a stored category names must still be on the list after this save.
+        let current: Vec<scaffoldry_engine::sensitivity::Category> = serde_json::from_value(stored(state, "sensitivity.categories")).unwrap_or_default();
+        check_conditions(&current, &listed).map_err(|e| invalid_at("sensitivity.categories", e))?;
+        Ok(())
+    } else if key == "sensitivity.detectors" {
         let detectors = validate_detectors(value).map_err(|e| invalid_at(key, e))?;
         // Every detector a stored category names must still exist after this save.
         let current: Vec<scaffoldry_engine::sensitivity::Category> =
@@ -158,7 +167,10 @@ fn validate_sensitivity(state: &SharedState, key: &str, value: &Value) -> Result
         Ok(())
     } else {
         let detectors = validate_detectors(&stored(state, "sensitivity.detectors")).unwrap_or_default();
-        validate_categories(value, &detectors).map_err(|e| invalid_at(key, e))?;
+        let categories = validate_categories(value, &detectors).map_err(|e| invalid_at(key, e))?;
+        // A category names only conditions that settings list.
+        let listed = validate_conditions(&stored(state, "sensitivity.conditions")).unwrap_or_default();
+        check_conditions(&categories, &listed).map_err(|e| invalid_at(key, e))?;
         Ok(())
     }
 }
@@ -204,8 +216,8 @@ async fn put_setting(
             .into_response();
     }
 
-    // The two sensitivity settings are checked in full, and an error names its path.
-    if key == "sensitivity.categories" || key == "sensitivity.detectors" {
+    // The sensitivity settings are checked in full, and an error names its path.
+    if key == "sensitivity.categories" || key == "sensitivity.detectors" || key == "sensitivity.conditions" {
         if let Err(e) = validate_sensitivity(&state, &key, &payload) {
             return e.into_pair().into_response();
         }

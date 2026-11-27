@@ -113,7 +113,7 @@ async fn fixture() -> Fixture {
         ceds_mappings: Default::default(),
         tables: vec![
             AppTable {
-                retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
+                retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false, audience: Vec::new(),
                 id: "items".to_string(),
                 name: "Items".to_string(),
                 slug: "items".to_string(),

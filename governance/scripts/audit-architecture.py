@@ -96,7 +96,7 @@ def audit_repo_hygiene(root: Path) -> list[str]:
     return errors
 
 # The tables only the data crate (crates/scaffoldry-data) may read or write. See docs/plans/data-layer.md, "The boundary".
-DATA_DOOR_TABLES = ("dataset_records", "record_index", "record_keys", "data_labels", "label_changes", "row_shares", "row_share_rows")
+DATA_DOOR_TABLES = ("dataset_records", "record_index", "record_keys", "data_labels", "label_changes", "row_shares", "row_share_rows", "record_audience")
 DATA_DOOR_CRATE = "crates/scaffoldry-data/"
 # SQL text that reads or writes one of the tables. A bare word in prose or an identifier is not matched.
 DATA_DOOR_SQL = re.compile(
