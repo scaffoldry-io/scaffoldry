@@ -919,8 +919,8 @@ async fn label_change_propose(w: World) -> Outcome {
     ensure(floor.is_empty(), format!("a proposal changed the floor: {floor:?}"))
 }
 
-/// Data layer phase 6: a floor is raised, then A proposes lowering it. The proposer cannot approve. One second administrator approves
-/// on A and cannot approve again on B, which reads the approval from the database. A third completes it on B, and A reads the floor B set.
+/// Data layer phase 6: a floor is raised, then A proposes lowering it. The proposer cannot approve. A second administrator completes it
+/// on B, A refuses a further approval because it reads the decision from the database, and A reads the floor B set.
 async fn label_change_decide(w: World) -> Outcome {
     let slug = make_app(&w).await?;
     phi_category(&w);
@@ -933,12 +933,10 @@ async fn label_change_decide(w: World) -> Outcome {
     let (s, body) = w.wa("POST", &uri, ADMIN, Some(approve.clone())).await;
     ensure(s == StatusCode::FORBIDDEN, format!("the proposer may not approve a removal of protection: {s} {body}"))?;
     let (first, second) = (second_admin(&w).await?, second_admin(&w).await?);
-    let one = status(w.wa("POST", &uri, &first, Some(approve.clone())).await, StatusCode::OK, "A takes the first approval")?;
-    ensure(one["status"] == "Pending", format!("one approval does not complete it: {one}"))?;
-    let (s, body) = w.rb("POST", &uri, &first, Some(approve.clone())).await;
-    ensure(s == StatusCode::CONFLICT, format!("B knows the first approver has approved: {s} {body}"))?;
-    let done = status(w.rb("POST", &uri, &second, Some(approve)).await, StatusCode::OK, "B takes the second approval")?;
-    ensure(done["status"] == "Applied", format!("the second person completes it: {done}"))?;
+    let done = status(w.rb("POST", &uri, &first, Some(approve.clone())).await, StatusCode::OK, "B takes the approval")?;
+    ensure(done["status"] == "Applied", format!("a second person completes it: {done}"))?;
+    let (s, body) = w.wa("POST", &uri, &second, Some(approve)).await;
+    ensure(s == StatusCode::CONFLICT, format!("A knows the change was decided on B: {s} {body}"))?;
     let seen = status(w.wa("PUT", &format!("/api/v1/admin/datasets/{id}/label-floor"), ADMIN, Some(json!({ "floor": ["phi"], "reason": "Raised again." }))).await, StatusCode::OK, "A raises it again")?;
     ensure(seen["was"] == json!([]), format!("A reads the floor B set: {seen}"))
 }

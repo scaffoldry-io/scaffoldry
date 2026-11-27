@@ -6,8 +6,8 @@
 //! - **The evaluation** is built when it is asked for. It asks the phase 3 gate the same question twice, once of the world as it is and
 //!   once of the world as it would be, for each kind of reader. It never stores its answer.
 //! - **A decision** is made by the dataset's steward (the people who hold its `steward_position` at its unit or above), a Platform
-//!   Admin or a compliance officer. Raising protection needs one approval. Removing protection needs two, from two people, and
-//!   neither is the proposer. When the change would lock someone out of open work, the steward must say how to treat that work.
+//!   Admin or a compliance officer. Every change needs one approval. Removing protection takes two people: the
+//!   proposer, and an approver who is not the proposer. When the change would lock someone out of open work, the steward must say how to treat that work.
 //!   Approving applies the change through the phase 3 functions and writes one `DataLabelChanged` ledger entry that names the
 //!   proposer, the deciders and the finding.
 //!
@@ -180,12 +180,10 @@ fn removes_protection(ask: &Ask, cats: &[Category]) -> bool {
     }
 }
 
-fn approvals_needed(ask: &Ask, cats: &[Category]) -> usize {
-    if removes_protection(ask, cats) {
-        2
-    } else {
-        1
-    }
+/// Every change needs one approval. A change that removes protection takes two people: its proposer, and an approver who is not the
+/// proposer (`decide` refuses the proposer).
+fn approvals_needed(_ask: &Ask, _cats: &[Category]) -> usize {
+    1
 }
 
 /// The ask from a request body: the kind, and what it names, checked against the settings and the dataset. A body that names parts
@@ -607,7 +605,7 @@ fn undo_text(ask: &Ask, cats: &[Category]) -> (String, usize) {
         records: ask.records.clone(),
     };
     let needs = approvals_needed(&reverse, cats);
-    let how = if needs == 2 { "It takes protection away, so it needs two approvers, and neither is the person who proposes it" } else { "It raises protection, so one steward approves it" };
+    let how = if removes_protection(&reverse, cats) { "It takes protection away, so a steward who is not the person who proposes it approves it" } else { "It raises protection, so one steward approves it" };
     let step = match ask.kind {
         Kind::Floor => "Propose a floor change that sets the floor back to what it was",
         Kind::Tags => "Propose a tags change that does the opposite to the same rows",
@@ -795,7 +793,7 @@ fn outcome(id: Uuid, out: DecideOutcome, needs: usize, open_work: Option<String>
         DecideOutcome::NotPending(s) => Err(ServiceError::Conflict(format!("This change is {s}, so it cannot be decided now"))),
         DecideOutcome::Proposer => Err(ServiceError::forbidden("The person who proposed a change that removes protection cannot approve it. Two other people do")),
         DecideOutcome::Duplicate => Err(ServiceError::Conflict("You have approved this change already. A different person approves it next".to_string())),
-        DecideOutcome::Waiting { approvals } => Ok(json!({ "id": id, "status": "Pending", "approvals": approvals, "approvals_needed": needs, "next": "It removes protection, so a second approver, who is not the proposer or the first approver, completes it" })),
+        DecideOutcome::Waiting { approvals } => Ok(json!({ "id": id, "status": "Pending", "approvals": approvals, "approvals_needed": needs, "next": "Another approval completes it" })),
         DecideOutcome::Held { approvals } => Ok(json!({ "id": id, "status": "Approved", "approvals": approvals, "approvals_needed": needs, "open_work": open_work, "next": "It is held. It applies when the open work has ended: POST /data/label-changes/{id}/apply" })),
         DecideOutcome::Scheduled { approvals } => Ok(json!({ "id": id, "status": "Scheduled", "approvals": approvals, "approvals_needed": needs, "open_work": open_work })),
         DecideOutcome::Applied { done } => Ok(applied(id, &done, &open_work)),
@@ -804,8 +802,8 @@ fn outcome(id: Uuid, out: DecideOutcome, needs: usize, open_work: Option<String>
 
 /// `POST /data/label-changes/{id}/decide`. The body names `decision` (`approve`, `decline` or `change`) and a `reason`.
 ///
-/// - `approve` adds the caller's approval. Raising protection needs one. Removing protection needs two, from two people, and the
-///   proposer is neither. When the change would lock someone out of open work, `open_work` is required: `now`, or
+/// - `approve` adds the caller's approval. Each change needs one. When it removes protection, the approver is not the
+///   proposer, so two people decide it. When the change would lock someone out of open work, `open_work` is required: `now`, or
 ///   `new_work_only`, which holds the change until the work has ended. Nothing decides it for the steward.
 /// - `decline` closes it.
 /// - `change` replaces what it asks (`add`, `remove`, `records`, or `floor`) and takes back every approval.
@@ -837,8 +835,8 @@ pub fn decide(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) ->
             }
         }
         _ => {
-            if needs == 2 && change.proposed_by.eq_ignore_ascii_case(&caller.eppn) {
-                return Err(ServiceError::forbidden("The person who proposed a change that removes protection cannot approve it. Two other people do"));
+            if removes_protection(&ask, &cats) && change.proposed_by.eq_ignore_ascii_case(&caller.eppn) {
+                return Err(ServiceError::forbidden("The person who proposed a change that removes protection cannot approve it. Another steward does"));
             }
             // A date: the notice period is checked now, and the change is held for the date once the approvals are complete.
             let kept = change.effective_at.as_deref().filter(|_| change.status == "Pending");
@@ -944,14 +942,18 @@ mod tests {
     }
 
     #[test]
-    fn raising_needs_one_approver_and_removing_protection_needs_two() {
+    fn every_change_needs_one_approver_and_these_remove_protection() {
         let cats = [cat("phi", true), cat("open", false)];
-        assert_eq!(approvals_needed(&ask(Kind::Tags, &[], &[], &["phi"], &[]), &cats), 1);
-        assert_eq!(approvals_needed(&ask(Kind::Tags, &[], &[], &[], &["phi"]), &cats), 2);
-        assert_eq!(approvals_needed(&ask(Kind::Tags, &[], &[], &[], &["open"]), &cats), 1, "a tag that protects nothing is removed by one steward");
-        assert_eq!(approvals_needed(&ask(Kind::Tags, &[], &[], &[], &["gone"]), &cats), 2, "a category settings dropped is held to protect");
-        assert_eq!(approvals_needed(&ask(Kind::Floor, &["phi"], &["phi", "open"], &[], &[]), &cats), 1);
-        assert_eq!(approvals_needed(&ask(Kind::Floor, &["phi", "open"], &["phi"], &[], &[]), &cats), 2, "any category leaving a floor is a lowering");
+        let removes = |a: Ask| {
+            assert_eq!(approvals_needed(&a, &cats), 1);
+            removes_protection(&a, &cats)
+        };
+        assert!(!removes(ask(Kind::Tags, &[], &[], &["phi"], &[])));
+        assert!(removes(ask(Kind::Tags, &[], &[], &[], &["phi"])), "so the proposer cannot approve it");
+        assert!(!removes(ask(Kind::Tags, &[], &[], &[], &["open"])), "a tag that protects nothing");
+        assert!(removes(ask(Kind::Tags, &[], &[], &[], &["gone"])), "a category settings dropped is held to protect");
+        assert!(!removes(ask(Kind::Floor, &["phi"], &["phi", "open"], &[], &[])));
+        assert!(removes(ask(Kind::Floor, &["phi", "open"], &["phi"], &[], &[])), "any category leaving a floor is a lowering");
     }
 
     #[test]

@@ -239,16 +239,14 @@ async fn set_floor(w: &World, token: &str, floor: Value) -> (StatusCode, Value) 
     rest(&w.app, "PUT", &format!("/api/v1/admin/datasets/{id}/label-floor"), token, Some(json!({ "floor": floor, "reason": "Health data is held here" }))).await
 }
 
-/// Lowers a floor the way data layer phase 6 asks: a proposal, and two approvers who are not the proposer. The floor route raises only.
+/// Lowers a floor the way data layer phase 6 asks: a proposal, and one approver who is not the proposer. The floor route raises only.
 async fn lower_floor(w: &World, floor: Value) {
     let id = dataset_id(w).await;
     let (s, b) = rest(&w.app, "POST", &format!("/api/v1/data/datasets/{id}/label-changes"), &w.admin, Some(json!({ "kind": "floor", "floor": floor, "reason": "The dataset no longer holds this" }))).await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
     let change = b["id"].as_str().unwrap().to_string();
-    for who in [&w.compliance, &w.second] {
-        let (s, b) = rest(&w.app, "POST", &format!("/api/v1/data/label-changes/{change}/decide"), who, Some(json!({ "decision": "approve", "reason": "I read the evaluation" }))).await;
-        assert_eq!(s, StatusCode::OK, "{b}");
-    }
+    let (s, b) = rest(&w.app, "POST", &format!("/api/v1/data/label-changes/{change}/decide"), &w.compliance, Some(json!({ "decision": "approve", "reason": "I read the evaluation" }))).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
 }
 
 /// The names the token's holder lists, by the paged table route, the legacy list, and the count the page route gives.

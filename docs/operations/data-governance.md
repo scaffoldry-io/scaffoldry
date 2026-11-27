@@ -44,7 +44,7 @@ A field is `Suggested` when its CEDS code is protected under the standard and th
 | `PUT /admin/labels` | Body `changes` (1 to 200 of `{ app_slug, table_id, field, ferpa_sensitive }`, where `null` removes the label) and `reason`. Every field must exist, or the whole request is `400` and nothing changes. One ledger entry, `DataLabelChanged`, `RA-02` |
 | `GET /admin/datasets` | The published datasets: id, name, department, level, record count |
 | `PUT /admin/datasets/{id}/classification` | Body `sensitivity_level` (`Public`, `Directory`, `Internal` or `Restricted / FERPA`) and `reason`. The column and the stored payload change together. Ledger `DataLabelChanged` |
-| `PUT /admin/datasets/{id}/label-floor` | Body `floor` (a list of category ids, at most 20, each defined in the settings) and `reason`. Every row of the dataset carries these categories, whatever its own tags say. A Platform Admin or a compliance officer may raise it. It does not lower one: lowering is a label change that two approvers decide (see below), and this route answers `409` to it. The floor, the flag Cedar reads on each row and the ledger entry (`DataLabelChanged`, setting `label_floor`) commit together. The answer holds `floor` and `was` |
+| `PUT /admin/datasets/{id}/label-floor` | Body `floor` (a list of category ids, at most 20, each defined in the settings) and `reason`. Every row of the dataset carries these categories, whatever its own tags say. A Platform Admin or a compliance officer may raise it. It does not lower one: lowering is a label change that one approver who is not the proposer decides (see below), and this route answers `409` to it. The floor, the flag Cedar reads on each row and the ledger entry (`DataLabelChanged`, setting `label_floor`) commit together. The answer holds `floor` and `was` |
 
 ## Changing a label
 
@@ -65,7 +65,7 @@ A change to tags or to a floor is a **label change**. It is proposed, read, and 
 
 The steward is the holder of the dataset's `steward_position`, found from its unit upward. A Platform Admin or a compliance officer may also decide.
 
-Raising protection takes one approval. Removing it takes two, from two people, and neither is the proposer. Removing is lowering a floor, or removing a tag whose category is protected or has a requirement. Approving applies the change, sets again the flag Cedar reads, writes a history row for each row whose tags changed, and writes one `DataLabelChanged` ledger entry. The entry names the proposer, the deciders, the review finding if there is one, and the choice about open work. Apply on a date is below.
+Every change takes one approval. Removing protection takes two people: the proposer, and an approver who is not the proposer. Removing is lowering a floor, or removing a tag whose category is protected or has a requirement. Approving applies the change, sets again the flag Cedar reads, writes a history row for each row whose tags changed, and writes one `DataLabelChanged` ledger entry. The entry names the proposer, the deciders, the review finding if there is one, and the choice about open work. Apply on a date is below.
 
 ### Apply on a date
 
