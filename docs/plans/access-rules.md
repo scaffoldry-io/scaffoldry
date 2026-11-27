@@ -36,7 +36,7 @@ This brief adds rules at the row and column level. They must hold at a million r
 
 `data-layer.md` extends this brief. It does not replace `row_scope` or `field_visibility`. Everything it adds is decided in the same place, `service/scope.rs`, is compiled to the same SQL, and must pass the same equivalence test.
 
-- **A departure from "a rule narrows and never grants", for one case.** An **audience field** is a field whose value names people, positions, or units. The dataset's policy says it grants read, or read and write. Rules still only narrow. The grant comes from the row, is bounded by the policy, and never bypasses a category's requirement. It is gated by a performance test (`data-layer.md` phase 3b).
+- **A departure from "a rule narrows and never grants", for one case.** An **audience field** is a field whose value names people, positions, or units. The dataset's policy says it grants read, or read and write. Rules still only narrow. The grant comes from the row, is bounded by the policy, and never bypasses a category's requirement. It is gated by a performance test (`data-layer.md` phase 3b), which it passes: the audience is built, and the rules in this note still only narrow.
 - **People carry `key@unit` pairs and a reach** (this unit, or this unit and below) in `person_of`, not bare position keys. This is `position-roles.md` phase 5a.
 - **Records stay filtered in PostgreSQL.** Audience grants live in an indexed table so that a list adds one condition and nothing is filtered in Rust.
 

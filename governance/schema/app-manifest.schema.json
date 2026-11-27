@@ -406,6 +406,22 @@
           "type": "boolean",
           "description": "A row that names no unit is refused, by every door. It needs a unit_field. Off by default, so a table that named its unit column earlier still takes rows with none. Setting it needs a proposal, and it is refused while a row names none."
         },
+        "audience": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Audience fields (data layer phase 3b). Each names a field of the table whose value names people, positions or units. A person named in it reads the row, and writes it when grants is write, on the fields listed and no others. A person is an address. A position is key@unit-id. A unit is a unit id, and reaches the people at the unit and below. A group is group:id. It grants nothing a category's requirement withholds. Setting it needs a proposal.",
+          "items": {
+            "type": "object",
+            "required": ["field", "fields"],
+            "additionalProperties": false,
+            "properties": {
+              "field": { "type": "string", "minLength": 1, "description": "A Text, Collaborator or Unit field of this table." },
+              "grants": { "enum": ["read", "write"], "default": "read", "description": "What being named grants: read, or read and write." },
+              "fields": { "type": "array", "minItems": 1, "maxItems": 200, "uniqueItems": true, "items": { "type": "string", "minLength": 1 }, "description": "The fields the grant reaches. A person named here sees these fields of the row and no others." },
+              "unit_acceptance": { "type": "boolean", "description": "A unit named in this field gains nothing until the unit's steward accepts. Off by default." }
+            }
+          }
+        },
         "retired_fields": {
           "type": "array",
           "maxItems": 200,

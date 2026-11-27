@@ -78,6 +78,8 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/data/label-changes/{id}/exceptions".into(), case!(label_change_scheduled));
     m.insert("POST /api/v1/data/label-changes/{id}/exceptions/{exception}/decide".into(), case!(label_change_scheduled));
     m.insert("POST /api/v1/data/datasets/{id}/row-shares".into(), case!(row_share));
+    m.insert("POST /api/v1/data/datasets/{id}/records/{record_id}/audience/accept".into(), case!(audience_accept));
+    m.insert("PUT /api/v1/admin/people/{eppn}/conditions/{id}".into(), case!(condition_set));
     m.insert("POST /api/v1/data/row-shares/{id}/decide".into(), case!(row_share));
     m.insert("POST /api/v1/data/row-shares/{id}/withdraw".into(), case!(row_share));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
@@ -1037,6 +1039,50 @@ async fn row_share(w: World) -> Outcome {
     ensure(!s.is_success(), format!("B closes the write at once: {s} {body}"))?;
     let (s, body) = w.rb("POST", &format!("/api/v1/data/row-shares/{share}/withdraw"), OWNER, Some(json!({ "reason": "Twice." }))).await;
     ensure(s == StatusCode::CONFLICT, format!("B reads that it is over: {s} {body}"))
+}
+
+/// Data layer phase 3b: A makes a row that names a unit in an audience field that asks the unit to accept. B, which has never been asked, lists
+/// the value that waits from the database and accepts it. A reads that it is accepted, and refuses a second acceptance.
+async fn audience_accept(w: World) -> Outcome {
+    let slug = unique("aud");
+    let unit = make_unit(&w, &unique("audunit")).await?;
+    let mut m = manifest(&slug);
+    m["tables"][0]["fields"].as_array_mut().ok_or("fields")?.push(json!({ "name": "partner", "label": "partner", "field_type": "Unit", "hierarchy": "academic", "required": false, "ferpa_sensitive": false }));
+    m["tables"][0]["audience"] = json!([{ "field": "partner", "grants": "read", "fields": ["name"], "unit_acceptance": true }]);
+    status(w.wa("POST", &format!("/api/v1/workspaces/{WORKSPACE}/apps"), OWNER, Some(m)).await, StatusCode::CREATED, "A makes an app with an audience policy")?;
+    let made = status(w.wa("POST", &format!("/api/v1/apps/{slug}/records"), OWNER, Some(json!({ "data": { "_table_id": "apps", "name": "Ada", "partner": unit } }))).await, StatusCode::CREATED, "A makes a row that names the unit")?;
+    let record = made["id"].as_str().ok_or("a record id")?.to_string();
+    let id = dataset_of(&w, &slug).await?;
+    let waiting = status(w.rb("GET", &format!("/api/v1/data/datasets/{id}/audience/pending"), ADMIN, None).await, StatusCode::OK, "B lists what waits")?;
+    ensure(waiting["pending"].as_array().is_some_and(|l| l.len() == 1) && has(&waiting, &record), format!("B lists the value A wrote: {waiting}"))?;
+    let uri = format!("/api/v1/data/datasets/{id}/records/{record}/audience/accept");
+    let (s, body) = w.rb("POST", &uri, EDITOR, Some(json!({ "unit": unit, "reason": "Not a steward." }))).await;
+    ensure(s == StatusCode::FORBIDDEN, format!("B refuses a person who is no steward: {s} {body}"))?;
+    status(w.rb("POST", &uri, ADMIN, Some(json!({ "unit": unit, "reason": "The unit advises these students." }))).await, StatusCode::OK, "B accepts")?;
+    let (s, body) = w.wa("POST", &uri, ADMIN, Some(json!({ "unit": unit, "reason": "Again." }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("A reads that it is accepted: {s} {body}"))?;
+    let after = status(w.wa("GET", &format!("/api/v1/data/datasets/{id}/audience/pending"), ADMIN, None).await, StatusCode::OK, "A lists what waits")?;
+    ensure(after["pending"].as_array().is_some_and(Vec::is_empty), format!("nothing waits: {after}"))
+}
+
+/// Data layer phase 3b: A sets a condition on a person's record. B reads it from the database, and clears it. A reads that it is gone.
+async fn condition_set(w: World) -> Outcome {
+    let list = json!([{ "id": "ferpa_training", "name": "FERPA training", "owner": "registrar" }]);
+    w.db.run(move |c| {
+        c.execute("INSERT INTO platform_settings (key, value, updated_by) VALUES ('sensitivity.conditions', $1, 'test') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", &[&list]).unwrap();
+        c.execute("UPDATE cache_versions SET version = version + 1 WHERE name = 'settings'", &[]).unwrap();
+    });
+    let uri = format!("/api/v1/admin/people/{OWNER}/conditions/ferpa_training");
+    let until = (chrono::Utc::now() + chrono::Duration::days(90)).format("%Y-%m-%d").to_string();
+    let set = status(w.wa("PUT", &uri, ADMIN, Some(json!({ "until": until, "owner": "registrar", "source": "manual", "reason": "The registrar confirmed the training." }))).await, StatusCode::OK, "A sets the condition")?;
+    ensure(set["conditions"]["ferpa_training"] == json!(until), format!("A's answer: {set}"))?;
+    let seen = status(w.rb("GET", &format!("/api/v1/admin/people/{OWNER}/conditions"), ADMIN, None).await, StatusCode::OK, "B reads it")?;
+    ensure(seen["conditions"]["ferpa_training"] == json!(until) && seen["sources"]["ferpa_training"]["owner"] == "registrar", format!("B reads what A set: {seen}"))?;
+    let (s, body) = w.rb("PUT", &uri, EDITOR, Some(json!({ "until": until, "reason": "Not an admin." }))).await;
+    ensure(s == StatusCode::FORBIDDEN, format!("B refuses a person who is no admin: {s} {body}"))?;
+    status(w.rb("PUT", &uri, ADMIN, Some(json!({ "until": null, "reason": "The training was withdrawn." }))).await, StatusCode::OK, "B clears it")?;
+    let gone = status(w.wa("GET", &format!("/api/v1/admin/people/{OWNER}/conditions"), ADMIN, None).await, StatusCode::OK, "A reads it")?;
+    ensure(gone["conditions"].as_object().is_some_and(|m| m.is_empty()), format!("A reads that it is gone: {gone}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {

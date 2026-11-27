@@ -868,7 +868,7 @@ mod cost {
             custom_domain: None,
             custom_domain_verified: false,
             tables: vec![AppTable {
-                retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
+                retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false, audience: Vec::new(),
                 id: "students".to_string(),
                 name: "students".to_string(),
                 slug: "students".to_string(),
@@ -982,7 +982,7 @@ mod cost {
             use scaffoldry_core::access::{Op, Operand, Pred};
             use scaffoldry_server::repository::{build_record_query, RecordQuery, ScopePlan, Shared, SqlParam};
             for (label, shared) in [("without a share", None), ("with a share", Some(Shared { grantee: ann.to_lowercase(), needs: vec![] }))] {
-                let plan = ScopePlan { pred: Pred::Cmp { field: "advisor".into(), op: Op::Eq, value: Operand::Literal(json!(ann.to_lowercase())) }, indexed: manifest(&slug).tables[0].fields.clone(), labels: vec![], shared };
+                let plan = ScopePlan { pred: Pred::Cmp { field: "advisor".into(), op: Op::Eq, value: Operand::Literal(json!(ann.to_lowercase())) }, indexed: manifest(&slug).tables[0].fields.clone(), labels: vec![], shared, audience: None };
                 let (sql, params) = build_record_query(&slug, &RecordQuery { table_id: "students".into(), any: false, clauses: vec![], sort: None, after: None, limit: 51, scope: Some(plan), search: None, expr: None, unit: None });
                 let explained = format!("EXPLAIN (ANALYZE, BUFFERS) {sql}");
                 let text = db_of(&db, move |c| {

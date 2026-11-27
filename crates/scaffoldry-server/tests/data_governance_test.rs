@@ -65,7 +65,7 @@ fn manifest(slug: &str) -> AppManifest {
     ];
     let requests = vec![FieldSpec::simple("kind", "Kind", FieldType::Text, false, false), flagged];
     let table = |id: &str, fields: Vec<FieldSpec>, primary: &str| AppTable {
-        retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
+        retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false, audience: Vec::new(),
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),

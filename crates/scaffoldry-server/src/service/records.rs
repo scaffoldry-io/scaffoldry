@@ -2300,9 +2300,13 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     } else {
         rows.last().map(|r| encode_cursor(r, sort_field.as_deref()))
     };
-    // A row the caller reads only through a share shows the fields the share covers. This is worked out before the rows are redacted, because
+    // A row the caller reads only through a share, or because its audience names them (data layer phase 3b), shows the fields the share or the
+    // policy covers. This is worked out before the rows are redacted, because
     // the caller's own rights are judged on the whole row.
-    let masks = if scope.as_ref().is_some_and(|p| p.shared.is_some()) { scope::share_masks(caller, app_slug, &rows, state) } else { Default::default() };
+    let masks = match &scope {
+        Some(p) if p.shared.is_some() || p.audience.is_some() => scope::way_in_masks(caller, app_slug, &rows, p.shared.is_some(), p.audience.as_ref(), state),
+        _ => Default::default(),
+    };
     fill_lookups(caller, app_slug, &mut rows, state);
     let records = redact_records(caller, app_slug, rows, state);
     let records = if masks.is_empty() { records } else { records.into_iter().map(|r| match masks.get(&r.id) { Some(fields) => scope::through_share(r, fields), None => r }).collect() };

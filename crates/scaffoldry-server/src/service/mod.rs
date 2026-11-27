@@ -33,6 +33,7 @@ pub mod workspaces;
 pub mod identity;
 pub mod admin;
 pub mod approvers;
+pub mod audience;
 pub mod people;
 pub mod positions;
 pub mod processes;

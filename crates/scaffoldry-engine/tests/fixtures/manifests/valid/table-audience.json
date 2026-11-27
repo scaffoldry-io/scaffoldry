@@ -1,0 +1,72 @@
+{
+  "slug": "advising-audience",
+  "title": "Advising",
+  "description": "Advising notes",
+  "organization_code": "ADV",
+  "department": "advising",
+  "views": [],
+  "tables": [
+    {
+      "id": "students",
+      "name": "Students",
+      "slug": "students",
+      "fields": [
+        {
+          "name": "student_number",
+          "label": "Student number",
+          "field_type": "Text",
+          "required": true,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "name",
+          "label": "Name",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "department",
+          "label": "Department",
+          "field_type": "Unit",
+          "hierarchy": "academic",
+          "required": false,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "advisor",
+          "label": "Advisor",
+          "field_type": "Text",
+          "required": false,
+          "ferpa_sensitive": false
+        },
+        {
+          "name": "partner",
+          "label": "Partner unit",
+          "field_type": "Unit",
+          "hierarchy": "academic",
+          "required": false,
+          "ferpa_sensitive": false
+        }
+      ],
+      "unit_field": "department",
+      "audience": [
+        {
+          "field": "advisor",
+          "grants": "write",
+          "fields": [
+            "name"
+          ]
+        },
+        {
+          "field": "partner",
+          "fields": [
+            "name",
+            "student_number"
+          ],
+          "unit_acceptance": true
+        }
+      ]
+    }
+  ]
+}

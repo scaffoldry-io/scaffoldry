@@ -49,6 +49,69 @@ pub struct Category {
     /// a unit that its reach covers for the row. Empty means no requirement, which is how every category behaved before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<Requirement>,
+    /// Conditions a reader must hold (data layer phase 3b), each an id from `sensitivity.conditions`. A condition holds while the
+    /// date on the reader's record has not passed. A category with conditions and no `requires` asks only the conditions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<String>,
+}
+
+impl Category {
+    /// True when a reader must meet something to read a row that carries this category: a position, or a condition.
+    pub fn has_requirement(&self) -> bool {
+        !self.requires.is_empty() || !self.conditions.is_empty()
+    }
+}
+
+/// One condition on the closed list `sensitivity.conditions` (data layer phase 3b): a fact about a person that carries a date, such
+/// as FERPA training. `owner` is the position whose steward maintains it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Condition {
+    pub id: String,
+    pub name: String,
+    pub owner: String,
+}
+
+/// The most conditions the list holds, and the most a category names.
+pub const MAX_CONDITIONS: usize = 20;
+pub const MAX_CATEGORY_CONDITIONS: usize = 8;
+
+/// Checks the setting `sensitivity.conditions`: a list of at most [`MAX_CONDITIONS`], with unique ids.
+pub fn validate_conditions(value: &Value) -> Result<Vec<Condition>, SettingsError> {
+    let items = value.as_array().ok_or_else(|| SettingsError::at("", "must be a list"))?;
+    if items.len() > MAX_CONDITIONS {
+        return Err(SettingsError::at("", format!("holds at most {MAX_CONDITIONS} conditions")));
+    }
+    let mut out: Vec<Condition> = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let c: Condition = serde_json::from_value(item.clone()).map_err(|e| SettingsError::at(format!("[{i}]"), e.to_string()))?;
+        if !id_valid(&c.id) {
+            return Err(SettingsError::at(format!("[{i}].id"), format!("id {ID_RULE}")));
+        }
+        if !id_valid(&c.owner) {
+            return Err(SettingsError::at(format!("[{i}].owner"), format!("an owner is a position key, and a key {ID_RULE}")));
+        }
+        if c.name.trim().is_empty() || c.name.chars().count() > MAX_TEXT_LEN {
+            return Err(SettingsError::at(format!("[{i}].name"), "a name is 1 to 128 characters"));
+        }
+        if out.iter().any(|o| o.id == c.id) {
+            return Err(SettingsError::at(format!("[{i}].id"), format!("condition id '{}' is used twice", c.id)));
+        }
+        out.push(c);
+    }
+    Ok(out)
+}
+
+/// Every condition a category names must be on the list. Run when either setting is saved.
+pub fn check_conditions(categories: &[Category], listed: &[Condition]) -> Result<(), SettingsError> {
+    for (i, c) in categories.iter().enumerate() {
+        for (j, name) in c.conditions.iter().enumerate() {
+            if !listed.iter().any(|x| &x.id == name) {
+                return Err(SettingsError::at(format!("[{i}].conditions[{j}]"), format!("category '{}' names the condition '{name}', which sensitivity.conditions does not list", c.id)));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// How far above its unit a position reaches over the rows of a category.
@@ -182,6 +245,17 @@ pub fn validate_categories(value: &Value, detectors: &[DetectorSpec]) -> Result<
             }
             if c.requires[..j].contains(r) {
                 return Err(SettingsError::at(format!("[{i}].requires[{j}]"), "this requirement is listed twice"));
+            }
+        }
+        if c.conditions.len() > MAX_CATEGORY_CONDITIONS {
+            return Err(SettingsError::at(format!("[{i}].conditions"), format!("a category names at most {MAX_CATEGORY_CONDITIONS} conditions")));
+        }
+        for (j, n) in c.conditions.iter().enumerate() {
+            if !id_valid(n) {
+                return Err(SettingsError::at(format!("[{i}].conditions[{j}]"), format!("a condition id {ID_RULE}")));
+            }
+            if c.conditions[..j].contains(n) {
+                return Err(SettingsError::at(format!("[{i}].conditions[{j}]"), "this condition is listed twice"));
             }
         }
         for (j, d) in c.detectors.iter().enumerate() {

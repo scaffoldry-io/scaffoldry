@@ -128,6 +128,7 @@ const SCHEMA_0121: &str = include_str!("../../scaffoldry-core/migrations/0121_re
 const SCHEMA_0122: &str = include_str!("../../scaffoldry-core/migrations/0122_label_changes.sql");
 const SCHEMA_0123: &str = include_str!("../../scaffoldry-core/migrations/0123_label_change_schedule.sql");
 const SCHEMA_0124: &str = include_str!("../../scaffoldry-core/migrations/0124_row_shares.sql");
+const SCHEMA_0125: &str = include_str!("../../scaffoldry-core/migrations/0125_record_audience.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -684,7 +685,31 @@ pub struct ScopePlan {
     /// The reader's live row shares on this table (data layer phase 10), for a statement that serves a list or a count. A row a share covers
     /// is read even when the rows and the gates above do not read it. `None` for a reader with no live share, who adds nothing.
     pub shared: Option<Shared>,
+    /// The reader's principals and the audience fields that reach what the statement reads (data layer phase 3b). A row that names one of
+    /// the principals in one of those fields is read when the gates read it, even when the rows' predicate does not. `None` for a table
+    /// with no audience fields, or a statement none of them covers, which adds nothing.
+    pub audience: Option<Audience>,
 }
+
+/// The way into a scope that a row's own audience fields give: "the row names one of my principals".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Audience {
+    /// The reader, their positions as `key@unit-id`, their units and their groups, in lower case. A small set that one request knows.
+    pub principals: Vec<String>,
+    /// The audience fields whose policy reaches every field the statement reads, so a name in another field opens nothing to it.
+    pub fields: Vec<String>,
+    /// True when the rows the reader's rules select, with the rows the audience names, are few (`FEW_ROWS` or fewer). A statement then reads
+    /// them as one small set and joins it to the records. Otherwise it keeps the early stop of the page and the single scan of a count. The
+    /// scope builder works this out once for a request (`ScopePlan::sizing`).
+    pub few: bool,
+}
+
+/// The most rows, rules and audience together, that a statement reads as one set and joins to the records.
+///
+/// ponytail: measured on 1,000,000 rows. A first page of 101 that walks the records in order and probes each one costs about
+/// 700,000 / n ms for n matching rows, which is 233 ms at 3,080 rows. The same page read as one set and sorted costs about 15 microseconds
+/// for each row: 46 ms at 3,080 rows and 11 ms at 2,081, in psql. The two cross near 6,900. 5,000 is a little before that.
+pub const FEW_ROWS: i64 = 5_000;
 
 /// The one way into a scope besides its rows and gates: "the row is shared with me".
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -743,8 +768,12 @@ impl ScopePlan {
         table_id: &str,
         first_param: usize,
     ) -> (String, Vec<SqlParam>) {
-        use scaffoldry_engine::access::to_sql_probes;
-        let rows = match to_sql_probes(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
+        use scaffoldry_engine::access::to_sql_probes_or;
+        let way = |next: usize| self.audience_sql(first_param, id_expr, true, next);
+        // A page whose rows are few is read as one small set, which is faster than walking the table in order to find them.
+        let few = self.audience.as_ref().is_some_and(|a| a.few) && self.audience_on();
+        let probed = if few { Ok(None) } else { to_sql_probes_or(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param, self.audience_on().then_some(&way)) };
+        let rows = match probed {
             Ok(Some(compiled)) => Self::wrap(Ok(compiled), first_param),
             Ok(None) => self.clause_at_rows(id_expr, app_slug, table_id, first_param),
             Err(e) => Self::wrap(Err(e), first_param),
@@ -754,8 +783,74 @@ impl ScopePlan {
     }
 
     fn clause_at_rows(&self, id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
-        use scaffoldry_engine::access::to_sql;
+        use scaffoldry_engine::access::{to_sql, to_sql_or};
+        if self.audience_on() {
+            let as_union = self.audience.as_ref().is_some_and(|a| a.few);
+            return Self::wrap(to_sql_or(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param, &|next| self.audience_sql(first_param, id_expr, false, next), as_union), first_param);
+        }
         Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param), first_param)
+    }
+
+    /// A statement that counts, with a limit, the rows the audience names and the rows the rules select (when they are one test or an OR of
+    /// equality and membership tests, the shape the index answers at once). It returns two numbers: whether the audience names any row at all,
+    /// and how many rows rules and audience reach together, up to `FEW_ROWS + 1`, which is `None` when the rules are of another shape and
+    /// cannot be counted this way. The parameters are the app and the table, then the rules', then the principals and the fields.
+    /// `None` when the plan has no audience.
+    pub fn sizing(&self, app_slug: &str, table_id: &str) -> Option<(String, Vec<SqlParam>, bool)> {
+        use scaffoldry_engine::access::{probe_sets, Param};
+        let audience = self.audience.as_ref()?;
+        let never = scaffoldry_core::access::never();
+        let (mut sets, mut params) = (Vec::new(), vec![Param::Text(app_slug.to_string()), Param::Text(table_id.to_string())]);
+        let countable = if self.pred == never {
+            true
+        } else {
+            match probe_sets(&self.pred, &self.indexed, app_slug, table_id, 1) {
+                Ok(Some((found, bound))) => {
+                    sets = found;
+                    params = bound;
+                    true
+                }
+                _ => false,
+            }
+        };
+        let next = params.len() + 1;
+        let (principals, fields) = (format!("${next}::text[]"), format!("${}::text[]", next + 1));
+        let named = scaffoldry_data::audience::set_sql("$1", "$2", &principals, &fields);
+        params.push(Param::Texts(audience.principals.clone()));
+        params.push(Param::Texts(audience.fields.clone()));
+        sets.push(named.clone());
+        let all = sets.iter().map(|s| format!("({s})")).collect::<Vec<_>>().join(" UNION ALL ");
+        let sql = format!(
+            "SELECT (SELECT count(*) FROM (SELECT 1 FROM ({named}) a LIMIT 1) x)::bigint, (SELECT count(*) FROM (SELECT 1 FROM ({all}) u LIMIT {}) y)::bigint",
+            FEW_ROWS + 1
+        );
+        let bound = params
+            .into_iter()
+            .map(|p| match p {
+                Param::Text(t) => SqlParam::Text(t),
+                Param::Texts(t) => SqlParam::Texts(t),
+                Param::Num(n) => SqlParam::Float(n),
+                Param::Nums(n) => SqlParam::Floats(n),
+            })
+            .collect();
+        Some((sql, bound, countable))
+    }
+
+    /// True when the audience is one more way into the rows' predicate. A predicate that selects every row has nothing to widen.
+    fn audience_on(&self) -> bool {
+        self.audience.is_some() && self.pred != scaffoldry_core::access::Pred::True
+    }
+
+    /// The audience as a fragment and its parameters, for the predicate to take in. It names the principals and the fields in two
+    /// parameters that start at `next`, and the app and the table by the first two placeholders, which the predicate bound. `probe` is the
+    /// test of the record `id_expr` names, for a statement that reads in order. Otherwise it is the set of record ids.
+    fn audience_sql(&self, first_param: usize, id_expr: &str, probe: bool, next: usize) -> (String, Vec<scaffoldry_engine::access::Param>) {
+        use scaffoldry_engine::access::Param;
+        let Some(audience) = &self.audience else { return (String::new(), Vec::new()) };
+        let (app, table) = (format!("${first_param}"), format!("${}", first_param + 1));
+        let (principals, fields) = (format!("${next}::text[]"), format!("${}::text[]", next + 1));
+        let sql = if probe { scaffoldry_data::audience::probe_sql(id_expr, &app, &table, &principals, &fields) } else { scaffoldry_data::audience::set_sql(&app, &table, &principals, &fields) };
+        (sql, vec![Param::Texts(audience.principals.clone()), Param::Texts(audience.fields.clone())])
     }
 
     fn wrap(
@@ -1326,6 +1421,7 @@ impl PostgresRepository {
                             ("0122_label_changes.sql", SCHEMA_0122),
                             ("0123_label_change_schedule.sql", SCHEMA_0123),
                             ("0124_row_shares.sql", SCHEMA_0124),
+                            ("0125_record_audience.sql", SCHEMA_0125),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 

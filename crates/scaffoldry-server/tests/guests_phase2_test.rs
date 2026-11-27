@@ -91,7 +91,7 @@ fn manifest(slug: &str) -> AppManifest {
         { let mut f = FieldSpec::simple("program_ref", "Program", FieldType::Link, false, false); f.link_target_app = Some("programs".to_string()); f.link_target_table = Some("programs".to_string()); f },
     ];
     let table = |id: &str, fields: Vec<FieldSpec>, primary: &str| AppTable {
-        retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
+        retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false, audience: Vec::new(),
         id: id.to_string(),
         name: id.to_string(),
         slug: id.to_string(),

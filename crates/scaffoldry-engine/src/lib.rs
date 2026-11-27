@@ -784,6 +784,37 @@ pub struct TableKey {
     pub case_fold: bool,
 }
 
+/// One audience field of a table (data layer phase 3b). The field's value names people, positions or units, and a person it names
+/// reads the row (and writes it when `grants` is write) on `fields` and no others. With `unit_acceptance`, a unit it names gains
+/// nothing until the unit's steward accepts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudienceRule {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "AudienceGrant::is_read")]
+    pub grants: AudienceGrant,
+    pub fields: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unit_acceptance: bool,
+}
+
+/// What being named in an audience field grants.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudienceGrant {
+    #[default]
+    Read,
+    Write,
+}
+
+impl AudienceGrant {
+    fn is_read(&self) -> bool {
+        *self == AudienceGrant::Read
+    }
+}
+
+/// The most audience fields a table has, and the most names one row's audience fields hold in all.
+pub const MAX_AUDIENCE_FIELDS: usize = 8;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppTable {
     pub id: String,
@@ -824,6 +855,10 @@ pub struct AppTable {
     /// declared its column earlier takes rows with no unit as before.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unit_required: bool,
+    /// The audience fields (data layer phase 3b). A person named in one reads the row, on the fields the rule lists. Setting it is a
+    /// manifest change, so a proposal carries it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audience: Vec<AudienceRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

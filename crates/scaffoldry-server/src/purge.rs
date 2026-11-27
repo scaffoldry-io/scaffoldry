@@ -302,6 +302,8 @@ fn plan(c: &mut postgres::Client, slug: &str, p: &Policy) -> Result<Plan, Reposi
 pub fn destroy(tx: &mut postgres::Transaction<'_>, app_slug: &str, ids: &[String]) -> Result<Vec<String>, postgres::Error> {
     let ids: Vec<String> = tx.query("SELECT id FROM unnest($2::text[]) AS id WHERE NOT is_held($1, id)", &[&app_slug, &ids.to_vec()])?.iter().map(|r| r.get(0)).collect();
     tx.execute("DELETE FROM record_index WHERE record_id = ANY($1)", &[&ids])?;
+    // A record that is gone for good names nobody (data layer phase 3b). A trashed one kept its rows until now.
+    scaffoldry_data::audience::delete_for_records(tx, &ids)?;
     tx.execute("DELETE FROM record_links WHERE from_record = ANY($1) OR to_record = ANY($1)", &[&ids])?;
     tx.execute("DELETE FROM trash_links WHERE record_id = ANY($1) OR other_record = ANY($1)", &[&ids])?;
     tx.execute("DELETE FROM record_comments WHERE app_slug = $1 AND record_id = ANY($2)", &[&app_slug, &ids])?;

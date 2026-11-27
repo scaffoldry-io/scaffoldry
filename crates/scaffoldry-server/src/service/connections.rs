@@ -454,7 +454,12 @@ pub fn ensure_system_workspace(repo: &crate::repository::PostgresRepository) -> 
 pub fn ensure_writable(app_slug: &str, state: &SharedState) -> Result<(), ServiceError> {
     let dataset = state.engine.read().ok().and_then(|e| e.resolve_by_slug(app_slug).map(|m| m.kind == scaffoldry_engine::AppKind::Dataset)).unwrap_or(false);
     if dataset {
-        return Err(ServiceError::ReadOnlySource("This dataset is read-only. It is a copy of another system's data, and only its sync changes it".to_string()));
+        let mut message = "This dataset is read-only. It is a copy of another system's data, and only its sync changes it".to_string();
+        // Who is named in an audience field is the source's to say too (data layer phase 3b). A person gives one more person one row by a row share.
+        if crate::service::scope::has_audience(app_slug, state) {
+            message.push_str(". Who a row names in an audience field comes from the source as well. To let one person read one row, ask for a row share: POST /api/v1/data/datasets/{id}/row-shares, with the dataset id from GET /api/v1/data/datasets");
+        }
+        return Err(ServiceError::ReadOnlySource(message));
     }
     Ok(())
 }
