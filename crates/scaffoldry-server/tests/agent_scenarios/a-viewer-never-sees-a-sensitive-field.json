@@ -103,8 +103,8 @@
         "records": {
           "len": 1
         },
-        "records.0.data.applicant": "Sensitive Sam",
-        "records.0.data.ssn": {
+        "records.0.untrusted_text.data.applicant": "Sensitive Sam",
+        "records.0.untrusted_text.data.ssn": {
           "absent": true
         }
       },
@@ -118,7 +118,7 @@
       },
       "as": "viewer",
       "expect": {
-        "data.applicant": "Sensitive Sam",
+        "untrusted_text.data.applicant": "Sensitive Sam",
         "data.ssn": {
           "absent": true
         }
@@ -131,7 +131,7 @@
         "table_id": "applications"
       },
       "expect": {
-        "records.0.data.ssn": "123-45-6789"
+        "records.0.untrusted_text.data.ssn": "123-45-6789"
       },
       "as": "faculty-owner"
     }

@@ -134,7 +134,7 @@
       },
       "expect": {
         "checks.stale": "pass",
-        "changes.0": {
+        "untrusted_text.changes.0": {
           "contains": "notes"
         }
       }

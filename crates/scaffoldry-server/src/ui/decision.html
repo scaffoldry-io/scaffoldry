@@ -61,13 +61,30 @@
     return e;
   }
 
+  // The server moves typed text under "untrusted_text" so a model reads it as data. This screen renders it as text, so it
+  // puts it back. It is a copy of untrusted::restore.
+  function restoreText(v) {
+    if (Array.isArray(v)) { v.forEach(restoreText); return v; }
+    if (!v || typeof v !== "object") return v;
+    var t = v.untrusted_text;
+    if (t && typeof t === "object" && !Array.isArray(t)) {
+      delete v.untrusted_text;
+      Object.keys(t).forEach(function (k) {
+        if (v[k] && typeof v[k] === "object" && !Array.isArray(v[k]) && t[k] && typeof t[k] === "object" && !Array.isArray(t[k])) Object.assign(v[k], t[k]);
+        else v[k] = t[k];
+      });
+    }
+    Object.keys(v).forEach(function (k) { restoreText(v[k]); });
+    return v;
+  }
+
   function itemsOf(result) {
-    var s = result && result.structuredContent;
+    var s = restoreText(result && result.structuredContent);
     if (Array.isArray(s)) return s;
     if (s && Array.isArray(s.items)) return s.items;
     var first = result && result.content && result.content[0];
     try {
-      var parsed = first && JSON.parse(first.text);
+      var parsed = first && restoreText(JSON.parse(first.text));
       if (Array.isArray(parsed)) return parsed;
       if (parsed && Array.isArray(parsed.items)) return parsed.items;
     } catch (e) { /* no text to read */ }
@@ -114,7 +131,7 @@
 
     // The record the step is about. Only its fields are shown, as text.
     request("tools/call", { name: "get_record", arguments: { app_slug: item.app_slug, record_id: item.record_id } }).then(function (res) {
-      var rec = res && res.structuredContent;
+      var rec = restoreText(res && res.structuredContent);
       var data = rec && (rec.data || rec);
       if (!data || typeof data !== "object") return;
       Object.keys(data).filter(function (k) { return k.charAt(0) !== "_"; }).forEach(function (k) {

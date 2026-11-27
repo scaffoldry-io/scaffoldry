@@ -62,7 +62,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "update_workspace",
-        description: "Update a workspace's details, visibility, classification and policies. Owner or admin.",
+        description: "Update a workspace. A change of visibility, classification or unit is drafted for a person.",
         input_schema: schema_update_workspace,
         scope: Scope::Workspace("manage_workspace"),
         read_only: false,
@@ -71,7 +71,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "manage_workspace_member",
-        description: "Add, change or remove a workspace collaborator. Owner or admin. Logged.",
+        description: "Draft adding, changing or removing a collaborator for a person to confirm.",
         input_schema: schema_manage_workspace_member,
         scope: Scope::Workspace("manage_workspace"),
         read_only: false,
@@ -665,8 +665,15 @@ fn run_get_workspace(caller: &AuthUser, _origin: &Origin, args: Value, state: &S
     to_value(&workspaces::get_workspace(caller, ws_id, state)?)
 }
 
-fn run_update_workspace(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+fn run_update_workspace(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let ws_id = required_str(&args, "workspace_id")?.to_string();
+    // A change to who may reach a workspace, who owns it or how it is labelled is drafted for a person to confirm. Nothing is
+    // applied. A change that names only the title, description or icon is applied.
+    if crate::service::workspace_drafts::touches_access(&args) {
+        if let Some(draft) = crate::service::workspace_drafts::draft_settings(state, caller, origin, &args)? {
+            return Ok(draft);
+        }
+    }
     let input = workspaces::UpdateWorkspacePayload {
         name: text(&args, "name"),
         description: text(&args, "description"),
@@ -680,13 +687,9 @@ fn run_update_workspace(caller: &AuthUser, _origin: &Origin, args: Value, state:
     to_value(&workspaces::update_workspace(caller, &ws_id, input, state)?)
 }
 
-fn run_manage_workspace_member(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
-    let ws_id = required_str(&args, "workspace_id")?;
-    let action = required_str(&args, "action")?;
-    let eppn = required_str(&args, "eppn")?;
-    let role = args.get("role").and_then(|v| v.as_str());
-    let name = args.get("name").and_then(|v| v.as_str());
-    workspaces::manage_workspace_member(caller, ws_id, action, eppn, role, name, state)
+fn run_manage_workspace_member(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
+    // A collaborator is access, so the change is drafted for a person to confirm. Nothing is applied.
+    crate::service::workspace_drafts::draft_member(state, caller, origin, &args)
 }
 
 fn run_create_record(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1264,7 +1267,7 @@ fn schema_draft_access_change() -> Value {
 
 fn run_draft_access_change(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let preview = args.get("preview").and_then(Value::as_bool).unwrap_or(false);
-    crate::service::access_drafts::draft(state, caller, origin, &args, !preview)
+    crate::service::access_drafts::draft(state, caller, origin, &args, !preview, "draft_access_change")
 }
 
 fn run_access_suggestions(caller: &AuthUser, _origin: &Origin, _args: Value, state: &SharedState) -> Result<Value, ServiceError> {
@@ -1359,7 +1362,7 @@ struct DecideArgs {
 fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {
     let a: ProposeArgs = parse(args)?;
     let run = if a.dry_run { crate::service::proposals::dry_run } else { crate::service::proposals::propose };
-    run(
+    let mut proposed = run(
         caller,
         crate::service::proposals::ProposeInput {
             workspace_id: a.workspace_id,
@@ -1371,7 +1374,12 @@ fn run_propose_app_change(caller: &AuthUser, _origin: &Origin, args: Value, stat
         notes: vec![],
         },
         state,
-    )
+    )?;
+    // A proposal waits for a person. The link opens it in the desk.
+    if let Some(id) = proposed.get("proposal_id").and_then(Value::as_str).map(str::to_string) {
+        proposed["desk_link"] = json!(format!("/proposals?id={id}"));
+    }
+    Ok(proposed)
 }
 
 fn run_request_access(caller: &AuthUser, origin: &Origin, args: Value, state: &SharedState) -> Result<Value, ServiceError> {

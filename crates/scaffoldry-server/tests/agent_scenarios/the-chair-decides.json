@@ -166,7 +166,7 @@
         "record_id": "$rid"
       },
       "expect": {
-        "data.status": "Admitted"
+        "untrusted_text.data.status": "Admitted"
       }
     }
   ],

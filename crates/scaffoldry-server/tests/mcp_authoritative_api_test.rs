@@ -719,7 +719,7 @@ async fn simulate_cedar_policy_calls_the_engine_and_needs_a_platform_admin() {
     let expected_reasons: Vec<Value> = expected.reasons.iter().map(|r| json!(r)).collect();
     assert!(!expected_reasons.is_empty(), "a forbid decided this");
     assert_eq!(out["reasons"], Value::Array(expected_reasons));
-    assert!(out["deciding_policy"]["description"].as_str().is_some_and(|d| !d.is_empty()));
+    assert!(out["deciding_policy"]["untrusted_text"]["description"].as_str().is_some_and(|d| !d.is_empty()));
 }
 
 #[tokio::test]

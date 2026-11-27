@@ -68,10 +68,27 @@
     root.appendChild(el("h2", title));
   }
 
+  // The server moves typed text under "untrusted_text" so a model reads it as data. This screen renders it as text, so it
+  // puts it back. It is a copy of untrusted::restore.
+  function restoreText(v) {
+    if (Array.isArray(v)) { v.forEach(restoreText); return v; }
+    if (!v || typeof v !== "object") return v;
+    var t = v.untrusted_text;
+    if (t && typeof t === "object" && !Array.isArray(t)) {
+      delete v.untrusted_text;
+      Object.keys(t).forEach(function (k) {
+        if (v[k] && typeof v[k] === "object" && !Array.isArray(v[k]) && t[k] && typeof t[k] === "object" && !Array.isArray(t[k])) Object.assign(v[k], t[k]);
+        else v[k] = t[k];
+      });
+    }
+    Object.keys(v).forEach(function (k) { restoreText(v[k]); });
+    return v;
+  }
+
   function proposalOf(result) {
-    if (result && result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+    if (result && result.structuredContent && typeof result.structuredContent === "object") return restoreText(result.structuredContent);
     var first = result && result.content && result.content[0];
-    try { return first && JSON.parse(first.text); } catch (e) { return null; }
+    try { return first && restoreText(JSON.parse(first.text)); } catch (e) { return null; }
   }
 
   function render(p) {

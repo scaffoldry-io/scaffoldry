@@ -77,7 +77,7 @@
       "expect": {
         "slug": "$app",
         "version": 1,
-        "tables.0.name": "Applications"
+        "tables.0.untrusted_text.name": "Applications"
       }
     },
     {

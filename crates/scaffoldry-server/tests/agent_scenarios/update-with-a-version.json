@@ -95,8 +95,8 @@
       },
       "expect": {
         "version": 2,
-        "data.status": "Reviewed",
-        "data.applicant": "Rosa"
+        "untrusted_text.data.status": "Reviewed",
+        "untrusted_text.data.applicant": "Rosa"
       }
     },
     {
@@ -107,7 +107,7 @@
       },
       "expect": {
         "version": 2,
-        "data.status": "Reviewed"
+        "untrusted_text.data.status": "Reviewed"
       }
     }
   ],

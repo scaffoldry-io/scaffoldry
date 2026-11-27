@@ -174,7 +174,7 @@ async fn tool(w: &World, who: &str, name: &str, args: Value) -> Result<Value, St
 /// The titles a person's list shows.
 async fn listed(w: &World, who: &str) -> BTreeSet<String> {
     let page = tool(w, who, "list_records", json!({ "app_slug": w.slug, "table_id": "cases", "limit": 200 })).await.expect("a list");
-    page["records"].as_array().unwrap().iter().map(|r| r["data"]["title"].as_str().unwrap().to_string()).collect()
+    page["records"].as_array().unwrap().iter().map(|r| r["untrusted_text"]["data"]["title"].as_str().unwrap().to_string()).collect()
 }
 
 fn set(names: &[&str]) -> BTreeSet<String> {
@@ -224,7 +224,7 @@ async fn the_list_a_single_record_and_a_count_agree() {
     for r in all["records"].as_array().unwrap() {
         let id = r["id"].as_str().unwrap();
         let got = tool(&w, "fay@state.edu", "get_record", json!({ "app_slug": w.slug, "record_id": id })).await;
-        assert_eq!(got.is_ok(), shown.iter().any(|s| s == id), "get_record agrees with the list for {}", r["data"]["title"]);
+        assert_eq!(got.is_ok(), shown.iter().any(|s| s == id), "get_record agrees with the list for {}", r["untrusted_text"]["data"]["title"]);
     }
     let count = tool(&w, "fay@state.edu", "aggregate_records", json!({ "app_slug": w.slug, "table_id": "cases", "function": "count" })).await.unwrap();
     assert_eq!(count["value"].as_f64(), Some(3.0), "{count}");
@@ -254,7 +254,7 @@ async fn ssns(w: &World, who: &str, filter: Option<Value>) -> Result<std::collec
         args["filter"] = f;
     }
     let page = tool(w, who, "list_records", args).await?;
-    Ok(page["records"].as_array().unwrap().iter().map(|r| (r["data"]["title"].as_str().unwrap().to_string(), r["data"]["ssn"].as_str().map(str::to_string))).collect())
+    Ok(page["records"].as_array().unwrap().iter().map(|r| (r["untrusted_text"]["data"]["title"].as_str().unwrap().to_string(), r["untrusted_text"]["data"]["ssn"].as_str().map(str::to_string))).collect())
 }
 
 fn unit_is(unit: Uuid) -> Value {
@@ -387,7 +387,7 @@ async fn a_people_hierarchy_reaches_the_rows_placed_by_the_people_appointed_in_t
         let w = &w;
         async move {
             let page = tool(w, who, "list_records", json!({ "app_slug": w.slug, "table_id": "tickets", "limit": 200 })).await.expect("a list");
-            page["records"].as_array().unwrap().iter().map(|r| r["data"]["title"].as_str().unwrap().to_string()).collect::<BTreeSet<_>>()
+            page["records"].as_array().unwrap().iter().map(|r| r["untrusted_text"]["data"]["title"].as_str().unwrap().to_string()).collect::<BTreeSet<_>>()
         }
     };
     assert_eq!(titles("zed@state.edu").await, set(&["p1"]), "team one holds p1");

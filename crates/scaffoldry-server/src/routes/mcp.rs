@@ -273,6 +273,7 @@ async fn handle_mcp_request(
             };
             let worker_state = state.clone();
             let tool_name_for_guidance = tool_name.clone();
+            let args_for_marking = args.clone();
             let outcome =
                 tokio::task::spawn_blocking(move || tools::call(&caller, &origin, &tool_name, args, &worker_state)).await;
 
@@ -285,15 +286,22 @@ async fn handle_mcp_request(
                         Value::Array(_) => json!({ "items": value }),
                         other => json!({ "value": other }),
                     };
+                    // Text a person typed moves under `untrusted_text`, so an agent can tell it from the server's own words.
+                    crate::service::untrusted::mark(&tool_name_for_guidance, &args_for_marking, &state, &mut structured);
                     // A main result says what usually comes next. A result that already has a `guidance` field keeps its own.
                     let guided = crate::service::next_step::for_tool(&tool_name_for_guidance).filter(|_| structured.get("guidance").is_none());
                     if let Some(g) = &guided {
                         structured["guidance"] = g.clone();
                     }
-                    let shown = if guided.is_some() && value.is_object() { &structured } else { &value };
+                    // The text is the same result. A bare list or value is read back out of its wrapper, so it is marked too.
+                    let shown = match &value {
+                        Value::Object(_) => structured.clone(),
+                        Value::Array(_) => structured["items"].clone(),
+                        _ => structured["value"].clone(),
+                    };
                     json!({
                         "structuredContent": structured,
-                        "content": [{ "type": "text", "text": serde_json::to_string(shown).unwrap_or_default() }]
+                        "content": [{ "type": "text", "text": serde_json::to_string(&shown).unwrap_or_default() }]
                     })
                 }
                 Ok(Err(err)) => service_tool_error(&err),

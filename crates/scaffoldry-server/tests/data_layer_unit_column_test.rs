@@ -505,7 +505,7 @@ async fn a_list_filtered_by_unit_uses_the_column_in_sql() {
         { "id": "a", "field_name": "unit", "operator": "Equals", "value": w.lab.to_string() },
         { "id": "b", "field_name": "score", "operator": "GreaterThan", "value": "0" } ], "groups": [] });
     let page = filter_page(&w, &w.admin, both, 10, None).await.expect("a page");
-    let names: Vec<&str> = page["records"].as_array().unwrap().iter().map(|r| r["data"]["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = page["records"].as_array().unwrap().iter().map(|r| r["untrusted_text"]["data"]["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Low", "High"], "{page}");
 }
 

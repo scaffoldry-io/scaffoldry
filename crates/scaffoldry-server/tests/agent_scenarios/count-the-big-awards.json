@@ -126,7 +126,7 @@
         "records": {
           "len": 2
         },
-        "records.0.data.applicant": "Big two"
+        "records.0.untrusted_text.data.applicant": "Big two"
       }
     }
   ],

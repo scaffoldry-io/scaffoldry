@@ -127,7 +127,7 @@
       },
       "expect": {
         "checks.rule_schema": "pass",
-        "changes": {
+        "untrusted_text.changes": {
           "contains": "wait for a decision"
         }
       }
@@ -139,7 +139,7 @@
       },
       "expect": {
         "status": "Pending",
-        "changes.0": {
+        "untrusted_text.changes.0": {
           "contains": "is added"
         }
       }

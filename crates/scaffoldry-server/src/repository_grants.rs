@@ -305,6 +305,15 @@ impl PostgresRepository {
         })
     }
 
+    /// How a draft came about, for the ledger: `{ via, for, client, tool, task }`. `None` when there is no such change.
+    pub fn access_change_origin(&self, id: Uuid) -> Result<Option<Value>, RepositoryError> {
+        self.with_client(move |c| {
+            Ok(c.query_opt("SELECT proposed_via, drafted_for, via_client, change->>'via_tool', task FROM access_changes WHERE id = $1", &[&id])?.map(|r| {
+                json!({ "via": r.get::<_, String>(0), "for": r.get::<_, Option<String>>(1), "client": r.get::<_, Option<String>>(2), "tool": r.get::<_, Option<String>>(3), "task": r.get::<_, Option<String>>(4) })
+            }))
+        })
+    }
+
     /// How a change came about and whether it ended: `(proposed_via, widens, expired)`.
     pub fn access_change_flags(&self, id: Uuid) -> Result<Option<(String, bool, bool)>, RepositoryError> {
         self.with_client(move |c| Ok(c.query_opt("SELECT proposed_via, widens, COALESCE(expires_at < NOW(), false) FROM access_changes WHERE id = $1", &[&id])?.map(|r| (r.get(0), r.get(1), r.get(2)))))
@@ -334,8 +343,8 @@ impl PostgresRepository {
                     let id: Uuid = r.get(0);
                     let change: Value = r.get(1);
                     let kind = change["kind"].as_str().unwrap_or("grant").to_string();
-                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "sentence": change["sentence"].clone(), "rule": change["rule"].clone(), "organization_id": change["organization_id"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6),
-                        "proposed_via": r.get::<_, String>(7), "drafted_for": r.get::<_, Option<String>>(8), "via_client": r.get::<_, Option<String>>(9), "task": r.get::<_, Option<String>>(10),
+                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "sentence": change["sentence"].clone(), "rule": change["rule"].clone(), "organization_id": change["organization_id"].clone(), "workspace_id": change["workspace_id"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6),
+                        "proposed_via": r.get::<_, String>(7), "drafted_for": r.get::<_, Option<String>>(8), "via_client": r.get::<_, Option<String>>(9), "via_tool": change["via_tool"].clone(), "task": r.get::<_, Option<String>>(10),
                         "expires_at": r.get::<_, Option<String>>(11), "expired": r.get::<_, bool>(12) })
                 })
                 .collect())
@@ -398,6 +407,8 @@ impl PostgresRepository {
                 } else {
                     tx.execute("INSERT INTO access_request_rules (id, organization_id, rule, created_by) VALUES ($1, $2, $3, $4)", &[&Uuid::new_v4(), &org, &change["rule"], &proposed_by])?;
                 }
+            } else if confirm && change["kind"].as_str().is_some_and(|k| k.starts_with("workspace_")) {
+                // A workspace change is applied by the service that decides it. Nothing is made here but the new state.
             } else if confirm {
                 let g = &change["grant"];
                 let text = |k: &str| g[k].as_str().map(str::to_string);

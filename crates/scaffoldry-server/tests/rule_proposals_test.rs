@@ -177,7 +177,7 @@ async fn a_rules_only_proposal_changes_nothing_until_approved_and_then_writes_ve
     assert!(!err, "{p}");
     assert!(live_rules(&w).is_empty(), "nothing is live yet");
     let id = p["proposal_id"].as_str().unwrap().to_string();
-    assert!(p["changes"].as_array().unwrap().iter().any(|c| c.as_str().unwrap().contains("set status to Approved")), "{p}");
+    assert!(p["untrusted_text"]["changes"].as_array().unwrap().iter().any(|c| c.as_str().unwrap().contains("set status to Approved")), "{p}");
 
     let (err, done) = decide(&w, &w.owner, &id, "approve").await;
     assert!(!err, "{done}");
@@ -392,7 +392,7 @@ async fn a_user_task_that_resolves_to_nobody_saves_with_a_warning() {
     assert!(!err, "a warning does not block: {p}");
     let approver = check(&p, "rule_approver");
     assert_eq!(approver["outcome"], "warn", "{p}");
-    assert!(approver["messages"][0].as_str().unwrap().contains("nobody can decide"), "{p}");
+    assert!(approver["untrusted_text"]["messages"][0].as_str().unwrap().contains("nobody can decide"), "{p}");
     // A warning is not a flagged check, so the owner may approve their own proposal.
     let (err, done) = decide(&w, &w.owner, p["proposal_id"].as_str().unwrap(), "approve").await;
     assert!(!err, "{done}");

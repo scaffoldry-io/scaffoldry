@@ -157,7 +157,7 @@ async fn preview_change(State(state): State<SharedState>, headers: HeaderMap, bo
     let c = caller(&state, &headers)?;
     let origin = crate::guard::read_origin(&state, &headers);
     let body = parse(&body)?;
-    tokio::task::spawn_blocking(move || crate::service::access_drafts::draft(&state, &c, &origin, &body, false))
+    tokio::task::spawn_blocking(move || crate::service::access_drafts::draft(&state, &c, &origin, &body, false, "preview_access_change"))
         .await
         .map_err(|_| ServiceError::Internal("The request stopped before it finished".to_string()))?
         .map(Json)

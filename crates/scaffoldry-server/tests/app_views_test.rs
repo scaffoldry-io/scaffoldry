@@ -253,6 +253,9 @@ fn sort_on(field: &str) -> Value {
 }
 
 fn names(list: &Value) -> Vec<String> {
+    // Over MCP a view's name is marked under `untrusted_text` (mcp-guidance phase 6). Over REST it is not. Put it back to read both.
+    let mut list = list.clone();
+    scaffoldry_server::service::untrusted::restore(&mut list);
     list["views"].as_array().unwrap().iter().map(|v| v["name"].as_str().unwrap().to_string()).collect()
 }
 

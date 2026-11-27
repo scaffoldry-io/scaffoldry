@@ -306,7 +306,7 @@ async fn removing_option_in_use_is_flagged_with_count_unused_is_not() {
     let checks_b = prop_b["checks"].as_array().unwrap();
     let data_loss_b = checks_b.iter().find(|c| c["name"] == "data_loss").unwrap();
     assert_eq!(data_loss_b["outcome"], "fail", "Removing used option must fail data_loss check");
-    let problems_str = serde_json::to_string(&data_loss_b["messages"]).unwrap();
+    let problems_str = serde_json::to_string(&data_loss_b["untrusted_text"]["messages"]).unwrap();
     assert!(problems_str.contains("3"), "data_loss message must mention the count (3): {problems_str}");
 }
 
@@ -488,12 +488,12 @@ async fn kanban_over_select_field_groups_by_id_and_shows_label_and_color() {
     let stages = groups["stages"].as_array().expect("stages array");
     assert_eq!(stages.len(), 2);
     let todo_stage = stages.iter().find(|s| s["id"] == "opt_todo").expect("todo stage");
-    assert_eq!(todo_stage["label"], "To Do");
+    assert_eq!(todo_stage["untrusted_text"]["label"], "To Do");
     assert_eq!(todo_stage["color"], "warn");
     assert_eq!(todo_stage["records"].as_array().unwrap().len(), 1);
 
     let done_stage = stages.iter().find(|s| s["id"] == "opt_done").expect("done stage");
-    assert_eq!(done_stage["label"], "Done");
+    assert_eq!(done_stage["untrusted_text"]["label"], "Done");
     assert_eq!(done_stage["color"], "ok");
     assert_eq!(done_stage["records"].as_array().unwrap().len(), 1);
 }

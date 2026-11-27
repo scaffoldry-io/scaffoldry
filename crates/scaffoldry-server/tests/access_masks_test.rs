@@ -148,7 +148,10 @@ async fn one_row(w: &World, token: &str) -> Value {
     let page = tool(w, token, "list_records", json!({ "app_slug": w.slug, "table_id": "people", "limit": 10 })).await.expect("a list");
     let rows = page["records"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
-    rows[0]["data"].clone()
+    // Text fields moved to `untrusted_text.data` on purpose (mcp-guidance phase 6). A number stays in `data`.
+    let mut data = rows[0]["data"].as_object().cloned().unwrap_or_default();
+    data.extend(rows[0]["untrusted_text"]["data"].as_object().cloned().unwrap_or_default());
+    Value::Object(data)
 }
 
 // 2. A viewer reads a protected date of birth whose field mask is `year` and gets the year. An editor gets the date.
@@ -244,8 +247,9 @@ async fn an_export_and_a_page_call_apply_the_same_mask_as_a_list() {
     assert!(full.contains("2004-12-31") && full.contains("123456789") && full.contains("55250"), "the owner exports the values: {full}");
 
     let listed = tool(&w, &w.viewer, "page_call", json!({ "app_slug": w.slug, "page_id": "board", "op": "list", "table_id": "people" })).await.expect("a page call");
-    let row = &listed["records"][0]["data"];
-    assert_eq!((row["dob"].as_str(), row["ssn"].as_str(), row["salary"].as_str()), (Some("2004"), Some("*****6789"), Some("50000 to under 60000")), "{listed}");
+    // The ssn is text, so it is under `untrusted_text.data` (mcp-guidance phase 6). The dob and the salary band stay in `data`.
+    let (row, text) = (&listed["records"][0]["data"], &listed["records"][0]["untrusted_text"]["data"]);
+    assert_eq!((row["dob"].as_str(), text["ssn"].as_str(), row["salary"].as_str()), (Some("2004"), Some("*****6789"), Some("50000 to under 60000")), "{listed}");
 }
 
 // 6. A masked read is not a disclosure of the protected value. Only a read with no mask is.
@@ -277,9 +281,9 @@ async fn history_shows_masks_to_a_reader_who_is_not_cleared() {
         async move { tool(w, &token, "get_record", json!({ "app_slug": w.slug, "record_id": id, "history": true })).await.expect("history") }
     };
     let mine = entries(w.viewer.clone()).await;
-    let change = mine["entries"].as_array().unwrap().iter().find_map(|e| e["changes"].get("dob").cloned()).unwrap_or_else(|| panic!("a change to dob in {mine}"));
+    let change = mine["entries"].as_array().unwrap().iter().find_map(|e| e["untrusted_text"]["changes"].get("dob").cloned()).unwrap_or_else(|| panic!("a change to dob in {mine}"));
     assert_eq!((change["old"].as_str(), change["new"].as_str()), (Some("2004"), Some("2005")), "{change}");
     let theirs = entries(w.owner.clone()).await;
-    let change = theirs["entries"].as_array().unwrap().iter().find_map(|e| e["changes"].get("dob").cloned()).unwrap();
+    let change = theirs["entries"].as_array().unwrap().iter().find_map(|e| e["untrusted_text"]["changes"].get("dob").cloned()).unwrap();
     assert_eq!(change["new"], "2005-06-15", "{change}");
 }

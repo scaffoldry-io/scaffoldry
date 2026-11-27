@@ -120,7 +120,7 @@ async fn titles(app: &axum::Router, slug: &str, who: &str) -> BTreeSet<String> {
     let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "list_records", "arguments": { "app_slug": slug, "table_id": "tickets", "limit": 200 } } });
     let (_, v) = send(app, "POST", "/api/mcp", who, Some(payload)).await;
     assert!(v["result"]["isError"] != true, "{who}: {v}");
-    v["result"]["structuredContent"]["records"].as_array().unwrap_or(&vec![]).iter().map(|r| r["data"]["title"].as_str().unwrap().to_string()).collect()
+    v["result"]["structuredContent"]["records"].as_array().unwrap_or(&vec![]).iter().map(|r| r["untrusted_text"]["data"]["title"].as_str().unwrap().to_string()).collect()
 }
 
 fn set(names: &[&str]) -> BTreeSet<String> {
