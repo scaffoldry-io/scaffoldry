@@ -214,6 +214,7 @@ async fn list_table_records(
             "next_cursor": page.next_cursor,
         });
         crate::service::records::add_field_states(&mut body, &page.calculating);
+        add_upcoming_changes(&mut body, &user, &slug, &table_id, &state);
         return Ok(Json(body));
     }
 
@@ -290,13 +291,22 @@ async fn list_table_records(
         None
     };
 
-    Ok(Json(json!({
+    let mut body = json!({
         "app_slug": slug,
         "table_id": table_id,
         "total": total,
         "offset": next_offset,
         "records": paged_records
-    })))
+    });
+    add_upcoming_changes(&mut body, &user, &slug, &table_id, &state);
+    Ok(Json(body))
+}
+
+/// Data layer phase 6b: a reader a scheduled label change affects sees it coming. The block holds the date and what changes, and nothing else.
+fn add_upcoming_changes(body: &mut Value, user: &crate::state::AuthUser, slug: &str, table_id: &str, state: &SharedState) {
+    if let Some(upcoming) = crate::service::label_changes::schedule::upcoming(user, slug, table_id, state) {
+        body["upcoming_changes"] = upcoming;
+    }
 }
 
 async fn create_table_record(

@@ -73,6 +73,10 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/data/datasets/{id}/label-changes".into(), case!(label_change_propose));
     m.insert("POST /api/v1/data/label-changes/{id}/decide".into(), case!(label_change_decide));
     m.insert("POST /api/v1/data/label-changes/{id}/apply".into(), case!(label_change_apply));
+    m.insert("POST /api/v1/data/label-changes/{id}/plan/approve".into(), case!(label_change_scheduled));
+    m.insert("POST /api/v1/data/label-changes/{id}/withdraw".into(), case!(label_change_scheduled));
+    m.insert("POST /api/v1/data/label-changes/{id}/exceptions".into(), case!(label_change_scheduled));
+    m.insert("POST /api/v1/data/label-changes/{id}/exceptions/{exception}/decide".into(), case!(label_change_scheduled));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
     m.insert("POST /api/v1/admin/guests/{id}/disable".into(), case!(guest_disable));
@@ -959,6 +963,38 @@ async fn label_change_apply(w: World) -> Outcome {
     ensure(done["status"] == "Applied", format!("applied: {done}"))?;
     let tags: Vec<String> = w.db.run(move |c| c.query_one("SELECT tags FROM dataset_records WHERE id = $1", &[&record]).unwrap().get(0));
     ensure(tags == vec!["phi".to_string()], format!("the row carries the tag: {tags:?}"))
+}
+
+/// Data layer phase 6b: A schedules a floor for a date. B, which has never been asked, approves the plan, and the people on it are told.
+/// A person who will lose access asks B for an exception, and A decides it. B withdraws the change, and A refuses to approve a plan that
+/// is no longer scheduled. Each server reads the other's step from the database.
+async fn label_change_scheduled(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    phi_category(&w);
+    let id = dataset_of(&w, &slug).await?;
+    // A change that touches no row affects nobody, so the table holds one.
+    make_record(&w, &slug, "Ada").await?;
+    let made = status(w.wa("POST", &format!("/api/v1/data/datasets/{id}/label-changes"), ADMIN, Some(json!({ "kind": "floor", "floor": ["phi"], "reason": "Health data is held here." }))).await, StatusCode::CREATED, "A proposes a floor")?;
+    let change = made["id"].as_str().ok_or("a change id")?.to_string();
+    let date = (chrono::Utc::now() + chrono::Duration::days(40)).to_rfc3339();
+    let held = status(w.wa("POST", &format!("/api/v1/data/label-changes/{change}/decide"), ADMIN, Some(json!({ "decision": "approve", "reason": "Notice first.", "effective_at": date }))).await, StatusCode::OK, "A schedules it")?;
+    ensure(held["status"] == "Scheduled", format!("held for its date: {held}"))?;
+    let (s, body) = w.rb("POST", &format!("/api/v1/data/label-changes/{change}/exceptions"), OWNER, Some(json!({ "justification": "I need it.", "expires_at": (chrono::Utc::now() + chrono::Duration::days(60)).to_rfc3339() }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("B knows the plan waits, so the notice period has not begun: {s} {body}"))?;
+    let plan = status(w.rb("POST", &format!("/api/v1/data/label-changes/{change}/plan/approve"), ADMIN, Some(json!({ "reason": "The plan is right." }))).await, StatusCode::OK, "B approves the plan A made")?;
+    ensure(plan["notices"]["audience"].as_i64().is_some_and(|n| n > 0) && plan["notices"]["audience"] == plan["notices"]["sent"], format!("everyone on the plan is told: {plan}"))?;
+    let asked = status(
+        w.rb("POST", &format!("/api/v1/data/label-changes/{change}/exceptions"), OWNER, Some(json!({ "justification": "I need it.", "expires_at": (chrono::Utc::now() + chrono::Duration::days(60)).to_rfc3339() }))).await,
+        StatusCode::CREATED,
+        "B takes an exception",
+    )?;
+    let exception = asked["id"].as_str().ok_or("an exception id")?.to_string();
+    let decided = status(w.wa("POST", &format!("/api/v1/data/label-changes/{change}/exceptions/{exception}/decide"), ADMIN, Some(json!({ "decision": "approve", "reason": "Their work needs it." }))).await, StatusCode::OK, "A decides it")?;
+    ensure(decided["status"] == "Approved" && decided["grant_id"].is_i64(), format!("a grant: {decided}"))?;
+    let withdrawn = status(w.rb("POST", &format!("/api/v1/data/label-changes/{change}/withdraw"), ADMIN, Some(json!({ "reason": "Not needed." }))).await, StatusCode::OK, "B withdraws it")?;
+    ensure(withdrawn["status"] == "Withdrawn" && withdrawn["grants_revoked"] == 1, format!("withdrawn: {withdrawn}"))?;
+    let (s, body) = w.wa("POST", &format!("/api/v1/data/label-changes/{change}/plan/approve"), ADMIN, Some(json!({ "reason": "Again." }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("A reads that it is withdrawn: {s} {body}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {

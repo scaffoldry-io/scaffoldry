@@ -88,6 +88,11 @@ notices! {
     // Data layer phase 2e: a request for access to a catalog dataset waits for a steward. `reminder` is true when it has
     // waited. It carries no app, so it reaches a steward who cannot read the dataset's app.
     AccessRequestWaiting => "access_request_waiting" { by: PersonRef, dataset: DatasetRef, reminder: Flag },
+    // Data layer phase 6b: a label change is scheduled for a date, and a person on its plan is told. `days` is the whole days left.
+    // `loses` is true for a person who will lose access. It carries no app, so an owner or a steward who cannot read the app is told too.
+    LabelChangeScheduled => "label_change_scheduled" { dataset: DatasetRef, days: Count, loses: Flag },
+    // The same people are told when the steward withdraws the change.
+    LabelChangeWithdrawn => "label_change_withdrawn" { dataset: DatasetRef },
 }
 
 /// Who is told.
@@ -120,7 +125,12 @@ impl Notice {
             | Notice::Assigned { app, .. }
             | Notice::ViewShared { app, .. }
             | Notice::ProcessNotice { app, .. } => Some(app.0.as_str()),
-            Notice::JobFinished { .. } | Notice::DelegationReceived { .. } | Notice::AccessChanged { .. } | Notice::AccessRequestWaiting { .. } => None,
+            Notice::JobFinished { .. }
+            | Notice::DelegationReceived { .. }
+            | Notice::AccessChanged { .. }
+            | Notice::AccessRequestWaiting { .. }
+            | Notice::LabelChangeScheduled { .. }
+            | Notice::LabelChangeWithdrawn { .. } => None,
         }
     }
 }
@@ -135,6 +145,8 @@ pub const FORCED: &[(&str, &str)] = &[
     ("access_changed", "A change to your own access always reaches your inbox."),
     ("access_request_waiting", "A request for access that waits on you always reaches your inbox, so nobody waits unseen."),
     ("file_infected", "An infected file always reaches your inbox."),
+    ("label_change_scheduled", "A change to who may read data you use, or own, or steward, always reaches your inbox, so nobody learns of it too late."),
+    ("label_change_withdrawn", "The withdrawal of a change you were told about always reaches your inbox, so nobody keeps preparing for it."),
 ];
 
 /// The channel when neither the person nor the institution chose one.
@@ -165,6 +177,8 @@ pub fn label(kind: &str) -> &'static str {
         "view_shared" => "Someone shares a view with you",
         "process_notice" => "A rule notifies you",
         "access_request_waiting" => "A request for access to a dataset waits on you",
+        "label_change_scheduled" => "A change to who may read a dataset is scheduled",
+        "label_change_withdrawn" => "A scheduled change to who may read a dataset is withdrawn",
         _ => "Other notices",
     }
 }
@@ -404,6 +418,31 @@ pub fn render(state: &SharedState, notice: &Notice) -> (String, String, Value) {
                 format!("{}: {name}", if reminder.0 { "Still waiting: access requested" } else { "Access requested" }),
                 format!("{} asked for access to {name}. {}", who(by), if reminder.0 { "The request is still waiting for a decision." } else { "It waits for your decision." }),
                 link("/me/access/requests".to_string(), json!({ "dataset": dataset.0 })),
+            )
+        }
+        Notice::LabelChangeScheduled { dataset, days, loses } => {
+            let name = crate::service::catalog::name_of(state, &dataset.0).unwrap_or_else(|| "a dataset".to_string());
+            let when = if days.0 == 1 { "1 day".to_string() } else { format!("{} days", days.0) };
+            if loses.0 {
+                (
+                    format!("You will lose access: {name}"),
+                    format!("Access to some rows of {name} changes in {when}, and you will lose it. You may ask for an exception before then. Read the dataset to see the notice."),
+                    link("/datasets".to_string(), json!({ "dataset": dataset.0 })),
+                )
+            } else {
+                (
+                    format!("A change to {name} takes effect in {when}"),
+                    format!("Who may read some rows of {name} changes in {when}. People who read it are told, and they may ask for an exception."),
+                    link("/datasets".to_string(), json!({ "dataset": dataset.0 })),
+                )
+            }
+        }
+        Notice::LabelChangeWithdrawn { dataset } => {
+            let name = crate::service::catalog::name_of(state, &dataset.0).unwrap_or_else(|| "a dataset".to_string());
+            (
+                format!("Withdrawn: the change to {name}"),
+                format!("The change to who may read {name}, which you were told about, is withdrawn. Nothing changes for you."),
+                link("/datasets".to_string(), json!({ "dataset": dataset.0 })),
             )
         }
         Notice::ViewShared { by, app: a, table: t } => (

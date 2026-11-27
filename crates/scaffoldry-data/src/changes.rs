@@ -8,7 +8,8 @@ use postgres::GenericClient;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-const COLUMNS: &str = "id, dataset_id, kind, spec, reason, source, finding_id, proposed_by, proposed_at::text, status, approvals, amended, open_work, decided_by, decided_at::text, decision_note";
+const COLUMNS: &str = "id, dataset_id, kind, spec, reason, source, finding_id, proposed_by, proposed_at::text, status, approvals, amended, open_work, decided_by, decided_at::text, decision_note, \
+    to_char(effective_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), plan, plan_approved_by, to_char(plan_approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
 
 /// A proposal as stored.
 #[derive(Debug, Clone)]
@@ -29,6 +30,12 @@ pub struct Change {
     pub decided_by: Option<String>,
     pub decided_at: Option<String>,
     pub decision_note: Option<String>,
+    /// Phase 6b: the date a scheduled change applies, as UTC text. `None` for a change that applies when it is decided.
+    pub effective_at: Option<String>,
+    /// Phase 6b: the communications plan the steward reads, as the schema `label-change-plan.schema.json` describes it.
+    pub plan: Option<Value>,
+    pub plan_approved_by: Option<String>,
+    pub plan_approved_at: Option<String>,
 }
 
 /// One approval: who, when, and the note they gave.
@@ -68,6 +75,10 @@ fn change_of(r: &postgres::Row) -> Change {
         decided_by: r.get(13),
         decided_at: r.get(14),
         decision_note: r.get(15),
+        effective_at: r.get(16),
+        plan: r.get(17),
+        plan_approved_by: r.get(18),
+        plan_approved_at: r.get(19),
     }
 }
 
@@ -123,7 +134,7 @@ pub fn set_approvals<C: GenericClient>(tx: &mut C, id: Uuid, approvals: &[Approv
 pub fn amend<C: GenericClient>(tx: &mut C, id: Uuid, spec: &Value, by: &str, note: &str) -> Result<(), postgres::Error> {
     tx.execute(
         "UPDATE label_changes SET amended = amended || jsonb_build_array(jsonb_build_object('by', $3::text, 'at', NOW()::text, 'note', $4::text, 'was', spec)), \
-         spec = $2, approvals = '[]'::jsonb WHERE id = $1",
+         spec = $2, approvals = '[]'::jsonb, effective_at = NULL WHERE id = $1",
         &[&id, spec, &by, &note],
     )?;
     Ok(())
@@ -136,6 +147,50 @@ pub fn set_status<C: GenericClient>(tx: &mut C, id: Uuid, status: &str, decided_
         &[&id, &status, &decided_by, &note, &open_work],
     )?;
     Ok(())
+}
+
+/// Holds an approved change for its date (phase 6b): the status becomes `Scheduled`, with the date and the plan the steward will read.
+/// `at` is RFC 3339 text. The plan is approved separately, and nothing is sent before then.
+pub fn schedule<C: GenericClient>(tx: &mut C, id: Uuid, at: &str, plan: &Value, decided_by: &str, note: &str) -> Result<(), postgres::Error> {
+    tx.execute(
+        "UPDATE label_changes SET status = 'Scheduled', effective_at = $2::text::timestamptz, plan = $3, open_work = 'date', decided_by = $4, decided_at = NOW(), decision_note = $5 WHERE id = $1",
+        &[&id, &at, plan, &decided_by, &note],
+    )?;
+    Ok(())
+}
+
+/// Keeps the date a first approver asked for while the change waits for a second. The approval that completes the change takes it unless
+/// that approver names another. `amend` clears it.
+pub fn set_effective<C: GenericClient>(tx: &mut C, id: Uuid, at: &str) -> Result<(), postgres::Error> {
+    tx.execute("UPDATE label_changes SET effective_at = $2::text::timestamptz WHERE id = $1 AND status = 'Pending'", &[&id, &at])?;
+    Ok(())
+}
+
+/// Records that the steward approved the plan. False when it was approved already, so a second call sends nothing new.
+pub fn approve_plan<C: GenericClient>(tx: &mut C, id: Uuid, by: &str) -> Result<bool, postgres::Error> {
+    Ok(tx.execute("UPDATE label_changes SET plan_approved_by = $2, plan_approved_at = NOW() WHERE id = $1 AND plan_approved_at IS NULL", &[&id, &by])? == 1)
+}
+
+/// The scheduled changes whose plan is approved and whose date is `now` or earlier, oldest first. `now` is RFC 3339 text. A change
+/// whose plan was never approved is left alone, because nobody was told.
+pub fn due<C: GenericClient>(c: &mut C, now: &str, limit: i64) -> Result<Vec<Uuid>, postgres::Error> {
+    Ok(c.query(
+        "SELECT id FROM label_changes WHERE status = 'Scheduled' AND plan_approved_at IS NOT NULL AND effective_at <= $1::text::timestamptz ORDER BY effective_at, id LIMIT $2",
+        &[&now, &limit],
+    )?
+    .iter()
+    .map(|r| r.get(0))
+    .collect())
+}
+
+/// Whether a live row of the table that is not one of `except` already carries one of `tags`. An exception that waives a category for a
+/// dataset would open such a row, so the steward is told it cannot be granted.
+pub fn others_carry<C: GenericClient>(c: &mut C, app_slug: &str, table_id: &str, tags: &[String], except: &[String]) -> Result<bool, postgres::Error> {
+    Ok(c.query_one(
+        "SELECT EXISTS (SELECT 1 FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND tags && $3 AND NOT (id = ANY($4)))",
+        &[&app_slug, &table_id, &tags, &except],
+    )?
+    .get(0))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

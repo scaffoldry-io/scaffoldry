@@ -11,7 +11,9 @@
 //!   Approving applies the change through the phase 3 functions and writes one `DataLabelChanged` ledger entry that names the
 //!   proposer, the deciders and the finding.
 //!
-//! Applying on a date, the notice period and exceptions are phase 6b. The evaluation lists the option and says it is not built.
+//! Applying on a date, the notice period, the communications plan and exceptions are phase 6b, in `schedule`.
+
+pub mod schedule;
 
 use crate::repository::AppendDecisionParams;
 use crate::repository_catalog::CatalogRow;
@@ -255,6 +257,7 @@ fn change_json(c: &Change, ask: &Ask, cats: &[Category]) -> Value {
         "removes_protection": removes_protection(ask, cats), "approvals_needed": approvals_needed(ask, cats),
         "approved_by": c.approvals.iter().map(|a| json!({ "by": a.by, "at": a.at, "note": a.note })).collect::<Vec<_>>(),
         "open_work": c.open_work, "decided_by": c.decided_by, "decided_at": c.decided_at, "decision_note": c.decision_note,
+        "effective_at": c.effective_at, "plan_approved_at": c.plan_approved_at,
     })
 }
 
@@ -347,9 +350,17 @@ type Bucket = (Option<String>, Option<String>, Option<Uuid>);
 /// A kind of reader, how many there are, and the gate they meet before the change and after it.
 struct Kindred {
     sig: Signature,
-    people: i64,
+    /// The people who hold exactly these positions. Their number is what the evaluation shows. The plan of a scheduled change names them.
+    members: Vec<String>,
     before: Option<Gate>,
     after: Option<Gate>,
+}
+
+/// What the gate says of a kind of reader for the rows a change touches.
+struct Verdict {
+    kind: Kindred,
+    gains: bool,
+    loses: bool,
 }
 
 /// The relevant (position, unit) pairs a person holds today. A position no requirement lists cannot change what the gate says.
@@ -391,19 +402,19 @@ fn names_of(state: &SharedState) -> (HashMap<String, String>, HashMap<Uuid, Stri
 /// The readers, grouped by what they hold, and how many each group has. A reader is a person who holds a role, or is a member of the
 /// app's workspace. A Platform Admin reads every row and is left out. Two people who hold the same relevant positions at the same
 /// units get the same answer from the gate, so each group is asked once.
-fn population(app: &str, relevant: &BTreeSet<String>, state: &SharedState) -> Result<(BTreeMap<Signature, i64>, i64), ServiceError> {
+fn population(app: &str, relevant: &BTreeSet<String>, state: &SharedState) -> Result<(BTreeMap<Signature, Vec<String>>, i64), ServiceError> {
     let holders = state.repository.all_holders().map_err(storage)?;
     let mut by_person: HashMap<String, Vec<&Holder>> = HashMap::new();
     for h in &holders {
         by_person.entry(h.eppn.clone()).or_default().push(h);
     }
-    let mut groups: BTreeMap<Signature, i64> = BTreeMap::new();
+    let mut groups: BTreeMap<Signature, Vec<String>> = BTreeMap::new();
     let mut counted = 0;
-    for list in by_person.values() {
+    for (person, list) in &by_person {
         if is_root_admin(list, state) {
             continue;
         }
-        *groups.entry(signature(list, relevant)).or_default() += 1;
+        groups.entry(signature(list, relevant)).or_default().push(person.clone());
         counted += 1;
     }
     let workspace = {
@@ -414,10 +425,10 @@ fn population(app: &str, relevant: &BTreeSet<String>, state: &SharedState) -> Re
         let members: Vec<String> = crate::service::members::people_with_roles(&ws, state).into_keys().collect();
         let mut seen = BTreeSet::new();
         for m in members {
-            if by_person.contains_key(&m) || !seen.insert(m) {
+            if by_person.contains_key(&m) || !seen.insert(m.clone()) {
                 continue;
             }
-            *groups.entry(Vec::new()).or_default() += 1;
+            groups.entry(Vec::new()).or_default().push(m);
             counted += 1;
         }
     }
@@ -447,41 +458,54 @@ fn reach_json(r: &Reach) -> Value {
     json!({ "people": r.people, "by_position": list })
 }
 
-/// Who gains and who loses access to at least one row the change touches: the readers the gate admits before and the readers it admits
-/// after, in a world with the new floor and the new tags.
+/// What the gate says of each kind of reader, for the rows the change touches: the readers the gate admits before and the readers it
+/// admits after, in a world with the new floor and the new tags. Returns the verdicts and how many people were counted.
 ///
 /// Cost: one read of every holding, one grouped read of the rows the change touches (by key for named rows, a scan of the table for a
 /// floor), then one gate for each kind of reader, before and after, asked of each distinct pair of unit and tags. It does not
 /// read a row twice and it does not ask the gate about a person.
-fn access(ask: &Ask, cats: &[Category], state: &SharedState) -> Result<Value, ServiceError> {
+fn verdicts(ask: &Ask, cats: &[Category], state: &SharedState) -> Result<(Vec<Verdict>, i64), ServiceError> {
     let relevant = requirement_positions(cats);
     let (readers, counted) = population(&ask.app, &relevant, state)?;
     let ids = (ask.kind == Kind::Tags).then(|| ask.records.clone());
     let groups = state.repository.label_groups(&ask.app, &ask.table, ids).map_err(storage)?;
-    let names = names_of(state);
     let gates: Vec<Kindred> = readers
         .into_iter()
-        .map(|(sig, people)| {
+        .map(|(sig, members)| {
             let before = row_labels::gate_over(&sig, &ask.app, &ask.table, Some(ask.floor_before.clone()), cats, state);
             let after = row_labels::gate_over(&sig, &ask.app, &ask.table, Some(ask.floor_after.clone()), cats, state);
-            Kindred { sig, people, before, after }
+            Kindred { sig, members, before, after }
         })
         .collect();
-    let (mut gain, mut lose) = (Reach { people: 0, by: BTreeMap::new() }, Reach { people: 0, by: BTreeMap::new() });
     let tree = state.tree.read().unwrap_or_else(|p| p.into_inner());
     let contains = |a: Uuid, u: Uuid| tree.contains(a, u);
-    for k in &gates {
-        let (mut gains, mut loses) = (false, false);
-        for g in &groups {
-            let (was, will) = (admitted(&k.before, g.unit, &g.tags, &contains), admitted(&k.after, g.unit, &ask.tags_after(&g.tags), &contains));
-            gains |= !was && will;
-            loses |= was && !will;
+    let out = gates
+        .into_iter()
+        .map(|k| {
+            let (mut gains, mut loses) = (false, false);
+            for g in &groups {
+                let (was, will) = (admitted(&k.before, g.unit, &g.tags, &contains), admitted(&k.after, g.unit, &ask.tags_after(&g.tags), &contains));
+                gains |= !was && will;
+                loses |= was && !will;
+            }
+            Verdict { kind: k, gains, loses }
+        })
+        .collect();
+    Ok((out, counted))
+}
+
+/// Who gains and who loses access to at least one row the change touches, by position and unit. It names no person.
+fn access(ask: &Ask, cats: &[Category], state: &SharedState) -> Result<Value, ServiceError> {
+    let (verdicts, counted) = verdicts(ask, cats, state)?;
+    let names = names_of(state);
+    let (mut gain, mut lose) = (Reach { people: 0, by: BTreeMap::new() }, Reach { people: 0, by: BTreeMap::new() });
+    for v in &verdicts {
+        let n = v.kind.members.len() as i64;
+        if v.gains {
+            bucket(&v.kind.sig, &names, n, &mut gain);
         }
-        if gains {
-            bucket(&k.sig, &names, k.people, &mut gain);
-        }
-        if loses {
-            bucket(&k.sig, &names, k.people, &mut lose);
+        if v.loses {
+            bucket(&v.kind.sig, &names, n, &mut lose);
         }
     }
     Ok(json!({
@@ -490,6 +514,11 @@ fn access(ask: &Ask, cats: &[Category], state: &SharedState) -> Result<Value, Se
         "lose": reach_json(&lose),
         "basis": "Counted from the label requirements in settings, by the position and unit a person holds, with the gate that reads every row. A Platform Admin reads every row and is not counted. App grants and row rules narrow access further and are not counted.",
     }))
+}
+
+/// The people who lose access to at least one row the change touches. The plan of a scheduled change tells them.
+fn losers(ask: &Ask, cats: &[Category], state: &SharedState) -> Result<BTreeSet<String>, ServiceError> {
+    Ok(verdicts(ask, cats, state)?.0.into_iter().filter(|v| v.loses).flat_map(|v| v.kind.members).collect())
 }
 
 /// What depends on the data, and who would be locked out of unfinished work.
@@ -648,7 +677,7 @@ fn evaluate(change: &Change, ask: &Ask, state: &SharedState) -> Result<Value, Se
     let options = json!([
         { "id": "now", "available": true, "text": "Apply now. People with open work on these rows lose their access when it applies" },
         { "id": "new_work_only", "available": true, "text": "Apply for new work only. The change is approved and held, and it applies when the open work on these rows has ended" },
-        { "id": "date", "available": false, "text": "Apply on a date. The effective date, the notice period and exceptions are data layer phase 6b and are not built" },
+        { "id": "date", "available": true, "min_days": schedule::min_days(ask, &cats, state), "text": format!("Apply on a date. Give `effective_at` at least {} days from now. A plan tells the people it affects, you approve it before anyone is told, and they may ask for an exception until the date", schedule::min_days(ask, &cats, state)) },
     ]);
     let (undo, undo_needs) = undo_text(ask, &cats);
     let removes = removes_protection(ask, &cats);
@@ -678,14 +707,18 @@ pub fn get(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, Se
     let (change, row) = load(caller, id, state)?;
     let ask = ask_of(&change, &row, state)?;
     let cats = state.sensitivity_categories();
-    Ok(json!({ "change": change_json(&change, &ask, &cats), "evaluation": evaluate(&change, &ask, state)? }))
+    let mut out = json!({ "change": change_json(&change, &ask, &cats), "evaluation": evaluate(&change, &ask, state)? });
+    if let Some(s) = schedule::block(&change, state)? {
+        out["schedule"] = s;
+    }
+    Ok(out)
 }
 
 /// `GET /data/label-changes`: the changes the caller may decide, newest first. Filters: `status`, `dataset`.
 pub fn list(caller: &AuthUser, q: &HashMap<String, String>, state: &SharedState) -> Result<Value, ServiceError> {
     if let Some(s) = q.get("status") {
-        if !["Pending", "Approved", "Applied", "Declined"].contains(&s.as_str()) {
-            return Err(bad("status is Pending, Approved, Applied or Declined"));
+        if !["Pending", "Approved", "Scheduled", "Applied", "Declined", "Withdrawn"].contains(&s.as_str()) {
+            return Err(bad("status is Pending, Approved, Scheduled, Applied, Declined or Withdrawn"));
         }
     }
     let admin = is_admin_or_compliance(caller, state);
@@ -764,6 +797,7 @@ fn outcome(id: Uuid, out: DecideOutcome, needs: usize, open_work: Option<String>
         DecideOutcome::Duplicate => Err(ServiceError::Conflict("You have approved this change already. A different person approves it next".to_string())),
         DecideOutcome::Waiting { approvals } => Ok(json!({ "id": id, "status": "Pending", "approvals": approvals, "approvals_needed": needs, "next": "It removes protection, so a second approver, who is not the proposer or the first approver, completes it" })),
         DecideOutcome::Held { approvals } => Ok(json!({ "id": id, "status": "Approved", "approvals": approvals, "approvals_needed": needs, "open_work": open_work, "next": "It is held. It applies when the open work has ended: POST /data/label-changes/{id}/apply" })),
+        DecideOutcome::Scheduled { approvals } => Ok(json!({ "id": id, "status": "Scheduled", "approvals": approvals, "approvals_needed": needs, "open_work": open_work })),
         DecideOutcome::Applied { done } => Ok(applied(id, &done, &open_work)),
     }
 }
@@ -806,12 +840,29 @@ pub fn decide(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) ->
             if needs == 2 && change.proposed_by.eq_ignore_ascii_case(&caller.eppn) {
                 return Err(ServiceError::forbidden("The person who proposed a change that removes protection cannot approve it. Two other people do"));
             }
-            let open_work = open_work_of(body)?;
+            // A date: the notice period is checked now, and the change is held for the date once the approvals are complete.
+            let kept = change.effective_at.as_deref().filter(|_| change.status == "Pending");
+            let effective = schedule::effective_of(body, kept, &ask, &cats, state, chrono::Utc::now())?;
+            let open_work = match (&effective, open_work_of(body)?) {
+                (Some(_), None) => Some("date".to_string()),
+                (Some(_), Some(w)) if w == "date" => Some(w),
+                (Some(_), Some(_)) => return Err(bad("A date and `open_work` of `now` or `new_work_only` cannot both be asked. Give `effective_at` alone")),
+                (None, Some(w)) if w == "date" => return Err(bad("Apply on a date needs `effective_at`, a date and time such as 2026-12-30T09:00:00Z")),
+                (None, w) => w,
+            };
             let locked = work(&ask, &cats, state)?.locked.len();
             if locked > 0 && open_work.is_none() {
-                return Err(bad(format!("{locked} people would be locked out of open work. Say how to treat it: open_work is `now` or `new_work_only`. No default decides this for you")));
+                return Err(bad(format!("{locked} people would be locked out of open work. Say how to treat it: open_work is `now` or `new_work_only`, or give `effective_at` to apply on a date. No default decides this for you")));
             }
             let hold = locked > 0 && open_work.as_deref() == Some("new_work_only");
+            let complete = change.approvals.iter().filter(|a| !a.by.eq_ignore_ascii_case(&caller.eppn)).count() + 1 >= needs;
+            let (held, described) = match &effective {
+                Some(at) if complete => {
+                    let (held, described) = schedule::hold(caller, &change, &ask, &row, *at, &reason, state)?;
+                    (Some(held), Some(described))
+                }
+                _ => (None, None),
+            };
             let req = DecideReq {
                 id: change.id,
                 by: caller.eppn.clone(),
@@ -820,11 +871,21 @@ pub fn decide(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) ->
                 needs,
                 hold,
                 release: false,
+                scheduled: false,
+                schedule: held,
+                date: effective.map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
                 plan: plan_of(&ask, state)?,
                 ledger: ledger_of(change.id, &ask, &caller.eppn, &reason),
             };
             let out = state.repository.decide_label_change(req).map_err(storage)?;
-            outcome(change.id, out, needs, open_work)
+            let scheduled = matches!(out, DecideOutcome::Scheduled { .. });
+            let mut answer = outcome(change.id, out, needs, open_work)?;
+            if let (true, Some(d)) = (scheduled, described) {
+                if let (Some(a), Some(d)) = (answer.as_object_mut(), d.as_object()) {
+                    a.extend(d.clone());
+                }
+            }
+            Ok(answer)
         }
     }
 }
@@ -832,9 +893,8 @@ pub fn decide(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) ->
 fn open_work_of(body: &Value) -> Result<Option<String>, ServiceError> {
     match body.get("open_work") {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(s)) if s == "now" || s == "new_work_only" => Ok(Some(s.clone())),
-        Some(Value::String(s)) if s == "date" => Err(bad("Apply on a date is data layer phase 6b and is not built. Choose `now` or `new_work_only`")),
-        Some(_) => Err(bad("open_work is `now` or `new_work_only`")),
+        Some(Value::String(s)) if s == "now" || s == "new_work_only" || s == "date" => Ok(Some(s.clone())),
+        Some(_) => Err(bad("open_work is `now`, `new_work_only` or `date`")),
     }
 }
 
@@ -860,6 +920,9 @@ pub fn apply(caller: &AuthUser, id: &str, state: &SharedState) -> Result<Value, 
         needs: 0,
         hold: false,
         release: true,
+        scheduled: false,
+        schedule: None,
+        date: None,
         plan: plan_of(&ask, state)?,
         ledger: ledger_of(change.id, &ask, &caller.eppn, &note.chars().take(500).collect::<String>()),
     };

@@ -120,8 +120,9 @@ async fn a_person_who_cannot_read_the_app_gets_no_notice_about_it() {
 fn no_kind_takes_free_text() {
     let allowed = ["AppRef", "TableRef", "PersonRef", "RecordRef", "StepRef", "JobRef", "WorkspaceRef", "DatasetRef", "Count", "Flag"];
     // The brief's sixteen kinds, `process_notice` for a rule's Notify effect (notifications phase 4), and
-    // `access_request_waiting` for a catalog request that waits for a steward (data layer phase 2e).
-    assert_eq!(notifications::FIELDS.len(), 18, "one entry per kind");
+    // `access_request_waiting` for a catalog request that waits for a steward (data layer phase 2e), and `label_change_scheduled` and
+    // `label_change_withdrawn` for a label change that runs on a date (data layer phase 6b).
+    assert_eq!(notifications::FIELDS.len(), 20, "one entry per kind");
     for (kind, fields) in notifications::FIELDS {
         assert!(notifications::KINDS.contains(kind), "{kind}");
         for (name, ty) in fields.iter() {
@@ -142,6 +143,14 @@ fn no_kind_takes_free_text() {
     let (title, body, _) = notifications::render(&state, &n);
     assert!(!title.contains(secret) && !body.contains(secret), "{title} / {body}");
     let n = Notice::AccessRequestWaiting { by: PersonRef(secret.into()), dataset: notifications::DatasetRef(secret.into()), reminder: Flag(false) };
+    let (title, body, _) = notifications::render(&state, &n);
+    assert!(!title.contains(secret) && !body.contains(secret) && title.contains("a dataset"), "{title} / {body}");
+    for loses in [true, false] {
+        let n = Notice::LabelChangeScheduled { dataset: notifications::DatasetRef(secret.into()), days: Count(30), loses: Flag(loses) };
+        let (title, body, _) = notifications::render(&state, &n);
+        assert!(!title.contains(secret) && !body.contains(secret) && body.contains("30 days"), "{title} / {body}");
+    }
+    let n = Notice::LabelChangeWithdrawn { dataset: notifications::DatasetRef(secret.into()) };
     let (title, body, _) = notifications::render(&state, &n);
     assert!(!title.contains(secret) && !body.contains(secret) && title.contains("a dataset"), "{title} / {body}");
 }

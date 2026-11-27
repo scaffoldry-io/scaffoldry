@@ -46,11 +46,29 @@ pub struct DecideReq {
     pub needs: usize,
     /// The steward chose "apply for new work only" while work is open. The change is approved and held.
     pub hold: bool,
-    /// Applies a change that was held. No approval is added.
+    /// Applies a change that was held, or that was scheduled and whose date came. No approval is added.
     pub release: bool,
+    /// With `release`: the change is `Scheduled` and not `Approved`.
+    pub scheduled: bool,
+    /// The steward chose a date. When the approvals are complete the change is held for it, with its plan and its audience, and not applied.
+    pub schedule: Option<Schedule>,
+    /// The date (RFC 3339) this approver asked for. While the change waits for another approver it is kept on the change.
+    pub date: Option<String>,
     pub plan: Plan,
     /// The ledger entry, built from what the decision did.
     pub ledger: Box<dyn FnOnce(&Done) -> AppendDecisionParams + Send>,
+}
+
+/// A change held for its date: when, the plan the steward reads, the people the plan tells, and the ledger entry that records it.
+pub struct Schedule {
+    /// RFC 3339.
+    pub at: String,
+    pub plan: Value,
+    pub app_slug: String,
+    pub table_id: String,
+    /// Each person with the audiences that put them on the plan.
+    pub audience: Vec<(String, Vec<String>)>,
+    pub ledger: AppendDecisionParams,
 }
 
 /// What a decision did, for the ledger entry and the answer.
@@ -74,6 +92,8 @@ pub enum DecideOutcome {
     Duplicate,
     Waiting { approvals: usize },
     Held { approvals: usize },
+    /// Held for its date. Nothing was applied and nobody was told.
+    Scheduled { approvals: usize },
     Applied { done: Box<Done> },
 }
 
@@ -266,7 +286,11 @@ impl PostgresRepository {
         self.with_client(move |c| {
             let mut tx = c.transaction()?;
             let Some(change) = changes::get_for_update(&mut tx, req.id)? else { return Ok(DecideOutcome::Missing) };
-            let wanted = if req.release { "Approved" } else { "Pending" };
+            let wanted = match (req.release, req.scheduled) {
+                (true, true) => "Scheduled",
+                (true, false) => "Approved",
+                _ => "Pending",
+            };
             if change.status != wanted {
                 return Ok(DecideOutcome::NotPending(change.status));
             }
@@ -282,6 +306,9 @@ impl PostgresRepository {
                 approvals.push(Approval { by: req.by.clone(), at, note: req.note.clone() });
                 changes::set_approvals(&mut tx, req.id, &approvals)?;
                 if approvals.len() < req.needs {
+                    if let Some(at) = &req.date {
+                        changes::set_effective(&mut tx, req.id, at)?;
+                    }
                     tx.commit()?;
                     return Ok(DecideOutcome::Waiting { approvals: approvals.len() });
                 }
@@ -289,6 +316,18 @@ impl PostgresRepository {
                     changes::set_status(&mut tx, req.id, "Approved", &req.by, &req.note, req.open_work.as_deref())?;
                     tx.commit()?;
                     return Ok(DecideOutcome::Held { approvals: approvals.len() });
+                }
+                if let Some(s) = req.schedule {
+                    changes::schedule(&mut tx, req.id, &s.at, &s.plan, &req.by, &req.note)?;
+                    for (person, audiences) in &s.audience {
+                        tx.execute(
+                            "INSERT INTO label_change_audience (change_id, person, app_slug, table_id, audiences) VALUES ($1, lower($2), $3, $4, $5) ON CONFLICT (change_id, person) DO NOTHING",
+                            &[&req.id, person, &s.app_slug, &s.table_id, audiences],
+                        )?;
+                    }
+                    append_ledger_in_tx(&mut tx, s.ledger)?;
+                    tx.commit()?;
+                    return Ok(DecideOutcome::Scheduled { approvals: approvals.len() });
                 }
             }
             let mut done = Done {
@@ -319,6 +358,12 @@ impl PostgresRepository {
             }
             append_ledger_in_tx(&mut tx, (req.ledger)(&done))?;
             changes::set_status(&mut tx, req.id, "Applied", &req.by, &req.note, done.open_work.as_deref())?;
+            // Exceptions: an approved one now waives what the change added, and a request nobody decided before the date lapses.
+            tx.execute("UPDATE label_change_exceptions SET in_force = TRUE WHERE change_id = $1 AND status = 'Approved'", &[&req.id])?;
+            tx.execute(
+                "UPDATE label_change_exceptions SET status = 'Lapsed', decided_at = NOW(), decision_note = 'Nobody decided this before the date' WHERE change_id = $1 AND status = 'Requested'",
+                &[&req.id],
+            )?;
             tx.commit()?;
             Ok(DecideOutcome::Applied { done: Box::new(done) })
         })

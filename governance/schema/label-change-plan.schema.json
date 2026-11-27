@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/label-change-plan.schema.json",
+  "title": "LabelChangePlan",
+  "description": "The communications plan of a scheduled label change (data layer phase 6b). The server builds it from the evaluation when a steward approves a change for a date. The steward reads it and approves it. Nothing is sent before then. It holds counts, wording and dates, never a person's address and never a record value.",
+  "type": "object",
+  "required": ["effective_at", "notice_days", "notice_days_min", "change", "audiences", "timeline", "channels"],
+  "additionalProperties": false,
+  "properties": {
+    "effective_at": { "type": "string", "format": "date-time", "description": "When access changes." },
+    "notice_days": { "type": "integer", "minimum": 1, "description": "Whole days from the day the change was scheduled to the effective date." },
+    "notice_days_min": { "type": "integer", "minimum": 1, "description": "The shortest notice settings allow for this change. notice_days is never less." },
+    "change": {
+      "type": "object",
+      "required": ["kind", "adds", "removes"],
+      "additionalProperties": false,
+      "description": "What changes, as category ids from settings. It names no row and no value.",
+      "properties": {
+        "kind": { "enum": ["tags", "floor"] },
+        "adds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" } },
+        "removes": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" } }
+      }
+    },
+    "audiences": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/audience" }
+    },
+    "timeline": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/step" },
+      "description": "Dates are days before the effective date. Reminders, a final warning and a confirmation are not built yet, so the timeline holds the first notice and the day."
+    },
+    "channels": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["inbox", "email", "api"] },
+      "description": "inbox and email follow each person's preferences, and the inbox always receives it. api is the upcoming_changes block on a read of the dataset's records."
+    }
+  },
+  "$defs": {
+    "audience": {
+      "type": "object",
+      "required": ["id", "name", "count", "told"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "enum": ["lose_access", "owners", "stewards", "compliance"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "count": { "type": "integer", "minimum": 0, "description": "How many people the audience holds when the plan is built." },
+        "told": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What the audience is told, in plain words. It holds no record value." }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["action", "days_before"],
+      "additionalProperties": false,
+      "properties": {
+        "action": { "enum": ["first_notice", "effective"] },
+        "days_before": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
