@@ -176,7 +176,7 @@ async fn proposing_leaves_the_live_app_unchanged() {
     let (err, p) = propose(&w, &w.owner, manifest(&w.slug, fields), vec![]).await;
     assert!(!err, "{p}");
     assert!(p["proposal_id"].is_string());
-    assert!(p["changes"].as_array().unwrap().iter().any(|c| c.as_str().unwrap().contains("notes")), "{p}");
+    assert!(p["untrusted_text"]["changes"].as_array().unwrap().iter().any(|c| c.as_str().unwrap().contains("notes")), "{p}");
 
     let (v1, after) = live_version(&w).await;
     assert_eq!(v0, v1);
@@ -357,7 +357,7 @@ async fn a_page_that_reads_a_sensitive_field_is_flagged_and_the_proposer_cannot_
     let (err, p) = propose(&w, &w.owner, m, vec![source.to_string()]).await;
     assert!(!err, "{p}");
     assert_eq!(check(&p, "page_sensitivity")["outcome"], "fail", "{p}");
-    let changes = p["changes"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_string()).collect::<Vec<_>>().join("\n");
+    let changes = p["untrusted_text"]["changes"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_string()).collect::<Vec<_>>().join("\n");
     assert!(changes.contains("Award dashboard") && changes.to_lowercase().contains("social security number"), "{changes}");
     assert!(changes.contains("may not create or delete records"), "{changes}");
 
@@ -387,7 +387,7 @@ async fn one_changed_character_is_a_new_hash_and_a_changed_page() {
     m["pages"] = json!([page(&sha(second), &["title"], &[])]);
     let (err, p2) = propose(&w, &w.owner, m, vec![second.to_string()]).await;
     assert!(!err, "{p2}");
-    let changes = p2["changes"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_string()).collect::<Vec<_>>().join("\n");
+    let changes = p2["untrusted_text"]["changes"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_string()).collect::<Vec<_>>().join("\n");
     assert!(changes.contains("Award dashboard") && changes.to_lowercase().contains("changed"), "{changes}");
 }
 

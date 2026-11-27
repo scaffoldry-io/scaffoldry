@@ -105,7 +105,10 @@ async fn the_kit_has_three_parts_and_each_states_the_version() {
 
     let (status, over_rest) = send(&w.app, "GET", "/api/v1/agent-kit", &w.owner, None).await;
     assert_eq!(status, StatusCode::OK, "{over_rest}");
-    assert_eq!(over_rest, kit, "the route returns what the tool returns");
+    // The tool marks typed text under `untrusted_text` (mcp-guidance phase 6). The route does not, so put it back to compare.
+    let mut kit_as_text = kit.clone();
+    scaffoldry_server::service::untrusted::restore(&mut kit_as_text);
+    assert_eq!(over_rest, kit_as_text, "the route returns what the tool returns");
 }
 
 // 2. Applying the section changes only the text between the markers, and twice changes nothing more.

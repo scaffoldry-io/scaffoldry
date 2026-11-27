@@ -371,7 +371,7 @@ async fn request_access_over_mcp_takes_a_dataset() {
     assert_eq!(r["status"], "Pending", "{v}");
     assert_eq!(r["dataset_id"], json!(ds));
     assert_eq!(r["routing"]["to"], "steward");
-    assert_eq!(r["answers"]["project"], "P1");
+    assert_eq!(r["untrusted_text"]["answers"]["project"], "P1");
     // A missing field is an error the tool can read.
     let (_, v) = rest(&w.app, "POST", "/api/mcp", OTHER, Some(call(json!({ "object_kind": "dataset", "object_id": ds, "role": "viewer", "reason": "Study" })))).await;
     assert_eq!(v["result"]["isError"], true, "{v}");

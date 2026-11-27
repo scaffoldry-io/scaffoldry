@@ -120,7 +120,7 @@
       },
       "expect": {
         "version": 2,
-        "data.status": "First"
+        "untrusted_text.data.status": "First"
       }
     },
     {
@@ -135,7 +135,7 @@
       },
       "expect": {
         "version": 3,
-        "data.status": "Second"
+        "untrusted_text.data.status": "Second"
       }
     }
   ],

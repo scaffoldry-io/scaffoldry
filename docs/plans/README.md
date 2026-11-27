@@ -345,7 +345,7 @@ Johann said "keep going" on 2026-11-26. The keys and catalog rows now have plain
 | 203 | [data-layer.md](data-layer.md) | 2d | The catalog lists datasets with metadata and synthetic samples. Search works on the desk and in MCP. Discoverability is a policy | **COMPLETED** |
 | 204 | [data-layer.md](data-layer.md) | 2e | Request access starts from a catalog entry, as an `access-model.md` phase 13 request, with the inbox and email | **COMPLETED** |
 | 205 | [data-layer.md](data-layer.md) | 3 | Rows and datasets carry labels, with an effective label | | **COMPLETED** in part: row tags, the row's unit for access, the dataset floor, category requirements and the effective label are built, with the read-side gate on every list, count and single read. Left: the desk screens for tags, floors and requirements, a steward's bulk tagging, a second person to lower a floor, and the access review counts. See `data-layer.md` |
-| 206 | [mcp-guidance.md](mcp-guidance.md) | 6 | Typed text is marked untrusted in every result. A tool that would change access returns a proposal and a link |
+| 206 | [mcp-guidance.md](mcp-guidance.md) | 6 | Typed text is marked untrusted in every result. A tool that would change access returns a proposal and a link | **COMPLETED** |
 | 207 | [mcp-guidance.md](mcp-guidance.md) | 7 | A recorded scenario for each of the five generated prompts passes against the real server |
 | 208 | [data-layer.md](data-layer.md) | 5 | The AI review writes findings for rows that match a category, and changes no tag or access |
 | 209 | [data-layer.md](data-layer.md) | 6 | A steward reads the evaluation and decides. Removing protection takes a second person |

@@ -124,12 +124,14 @@ fn record_text_names(state: &SharedState, slug: &str, data: &Value) -> Vec<Strin
     text_fields(state, slug, data.get("_table_id").and_then(Value::as_str))
 }
 
-fn walk(v: &mut Value, state: &SharedState) {
+fn walk(v: &mut Value, state: &SharedState, call_slug: Option<&str>) {
     match v {
-        Value::Array(items) => items.iter_mut().for_each(|i| walk(i, state)),
+        Value::Array(items) => items.iter_mut().for_each(|i| walk(i, state, call_slug)),
         Value::Object(m) => {
-            // A record: `app_slug` and its `data`. The text keeps the path `data`.
-            let record = m.get("app_slug").and_then(Value::as_str).zip(m.get("data").filter(|d| d.is_object())).map(|(slug, d)| record_text_names(state, slug, d));
+            // A record: `app_slug` and its `data`. The text keeps the path `data`. A row a page reads has no `app_slug`.
+            // It has `version` beside `data`, and the call's `app_slug` names its app.
+            let slug = m.get("app_slug").and_then(Value::as_str).or_else(|| if m.contains_key("version") { call_slug } else { None });
+            let record = slug.zip(m.get("data").filter(|d| d.is_object())).map(|(slug, d)| record_text_names(state, slug, d));
             if let Some(names) = record {
                 if let Some(Value::Object(data)) = m.get_mut("data") {
                     let mut moved: Vec<(String, Value)> = Vec::new();
@@ -156,7 +158,7 @@ fn walk(v: &mut Value, state: &SharedState) {
             }
             for (k, child) in m.iter_mut() {
                 if k != FIELD {
-                    walk(child, state);
+                    walk(child, state, call_slug);
                 }
             }
         }
@@ -182,7 +184,7 @@ pub fn mark(tool: &str, args: &Value, state: &SharedState, result: &mut Value) {
             });
         }
     }
-    walk(result, state);
+    walk(result, state, args.get("app_slug").and_then(Value::as_str));
 }
 
 /// Puts every typed text back where it was, for code that renders it as text and is not a model. A screen inside the agent's

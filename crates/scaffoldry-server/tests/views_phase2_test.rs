@@ -243,7 +243,12 @@ async fn count(w: &World, filter: Value) -> f64 {
 async fn rows(w: &World, filter: Value) -> Vec<Value> {
     let (err, v) = tool(w, &w.owner, "list_records", json!({ "app_slug": w.slug, "table_id": "t1", "filter": filter, "limit": 200 })).await;
     assert!(!err, "{v}");
-    v["records"].as_array().unwrap().iter().map(|r| r["data"].clone()).collect()
+    v["records"].as_array().unwrap().iter().map(|r| {
+        // Text fields are marked under `untrusted_text.data` (mcp-guidance phase 6). Put both parts together.
+        let mut d = r["data"].as_object().cloned().unwrap_or_default();
+        d.extend(r["untrusted_text"]["data"].as_object().cloned().unwrap_or_default());
+        Value::Object(d)
+    }).collect()
 }
 
 async fn make_view(w: &World, token: &str, name: &str, config: Value) -> Value {

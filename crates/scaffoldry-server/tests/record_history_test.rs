@@ -423,7 +423,7 @@ async fn the_mcp_tool_masks_the_same_way() {
         }
     };
     let as_viewer = call(f.viewer.clone()).await;
-    assert_eq!(entries(&as_viewer)[0]["changes"]["ssn"], json!({ "changed": true }), "{as_viewer}");
+    assert_eq!(entries(&as_viewer)[0]["untrusted_text"]["changes"]["ssn"], json!({ "changed": true }), "{as_viewer}");
     let as_owner = call(f.owner.clone()).await;
-    assert_eq!(entries(&as_owner)[0]["changes"]["ssn"], json!({ "new": "123-45-6789" }));
+    assert_eq!(entries(&as_owner)[0]["untrusted_text"]["changes"]["ssn"], json!({ "new": "123-45-6789" }));
 }

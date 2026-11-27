@@ -377,7 +377,7 @@ async fn a_conversion_previews_flags_converts_with_history_and_can_be_undone() {
     let checks = shown["structuredContent"]["checks"].as_array().cloned().unwrap_or_default();
     let loss = checks.iter().find(|c| c["name"] == "data_loss").unwrap_or_else(|| panic!("{shown}"));
     assert_eq!(loss["outcome"], "fail", "{loss}");
-    assert!(loss["messages"].to_string().contains("120 values"), "{loss}");
+    assert!(loss["untrusted_text"]["messages"].to_string().contains("120 values"), "{loss}");
     assert_eq!(loss["previews"][0]["blanks"], 120, "{loss}");
     let refused = decide(&w, &w.token, &p).await;
     assert_eq!(refused["isError"], true, "the proposer cannot approve a flagged change alone: {refused}");

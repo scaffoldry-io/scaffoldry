@@ -356,7 +356,9 @@ async fn list_datasets_with_a_query_returns_the_same_entries_over_mcp() {
     for (token, q) in [(&w.editor, "enrollment"), (&w.admin, "registrar"), (&w.editor, "ferpa")] {
         let http = search(&w, token, q).await;
         let mcp = tool(&w, token, "list_datasets", json!({ "query": q })).await;
-        let items = mcp.get("items").cloned().unwrap_or(mcp);
+        let mut items = mcp.get("items").cloned().unwrap_or(mcp);
+        // Typed text is marked under `untrusted_text` over MCP (mcp-guidance phase 6). The route does not mark it.
+        scaffoldry_server::service::untrusted::restore(&mut items);
         assert_eq!(items, http["datasets"], "{q}");
         assert!(!items.as_array().unwrap().is_empty(), "{q}");
     }

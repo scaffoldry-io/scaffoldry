@@ -150,7 +150,11 @@ async fn page_call(w: &World, token: &str, args: Value) -> Result<Value, String>
 }
 
 async fn record_data(w: &World, id: &str) -> Value {
-    tool(w, &w.owner, "get_record", json!({ "app_slug": w.slug, "record_id": id })).await.expect("the record")["data"].clone()
+    // Text fields are marked under `untrusted_text.data` (mcp-guidance phase 6). Put both parts together.
+    let r = tool(w, &w.owner, "get_record", json!({ "app_slug": w.slug, "record_id": id })).await.expect("the record");
+    let mut d = r["data"].as_object().cloned().unwrap_or_default();
+    d.extend(r["untrusted_text"]["data"].as_object().cloned().unwrap_or_default());
+    Value::Object(d)
 }
 
 // 1. get_page returns a document with the stored source and the policy, and nothing of the caller.
@@ -161,7 +165,7 @@ async fn get_page_returns_the_source_and_the_policy_and_not_the_caller() {
     add_record(&w, "Secret Title 77", 5, "open").await;
 
     let page = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug, "page_id": "board" })).await.expect("get_page");
-    let html = page["html"].as_str().expect("html");
+    let html = page["untrusted_text"]["html"].as_str().expect("html");
     assert!(html.contains("AWARD-DASHBOARD-MARKER"), "the stored source is in the document");
     assert!(html.contains("Content-Security-Policy"), "the policy is in the document");
     assert!(html.contains("default-src 'none'") && html.contains("connect-src 'none'"));
@@ -182,7 +186,7 @@ async fn a_page_that_names_a_marker_is_not_filled_twice_and_a_left_angle_bracket
     let tricky = "export default function P() { return <p>@@LOADER@@ @@BRIDGE@@</p>; }";
     publish(&w, vec![custom_page(tricky, &["title"], &[], false, false)], vec![tricky]).await.expect("published");
     let page = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug, "page_id": "board" })).await.expect("get_page");
-    let html = page["html"].as_str().unwrap();
+    let html = page["untrusted_text"]["html"].as_str().unwrap();
     assert_eq!(html.matches("window.scaffoldry = {").count(), 1, "the bridge is in the document once");
     assert!(html.contains("@@LOADER@@"), "the page's own text is kept as written");
     assert!(html.contains("\\u003cp>"), "a left angle bracket in the source is escaped");
@@ -251,14 +255,16 @@ async fn a_page_receives_only_the_fields_it_may_read() {
     let row = &listed["records"][0];
     let mut keys: Vec<&str> = row.as_object().unwrap().keys().map(String::as_str).collect();
     keys.sort();
-    assert_eq!(keys, ["data", "id", "version"], "{row}");
-    let data: Vec<&str> = row["data"].as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["data", "id", "untrusted_text", "version"], "{row}");
+    // The title is typed text, so it sits under `untrusted_text.data` (mcp-guidance phase 6). `data` holds nothing else.
+    assert_eq!(row["data"], json!({}), "{row}");
+    let data: Vec<&str> = row["untrusted_text"]["data"].as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(data, ["title"], "{row}");
-    assert_eq!(row["data"]["title"], "Visible");
+    assert_eq!(row["untrusted_text"]["data"]["title"], "Visible");
     assert!(!listed.to_string().contains("9000") && !listed.to_string().contains("hidden-status") && !listed.to_string().contains(OWNER));
 
     let got = page_call(&w, &w.owner, json!({ "op": "get", "table_id": "grants", "record_id": id })).await.expect("get");
-    assert_eq!(got["data"], json!({ "title": "Visible" }), "{got}");
+    assert_eq!(got["untrusted_text"]["data"], json!({ "title": "Visible" }), "{got}");
 }
 
 // 4. An update that sets a field outside write is refused and the row is unchanged.
@@ -277,7 +283,7 @@ async fn an_update_outside_the_write_list_is_refused_and_the_row_is_unchanged() 
     assert_eq!(data["status"], "open", "nothing was applied");
 
     let saved = page_call(&w, &w.owner, json!({ "op": "update", "table_id": "grants", "record_id": id, "version": 1, "data": { "status": "closed" } })).await.expect("a granted field");
-    assert_eq!(saved["data"], json!({ "status": "closed", "title": "Keep" }), "the answer is cut to what the page may read: {saved}");
+    assert_eq!({ let mut d = saved["data"].as_object().unwrap().clone(); d.extend(saved["untrusted_text"]["data"].as_object().unwrap().clone()); Value::Object(d) }, json!({ "status": "closed", "title": "Keep" }), "the answer is cut to what the page may read: {saved}");
     assert_eq!(record_data(&w, &id).await["status"], "closed");
 }
 
@@ -328,7 +334,7 @@ async fn create_and_remove_need_their_own_grant_and_create_is_held_to_the_write_
     let err = page_call(&w, &w.owner, json!({ "op": "create", "table_id": "grants", "data": { "title": "x", "amount": 5 } })).await.unwrap_err();
     assert!(err.contains("amount"), "a create sets only what the write list names: {err}");
     let made = page_call(&w, &w.owner, json!({ "op": "create", "table_id": "grants", "data": { "title": "From a page" } })).await.expect("create");
-    assert_eq!(made["data"], json!({ "title": "From a page" }));
+    assert_eq!(made["untrusted_text"]["data"], json!({ "title": "From a page" }));
     let id = made["id"].as_str().unwrap().to_string();
     page_call(&w, &w.owner, json!({ "op": "remove", "table_id": "grants", "record_id": id, "version": 1 })).await.expect("remove");
     let gone = page_call(&w, &w.owner, json!({ "op": "get", "table_id": "grants", "record_id": id })).await;
@@ -441,7 +447,7 @@ async fn a_bundle_is_rendered_as_a_bundle() {
     page["kind"]["Custom"]["format"] = json!("bundle");
     page["kind"]["Custom"]["dependencies"] = json!([{ "name": "mini", "version": "1.0.0", "license": "MIT" }]);
     publish(&w, vec![page], vec![bundle]).await.expect("published");
-    let html = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug, "page_id": "board" })).await.expect("get_page")["html"].as_str().unwrap().to_string();
+    let html = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug, "page_id": "board" })).await.expect("get_page")["untrusted_text"]["html"].as_str().unwrap().to_string();
     assert!(html.contains("BUNDLE-MARKER"));
     assert!(html.contains("\"format\":\"bundle\""), "the loader is told to run it as written");
     let listed = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug })).await.unwrap();

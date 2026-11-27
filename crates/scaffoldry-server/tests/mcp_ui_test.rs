@@ -168,7 +168,7 @@ async fn a_custom_page_resource_is_the_string_get_page_returns() {
     let v = rpc(&w.app, &w.owner, "resources/read", json!({ "uri": page_uri(&w) })).await;
     let content = &v["result"]["contents"][0];
     assert_eq!(content["mimeType"], MIME, "{v}");
-    assert_eq!(content["text"], page["html"], "the resource and the tool say the same thing");
+    assert_eq!(content["text"], page["untrusted_text"]["html"], "the resource and the tool say the same thing");
     assert_eq!(page["resource_uri"], page_uri(&w).as_str(), "get_page names its resource: {page}");
     let listed = rpc(&w.app, &w.owner, "resources/list", json!({})).await;
     assert!(listed["result"]["resources"].as_array().unwrap().iter().any(|r| r["uri"] == page_uri(&w).as_str() && r["mimeType"] == MIME), "{listed}");

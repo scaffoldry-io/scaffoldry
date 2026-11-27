@@ -102,7 +102,7 @@ The agent always works for a person, and a person decides. This holds in every p
 | 3 | `explain_decision` explains the caller's own refusal in words and names the rule. It refuses to explain another person's | The explanation tool. **Built** |
 | 4 | A prompt is built from policy data. Changing the policy changes the prompt, with no code change. Each prompt names its tools and stopping points. No prompt contains a record value | Generated prompts. The first five above. **Built** |
 | 5 | `tools/list` omits a tool the caller cannot use. It signals a change when access changes | Tools shown by access |
-| 6 | Untrusted fields are marked in every result that carries typed text. A tool that would change access returns a proposal and a link. The ledger names the agent as the proposer | Untrusted marking and propose-then-confirm |
+| 6 | Untrusted fields are marked in every result that carries typed text. A tool that would change access returns a proposal and a link. The ledger names the agent as the proposer | Untrusted marking and propose-then-confirm. **Built** |
 | 7 | A recorded scenario for each of the first five prompts passes against the real server | Scenarios as the contract, from `agent-coverage.md` |
 
 ### Phase 2, as built
@@ -131,6 +131,19 @@ The agent always works for a person, and a person decides. This holds in every p
   - `review_a_share_request`: the setting `sharing.allowed_scopes` and the sharing limits. Tools: `describe_app`, `list_views`, `get_workspace`.
 - **Not built, and said so in the prompt.** A stored steward evaluation and a communications plan do not exist, so `review_a_change` tells the agent to build both from the proposal's checks and change list and to label them a draft. A share request has no stored record or workflow, so `review_a_share_request` takes the justification as an argument and marks it as untrusted text.
 - **Tests.** `tests/mcp_guidance_phase4_test.rs`: the five parts, real tool names only, no planted record value, and that a changed setting, request rule, authority table or active Cedar policy changes the next prompt with no code change.
+
+### Phase 6, as built
+
+- **Marking.** `service/untrusted.rs::mark` runs in `routes/mcp.rs` on every `tools/call` result, for `structuredContent` and the text copy. Typed text moves into an `untrusted_text` member of the object that held it. A record keeps its path: `{ "data": {}, "untrusted_text": { "data": { "title": "..." } } }`. A bare text with no other name stays a string, as `read_library_snapshot` already did. The member holds a string or a map.
+- **What moves.** A key list (title, description, label, summary, reason, rationale, note, comment, question, statement, justification, answers, prompt, instructions, and others). Per-tool paths for names of workspaces, collaborators, tables and views, `aggregate_records` groups, `get_page` html and `list_datasets` sample rows. Record fields of type Text, LongText, Email, Phone, Url, Formula, Lookup and Rollup, found from the app manifest.
+- **Instructions.** `guidance.rs` names `untrusted_text`. The size limit holds.
+- **Propose then confirm.** `update_workspace` and `manage_workspace_member` wrote access, ownership and labels directly. They now draft a change (`service/workspace_drafts.rs`, kinds `workspace_settings` and `workspace_member`) that a person confirms in the desk and that runs as the confirmer. `update_workspace` drafts only when visibility, data classification, department or unit change. A change to name, description or icon applies directly. A widening draft cannot be confirmed by the person it was drafted for. Moving a department or unit counts as widening.
+- **Links.** `draft_access_change`, the two converted tools, `propose_app_change` and a `request_access` filing return `desk_link` (`/admin/access?change=<id>`, `/proposals?id=<id>`, `/me/access/requests?request=<id>`).
+- **Ledger.** Confirm payloads carry `proposer: { via, for, client, tool, task }`. The tool name is stored as `via_tool` in the change JSON, so no migration was added. The ledger principal is the person who confirmed.
+- **Screens.** `ui/bridge.js`, `proposal-review.html` and `decision.html` carry a copy of `untrusted::restore`, so they render the text as before.
+- **Page rows.** A row a page reads (`page_call`) has `version` beside `data` and no `app_slug`. The call's `app_slug` names its app, so its text fields are marked as a record's are.
+- **Tests.** `tests/mcp_guidance_phase6_test.rs`. About 30 older test files, and the scenario files in `tests/agent_scenarios/`, read a text field that moved on purpose. They now read it from `untrusted_text`, or put it back with `untrusted::restore` when they compare a tool with a route that does not mark. No assertion was weakened.
+- **Not done.** Resources, prompts and error bodies are not marked, only tool results. `decide_proposal` is a person's tool and stays closed to agent sessions. `save_view` and record writes run under the person's own rights and stay direct.
 
 ## Enterprise objections
 

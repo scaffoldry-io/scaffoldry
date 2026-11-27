@@ -318,12 +318,12 @@ async fn a_proposed_page_renders_from_the_proposal_and_its_writes_are_refused() 
     let live_page = tool(&w, &w.owner, "get_page", json!({ "app_slug": w.slug, "page_id": "board" })).await;
     assert!(live_page.is_err(), "the page is not live");
     let page = tool(&w, &token, "get_page", json!({ "app_slug": shadow, "page_id": "board" })).await.expect("the preview renders the page");
-    assert!(page["html"].as_str().unwrap().contains("PROPOSED-PAGE-MARKER"), "the proposal's source is in the document");
+    assert!(page["untrusted_text"]["html"].as_str().unwrap().contains("PROPOSED-PAGE-MARKER"), "the proposal's source is in the document");
 
     let listed = tool(&w, &token, "page_call", json!({ "app_slug": shadow, "page_id": "board", "op": "list", "table_id": "cases" })).await.expect("a read");
     let rows = listed["records"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "the live rule still hides the secret row: {listed}");
-    assert_eq!(rows[0]["data"]["title"], "plain");
+    assert_eq!(rows[0]["untrusted_text"]["data"]["title"], "plain");
 
     let err = tool(&w, &token, "page_call", json!({ "app_slug": shadow, "page_id": "board", "op": "create", "table_id": "cases", "data": { "title": "new" } })).await.unwrap_err();
     assert!(err.to_lowercase().contains("read-only") || err.to_lowercase().contains("preview"), "{err}");

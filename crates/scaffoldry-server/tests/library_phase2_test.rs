@@ -201,7 +201,7 @@ async fn list_library_policies_shows_the_summary() {
     let out = call(&w.app, FACULTY, "list_library_policies", json!({})).await["structuredContent"].clone();
     let p = &out["policies"][0];
     assert_eq!(p["key"], "records-retention", "{out}");
-    assert!(p["title"].is_string() && p["owner"].is_object() && p["review_every_days"].is_number() && p["rule_counts"].is_object(), "{p}");
+    assert!(p["untrusted_text"]["title"].is_string() && p["owner"].is_object() && p["review_every_days"].is_number() && p["rule_counts"].is_object(), "{p}");
 }
 
 // 4 and scenario 3: no tool can publish, approve, reject, bind, or answer.

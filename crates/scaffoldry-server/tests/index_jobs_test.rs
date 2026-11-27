@@ -383,14 +383,14 @@ async fn a_raised_label_protects_a_read_before_the_flag_job_has_run() {
         async move { send(&app, "POST", "/api/mcp", &token, Some(payload)).await.1["result"]["structuredContent"].clone() }
     };
     let before = read(viewer.clone()).await;
-    assert!(before["records"][0]["data"].get("plain_text").is_some(), "no label yet: {before}");
+    assert!(before["records"][0]["untrusted_text"]["data"].get("plain_text").is_some(), "no label yet: {before}");
 
     w.state.labels.write().unwrap().insert(
         (w.slug.clone(), "t1".to_string(), "plain_text".to_string()),
         DataLabel { ferpa_sensitive: true, note: "now sensitive".into(), set_by: "compliance@state.edu".into(), categories: Vec::new() },
     );
     let after = read(viewer).await;
-    assert!(after["records"][0]["data"].get("plain_text").is_none(), "the label protects the read at once: {after}");
+    assert!(after["records"][0]["untrusted_text"]["data"].get("plain_text").is_none(), "the label protects the read at once: {after}");
     let stored: i64 = {
         let slug = w.slug.clone();
         db(move |c| c.query_one("SELECT count(*) FROM dataset_records WHERE app_slug = $1 AND is_ferpa_sensitive", &[&slug]).unwrap().get(0))

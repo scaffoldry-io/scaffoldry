@@ -252,7 +252,7 @@ async fn a_request_filed_by_an_ai_tool_waits_for_the_person() {
     tool(&w.app, &token, "begin_task", json!({ "task": "Check the audit log" })).await.unwrap();
     let filed = tool(&w.app, &token, "request_access", json!({ "object_kind": "app", "object_id": w.app_d, "role": "viewer", "reason": "I need the audit log", "days": 14 })).await.unwrap();
     assert_eq!(filed["status"], "Waiting for person", "{filed}");
-    assert_eq!(filed["task"], "Check the audit log");
+    assert_eq!(filed["untrusted_text"]["task"], "Check the audit log");
     assert!(filed["filed_by_client"].is_string(), "{filed}");
     let id = filed["id"].as_str().unwrap().to_string();
     assert_eq!(w.grants_from_requests(), 0);

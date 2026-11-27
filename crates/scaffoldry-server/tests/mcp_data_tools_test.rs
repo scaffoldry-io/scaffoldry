@@ -296,14 +296,14 @@ async fn update_with_a_stale_version_is_a_tool_error_and_the_row_is_unchanged() 
     let (err, saved) = tool(&f.app, &f.owner, "update_record", json!({ "app_slug": f.slug, "record_id": id, "version": 1, "data": { "title": "Winner" } })).await;
     assert!(!err, "{saved}");
     assert_eq!(saved["version"], 2);
-    assert_eq!(saved["data"]["title"], "Winner");
+    assert_eq!(saved["untrusted_text"]["data"]["title"], "Winner");
 
     let (err, msg) = tool(&f.app, &f.owner, "update_record", json!({ "app_slug": f.slug, "record_id": id, "version": 1, "data": { "title": "Loser" } })).await;
     assert!(err);
     assert!(msg.as_str().unwrap().contains("current version is 2"), "{msg}");
 
     let (_, row) = tool(&f.app, &f.owner, "get_record", json!({ "app_slug": f.slug, "record_id": id })).await;
-    assert_eq!(row["data"]["title"], "Winner");
+    assert_eq!(row["untrusted_text"]["data"]["title"], "Winner");
     assert_eq!(row["version"], 2);
 }
 
@@ -318,7 +318,7 @@ async fn a_ferpa_field_is_absent_from_every_read_for_a_viewer_and_present_for_an
     assert!(!err, "{page}");
     for row in page["records"].as_array().unwrap() {
         assert!(row["data"].get("ssn").is_none(), "the viewer saw ssn: {row}");
-        assert!(row["data"].get("title").is_some());
+        assert!(row["untrusted_text"]["data"].get("title").is_some(), "the title moved to untrusted_text: {row}");
     }
     let id = page["records"][0]["id"].as_str().unwrap().to_string();
     let (err, one) = tool(&f.app, &f.viewer, "get_record", json!({ "app_slug": f.slug, "record_id": id })).await;
@@ -331,7 +331,7 @@ async fn a_ferpa_field_is_absent_from_every_read_for_a_viewer_and_present_for_an
     assert!(err, "{msg}");
 
     let (_, page) = tool(&f.app, &f.owner, "list_records", json!({ "app_slug": f.slug, "table_id": "t1" })).await;
-    assert!(page["records"][0]["data"].get("ssn").is_some(), "the owner sees it");
+    assert!(page["records"][0]["untrusted_text"]["data"].get("ssn").is_some(), "the owner sees it");
 
     // The REST route is the same service function.
     let resp = f
@@ -381,8 +381,8 @@ async fn list_apps_and_describe_app_name_the_app_and_its_version() {
     let (err, apps) = tool(&f.app, &f.owner, "list_apps", json!({ "workspace_id": WORKSPACE })).await;
     assert!(!err, "{apps}");
     let mine = apps.as_array().unwrap().iter().find(|a| a["slug"] == f.slug.as_str()).expect("listed");
-    assert_eq!(mine["title"], "Tools");
-    assert_eq!(mine["tables"], json!(["Things"]));
+    assert_eq!(mine["untrusted_text"]["title"], "Tools");
+    assert_eq!(mine["untrusted_text"]["tables"], json!(["Things"]));
 
     let (err, described) = tool(&f.app, &f.viewer, "describe_app", json!({ "app_slug": f.slug })).await;
     assert!(!err, "{described}");

@@ -282,7 +282,7 @@ async fn a_lookup_runs_one_statement_per_page_whatever_the_page_size() {
     let page = list(&w, &w.token, 200).await;
     let big = lookup_statements() - before;
     assert_eq!(page.len(), 200);
-    assert!(page.iter().all(|r| r["data"]["parent_name"] == "Dean" || r["data"]["parent_name"] == "Chair"), "every row has its lookup");
+    assert!(page.iter().all(|r| r["untrusted_text"]["data"]["parent_name"] == "Dean" || r["untrusted_text"]["data"]["parent_name"] == "Chair"), "every row has its lookup");
 
     let before = lookup_statements();
     let small = list(&w, &w.token, 5).await;
@@ -301,13 +301,13 @@ async fn a_lookup_never_returns_a_field_the_reader_may_not_see() {
     create(&w, "children", json!({ "title": "x", "amount": 1, "parent": p })).await;
 
     let owner = list(&w, &w.token, 10).await;
-    assert_eq!(owner[0]["data"]["parent_notes"], "advises on probation", "an editor sees it");
-    assert_eq!(owner[0]["data"]["parent_name"], "Dean");
+    assert_eq!(owner[0]["untrusted_text"]["data"]["parent_notes"], "advises on probation", "an editor sees it");
+    assert_eq!(owner[0]["untrusted_text"]["data"]["parent_name"], "Dean");
 
     let viewer = list(&w, &issue_test_token_and_user(VIEWER), 10).await;
     assert_eq!(viewer.len(), 1);
-    assert!(viewer[0]["data"].get("parent_notes").is_none(), "a viewer does not: {}", viewer[0]);
-    assert_eq!(viewer[0]["data"]["parent_name"], "Dean", "and still sees the field they may read");
+    assert!(viewer[0]["untrusted_text"]["data"].get("parent_notes").is_none(), "a viewer does not: {}", viewer[0]);
+    assert_eq!(viewer[0]["untrusted_text"]["data"]["parent_name"], "Dean", "and still sees the field they may read");
     assert!(!viewer[0].to_string().contains("probation"));
 }
 

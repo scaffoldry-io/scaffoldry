@@ -269,12 +269,12 @@ async fn a_page_of_200_rows_with_a_lookup_runs_exactly_two_statements() {
     let (_, v) = send(&w.app, "POST", "/api/mcp", &w.token, Some(payload)).await;
     let rows = v["result"]["structuredContent"]["records"].as_array().cloned().unwrap_or_default();
     assert_eq!(rows.len(), 200);
-    assert!(rows.iter().all(|r| r["data"]["parent_name"] == "Dean"));
+    assert!(rows.iter().all(|r| r["untrusted_text"]["data"]["parent_name"] == "Dean"));
     let (pages, lookups) = (page_statements() - page_before, lookup_statements() - lookup_before);
     assert_eq!((pages, lookups), (1, 1), "one statement for the page and one for the lookup");
 
     // A formula over a lookup is not stored. It is added to the rows of the page.
-    assert!(rows.iter().all(|r| r["data"]["parent_label"] == "Dean!"), "{}", rows[0]);
+    assert!(rows.iter().all(|r| r["untrusted_text"]["data"]["parent_label"] == "Dean!"), "{}", rows[0]);
     assert_eq!(stored(&w, &id_of(&rows[0]), "parent_label").await, Value::Null, "and nowhere else");
 }
 

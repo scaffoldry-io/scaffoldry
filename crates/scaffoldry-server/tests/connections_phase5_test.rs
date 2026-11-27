@@ -182,7 +182,7 @@ async fn a_link_holds_when_the_programs_name_changes_in_the_source() {
     let id = b["id"].as_str().unwrap().to_string();
     let first = read(&w, &slug, &id, OWNER).await;
     assert_eq!(first["data"]["program"], program.as_str(), "{first}");
-    assert_eq!(first["data"]["program_name"], "Physics", "the lookup reads the dataset: {first}");
+    assert_eq!(first["untrusted_text"]["data"]["program_name"], "Physics", "the lookup reads the dataset: {first}");
 
     put(&w, &programs(&[("P1", "Physics and Astronomy"), ("P2", "Chemistry")]));
     let run = sync(&w, &d).await;
@@ -190,7 +190,7 @@ async fn a_link_holds_when_the_programs_name_changes_in_the_source() {
     assert_eq!(record_id(&w, &d.app, "P1"), program, "the record keeps its id");
     let after = read(&w, &slug, &id, OWNER).await;
     assert_eq!(after["data"]["program"], program.as_str(), "the link holds: {after}");
-    assert_eq!(after["data"]["program_name"], "Physics and Astronomy", "{after}");
+    assert_eq!(after["untrusted_text"]["data"]["program_name"], "Physics and Astronomy", "{after}");
 }
 
 // 2. The source removes the program. The link is removed, then the program returns and the link returns.
@@ -210,7 +210,7 @@ async fn a_removed_program_unlinks_and_the_link_returns_with_it() {
     let gone = read(&w, &slug, &id, OWNER).await;
     let held = gone["data"].get("program").cloned().unwrap_or(Value::Null);
     assert!(held.is_null() || held == json!([]) || held == json!(""), "the link is removed: {gone}");
-    assert!(gone["data"].get("program_name").is_none_or(|v| v.is_null()), "{gone}");
+    assert!(gone["untrusted_text"]["data"].get("program_name").is_none_or(|v| v.is_null()), "{gone}");
     let links: i64 = {
         let p = program.clone();
         w.db.run(move |c| c.query_one("SELECT COUNT(*) FROM record_links WHERE to_record = $1", &[&p]).unwrap().get(0))
@@ -222,7 +222,7 @@ async fn a_removed_program_unlinks_and_the_link_returns_with_it() {
     assert_eq!(back["added"], 1, "{back}");
     let again = read(&w, &slug, &id, OWNER).await;
     assert_eq!(again["data"]["program"], program.as_str(), "the link returns with the program: {again}");
-    assert_eq!(again["data"]["program_name"], "Physics", "{again}");
+    assert_eq!(again["untrusted_text"]["data"]["program_name"], "Physics", "{again}");
 }
 
 // 3. A restricted dataset's picker returns only what the person may see, and a link to a record of a dataset a person

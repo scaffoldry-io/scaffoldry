@@ -175,7 +175,7 @@ async fn a_flow_across_two_workspaces_needs_both_parties() {
     assert_eq!(parties, vec![SOURCE_WS, AID_WS], "{p}");
     assert_eq!(check(&p, "cross_workspace")["outcome"], "fail", "flagged: {p}");
     assert_eq!(check(&p, "flow_grants")["outcome"], "pass");
-    assert!(check(&p, "flow_grants")["messages"].as_array().unwrap().len() >= 2, "sentences per workspace: {p}");
+    assert!(check(&p, "flow_grants")["untrusted_text"]["messages"].as_array().unwrap().len() >= 2, "sentences per workspace: {p}");
 
     let (s, b) = decide(&w, AID_OWNER, &id, AID_WS, "approve").await;
     assert_eq!(s, StatusCode::OK, "{b}");
