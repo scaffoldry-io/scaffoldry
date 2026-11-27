@@ -114,12 +114,10 @@ pub fn draft_member(state: &SharedState, caller: &AuthUser, origin: &Origin, arg
         Some(r) => Some(Role::parse(&r).ok_or_else(|| ServiceError::BadRequest("role must be owner, admin, editor, commenter, or viewer".to_string()))?),
         None => None,
     };
-    let current = state
-        .collaborators
-        .read()
-        .map_err(internal)?
-        .get(&id)
-        .and_then(|c| c.iter().find(|c| c.eppn.eq_ignore_ascii_case(&eppn) && c.app_slug.is_empty()).and_then(|c| Role::parse(&c.role)));
+    let current = crate::service::members::direct_memberships(state)
+        .into_iter()
+        .find(|c| c.workspace_id == id && c.eppn.eq_ignore_ascii_case(&eppn) && c.app_slug.is_empty())
+        .and_then(|c| Role::parse(&c.role));
     if !state.workspaces.read().map_err(internal)?.contains_key(&id) {
         return Err(ServiceError::NotFound(format!("Workspace '{id}' not found")));
     }
@@ -161,6 +159,16 @@ fn apply(state: &SharedState, caller: &AuthUser, change: &Value) -> Result<(), S
         }
         _ => Err(internal("The stored change is not a workspace change")),
     }
+}
+
+/// True for a stored change this module drafted.
+pub fn is_workspace_change(change: &Value) -> bool {
+    matches!(change["kind"].as_str(), Some("workspace_settings" | "workspace_member"))
+}
+
+/// True when the caller may decide the workspace draft, which is also who sees it in the desk's pending list.
+pub fn may_decide(state: &SharedState, caller: &AuthUser, change: &Value) -> bool {
+    text(change, "workspace_id").is_some_and(|ws| authorize_workspace(caller, &ws, "manage_workspace", state).is_ok())
 }
 
 /// Confirms or rejects a workspace draft. The person it was drafted for cannot confirm a change that widens access. The

@@ -565,6 +565,10 @@ pub fn list(state: &SharedState, caller: &AuthUser, q: &ListQuery) -> Result<Val
                 if c["kind"] == "hierarchy" {
                     return r.platform;
                 }
+                // A workspace draft is listed to whoever may decide it.
+                if crate::service::workspace_drafts::is_workspace_change(c) {
+                    return crate::service::workspace_drafts::may_decide(state, caller, c);
+                }
                 // A request rule belongs to a unit: whoever may set rules there sees it.
                 if c["kind"] == "request_rule" {
                     let unit = c["organization_id"].as_str().and_then(|u| Uuid::parse_str(u).ok());

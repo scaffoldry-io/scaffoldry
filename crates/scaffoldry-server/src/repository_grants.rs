@@ -343,7 +343,7 @@ impl PostgresRepository {
                     let id: Uuid = r.get(0);
                     let change: Value = r.get(1);
                     let kind = change["kind"].as_str().unwrap_or("grant").to_string();
-                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "sentence": change["sentence"].clone(), "rule": change["rule"].clone(), "organization_id": change["organization_id"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6),
+                    json!({ "change_id": id, "kind": kind, "grant": change["grant"].clone(), "hierarchy": change["hierarchy"].clone(), "sentence": change["sentence"].clone(), "rule": change["rule"].clone(), "organization_id": change["organization_id"].clone(), "workspace_id": change["workspace_id"].clone(), "widens": r.get::<_, bool>(2), "reason": r.get::<_, String>(3), "status": r.get::<_, String>(4), "proposed_by": r.get::<_, String>(5), "proposed_at": r.get::<_, String>(6),
                         "proposed_via": r.get::<_, String>(7), "drafted_for": r.get::<_, Option<String>>(8), "via_client": r.get::<_, Option<String>>(9), "via_tool": change["via_tool"].clone(), "task": r.get::<_, Option<String>>(10),
                         "expires_at": r.get::<_, Option<String>>(11), "expired": r.get::<_, bool>(12) })
                 })

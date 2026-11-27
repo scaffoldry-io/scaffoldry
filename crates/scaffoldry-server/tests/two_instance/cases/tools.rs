@@ -37,9 +37,13 @@ async fn update_workspace(w: World) -> Outcome {
 async fn manage_workspace_member(w: World) -> Outcome {
     let id = make_workspace(&w, &unique("P6TM"), "restricted").await?;
     let who = person("p6tool");
-    w.tool_a(ADMIN, "manage_workspace_member", json!({ "workspace_id": id, "action": "add", "eppn": who, "role": "viewer", "name": "Tool Person" })).await?;
+    // MCP guidance phase 6: the tool drafts the change. B lists the draft A stored, and the member is not added until a person confirms.
+    let drafted = w.tool_a(ADMIN, "manage_workspace_member", json!({ "workspace_id": id, "action": "add", "eppn": who, "role": "viewer", "name": "Tool Person" })).await?;
+    let change = drafted["change_id"].as_str().ok_or_else(|| format!("a change id: {drafted}"))?.to_string();
+    let pending = status(w.rb("GET", "/api/v1/admin/access/grants?state=pending", ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
+    ensure(has(&pending["changes"], &change), format!("B shows the draft A stored: {pending}"))?;
     let seen = status(w.rb("GET", &format!("/api/v1/workspaces/{id}/collaborators"), ADMIN, None).await, StatusCode::OK, "B lists them")?;
-    ensure(has(&seen, &who), format!("B lists the member the tool added: {seen}"))
+    ensure(!has(&seen, &who), format!("B does not list a member who is only drafted: {seen}"))
 }
 
 async fn create_record(w: World) -> Outcome {
