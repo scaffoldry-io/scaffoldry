@@ -408,8 +408,14 @@ pub fn list_exceptions(caller: &AuthUser, id: &str, state: &SharedState) -> Resu
     Ok(json!({ "exceptions": list.iter().map(|e| e.json()).collect::<Vec<_>>() }))
 }
 
+/// Where an exception's grant is anchored. It names the change, which is no workspace, app or table, so the grant reaches no object and
+/// adds no role or row anywhere. It carries the holder, the reason and the expiry, and the gate reads it to waive the category.
+fn exception_anchor(change: Uuid) -> String {
+    format!("label_change:{change}")
+}
+
 /// `POST /data/label-changes/{id}/exceptions/{exception}/decide`. The steward approves or declines. An approval records a grant, a
-/// viewer grant on the app with the exception's expiry, through the same table a request for access uses. The gate waives what the
+/// viewer grant anchored on the change, which reaches no object, with the exception's expiry. The gate waives what the
 /// change added for that person once the change is applied.
 pub fn decide_exception(caller: &AuthUser, id: &str, exception: &str, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
     let (change, row) = load(caller, id, state)?;
@@ -435,10 +441,16 @@ pub fn decide_exception(caller: &AuthUser, id: &str, exception: &str, body: &Val
         if ask.kind == Kind::Tags && state.repository.label_others_carry(&ask.app, &ask.table, ex.adds.clone(), ask.records.clone()).map_err(storage)? {
             return Err(ServiceError::Conflict("Other rows of this dataset already carry the category this change adds. An exception would open them to this person. Decline it, or share those rows another way".to_string()));
         }
+        // An exception keeps what the person reads today, so it is refused when they read nothing of the app now.
+        let reads = crate::service::identity::resolve_user(&ex.person, state)
+            .is_some_and(|u| crate::service::access::authorize_app(&u, &ask.app, crate::service::access::AppAction::Read, state).is_ok());
+        if !reads {
+            return Err(ServiceError::Conflict("This person reads nothing of the app today, so there is no access to keep. An exception does not give access".to_string()));
+        }
         let why: String = ex.justification.chars().take(400).collect();
         Some(ExceptionGrant {
             holder: ex.person.clone(),
-            anchor: format!("app:{}", ask.app),
+            anchor: exception_anchor(change.id),
             until: ex.expires_at.clone(),
             reason: format!("Exception to label change {}: {why}", change.id),
             created_by: caller.eppn.clone(),
@@ -450,7 +462,7 @@ pub fn decide_exception(caller: &AuthUser, id: &str, exception: &str, body: &Val
         (
             DecisionType::AccessGrantChanged,
             "AC-02",
-            json!({ "op": "create", "source": "label_change_exception", "change": change.id.to_string(), "exception": xid.to_string(), "holder": ex.person, "role": "viewer", "anchor": format!("app:{}", ask.app), "valid_until": ex.expires_at }),
+            json!({ "op": "create", "source": "label_change_exception", "change": change.id.to_string(), "exception": xid.to_string(), "holder": ex.person, "role": "viewer", "anchor": exception_anchor(change.id), "valid_until": ex.expires_at }),
         )
     } else {
         (DecisionType::AccessRequestDecided, "AC-03", json!({ "outcome": "Declined", "source": "label_change_exception", "change": change.id.to_string(), "exception": xid.to_string(), "requester": ex.person }))

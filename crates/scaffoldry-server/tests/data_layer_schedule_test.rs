@@ -48,6 +48,7 @@ fn files_dir() {
 
 struct World {
     db: common::TestDb,
+    state: std::sync::Arc<ServerState>,
     app: Router,
     admin: String,
     chem: String,
@@ -115,8 +116,12 @@ fn member_of(state: &ServerState, eppn: &str, role: &str) {
 }
 
 fn workspace(state: &ServerState, unit: Uuid) {
+    workspace_named(state, WS, unit);
+}
+
+fn workspace_named(state: &ServerState, id: &str, unit: Uuid) {
     let ws = WorkspaceRecord {
-        id: WS.to_string(),
+        id: id.to_string(),
         name: "Schedule".to_string(),
         code: "WS-SCHEDULE".to_string(),
         organization: "INST".to_string(),
@@ -131,9 +136,9 @@ fn workspace(state: &ServerState, unit: Uuid) {
         organization_id: Some(unit),
         synthetic: false,
     };
-    state.workspaces.write().unwrap().insert(WS.to_string(), ws.clone());
+    state.workspaces.write().unwrap().insert(id.to_string(), ws.clone());
     state.repository.upsert_workspace(&ws).unwrap();
-    state.collaborators.write().unwrap().insert(WS.to_string(), Vec::new());
+    state.collaborators.write().unwrap().insert(id.to_string(), Vec::new());
 }
 
 /// `phi` is protected and needs a registrar at or above the row's unit. `open` asks nothing and is not protected.
@@ -188,6 +193,7 @@ async fn world() -> World {
     let slug = format!("students-{}", &Uuid::new_v4().to_string()[..8]);
     World {
         db,
+        state: state.clone(),
         app,
         admin: issue_test_token_and_user(ADMIN),
         chem: issue_test_token_and_user(CHEM_REG),
@@ -837,4 +843,87 @@ async fn an_exception_that_would_open_other_rows_of_the_category_is_not_granted(
     assert!(b.to_string().contains("already carry"), "{b}");
     let grants: i64 = w.db.run(|c| c.query_one("SELECT count(*) FROM access_grants WHERE reason LIKE 'Exception to label change%'", &[]).unwrap().get(0));
     assert_eq!(grants, 0, "no grant was made");
+}
+
+// 11. An exception keeps what the person could read before the change, and nothing more. A person reads only the physics rows of one
+// table, through a grant at the physics unit. The grant an exception records must open no other row and no other table.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exception_keeps_only_what_the_person_could_read_before() {
+    const CLERK: &str = "carl.clerk@science.state.edu";
+    let w = world().await;
+    // The clerk holds a role (so the plan counts them) and a viewer grant at the physics unit. They are no member of the workspace.
+    appoint(&w.state, CLERK, w.physics, "staff", None);
+    let clerk = issue_test_token_and_user(CLERK);
+    let g = json!({ "holder_kind": "person", "holder_id": CLERK, "role": "viewer", "hierarchy": "academic", "anchor_kind": "unit", "anchor_id": w.physics.to_string(), "depth": 0, "source": "request", "valid_until": (chrono::Utc::now() + chrono::Duration::days(120)).to_rfc3339(), "reason": "Reads physics" });
+    let (s, pending) = rest(&w.app, "POST", "/api/v1/admin/access/grants", &w.admin, Some(g)).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{pending}");
+    let second = issue_test_token_and_user(SECOND);
+    let (s, b) = rest(&w.app, "POST", &format!("/api/v1/admin/access/changes/{}/decide", pending["change_id"].as_str().unwrap()), &second, Some(json!({ "decision": "confirm", "reason": "Reviewed" }))).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    w.state.refresh().unwrap();
+    // Two tables with a unit column each, in one app of a workspace that sits at physics.
+    workspace_named(&w.state, "ws-physics-only", w.physics);
+    let mut m = manifest(&w.slug);
+    m["workspace_id"] = json!("ws-physics-only");
+    m["tables"][0]["row_place"] = json!({ "academic": "unit" });
+    let mut other = m["tables"][0].clone();
+    other["id"] = json!("other");
+    other["name"] = json!("Other");
+    other["slug"] = json!("other");
+    m["tables"].as_array_mut().unwrap().push(other);
+    let (s, b) = rest(&w.app, "POST", "/api/v1/workspaces/ws-physics-only/apps", &w.admin, Some(m)).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let slug = w.slug.clone();
+    w.db.run(move |c| c.execute("UPDATE index_status SET state = 'ready' WHERE app_slug = $1", &[&slug]).unwrap());
+    let dataset = dataset_id(&w).await;
+    let (s, b) = rest(&w.app, "PUT", &format!("/api/v1/admin/datasets/{dataset}/discoverability"), &w.admin, Some(json!({ "steward_position": "data_steward", "reason": "The stewards of the student data" }))).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    row(&w, "Physics person", w.physics, None).await;
+    row(&w, "Chemistry person", w.chemistry, None).await;
+    for (name, unit) in [("Other physics", w.physics), ("Other chemistry", w.chemistry)] {
+        let data = json!({ "_table_id": "other", "name": name, "score": 1, "unit": unit.to_string() });
+        let (s, b) = rest(&w.app, "POST", &format!("/api/v1/apps/{}/records", w.slug), &w.admin, Some(json!({ "data": data }))).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+    }
+    let names_in = |body: &Value| -> BTreeSet<String> { body["records"].as_array().map(|r| r.iter().map(|x| x["data"]["name"].as_str().unwrap().to_string()).collect()).unwrap_or_default() };
+    let read = |table: &'static str, token: String| {
+        let (app, slug) = (w.app.clone(), w.slug.clone());
+        async move { rest(&app, "GET", &format!("/api/v1/apps/{slug}/tables/{table}/records?limit=100"), &token, None).await }
+    };
+    // Before anything: the clerk reads only physics rows, in both tables.
+    let (s, b) = read("students", clerk.clone()).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (before_t, before_u) = (names_in(&b), names_in(&read("other", clerk.clone()).await.1));
+    assert_eq!(before_t, set(&["Physics person"]), "the clerk reads the physics rows of the table");
+    assert!(!before_u.contains("Other chemistry"), "{before_u:?}");
+
+    // A change raises the floor of `students` with `phi`. The clerk loses the rows, asks, and the steward approves.
+    let (s, made) = rest(&w.app, "POST", &format!("/api/v1/data/datasets/{dataset}/label-changes"), &w.steward, Some(json!({ "kind": "floor", "floor": ["phi"], "reason": "The dataset holds health information" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{made}");
+    let change = made["id"].as_str().unwrap().to_string();
+    let effective = at(40);
+    let (s, b) = decide(&w, &w.steward2, &change, json!({ "decision": "approve", "reason": "Notice first", "effective_at": effective.to_rfc3339() })).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (s, b) = plan_approve(&w, &w.steward2, &change).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (s, asked) = ask_exception(&w, &clerk, &change, effective + chrono::Duration::days(20)).await;
+    assert_eq!(s, StatusCode::CREATED, "{asked}");
+    let (s, done) = decide_exception(&w, &w.steward, &change, asked["id"].as_str().unwrap(), "approve").await;
+    assert_eq!(s, StatusCode::OK, "{done}");
+    // The grant the exception records opens nothing, before or after the date.
+    assert_eq!(names_in(&read("students", clerk.clone()).await.1), before_t, "the exception grant widened the table before the date");
+    assert_eq!(names_in(&read("other", clerk.clone()).await.1), before_u, "the exception grant widened the other table before the date");
+    assert_eq!(run_due(&w, effective + chrono::Duration::seconds(1)).await, 1);
+    assert_eq!(names_in(&read("students", clerk.clone()).await.1), before_t, "the exception keeps the physics rows, and the chemistry rows stay closed");
+    assert_eq!(names_in(&read("other", clerk.clone()).await.1), before_u, "the other table stays as closed as it was");
+    // The single-row routes agree.
+    let ids: Vec<(String, String)> = w.db.run(|c| c.query("SELECT id, data->>'name' FROM dataset_records", &[]).unwrap().iter().map(|r| (r.get(0), r.get(1))).collect());
+    for (id, name) in ids {
+        let (s, b) = rest(&w.app, "GET", &format!("/api/v1/apps/{}/records/{id}", w.slug), &clerk, None).await;
+        if before_t.contains(&name) || before_u.contains(&name) {
+            assert_eq!(s, StatusCode::OK, "{name}: {b}");
+        } else {
+            assert_ne!(s, StatusCode::OK, "{name} is readable by the clerk: {b}");
+        }
+    }
 }

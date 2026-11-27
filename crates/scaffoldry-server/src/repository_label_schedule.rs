@@ -84,7 +84,7 @@ pub struct NewException {
     pub adds: Vec<String>,
 }
 
-/// The grant an approved exception makes: a viewer grant on the app, with the exception's expiry.
+/// The grant an approved exception makes: a viewer grant anchored on the change, so it reaches no object, with the exception's expiry.
 pub struct ExceptionGrant {
     pub holder: String,
     pub anchor: String,
@@ -282,7 +282,7 @@ impl PostgresRepository {
             }
             let mut grant_id = None;
             if let Some(g) = &grant {
-                // The same grant a request for access makes: a person's viewer grant on the app, source `request`, with its expiry.
+                // A grant in the same table a request for access uses, source `request`. Its anchor names the change, so it adds no reach.
                 let new_id: i64 = tx
                     .query_one(
                         "INSERT INTO access_grants (holder_kind, holder_id, role, anchor_kind, anchor_id, valid_until, source, reason, created_by) \

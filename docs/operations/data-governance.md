@@ -61,7 +61,7 @@ A change to tags or to a floor is a **label change**. It is proposed, read, and 
 | `POST /data/label-changes/{id}/withdraw` | The steward withdraws a scheduled change before its date. Body: `reason`. Its exceptions end and the people who were told are told |
 | `POST /data/label-changes/{id}/exceptions` | A person who will lose access asks to keep it. Body: `justification` (1 to 500 characters) and `expires_at`. Not before the plan is approved, and not after the date |
 | `GET /data/label-changes/{id}/exceptions` | The exceptions asked for a change, for its steward |
-| `POST /data/label-changes/{id}/exceptions/{exception}/decide` | The steward approves or declines. Body: `decision`, `reason`. An approval records a viewer grant on the app with the exception's expiry |
+| `POST /data/label-changes/{id}/exceptions/{exception}/decide` | The steward approves or declines. Body: `decision`, `reason`. An approval records a grant with the exception's expiry. It is anchored on the change, so it opens no app, table or row |
 
 The steward is the holder of the dataset's `steward_position`, found from its unit upward. A Platform Admin or a compliance officer may also decide.
 
@@ -82,7 +82,7 @@ The steward reads the plan and approves it. Only then is each person on it told.
 
 These are the defaults. An institution sets its own, as `{ "protected": { "raise": 45, "lower": 21 } }`. The schema is `sensitivity-settings.schema.json`.
 
-**Exceptions.** After the plan is approved, a person who will lose access may ask to keep it: a justification and an `expires_at` after the date. The steward decides. An approved exception is a viewer grant on the app, source `request`, with that expiry. It waives the categories the change adds, for that person, on that dataset. It does so only after the change is applied, and only while the grant is neither revoked nor over. A request nobody decided by the date lapses. When a change tags named rows and other rows already carry the category, the exception is refused, because it would open those rows too.
+**Exceptions.** After the plan is approved, a person who will lose access may ask to keep it: a justification and an `expires_at` after the date. The steward decides. An approved exception is a grant, source `request`, with that expiry. It is anchored on the change, so it reaches no object and adds no role or row. The person must read the app today, else the exception is refused. It waives the categories the change adds, for that person, on that dataset. It does so only after the change is applied, and only while the grant is neither revoked nor over. A request nobody decided by the date lapses. When a change tags named rows and other rows already carry the category, the exception is refused, because it would open those rows too.
 
 **Reading it coming.** A read of the table's records returns `upcoming_changes` to a person who has a recorded notice. Each entry has the date, the days left, the categories added and removed, a sentence, whether the reader loses access, and the reader's own exception. It names no other person and no row.
 
