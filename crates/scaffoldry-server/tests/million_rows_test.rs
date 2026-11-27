@@ -697,7 +697,7 @@ async fn million_rows_with_grants() {
         op: scaffoldry_core::access::Op::In,
         value: scaffoldry_core::access::Operand::Literal(Value::Array(ids.into_iter().map(Value::String).collect())),
     };
-    let scoped = |pred| RecordQuery { table_id: "t1".into(), any: false, clauses: vec![], sort: None, after: None, limit: 101, scope: Some(ScopePlan { pred, indexed: fields.clone(), labels: vec![] }), search: None, expr: None, unit: None };
+    let scoped = |pred| RecordQuery { table_id: "t1".into(), any: false, clauses: vec![], sort: None, after: None, limit: 101, scope: Some(ScopePlan { pred, indexed: fields.clone(), labels: vec![], shared: None }), search: None, expr: None, unit: None };
     let owners: Vec<String> = (0..REACHED_PEOPLE).map(|i| format!("person{i}@gate.example")).collect();
     let mut plans: Vec<(&str, String)> = Vec::new();
     for (name, pred) in [
@@ -718,7 +718,7 @@ async fn million_rows_with_grants() {
         group_by: Some("status".into()),
         clauses: vec![],
         expr: None,
-        scope: Some(ScopePlan { pred: in_set("u1", units_of("gate_a", 1..=5)), indexed: fields.clone(), labels: vec![] }),
+        scope: Some(ScopePlan { pred: in_set("u1", units_of("gate_a", 1..=5)), indexed: fields.clone(), labels: vec![], shared: None }),
         ..Default::default()
     };
     let (sql, params) = build_aggregate_sql(&agg);

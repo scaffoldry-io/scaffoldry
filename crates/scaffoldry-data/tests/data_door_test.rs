@@ -2,7 +2,7 @@
 //! back. The real schema is exercised by the server's own tests. These show each function does what it says.
 
 use postgres::{Client, NoTls, Transaction};
-use scaffoldry_data::{index, keys, labels, records};
+use scaffoldry_data::{index, keys, labels, records, shares};
 use serde_json::json;
 
 const URL: &str = "postgres://scaffoldry:scaffoldry_dev_password@127.0.0.1:5433/scaffoldry";
@@ -180,4 +180,66 @@ fn declaring_a_key_keys_live_rows_and_lists_the_groups_that_share_one() {
     assert_eq!(keys::declare(&mut tx, "app", "t1", None).unwrap(), Ok(0));
     assert!(keys::spec_for(&mut tx, "app", "t1").unwrap().is_none());
     assert_eq!(tx.query_one("SELECT count(*) FROM record_keys", &[]).unwrap().get::<_, i64>(0), 0);
+}
+
+fn share_shapes(tx: &mut Transaction<'_>) {
+    tx.batch_execute(
+        "CREATE TEMP TABLE row_shares (id uuid PRIMARY KEY, dataset_id text NOT NULL, app_slug text NOT NULL, table_id text NOT NULL, records text[] NOT NULL, \
+           grantee text NOT NULL, access text NOT NULL, fields text[] NOT NULL, kind text NOT NULL, categories text[] NOT NULL DEFAULT '{}', justification text NOT NULL, \
+           requested_by text NOT NULL, requested_at timestamptz NOT NULL DEFAULT NOW(), expires_at timestamptz NOT NULL, assessment jsonb NOT NULL, \
+           status text NOT NULL DEFAULT 'Requested', decided_by text, decided_at timestamptz, decision_note text, ended_at timestamptz, end_notified_at timestamptz) ON COMMIT DROP;
+         CREATE TEMP TABLE row_share_rows (share_id uuid NOT NULL REFERENCES row_shares(id) ON DELETE CASCADE, grantee text NOT NULL, app_slug text NOT NULL, \
+           table_id text NOT NULL, record_id text NOT NULL, PRIMARY KEY (share_id, record_id)) ON COMMIT DROP;",
+    )
+    .expect("temporary tables");
+}
+
+#[test]
+fn a_share_is_live_from_its_approval_to_its_date_and_the_lookup_follows_it() {
+    let mut c = Client::connect(&url(), NoTls).expect("the test server");
+    let mut tx = c.transaction().unwrap();
+    shapes(&mut tx);
+    share_shapes(&mut tx);
+    let (v1, none) = (json!({"a": 1}), json!({}));
+    records::insert(&mut tx, &new("r1", &v1, &none)).unwrap();
+    records::insert(&mut tx, &new("r2", &v1, &none)).unwrap();
+    let id = uuid::Uuid::new_v4();
+    let (ids, fields, assessment) = (vec!["r1".to_string()], vec!["a".to_string(), "b".to_string()], json!({}));
+    shares::insert(
+        &mut tx,
+        &shares::NewShare { id, dataset_id: "d", app_slug: "app", table_id: "t1", records: &ids, grantee: "Bo@x.edu", access: "write", fields: &fields, kind: "beyond", categories: &[], justification: "why", requested_by: "Ann@x.edu", expires_at: "2099-01-01T00:00:00Z", assessment: &assessment },
+    )
+    .unwrap();
+    let live = |tx: &mut Transaction<'_>, needs: &[&str]| -> Vec<String> {
+        let sql = format!("SELECT id FROM dataset_records WHERE {}", shares::live_sql("id", "$1", "$2", "$3", "$4::text[]"));
+        let needs: Vec<String> = needs.iter().map(|n| n.to_string()).collect();
+        tx.query(&sql, &[&"bo@x.edu", &"app", &"t1", &needs]).unwrap().iter().map(|r| r.get(0)).collect()
+    };
+    // A request opens nothing, and is stored in lower case.
+    assert!(live(&mut tx, &[]).is_empty() && !shares::has_live(&mut tx, "bo@x.edu", "app", "t1").unwrap());
+    let share = shares::get(&mut tx, id).unwrap().unwrap();
+    assert_eq!((share.grantee.as_str(), share.requested_by.as_str(), share.status.as_str()), ("bo@x.edu", "ann@x.edu", "Requested"));
+    assert!(shares::approve(&mut tx, &share, "Cy@x.edu", "ok").unwrap());
+    assert!(!shares::approve(&mut tx, &share, "Cy@x.edu", "ok").unwrap(), "a decided request is decided once");
+    // Approved: the named row, for a statement that reads only the named fields, and for no other row.
+    assert_eq!(live(&mut tx, &[]), ["r1"]);
+    assert_eq!(live(&mut tx, &["a", "b"]), ["r1"]);
+    assert!(live(&mut tx, &["a", "c"]).is_empty(), "a field the share does not name closes the row to that statement");
+    assert!(shares::has_live(&mut tx, "bo@x.edu", "app", "t1").unwrap() && !shares::has_live(&mut tx, "bo@x.edu", "app", "t2").unwrap());
+    let covers = shares::covers(&mut tx, "bo@x.edu", "app", &["r1".to_string(), "r2".to_string()]).unwrap();
+    assert_eq!(covers, [shares::Cover { record_id: "r1".into(), write: true, fields: fields.clone() }]);
+    assert_eq!(shares::list(&mut tx, "d", shares::Which::Live, Some("r1"), 10).unwrap().len(), 1);
+    assert!(shares::list(&mut tx, "d", shares::Which::Live, Some("r2"), 10).unwrap().is_empty());
+    // Past its date the lookup closes with nothing run, and the job finds it.
+    tx.execute("UPDATE row_shares SET expires_at = NOW() - interval '1 minute' WHERE id = $1", &[&id]).unwrap();
+    assert!(live(&mut tx, &[]).is_empty() && !shares::has_live(&mut tx, "bo@x.edu", "app", "t1").unwrap());
+    assert!(shares::covers(&mut tx, "bo@x.edu", "app", &["r1".to_string()]).unwrap().is_empty());
+    assert!(shares::list(&mut tx, "d", shares::Which::Live, None, 10).unwrap().is_empty());
+    assert_eq!(shares::due(&mut tx, "2099-06-01T00:00:00Z", 10).unwrap(), [id]);
+    assert!(shares::end(&mut tx, id, "Ended", None, "date").unwrap());
+    assert!(!shares::end(&mut tx, id, "Ended", None, "date").unwrap(), "a share ends once");
+    assert_eq!(tx.query_one("SELECT count(*) FROM row_share_rows", &[]).unwrap().get::<_, i64>(0), 0);
+    assert_eq!(shares::unnotified(&mut tx, 10).unwrap().len(), 1);
+    shares::mark_notified(&mut tx, id).unwrap();
+    assert!(shares::unnotified(&mut tx, 10).unwrap().is_empty());
 }

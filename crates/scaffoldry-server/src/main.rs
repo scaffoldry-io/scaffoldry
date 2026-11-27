@@ -137,6 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     jobs::register_schedule(repo, "remind_requests", 60 * 60)?;
     // A label change whose date has come is applied, every minute (data layer phase 6b).
     jobs::register_schedule(repo, "apply_label_changes", 60)?;
+    // A row share whose date has come is ended and its owners told, every minute (data layer phase 10).
+    jobs::register_schedule(repo, "end_row_shares", 60)?;
     // Scheduled flows are checked every five minutes (workflows phase 3).
     jobs::register_schedule(repo, "fire_schedules", 5 * 60)?;
     // Access receipts are sealed into a hash-chained batch every minute.

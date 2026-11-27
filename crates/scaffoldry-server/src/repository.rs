@@ -127,6 +127,7 @@ const SCHEMA_0120: &str = include_str!("../../scaffoldry-core/migrations/0120_ro
 const SCHEMA_0121: &str = include_str!("../../scaffoldry-core/migrations/0121_review_findings.sql");
 const SCHEMA_0122: &str = include_str!("../../scaffoldry-core/migrations/0122_label_changes.sql");
 const SCHEMA_0123: &str = include_str!("../../scaffoldry-core/migrations/0123_label_change_schedule.sql");
+const SCHEMA_0124: &str = include_str!("../../scaffoldry-core/migrations/0124_row_shares.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -680,6 +681,19 @@ pub struct ScopePlan {
     /// What the reader must be covered for by each row's effective label (data layer phase 3). Empty for a reader with nothing
     /// to meet. Each gate is one more condition on the row, read from its `unit_id` and `tags` columns.
     pub labels: Vec<scaffoldry_data::gate::Gate>,
+    /// The reader's live row shares on this table (data layer phase 10), for a statement that serves a list or a count. A row a share covers
+    /// is read even when the rows and the gates above do not read it. `None` for a reader with no live share, who adds nothing.
+    pub shared: Option<Shared>,
+}
+
+/// The one way into a scope besides its rows and gates: "the row is shared with me".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shared {
+    /// The person the shares are for, lower case.
+    pub grantee: String,
+    /// The fields the statement reads values of: its filter, its sort and the fields it totals or groups. A share opens a row to this
+    /// statement only when the share covers all of them, so a filter cannot show what the share does not.
+    pub needs: Vec<String>,
 }
 
 /// How many values a scope may name before a statement that reads every match is planned for a large set.
@@ -716,7 +730,8 @@ impl ScopePlan {
         first_param: usize,
     ) -> (String, Vec<SqlParam>) {
         let rows = self.clause_at_rows(id_expr, app_slug, table_id, first_param);
-        self.with_labels(rows, id_expr, app_slug, table_id, first_param)
+        let gated = self.with_labels(rows, id_expr, app_slug, table_id, first_param);
+        self.with_share(gated, id_expr, app_slug, table_id, first_param)
     }
 
     /// The same, for a statement that reads records in order and stops after a page. An OR of memberships is probed
@@ -734,7 +749,8 @@ impl ScopePlan {
             Ok(None) => self.clause_at_rows(id_expr, app_slug, table_id, first_param),
             Err(e) => Self::wrap(Err(e), first_param),
         };
-        self.with_labels(rows, id_expr, app_slug, table_id, first_param)
+        let gated = self.with_labels(rows, id_expr, app_slug, table_id, first_param);
+        self.with_share(gated, id_expr, app_slug, table_id, first_param)
     }
 
     fn clause_at_rows(&self, id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
@@ -785,6 +801,23 @@ impl ScopePlan {
         }
         sql.push_str(&gates);
         (sql, params)
+    }
+
+    /// Adds the one way in a share gives (data layer phase 10): the row is read when the rows and the gates read it, or when the reader holds
+    /// an approved share on it that has not reached its date and covers the fields the statement reads. The share is a membership in a
+    /// small keyed lookup (`scaffoldry_data::shares::live_sql`), bound by four parameters after the rest. It opens only the rows the
+    /// lookup names, and a reader with no share has no `shared`, so their statement is the one they had.
+    fn with_share(&self, built: (String, Vec<SqlParam>), id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
+        let Some(shared) = &self.shared else { return built };
+        let (sql, mut params) = built;
+        let Some(inner) = sql.strip_prefix(" AND ") else { return (sql, params) };
+        let at = first_param + params.len();
+        let lookup = scaffoldry_data::shares::live_sql(id_expr, &format!("${at}"), &format!("${}", at + 1), &format!("${}", at + 2), &format!("${}::text[]", at + 3));
+        params.push(SqlParam::Text(shared.grantee.clone()));
+        params.push(SqlParam::Text(app_slug.to_string()));
+        params.push(SqlParam::Text(table_id.to_string()));
+        params.push(SqlParam::Texts(shared.needs.clone()));
+        (format!(" AND (({inner}) OR {lookup})"), params)
     }
 
     /// The same, appended to a statement's parameters.
@@ -1292,6 +1325,7 @@ impl PostgresRepository {
                             ("0121_review_findings.sql", SCHEMA_0121),
                             ("0122_label_changes.sql", SCHEMA_0122),
                             ("0123_label_change_schedule.sql", SCHEMA_0123),
+                            ("0124_row_shares.sql", SCHEMA_0124),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 

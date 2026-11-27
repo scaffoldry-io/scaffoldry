@@ -77,6 +77,9 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/data/label-changes/{id}/withdraw".into(), case!(label_change_scheduled));
     m.insert("POST /api/v1/data/label-changes/{id}/exceptions".into(), case!(label_change_scheduled));
     m.insert("POST /api/v1/data/label-changes/{id}/exceptions/{exception}/decide".into(), case!(label_change_scheduled));
+    m.insert("POST /api/v1/data/datasets/{id}/row-shares".into(), case!(row_share));
+    m.insert("POST /api/v1/data/row-shares/{id}/decide".into(), case!(row_share));
+    m.insert("POST /api/v1/data/row-shares/{id}/withdraw".into(), case!(row_share));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
     m.insert("POST /api/v1/admin/guests/{id}/disable".into(), case!(guest_disable));
@@ -995,6 +998,45 @@ async fn label_change_scheduled(w: World) -> Outcome {
     ensure(withdrawn["status"] == "Withdrawn" && withdrawn["grants_revoked"] == 1, format!("withdrawn: {withdrawn}"))?;
     let (s, body) = w.wa("POST", &format!("/api/v1/data/label-changes/{change}/plan/approve"), ADMIN, Some(json!({ "reason": "Again." }))).await;
     ensure(s == StatusCode::CONFLICT, format!("A reads that it is withdrawn: {s} {body}"))
+}
+
+/// Data layer phase 10: A asks for a share that lets a viewer write one field of one row. B, which has never been asked, decides it, and
+/// each server reads the other's step from the database. The viewer writes the named field through either server, and not another. A ends the
+/// share, and B closes the write at once.
+async fn row_share(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let id = dataset_of(&w, &slug).await?;
+    let record = make_record(&w, &slug, "Ada").await?;
+    let viewer = person("viewer");
+    status(w.wa("POST", &format!("/api/v1/workspaces/{WORKSPACE}/collaborators"), OWNER, Some(json!({ "eppn": viewer, "role": "viewer" }))).await, StatusCode::CREATED, "add a viewer")?;
+    let asked = status(
+        w.wa("POST", &format!("/api/v1/data/datasets/{id}/row-shares"), OWNER, Some(json!({ "records": [record], "grantee": viewer, "access": "write", "fields": ["name"], "justification": "The viewer corrects the name for the term", "expires_at": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339() }))).await,
+        StatusCode::CREATED,
+        "A asks for a share",
+    )?;
+    ensure(asked["kind"] == "beyond" && asked["status"] == "Requested", format!("a request that waits: {asked}"))?;
+    let share = asked["id"].as_str().ok_or("a share id")?.to_string();
+    let uri = format!("/api/v1/apps/{slug}/records/{record}");
+    let seen = status(w.rb("GET", &uri, &viewer, None).await, StatusCode::OK, "B shows the viewer the row")?;
+    let (s, body) = w.rb("PATCH", &uri, &viewer, Some(json!({ "version": seen["version"], "data": { "name": "Ada Lovelace" } }))).await;
+    ensure(!s.is_success(), format!("nothing is written before it is decided: {s} {body}"))?;
+    let (s, body) = w.rb("POST", &format!("/api/v1/data/row-shares/{share}/decide"), OWNER, Some(json!({ "decision": "approve", "reason": "Fine." }))).await;
+    ensure(s == StatusCode::FORBIDDEN, format!("B knows the owner asked for it, and is no steward: {s} {body}"))?;
+    let approved = status(w.rb("POST", &format!("/api/v1/data/row-shares/{share}/decide"), ADMIN, Some(json!({ "decision": "approve", "reason": "The reason fits." }))).await, StatusCode::OK, "B decides what A asked")?;
+    ensure(approved["status"] == "Approved", format!("approved: {approved}"))?;
+    let (s, body) = w.wa("POST", &format!("/api/v1/data/row-shares/{share}/decide"), ADMIN, Some(json!({ "decision": "approve", "reason": "Again." }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("A reads that it is decided: {s} {body}"))?;
+    let (s, body) = w.wa("PATCH", &uri, &viewer, Some(json!({ "version": seen["version"], "data": { "gpa": 1.0 } }))).await;
+    ensure(s == StatusCode::FORBIDDEN, format!("A refuses a field the share does not name: {s} {body}"))?;
+    let saved = status(w.wa("PATCH", &uri, &viewer, Some(json!({ "version": seen["version"], "data": { "name": "Ada L" } }))).await, StatusCode::OK, "A takes the named field")?;
+    status(w.rb("PATCH", &uri, &viewer, Some(json!({ "version": saved["version"], "data": { "name": "Ada Lovelace" } }))).await, StatusCode::OK, "B takes it too")?;
+    let listed = status(w.rb("GET", &format!("/api/v1/data/datasets/{id}/row-shares"), OWNER, None).await, StatusCode::OK, "B lists the live shares")?;
+    ensure(has(&listed, &share), format!("B lists the share A asked for: {listed}"))?;
+    status(w.wa("POST", &format!("/api/v1/data/row-shares/{share}/withdraw"), OWNER, Some(json!({ "reason": "The term is over." }))).await, StatusCode::OK, "A ends it")?;
+    let (s, body) = w.rb("PATCH", &uri, &viewer, Some(json!({ "version": saved["version"], "data": { "name": "Ada Again" } }))).await;
+    ensure(!s.is_success(), format!("B closes the write at once: {s} {body}"))?;
+    let (s, body) = w.rb("POST", &format!("/api/v1/data/row-shares/{share}/withdraw"), OWNER, Some(json!({ "reason": "Twice." }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("B reads that it is over: {s} {body}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {

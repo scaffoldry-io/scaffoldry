@@ -102,6 +102,9 @@ pub const RECORD_INTERNALS: &[&str] = &[
     "act_on_work",
     // Reads a count for the admin inventory, which only a Platform Admin reaches.
     "get_records_per_table",
+    // Data layer phase 10: a request for a row share reads the rows it names, to check each is of the dataset and that the requester may
+    // read it. It returns no record data. The share's own read paths are `plan_reading`, `share_masks` and `share_cover` in this module.
+    "rows_of",
 ];
 
 /// The row rules in the manifest the app runs, or `None` when the engine holds no such app. The manifest is the
@@ -321,7 +324,110 @@ pub fn plan_of(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedSta
         RowScope::DenyAll => never(),
         RowScope::Mixed(p) => p,
     };
-    Some(crate::repository::ScopePlan { pred, indexed: fields_of(app_slug, table, state), labels })
+    Some(crate::repository::ScopePlan { pred, indexed: fields_of(app_slug, table, state), labels, shared: None })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Row shares (data layer phase 10)
+// ---------------------------------------------------------------------------------------------
+
+/// Whether a caller's own live row shares count for this read. They count for a person reading the live app as themselves. They do not
+/// count for a guest, in view-as, through an outside app's ceiling, or in a preview of a proposal: each of those is narrower than the person
+/// by design, and a share must not widen them.
+fn shares_count(caller: &AuthUser, app_slug: &str) -> bool {
+    caller.affiliation != "guest" && caller.affiliation != "central_admin" && caller.view_as_by.is_none() && caller.via_client.is_none() && !crate::service::preview::is_preview(app_slug)
+}
+
+/// The scope of a list or a count: `plan_of`, and one more way in when the caller holds a live row share on this table. `needs` names the
+/// fields the statement reads values of (its filter, sort, totals and groups, or every field for a search). A share opens a row to the
+/// statement only when it covers all of them. A caller with no live share gets `plan_of` unchanged. Only the list and the count read this.
+/// Link pickers, history, comments, trash and the app-wide list call `plan_of` or `allows`, which a share does not open.
+pub fn plan_reading(caller: &AuthUser, app_slug: &str, table: &str, needs: Vec<String>, state: &SharedState) -> Option<crate::repository::ScopePlan> {
+    let mut plan = plan_of(caller, app_slug, table, state)?;
+    if shares_count(caller, app_slug) {
+        let (app, table_id) = (crate::service::preview::stored_slug(app_slug), crate::service::row_labels::table_id_of(app_slug, table, state));
+        // A read that fails adds nothing, so a share never opens a row by the failure of a lookup.
+        if state.repository.has_live_row_share(&caller.eppn, app, &table_id).unwrap_or(false) {
+            plan.shared = Some(crate::repository::Shared { grantee: caller.eppn.to_lowercase(), needs });
+        }
+    }
+    Some(plan)
+}
+
+/// The fields of each of these rows that the caller reads only through a share: the rows the caller does not read by their own right
+/// and a live share covers. A row they read by their own right is not in it, so a share never narrows what they had.
+pub fn share_masks(caller: &AuthUser, app_slug: &str, rows: &[DatasetRecord], state: &SharedState) -> std::collections::HashMap<String, std::collections::BTreeSet<String>> {
+    let mut out: std::collections::HashMap<String, std::collections::BTreeSet<String>> = std::collections::HashMap::new();
+    if rows.is_empty() || !shares_count(caller, app_slug) {
+        return out;
+    }
+    let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let covers = state.repository.row_share_covers(&caller.eppn, crate::service::preview::stored_slug(app_slug), ids).unwrap_or_default();
+    for cover in covers {
+        out.entry(cover.record_id).or_default().extend(cover.fields);
+    }
+    // The caller's own rights are worked out once for each table of the page, and not once for each row.
+    let mut own: std::collections::HashMap<String, (RowScope, Vec<crate::service::row_labels::Gate>)> = std::collections::HashMap::new();
+    out.retain(|id, _| {
+        let Some(row) = rows.iter().find(|r| &r.id == id) else { return false };
+        let table = table_of(row);
+        let (rule, gates) = own.entry(table.clone()).or_insert_with(|| (scope_of(caller, app_slug, &table, RowOp::Read, state), crate::service::row_labels::gates_of(caller, app_slug, &table, state)));
+        let by_rules = match rule {
+            RowScope::AllowAll => true,
+            RowScope::DenyAll => false,
+            RowScope::Mixed(pred) => scaffoldry_engine::access::eval(pred, &row.data, &fields_of(app_slug, &table, state)),
+        };
+        !(by_rules && crate::service::row_labels::admits_with(gates, &row.data, state))
+    });
+    out
+}
+
+/// A record as a share shows it: the fields the share lists, and nothing else of the data.
+pub fn through_share(mut record: DatasetRecord, fields: &std::collections::BTreeSet<String>) -> DatasetRecord {
+    if let Some(map) = record.data.as_object_mut() {
+        map.retain(|k, _| k == "_table_id" || fields.contains(k));
+    }
+    // Who made the row is no field of the share.
+    record.created_by = None;
+    record
+}
+
+/// The fields of one row that the caller's live shares on it cover. With `write`, only the shares that let them write. `None` when no live
+/// share covers the row. The single-row read and the single-row update ask this, and only when the caller's own rights do not reach the row.
+pub fn share_cover(caller: &AuthUser, app_slug: &str, record_id: &str, write: bool, state: &SharedState) -> Option<std::collections::BTreeSet<String>> {
+    if !shares_count(caller, app_slug) {
+        return None;
+    }
+    let covers = state.repository.row_share_covers(&caller.eppn, crate::service::preview::stored_slug(app_slug), vec![record_id.to_string()]).unwrap_or_default();
+    let fields: std::collections::BTreeSet<String> = covers.into_iter().filter(|c| c.write || !write).flat_map(|c| c.fields).collect();
+    (!fields.is_empty()).then_some(fields)
+}
+
+/// How a person already reaches a row, for the three cases of "Sharing a row". `Open` is inside what they could already do. `Beyond` is a row
+/// their row rules or role do not reach. `Restricted` is a row whose effective label asks something of them that they do not meet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    Open,
+    Beyond,
+    Restricted,
+}
+
+/// The reach of `person` over one stored row, for `op`, by their own rights alone. A share never counts here.
+pub fn reach_of(person: &AuthUser, app_slug: &str, record: &DatasetRecord, op: RowOp, state: &SharedState) -> Reach {
+    let table = table_of(record);
+    let by_rules = match scope_for(person, app_slug, &table, op, state) {
+        RowScope::AllowAll => true,
+        RowScope::DenyAll => false,
+        RowScope::Mixed(pred) => scaffoldry_engine::access::eval(&pred, &record.data, &fields_of(app_slug, &table, state)),
+    };
+    if !crate::service::row_labels::admits(person, app_slug, &table, &record.data, state) {
+        return Reach::Restricted;
+    }
+    if by_rules {
+        Reach::Open
+    } else {
+        Reach::Beyond
+    }
 }
 
 /// The fields the app's rules read for a table. They are indexed, so a rule compiles to the index.
@@ -511,6 +617,7 @@ pub fn preview_access(
                     pred,
                     indexed: fields.clone(),
                     labels: Vec::new(),
+                    shared: None,
                 };
                 count_scoped(app_slug, &input.table_id, Some(&plan), state)
             }

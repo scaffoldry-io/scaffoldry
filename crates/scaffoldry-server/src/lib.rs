@@ -59,6 +59,7 @@ pub mod repository_imports;
 pub mod repository_content;
 pub mod repository_label_changes;
 pub mod repository_label_schedule;
+pub mod repository_row_shares;
 pub mod repository_labels;
 pub mod repository_datasets;
 pub mod repository_catalog;
