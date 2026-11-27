@@ -64,7 +64,13 @@ pub fn split_principal(eppn: &str) -> (Kind, &str) {
 
 /// The addresses a membership means right now.
 pub fn people_of(c: &CollaboratorRecord, state: &SharedState) -> Vec<String> {
-    let (kind, id) = split_principal(&c.eppn);
+    people_of_key(&c.eppn, state)
+}
+
+/// The addresses a stored principal key means right now: an address, `group:{id}`, `unit:{id}` or `position:{key}@{unit}`. A position
+/// is read from the roles that hold it today, so it follows the seat.
+pub fn people_of_key(key: &str, state: &SharedState) -> Vec<String> {
+    let (kind, id) = split_principal(key);
     match kind {
         Kind::User => vec![id.to_string()],
         Kind::Group => {

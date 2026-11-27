@@ -105,6 +105,7 @@ pub mod scope;
 pub mod label_changes;
 pub mod row_labels;
 pub mod row_shares;
+pub mod system_users;
 pub mod synthesize;
 pub mod trash;
 pub mod datasets;

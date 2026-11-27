@@ -81,6 +81,10 @@ pub fn add(m: &mut Entries) {
     m.insert("POST /api/v1/data/datasets/{id}/records/{record_id}/audience/accept".into(), case!(audience_accept));
     m.insert("PUT /api/v1/admin/people/{eppn}/conditions/{id}".into(), case!(condition_set));
     m.insert("POST /api/v1/data/row-shares/{id}/decide".into(), case!(row_share));
+    m.insert("POST /api/v1/data/system-users".into(), case!(system_user));
+    m.insert("PATCH /api/v1/data/system-users/{flow_id}".into(), case!(system_user));
+    m.insert("POST /api/v1/data/system-users/{flow_id}/grants".into(), case!(system_user));
+    m.insert("POST /api/v1/data/system-users/{flow_id}/grants/{grant_id}/revoke".into(), case!(system_user));
     m.insert("POST /api/v1/data/row-shares/{id}/withdraw".into(), case!(row_share));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
@@ -1039,6 +1043,37 @@ async fn row_share(w: World) -> Outcome {
     ensure(!s.is_success(), format!("B closes the write at once: {s} {body}"))?;
     let (s, body) = w.rb("POST", &format!("/api/v1/data/row-shares/{share}/withdraw"), OWNER, Some(json!({ "reason": "Twice." }))).await;
     ensure(s == StatusCode::CONFLICT, format!("B reads that it is over: {s} {body}"))
+}
+
+/// Data layer phase 9: A makes a flow a system user. B, which has never been asked, reads it from the database, and A and B each change
+/// one thing. A grant the owner approves on A is read on B, and a grant ended on B is read as ended on A.
+async fn system_user(w: World) -> Outcome {
+    let app = make_app(&w).await?;
+    let id = unique("p9flow");
+    let rule = json!({
+        "id": id, "name": format!("Marker {id}"), "enabled": true, "trigger": "RecordCreated",
+        "steps": [{ "id": "one", "when": [], "kind": { "Service": { "action": { "UpdateRecord": { "target": "Trigger", "fields": [["status", "\"one\""]] } } } } }]
+    });
+    status(w.wa("POST", &format!("/api/v1/apps/{app}/automations"), OWNER, Some(rule)).await, StatusCode::CREATED, "A creates the flow")?;
+    let made = status(w.wa("POST", "/api/v1/data/system-users", OWNER, Some(json!({ "flow_id": id, "owner": { "kind": "user", "id": OWNER }, "notes": "Marks a file" }))).await, StatusCode::CREATED, "A registers it")?;
+    ensure(made["grants"] == json!([]), format!("nothing by default: {made}"))?;
+    let seen = status(w.rb("GET", &format!("/api/v1/data/system-users/{id}"), OWNER, None).await, StatusCode::OK, "B reads it")?;
+    ensure(seen["notes"] == "Marks a file", format!("B reads what A stored: {seen}"))?;
+    status(w.rb("PATCH", &format!("/api/v1/data/system-users/{id}"), OWNER, Some(json!({ "name": "File marker" }))).await, StatusCode::OK, "B renames it")?;
+    let dataset = dataset_of(&w, &app).await?;
+    let granted = status(
+        w.wa("POST", &format!("/api/v1/data/system-users/{id}/grants"), OWNER, Some(json!({ "dataset": dataset, "action": "write", "fields": ["status"], "reason": "It marks the status", "review_by": (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339() }))).await,
+        StatusCode::CREATED,
+        "A approves a grant",
+    )?;
+    let grant = granted["id"].as_str().ok_or("a grant id")?.to_string();
+    let seen = status(w.rb("GET", &format!("/api/v1/data/system-users/{id}"), OWNER, None).await, StatusCode::OK, "B reads it again")?;
+    ensure(seen["name"] == "File marker" && seen["grants"][0]["status"] == "Active", format!("B reads A's grant and its own name: {seen}"))?;
+    status(w.rb("POST", &format!("/api/v1/data/system-users/{id}/grants/{grant}/revoke"), OWNER, Some(json!({ "reason": "The cycle is over" }))).await, StatusCode::OK, "B ends it")?;
+    let seen = status(w.wa("GET", &format!("/api/v1/data/system-users/{id}"), OWNER, None).await, StatusCode::OK, "A reads it")?;
+    ensure(seen["grants"][0]["status"] == "Revoked", format!("A reads that B ended it: {seen}"))?;
+    let (s, body) = w.wa("POST", &format!("/api/v1/data/system-users/{id}/grants/{grant}/revoke"), OWNER, Some(json!({ "reason": "Twice" }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("A reads that it is over: {s} {body}"))
 }
 
 /// Data layer phase 3b: A makes a row that names a unit in an audience field that asks the unit to accept. B, which has never been asked, lists

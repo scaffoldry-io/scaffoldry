@@ -122,8 +122,8 @@ fn no_kind_takes_free_text() {
     // The brief's sixteen kinds, `process_notice` for a rule's Notify effect (notifications phase 4), and
     // `access_request_waiting` for a catalog request that waits for a steward (data layer phase 2e), and `label_change_scheduled` and
     // `label_change_withdrawn` for a label change that runs on a date (data layer phase 6b), and `row_share_ended` for a row share that
-    // reaches its date (data layer phase 10).
-    assert_eq!(notifications::FIELDS.len(), 21, "one entry per kind");
+    // reaches its date (data layer phase 10), and `system_grant_lapsed` for an automation whose grant lapsed (data layer phase 9).
+    assert_eq!(notifications::FIELDS.len(), 22, "one entry per kind");
     for (kind, fields) in notifications::FIELDS {
         assert!(notifications::KINDS.contains(kind), "{kind}");
         for (name, ty) in fields.iter() {

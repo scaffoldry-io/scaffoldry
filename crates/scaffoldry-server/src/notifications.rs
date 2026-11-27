@@ -95,6 +95,9 @@ notices! {
     LabelChangeWithdrawn => "label_change_withdrawn" { dataset: DatasetRef },
     // Data layer phase 10: a row share reached its date. The owners of the rows are told. It names the dataset and how many rows, never a row.
     RowShareEnded => "row_share_ended" { dataset: DatasetRef, rows: Count },
+    // Data layer phase 9: an automation's grant reached its review date, so the automation stopped. The owner is told once. `others` is how many
+    // more datasets lapsed with it. It names the dataset, never the automation's data.
+    SystemGrantLapsed => "system_grant_lapsed" { dataset: DatasetRef, others: Count },
 }
 
 /// Who is told.
@@ -133,7 +136,8 @@ impl Notice {
             | Notice::AccessRequestWaiting { .. }
             | Notice::LabelChangeScheduled { .. }
             | Notice::LabelChangeWithdrawn { .. }
-            | Notice::RowShareEnded { .. } => None,
+            | Notice::RowShareEnded { .. }
+            | Notice::SystemGrantLapsed { .. } => None,
         }
     }
 }
@@ -151,6 +155,7 @@ pub const FORCED: &[(&str, &str)] = &[
     ("label_change_scheduled", "A change to who may read data you use, or own, or steward, always reaches your inbox, so nobody learns of it too late."),
     ("label_change_withdrawn", "The withdrawal of a change you were told about always reaches your inbox, so nobody keeps preparing for it."),
     ("row_share_ended", "The end of a share of rows you own always reaches your inbox, so you know who reads them."),
+    ("system_grant_lapsed", "A stop of an automation you own always reaches your inbox, so it does not fail unseen."),
 ];
 
 /// The channel when neither the person nor the institution chose one.
@@ -184,6 +189,7 @@ pub fn label(kind: &str) -> &'static str {
         "label_change_scheduled" => "A change to who may read a dataset is scheduled",
         "label_change_withdrawn" => "A scheduled change to who may read a dataset is withdrawn",
         "row_share_ended" => "A share of rows you own ends",
+        "system_grant_lapsed" => "An automation you own stops because its access lapsed",
         _ => "Other notices",
     }
 }
@@ -456,6 +462,19 @@ pub fn render(state: &SharedState, notice: &Notice) -> (String, String, Value) {
             (
                 format!("A share of {name} ended"),
                 format!("A share of {what} of {name} reached its date and ended. The person it was for reads nothing more through it."),
+                link("/datasets".to_string(), json!({ "dataset": dataset.0 })),
+            )
+        }
+        Notice::SystemGrantLapsed { dataset, others } => {
+            let name = crate::service::catalog::name_of(state, &dataset.0).unwrap_or_else(|| "a dataset".to_string());
+            let more = match others.0 {
+                0 => String::new(),
+                1 => " and 1 other dataset".to_string(),
+                n => format!(" and {n} other datasets"),
+            };
+            (
+                format!("An automation stopped: access to {name} lapsed"),
+                format!("An automation you own lost its access to {name}{more}, because the review date of a grant came. It stays stopped until someone who holds that access approves a grant with a new date."),
                 link("/datasets".to_string(), json!({ "dataset": dataset.0 })),
             )
         }
