@@ -1083,9 +1083,15 @@ pub fn fetch_record(
 ) -> Result<DatasetRecord, ServiceError> {
     let allowed = authorize_app(caller, app_slug, AppAction::Read, state);
     if allowed.is_ok() {
-        let record = state.find_record(app_slug, id).map_err(ServiceError::Internal)?.filter(|r| scope::allows(caller, app_slug, r, RowOp::Read, state));
-        if let Some(record) = record {
-            return Ok(redact_records(caller, app_slug, vec![record], state).remove(0));
+        let found = state.find_record(app_slug, id).map_err(ServiceError::Internal)?;
+        if let Some(record) = found {
+            if scope::allows(caller, app_slug, &record, RowOp::Read, state) {
+                return Ok(redact_records(caller, app_slug, vec![record], state).remove(0));
+            }
+            // A row share (data layer phase 10) reaches this one row, and shows only the fields it lists.
+            if let Some(fields) = scope::share_cover(caller, app_slug, id, false, state) {
+                return Ok(scope::through_share(redact_records(caller, app_slug, vec![record], state).remove(0), &fields));
+            }
         }
     }
     // Workflows phase 4: an open task grant reaches this one record, and shows only the fields it lists.
@@ -1120,11 +1126,20 @@ pub fn update_record_noted(
 ) -> Result<(DatasetRecord, Vec<Value>), ServiceError> {
     // Workflows phase 4: a person without the right to write may still fill the fields an open task grant lists, on that
     // one record.
+    // Data layer phase 10: a person whose own rights do not reach the row may still write the fields of a live row share that lets them write.
+    let mut shared: Option<std::collections::BTreeSet<String>> = None;
     let task = match authorize_app(caller, app_slug, AppAction::WriteRecords, state).and_then(|()| crate::service::connections::ensure_writable(app_slug, state)) {
         Ok(()) => None,
         Err(e) => match crate::service::task_grants::open_grant(caller, app_slug, id, state) {
             Some(grant) if !grant.write_fields.is_empty() => Some(grant),
-            _ => return Err(e),
+            _ => {
+                // The share reaches the app only for a person who may read it, and never a connection that cannot be written.
+                shared = authorize_app(caller, app_slug, AppAction::Read, state).ok().and_then(|()| crate::service::connections::ensure_writable(app_slug, state).ok()).and_then(|()| scope::share_cover(caller, app_slug, id, true, state));
+                if shared.is_none() {
+                    return Err(e);
+                }
+                None
+            }
         },
     };
 
@@ -1137,10 +1152,14 @@ pub fn update_record_noted(
         None => return Err(version_required("version is required: send the version you read")),
     };
 
-    let current = state
-        .find_record(app_slug, id)
-        .map_err(ServiceError::Internal)?
-        .filter(|r| task.is_some() || scope::allows(caller, app_slug, r, RowOp::Update, state))
+    let found = state.find_record(app_slug, id).map_err(ServiceError::Internal)?;
+    if let Some(r) = &found {
+        if task.is_none() && shared.is_none() && !scope::allows(caller, app_slug, r, RowOp::Update, state) {
+            shared = scope::share_cover(caller, app_slug, id, true, state);
+        }
+    }
+    let current = found
+        .filter(|r| task.is_some() || shared.is_some() || scope::allows(caller, app_slug, r, RowOp::Update, state))
         .ok_or_else(|| ServiceError::NotFound(format!("Record '{id}' not found")))?;
 
     let mut new_data = match payload.get("data") {
@@ -1166,6 +1185,24 @@ pub fn update_record_noted(
         let mut merged = current.data.clone();
         if let (Some(m), Some(fill)) = (merged.as_object_mut(), new_data.as_object()) {
             for (k, v) in fill {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+        new_data = merged;
+    }
+    // A write through a row share names only the fields the share lets the person write. The rest of the record stays.
+    if let Some(fields) = &shared {
+        let refused: Vec<&str> = new_data.as_object().map(|m| m.keys().map(String::as_str).filter(|k| *k != "_table_id" && !fields.contains(*k)).collect()).unwrap_or_default();
+        if !refused.is_empty() {
+            return Err(ServiceError::forbidden(format!(
+                "This share lets you change {}. It does not let you change {}.",
+                fields.iter().cloned().collect::<Vec<_>>().join(", "),
+                refused.join(", ")
+            )));
+        }
+        let mut merged = current.data.clone();
+        if let (Some(m), Some(sent)) = (merged.as_object_mut(), new_data.as_object()) {
+            for (k, v) in sent {
                 m.insert(k.clone(), v.clone());
             }
         }
@@ -1215,8 +1252,10 @@ pub fn update_record_noted(
     validate_and_normalize_durations_and_datetimes(app_slug, &table, &mut new_data, state)?;
     let attachments = validate_attachments(caller, app_slug, &table, Some(id), &mut new_data, state)?;
     // The person's own row and column rules apply to their own writes. A task grant's write was held to its fields above.
+    // A row share writes the one row it names. The row stays where it was, in every field the share does not list, so the person's own rows
+    // and gate are not asked again.
     if task.is_none() {
-        if !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
+        if shared.is_none() && !scope::allows_data(caller, app_slug, &table, &new_data, RowOp::Update, state) {
             return Err(outside_scope());
         }
         keep_what_the_caller_cannot_touch(caller, app_slug, &table, &current.data, &mut new_data, state);
@@ -2110,11 +2149,18 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
             Ok(())
         }
     };
-    let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
     let filter = prepared_filter(query.filter.as_ref(), state)?;
     for c in filter.iter().flat_map(scaffoldry_engine::clauses_of) {
         check(&c.field_name)?;
     }
+    // A row share opens a row to this list only when it covers every field the list reads values of: its filter, its sort, and, for a
+    // search, every field, because a search matches on any of them.
+    let needs: Vec<String> = if query.search.as_ref().is_some_and(|s| !s.trim().is_empty()) {
+        fields.iter().map(|f| f.name.clone()).collect()
+    } else {
+        filter.iter().flat_map(scaffoldry_engine::clauses_of).map(|c| c.field_name.clone()).chain(query.sort.iter().map(|s| s.field_name.clone())).collect()
+    };
+    let scope = crate::service::scope::plan_reading(caller, app_slug, &table, needs, state);
     // A filter that asks for one unit of the unit column reads the column, in SQL, and the rest of the filter reads the index.
     let (filter, unit_filter) = split_unit_filter(app_slug, &table, filter, state);
     let tree: Option<Expr> = filter.as_ref().filter(|f| !scaffoldry_engine::is_flat(f)).map(|f| expr_of(&fields, f));
@@ -2254,8 +2300,12 @@ pub fn list_page(caller: &AuthUser, app_slug: &str, query: PageQuery, state: &Sh
     } else {
         rows.last().map(|r| encode_cursor(r, sort_field.as_deref()))
     };
+    // A row the caller reads only through a share shows the fields the share covers. This is worked out before the rows are redacted, because
+    // the caller's own rights are judged on the whole row.
+    let masks = if scope.as_ref().is_some_and(|p| p.shared.is_some()) { scope::share_masks(caller, app_slug, &rows, state) } else { Default::default() };
     fill_lookups(caller, app_slug, &mut rows, state);
     let records = redact_records(caller, app_slug, rows, state);
+    let records = if masks.is_empty() { records } else { records.into_iter().map(|r| match masks.get(&r.id) { Some(fields) => scope::through_share(r, fields), None => r }).collect() };
     crate::service::clients::note_usage(caller, state, 0, records.len() as i64, 0);
     Ok(RecordPage { records, next_cursor, calculating })
 }
@@ -2661,7 +2711,9 @@ pub fn aggregate_records(
         }
     }
 
-    let scope = crate::service::scope::plan_of(caller, app_slug, &table, state);
+    // A row share opens a row to a total only when it covers every field the total reads: the filter, the field, and the groups.
+    let needs: Vec<String> = query.filter.iter().flat_map(scaffoldry_engine::clauses_of).map(|c| c.field_name.clone()).chain(query.field.iter().chain(query.group_by.iter()).chain(query.group_by2.iter()).cloned()).collect();
+    let scope = crate::service::scope::plan_reading(caller, app_slug, &table, needs, state);
     let plan = crate::repository_index::AggregatePlan {
         app_slug: crate::service::preview::stored_slug(app_slug).to_string(),
         table_id: table.clone(),

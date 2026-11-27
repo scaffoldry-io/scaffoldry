@@ -401,7 +401,7 @@ fn a_scope_with_many_units_is_large_and_a_small_or_empty_one_is_not() {
     use scaffoldry_core::access::{Op, Operand, Pred};
     use scaffoldry_server::repository::{ScopePlan, LARGE_SCOPE_VALUES};
     let members = |n: usize| Pred::Cmp { field: "unit".into(), op: Op::In, value: Operand::Literal(Value::Array((0..n).map(|i| json!(format!("u{i}"))).collect())) };
-    let plan = |pred| ScopePlan { pred, indexed: vec![], labels: vec![] };
+    let plan = |pred| ScopePlan { pred, indexed: vec![], labels: vec![], shared: None };
     assert!(!plan(members(LARGE_SCOPE_VALUES - 1)).is_large());
     assert!(plan(members(LARGE_SCOPE_VALUES)).is_large());
     // The values of every comparison count, across an OR.

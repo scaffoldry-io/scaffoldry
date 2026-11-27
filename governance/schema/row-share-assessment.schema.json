@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scaffoldry.io/schema/row-share-assessment.schema.json",
+  "title": "RowShareAssessment",
+  "description": "The assessment attached to a request for a row share (data layer phase 10). The server fills it with its own checks, with no model: counts, field names, category ids, and the days asked for against the setting. An agent or a person may add the narrative later. It holds no record value and no row id. It never approves or refuses: a person decides.",
+  "type": "object",
+  "required": ["version", "source", "reason", "exposure", "duration", "unusual", "narrative", "advisory"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "source": { "const": "server_precheck", "description": "Who made the structured parts. The narrative says who wrote it, when it is filled." },
+    "reason": {
+      "type": "object",
+      "required": ["fits", "characters", "short"],
+      "additionalProperties": false,
+      "properties": {
+        "fits": { "enum": ["not_assessed", "yes", "partly", "no"], "description": "Whether the justification fits the policy. The server cannot judge words, so it writes not_assessed. An agent or a person may change it with the narrative." },
+        "characters": { "type": "integer", "minimum": 0, "description": "The length of the justification. Its words are not copied here." },
+        "short": { "type": "boolean" }
+      }
+    },
+    "exposure": {
+      "type": "object",
+      "required": ["rows", "rows_inside_default", "rows_beyond_default", "rows_restricted", "fields", "access", "categories", "protected_fields"],
+      "additionalProperties": false,
+      "properties": {
+        "rows": { "type": "integer", "minimum": 1 },
+        "rows_inside_default": { "type": "integer", "minimum": 0, "description": "Rows the grantee already does this on." },
+        "rows_beyond_default": { "type": "integer", "minimum": 0 },
+        "rows_restricted": { "type": "integer", "minimum": 0, "description": "Rows whose label asks something of a reader that the grantee does not meet." },
+        "fields": { "type": "array", "items": { "type": "string", "maxLength": 128 }, "description": "Field names, never values." },
+        "access": { "enum": ["read", "write"] },
+        "categories": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" }, "description": "Category ids the named rows and fields carry." },
+        "protected_fields": { "type": "array", "items": { "type": "string", "maxLength": 128 } }
+      }
+    },
+    "duration": {
+      "type": "object",
+      "required": ["days", "max_days", "too_long"],
+      "additionalProperties": false,
+      "properties": {
+        "days": { "type": "integer", "minimum": 0 },
+        "max_days": { "type": "integer", "minimum": 1, "description": "The setting access.request_max_days." },
+        "too_long": { "type": "boolean" }
+      }
+    },
+    "unusual": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["write_access", "restricted_category", "longer_than_setting", "many_rows", "covers_every_field", "protected_field", "short_justification"] }
+    },
+    "narrative": {
+      "type": ["object", "null"],
+      "description": "A slot for a short assessment written by an agent or a person after the request is filed. Null until then.",
+      "required": ["by", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "by": { "type": "string", "maxLength": 255 },
+        "text": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "advisory": { "type": "string", "maxLength": 300 }
+  }
+}

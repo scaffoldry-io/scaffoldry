@@ -12,7 +12,8 @@
 
 use crate::service::{catalog, ServiceError};
 use crate::state::{AuthUser, SharedState};
-use scaffoldry_data::gate::{tags_of, Cover, Gate};
+pub use scaffoldry_data::gate::Gate;
+use scaffoldry_data::gate::{tags_of, Cover};
 use scaffoldry_engine::sensitivity::{Category, Reach};
 use scaffoldry_engine::{effective_label, effective_sensitivity, HostRouter};
 use serde_json::{json, Value};

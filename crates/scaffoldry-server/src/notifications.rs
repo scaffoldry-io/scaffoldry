@@ -93,6 +93,8 @@ notices! {
     LabelChangeScheduled => "label_change_scheduled" { dataset: DatasetRef, days: Count, loses: Flag },
     // The same people are told when the steward withdraws the change.
     LabelChangeWithdrawn => "label_change_withdrawn" { dataset: DatasetRef },
+    // Data layer phase 10: a row share reached its date. The owners of the rows are told. It names the dataset and how many rows, never a row.
+    RowShareEnded => "row_share_ended" { dataset: DatasetRef, rows: Count },
 }
 
 /// Who is told.
@@ -130,7 +132,8 @@ impl Notice {
             | Notice::AccessChanged { .. }
             | Notice::AccessRequestWaiting { .. }
             | Notice::LabelChangeScheduled { .. }
-            | Notice::LabelChangeWithdrawn { .. } => None,
+            | Notice::LabelChangeWithdrawn { .. }
+            | Notice::RowShareEnded { .. } => None,
         }
     }
 }
@@ -147,6 +150,7 @@ pub const FORCED: &[(&str, &str)] = &[
     ("file_infected", "An infected file always reaches your inbox."),
     ("label_change_scheduled", "A change to who may read data you use, or own, or steward, always reaches your inbox, so nobody learns of it too late."),
     ("label_change_withdrawn", "The withdrawal of a change you were told about always reaches your inbox, so nobody keeps preparing for it."),
+    ("row_share_ended", "The end of a share of rows you own always reaches your inbox, so you know who reads them."),
 ];
 
 /// The channel when neither the person nor the institution chose one.
@@ -179,6 +183,7 @@ pub fn label(kind: &str) -> &'static str {
         "access_request_waiting" => "A request for access to a dataset waits on you",
         "label_change_scheduled" => "A change to who may read a dataset is scheduled",
         "label_change_withdrawn" => "A scheduled change to who may read a dataset is withdrawn",
+        "row_share_ended" => "A share of rows you own ends",
         _ => "Other notices",
     }
 }
@@ -442,6 +447,15 @@ pub fn render(state: &SharedState, notice: &Notice) -> (String, String, Value) {
             (
                 format!("Withdrawn: the change to {name}"),
                 format!("The change to who may read {name}, which you were told about, is withdrawn. Nothing changes for you."),
+                link("/datasets".to_string(), json!({ "dataset": dataset.0 })),
+            )
+        }
+        Notice::RowShareEnded { dataset, rows } => {
+            let name = crate::service::catalog::name_of(state, &dataset.0).unwrap_or_else(|| "a dataset".to_string());
+            let what = if rows.0 == 1 { "1 row".to_string() } else { format!("{} rows", rows.0) };
+            (
+                format!("A share of {name} ended"),
+                format!("A share of {what} of {name} reached its date and ended. The person it was for reads nothing more through it."),
                 link("/datasets".to_string(), json!({ "dataset": dataset.0 })),
             )
         }

@@ -103,6 +103,7 @@ pub mod my_apps;
 pub mod scope;
 pub mod label_changes;
 pub mod row_labels;
+pub mod row_shares;
 pub mod synthesize;
 pub mod trash;
 pub mod datasets;

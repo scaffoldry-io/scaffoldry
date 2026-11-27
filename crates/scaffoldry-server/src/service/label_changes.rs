@@ -47,11 +47,11 @@ fn storage(e: crate::repository::RepositoryError) -> ServiceError {
     ServiceError::StorageUnavailable(e.to_string())
 }
 
-fn is_admin_or_compliance(caller: &AuthUser, state: &SharedState) -> bool {
+pub(crate) fn is_admin_or_compliance(caller: &AuthUser, state: &SharedState) -> bool {
     require_platform_admin_or_compliance(caller, state).is_ok()
 }
 
-fn reason_of(body: &Value) -> Result<String, ServiceError> {
+pub(crate) fn reason_of(body: &Value) -> Result<String, ServiceError> {
     let reason = body.get("reason").and_then(Value::as_str).map(str::trim).unwrap_or("");
     if reason.is_empty() || reason.chars().count() > 500 {
         return Err(bad("A reason between 1 and 500 characters is required"));
@@ -64,7 +64,7 @@ fn reason_of(body: &Value) -> Result<String, ServiceError> {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /// The people who hold the dataset's steward position now, found from the dataset's unit up (the rule request access uses).
-fn stewards_of(row: &CatalogRow, state: &SharedState) -> Vec<String> {
+pub(crate) fn stewards_of(row: &CatalogRow, state: &SharedState) -> Vec<String> {
     let Some(key) = &row.steward_position else { return Vec::new() };
     let Some(unit) = catalog::unit_of(state, row) else { return Vec::new() };
     let spec = ApproverSpec::Position { key: key.clone(), from: Origin::Workspace, walk_up: true };
@@ -72,11 +72,11 @@ fn stewards_of(row: &CatalogRow, state: &SharedState) -> Vec<String> {
 }
 
 /// A steward, a Platform Admin or a compliance officer.
-fn may_decide(caller: &AuthUser, row: &CatalogRow, state: &SharedState) -> bool {
+pub(crate) fn may_decide(caller: &AuthUser, row: &CatalogRow, state: &SharedState) -> bool {
     is_admin_or_compliance(caller, state) || stewards_of(row, state).iter().any(|s| s.eq_ignore_ascii_case(&caller.eppn))
 }
 
-fn refused() -> ServiceError {
+pub(crate) fn refused() -> ServiceError {
     ServiceError::forbidden("Only the dataset's steward, a Platform Admin or a compliance officer reads or decides a label change")
 }
 

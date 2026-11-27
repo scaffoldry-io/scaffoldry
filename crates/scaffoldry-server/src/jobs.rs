@@ -300,6 +300,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::service::label_changes::schedule::apply_job,
     },
     JobKind {
+        name: "end_row_shares",
+        title: "Ending row shares on their dates",
+        description: "Ends each approved row share whose date has come, once, with one ledger entry, and tells the owners of the rows. A read of a row never waits for this: it checks the date itself.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::row_shares::end_job,
+    },
+    JobKind {
         name: "reresolve_work",
         title: "Updating My Work",
         description: "Resolves who acts on each waiting step again after a change to who holds what, and opens or closes their work items.",
