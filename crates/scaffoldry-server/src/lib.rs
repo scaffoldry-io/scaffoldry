@@ -57,6 +57,7 @@ pub mod import_preset;
 pub mod export_jobs;
 pub mod repository_imports;
 pub mod repository_content;
+pub mod repository_label_changes;
 pub mod repository_labels;
 pub mod repository_datasets;
 pub mod repository_catalog;

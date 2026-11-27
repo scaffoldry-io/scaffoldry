@@ -70,6 +70,9 @@ pub fn add(m: &mut Entries) {
     m.insert("PUT /api/v1/admin/datasets/{id}/classification".into(), case!(dataset_classify));
     m.insert("PUT /api/v1/admin/datasets/{id}/discoverability".into(), case!(dataset_discoverability));
     m.insert("PUT /api/v1/admin/datasets/{id}/label-floor".into(), case!(dataset_label_floor));
+    m.insert("POST /api/v1/data/datasets/{id}/label-changes".into(), case!(label_change_propose));
+    m.insert("POST /api/v1/data/label-changes/{id}/decide".into(), case!(label_change_decide));
+    m.insert("POST /api/v1/data/label-changes/{id}/apply".into(), case!(label_change_apply));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
     m.insert("POST /api/v1/admin/guests/{id}/disable".into(), case!(guest_disable));
@@ -855,26 +858,107 @@ async fn dataset_discoverability(w: World) -> Outcome {
     ensure(admin["discoverability"] == "hidden", format!("B shows the policy A set: {admin}"))
 }
 
-/// Data layer phase 3: A raises a dataset's floor. B, which has never been asked, reads the floor from the database: when B
-/// lowers it, the floor it replaces is the one A set.
-async fn dataset_label_floor(w: World) -> Outcome {
-    let slug = make_app(&w).await?;
+/// Settings for the label-change cases: one protected category that asks for a registrar. Written to the settings table directly,
+/// because saving it through the settings route queues a content scan, which would use up the job limit the cancel-job case needs.
+fn phi_category(w: &World) {
     let category = json!([{ "id": "phi", "name": "PHI", "protected": true, "detectors": [], "requires": [{ "position": "registrar", "reach": "unit" }] }]);
-    // The category is written to the settings table directly. Saving it through the settings route queues a content scan for
-    // the administrator, which would use up the job limit the cancel-job case needs.
     w.db.run(move |c| {
         c.execute("INSERT INTO platform_settings (key, value, updated_by) VALUES ('sensitivity.categories', $1, 'test') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", &[&category]).unwrap();
         c.execute("UPDATE cache_versions SET version = version + 1 WHERE name = 'settings'", &[]).unwrap();
     });
+}
+
+async fn dataset_of(w: &World, slug: &str) -> Result<String, String> {
     let listed = status(w.wa("GET", "/api/v1/data/datasets", ADMIN, None).await, StatusCode::OK, "A lists the datasets")?;
-    let id = listed["datasets"].as_array().and_then(|l| l.iter().find(|d| d["app_slug"] == slug.as_str() && d["table_id"] == "apps")).and_then(|d| d["id"].as_str()).ok_or("the app's dataset")?.to_string();
+    Ok(listed["datasets"].as_array().and_then(|l| l.iter().find(|d| d["app_slug"] == slug && d["table_id"] == "apps")).and_then(|d| d["id"].as_str()).ok_or("the app's dataset")?.to_string())
+}
+
+/// Data layer phase 3: A raises a dataset's floor. B, which has never been asked, reads the floor from the database: the route that
+/// raises a floor refuses to lower it (phase 6 does that, with two approvers), and says so in the same words on both servers.
+async fn dataset_label_floor(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    phi_category(&w);
+    let id = dataset_of(&w, &slug).await?;
     let uri = format!("/api/v1/admin/datasets/{id}/label-floor");
     let raised = status(w.wa("PUT", &uri, ADMIN, Some(json!({ "floor": ["phi"], "reason": "Health data is held here." }))).await, StatusCode::OK, "A raises the floor")?;
     ensure(raised["floor"] == json!(["phi"]) && raised["was"] == json!([]), format!("A's floor: {raised}"))?;
-    let lowered = status(w.rb("PUT", &uri, ADMIN, Some(json!({ "floor": [], "reason": "It was a mistake." }))).await, StatusCode::OK, "B lowers it")?;
-    ensure(lowered["was"] == json!(["phi"]), format!("B replaces the floor A set: {lowered}"))?;
-    let back = status(w.wa("PUT", &uri, ADMIN, Some(json!({ "floor": [], "reason": "Nothing changes." }))).await, StatusCode::OK, "A reads what B wrote")?;
-    ensure(back["was"] == json!([]), format!("A sees B's floor: {back}"))
+    let (s, body) = w.rb("PUT", &uri, ADMIN, Some(json!({ "floor": [], "reason": "It was a mistake." }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("B refuses to lower the floor A raised: {s} {body}"))?;
+    let (s, body) = w.wa("PUT", &uri, ADMIN, Some(json!({ "floor": [], "reason": "It was a mistake." }))).await;
+    ensure(s == StatusCode::CONFLICT, format!("A refuses too: {s} {body}"))?;
+    let back = status(w.rb("PUT", &uri, ADMIN, Some(json!({ "floor": ["phi"], "reason": "Nothing changes." }))).await, StatusCode::OK, "B raises it again")?;
+    ensure(back["was"] == json!(["phi"]), format!("B reads the floor A set: {back}"))
+}
+
+/// Data layer phase 6: A proposes a floor change. B lists it from the database, and the dataset's floor has not moved.
+async fn label_change_propose(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    phi_category(&w);
+    let id = dataset_of(&w, &slug).await?;
+    let made = status(w.wa("POST", &format!("/api/v1/data/datasets/{id}/label-changes"), ADMIN, Some(json!({ "kind": "floor", "floor": ["phi"], "reason": "Health data is held here." }))).await, StatusCode::CREATED, "A proposes a floor")?;
+    let change = made["id"].as_str().ok_or("a change id")?.to_string();
+    let seen = status(w.rb("GET", &format!("/api/v1/data/label-changes?status=Pending&dataset={id}"), ADMIN, None).await, StatusCode::OK, "B lists the pending changes")?;
+    ensure(seen["changes"].as_array().is_some_and(|l| l.iter().any(|c| c["id"] == change.as_str())), format!("B lists the change A made: {seen}"))?;
+    let floor: Vec<String> = w.db.run({
+        let id = id.clone();
+        move |c| c.query_one("SELECT label_floor FROM datasets WHERE id = $1", &[&id]).unwrap().get(0)
+    });
+    ensure(floor.is_empty(), format!("a proposal changed the floor: {floor:?}"))
+}
+
+/// Data layer phase 6: a floor is raised, then A proposes lowering it. The proposer cannot approve. One second administrator approves
+/// on A and cannot approve again on B, which reads the approval from the database. A third completes it on B, and A reads the floor B set.
+async fn label_change_decide(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    phi_category(&w);
+    let id = dataset_of(&w, &slug).await?;
+    status(w.wa("PUT", &format!("/api/v1/admin/datasets/{id}/label-floor"), ADMIN, Some(json!({ "floor": ["phi"], "reason": "Health data is held here." }))).await, StatusCode::OK, "A raises the floor")?;
+    let made = status(w.wa("POST", &format!("/api/v1/data/datasets/{id}/label-changes"), ADMIN, Some(json!({ "kind": "floor", "floor": [], "reason": "It was a mistake." }))).await, StatusCode::CREATED, "A proposes lowering it")?;
+    let change = made["id"].as_str().ok_or("a change id")?.to_string();
+    let uri = format!("/api/v1/data/label-changes/{change}/decide");
+    let approve = json!({ "decision": "approve", "reason": "I read the evaluation." });
+    let (s, body) = w.wa("POST", &uri, ADMIN, Some(approve.clone())).await;
+    ensure(s == StatusCode::FORBIDDEN, format!("the proposer may not approve a removal of protection: {s} {body}"))?;
+    let (first, second) = (second_admin(&w).await?, second_admin(&w).await?);
+    let one = status(w.wa("POST", &uri, &first, Some(approve.clone())).await, StatusCode::OK, "A takes the first approval")?;
+    ensure(one["status"] == "Pending", format!("one approval does not complete it: {one}"))?;
+    let (s, body) = w.rb("POST", &uri, &first, Some(approve.clone())).await;
+    ensure(s == StatusCode::CONFLICT, format!("B knows the first approver has approved: {s} {body}"))?;
+    let done = status(w.rb("POST", &uri, &second, Some(approve)).await, StatusCode::OK, "B takes the second approval")?;
+    ensure(done["status"] == "Applied", format!("the second person completes it: {done}"))?;
+    let seen = status(w.wa("PUT", &format!("/api/v1/admin/datasets/{id}/label-floor"), ADMIN, Some(json!({ "floor": ["phi"], "reason": "Raised again." }))).await, StatusCode::OK, "A raises it again")?;
+    ensure(seen["was"] == json!([]), format!("A reads the floor B set: {seen}"))
+}
+
+/// Data layer phase 6: A approves a tag for new work only, which holds it while a task is open. B refuses to apply it, then applies it once
+/// the work has ended, and A reads the tag.
+async fn label_change_apply(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    phi_category(&w);
+    let id = dataset_of(&w, &slug).await?;
+    let record = make_record(&w, &slug, "Ada").await?;
+    {
+        let (slug, record) = (slug.clone(), record.clone());
+        w.db.run(move |c| {
+            c.execute(
+                "INSERT INTO task_grants (instance_id, step_id, person, app_slug, table_id, record_id, read_fields, write_fields) VALUES ($1, 'check', $2, $3, 'apps', $4, '{name}', '{}')",
+                &[&format!("lc:{record}"), &EDITOR, &slug, &record],
+            )
+            .unwrap();
+        });
+    }
+    let made = status(w.wa("POST", &format!("/api/v1/data/datasets/{id}/label-changes"), ADMIN, Some(json!({ "kind": "tags", "add": ["phi"], "records": [record], "reason": "Health data." }))).await, StatusCode::CREATED, "A proposes a tag")?;
+    let change = made["id"].as_str().ok_or("a change id")?.to_string();
+    let held = status(w.wa("POST", &format!("/api/v1/data/label-changes/{change}/decide"), ADMIN, Some(json!({ "decision": "approve", "reason": "Let the work finish.", "open_work": "new_work_only" }))).await, StatusCode::OK, "A approves and holds it")?;
+    ensure(held["status"] == "Approved", format!("held: {held}"))?;
+    let apply = format!("/api/v1/data/label-changes/{change}/apply");
+    let (s, body) = w.rb("POST", &apply, ADMIN, None).await;
+    ensure(s == StatusCode::CONFLICT, format!("B will not apply it while the task is open: {s} {body}"))?;
+    w.db.run(|c| c.execute("UPDATE task_grants SET state = 'closed', closed_at = NOW()", &[]).unwrap());
+    let done = status(w.rb("POST", &apply, ADMIN, None).await, StatusCode::OK, "B applies it once the work has ended")?;
+    ensure(done["status"] == "Applied", format!("applied: {done}"))?;
+    let tags: Vec<String> = w.db.run(move |c| c.query_one("SELECT tags FROM dataset_records WHERE id = $1", &[&record]).unwrap().get(0));
+    ensure(tags == vec!["phi".to_string()], format!("the row carries the tag: {tags:?}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {

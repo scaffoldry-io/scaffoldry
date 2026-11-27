@@ -117,9 +117,10 @@ pub fn decide(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) ->
     if crate::service::row_labels::in_force(state) && crate::content_review::visible_to(caller, vec![finding.clone()], state).0.is_empty() {
         return Err(ServiceError::NotFound("Finding not found".to_string()));
     }
-    // A review finding proposes tags for rows. Labelling the whole field would be far more than it asks, and applying a change is phase 6.
+    // A review finding proposes tags for rows. Confirming it makes a label change for a steward to read and decide (data layer phase 6).
+    // It labels no field and tags no row by itself.
     if confirm && finding["source"] == crate::content_review::SOURCE {
-        return Err(ServiceError::Conflict("A review finding proposes tags for rows, and a steward applies them in the evaluation. It can be dismissed here".to_string()));
+        return crate::service::label_changes::from_finding(caller, &finding, &reason, state);
     }
     let text = |k: &str| finding[k].as_str().unwrap_or("").to_string();
     let (app, table, field, category) = (text("app_slug"), text("table_id"), text("field"), text("category"));

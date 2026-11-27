@@ -100,6 +100,13 @@ fn gate_for(who: &AuthUser, app_slug: &str, table: &str, categories: &[Category]
     if who.affiliation == "central_admin" || who.affiliation == "guest" {
         return None;
     }
+    gate_over(&held_by(&who.eppn, state), app_slug, table, None, categories, state)
+}
+
+/// The gate for a reader who holds `held` (each position with the unit it is held at), on one table. `floor` is the dataset floor to
+/// judge by, and `None` reads the stored one. A change's evaluation passes the floor as it would be, so it asks the same question
+/// the gate asks, of a world that does not exist yet.
+pub fn gate_over(held: &[(String, Uuid)], app_slug: &str, table: &str, floor: Option<Vec<String>>, categories: &[Category], state: &SharedState) -> Option<Gate> {
     let stored = crate::service::preview::stored_slug(app_slug);
     let (table_id, unit_field, unit_required) = {
         let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
@@ -107,14 +114,14 @@ fn gate_for(who: &AuthUser, app_slug: &str, table: &str, categories: &[Category]
         (spec.map_or_else(|| table.to_string(), |t| t.id.clone()), spec.and_then(|t| t.unit_field.clone()), spec.is_some_and(|t| t.unit_required))
     };
     // A floor that cannot be read is a floor nobody is known to meet: the gate closes on every category with a requirement.
-    let floor = floor_of(stored, &table_id, state);
+    let floor = floor.or_else(|| floor_of(stored, &table_id, state));
     let fields = crate::service::scope::fields_of(app_slug, table, state);
     let fixed: BTreeSet<String> = {
         let labels = state.labels.read().unwrap_or_else(|p| p.into_inner());
         let sens: Vec<_> = fields.iter().map(|f| effective_sensitivity(f, labels.get(&(stored.to_string(), table_id.clone(), f.name.clone())), categories)).collect();
         effective_label(floor.as_deref().unwrap_or_default(), &[], &sens, categories).categories
     };
-    let (mut always, by_tag) = needs(categories, &fixed, &held_by(&who.eppn, state));
+    let (mut always, by_tag) = needs(categories, &fixed, held);
     if floor.is_none() {
         always.push(Cover::default());
     }
@@ -168,10 +175,6 @@ pub fn admits(caller: &AuthUser, app_slug: &str, table: &str, data: &Value, stat
 
 fn is_admin_or_compliance(caller: &AuthUser, state: &SharedState) -> bool {
     crate::service::admin::require_platform_admin_or_compliance(caller, state).is_ok()
-}
-
-fn is_platform_admin(caller: &AuthUser, state: &SharedState) -> bool {
-    crate::service::admin::require_platform_admin(caller, state).is_ok()
 }
 
 /// Sets the `_tags` of a record about to be written. `stored` is the record as it is now, when there is one.
@@ -276,8 +279,8 @@ pub fn set_floor(caller: &AuthUser, id: &str, body: &Value, state: &SharedState)
         return Err(bad(format!("'{}' is not a category of this organization", unknown.chars().take(64).collect::<String>())));
     }
     let was = floor_of(&row.app_slug, &row.table_id, state).ok_or_else(|| ServiceError::StorageUnavailable("The floor cannot be read".to_string()))?;
-    if was.iter().any(|c| !floor.contains(c)) && !is_platform_admin(caller, state) {
-        return Err(ServiceError::forbidden("Lowering a floor widens who reads every row of the dataset. A Platform Admin does that, and a compliance officer may raise it."));
+    if was.iter().any(|c| !floor.contains(c)) {
+        return Err(ServiceError::Conflict(format!("Lowering a floor widens who reads every row of the dataset. It is a label change that two approvers decide: POST /data/datasets/{}/label-changes with kind `floor`. This route raises a floor", row.id)));
     }
     let manifests = state.engine.read().map_err(|e| ServiceError::Internal(e.to_string()))?.list_manifests();
     let touched: BTreeSet<(String, String)> = std::iter::once((row.app_slug.clone(), row.table_id.clone())).collect();

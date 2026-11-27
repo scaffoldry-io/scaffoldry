@@ -239,6 +239,18 @@ async fn set_floor(w: &World, token: &str, floor: Value) -> (StatusCode, Value) 
     rest(&w.app, "PUT", &format!("/api/v1/admin/datasets/{id}/label-floor"), token, Some(json!({ "floor": floor, "reason": "Health data is held here" }))).await
 }
 
+/// Lowers a floor the way data layer phase 6 asks: a proposal, and two approvers who are not the proposer. The floor route raises only.
+async fn lower_floor(w: &World, floor: Value) {
+    let id = dataset_id(w).await;
+    let (s, b) = rest(&w.app, "POST", &format!("/api/v1/data/datasets/{id}/label-changes"), &w.admin, Some(json!({ "kind": "floor", "floor": floor, "reason": "The dataset no longer holds this" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let change = b["id"].as_str().unwrap().to_string();
+    for who in [&w.compliance, &w.second] {
+        let (s, b) = rest(&w.app, "POST", &format!("/api/v1/data/label-changes/{change}/decide"), who, Some(json!({ "decision": "approve", "reason": "I read the evaluation" }))).await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+    }
+}
+
 /// The names the token's holder lists, by the paged table route, the legacy list, and the count the page route gives.
 async fn listed(w: &World, token: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -373,14 +385,19 @@ async fn a_write_cannot_lower_a_floor() {
     let (s, b) = create(&w, &w.chem, "bad shape", Some(w.chemistry), Some(json!("phi"))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
 
-    // The floor is lowered only by the change route, and only by a Platform Admin. A compliance officer may raise it.
+    // The floor route raises, for a Platform Admin or a compliance officer. It lowers for nobody: a lowering is a label change that two
+    // other people approve (data layer phase 6).
     let (s, b) = set_floor(&w, &w.compliance, json!([])).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    let (s, b) = set_floor(&w, &w.outsider, json!(["phi", "hr"])).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
     assert_eq!(listed(&w, &w.outsider).await, set(&[]));
     let (s, b) = set_floor(&w, &w.compliance, json!(["phi", "hr"])).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     let (s, b) = set_floor(&w, &w.admin, json!([])).await;
-    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert_eq!(listed(&w, &w.outsider).await, set(&[]), "the refused lowering changed nothing");
+    lower_floor(&w, json!([])).await;
     assert_eq!(listed(&w, &w.outsider).await, set(&["no tags", "empty tags", "open tag"]));
 }
 
@@ -443,11 +460,11 @@ async fn a_chemistry_row_is_read_by_the_chemistry_registrar_and_not_the_physics_
     assert_eq!(get_row(&w, &w.science_reg, &phys_row).await, StatusCode::OK);
 
     // `hr` is "unit" only: the registrar at the parent does not reach the rows of the units below.
-    set_floor(&w, &w.admin, json!(["hr"])).await;
+    lower_floor(&w, json!(["hr"])).await;
     assert_eq!(listed(&w, &w.science_reg).await, set(&[]));
     assert_eq!(listed(&w, &w.chem).await, set(&["chem row"]));
     // `anyreg` is "anywhere": any registrar reads any row.
-    set_floor(&w, &w.admin, json!(["anyreg"])).await;
+    lower_floor(&w, json!(["anyreg"])).await;
     assert_eq!(listed(&w, &w.phys).await, set(&["chem row", "phys row"]));
     assert_eq!(listed(&w, &w.outsider).await, set(&[]));
 }
