@@ -411,7 +411,7 @@ fn population(app: &str, relevant: &BTreeSet<String>, state: &SharedState) -> Re
         engine.resolve_by_slug(app).and_then(|m| m.workspace_id.clone())
     };
     if let Some(ws) = workspace {
-        let members: Vec<String> = state.collaborators.read().map(|c| c.get(&ws).map(|l| l.iter().map(|m| m.eppn.to_lowercase()).collect()).unwrap_or_default()).unwrap_or_default();
+        let members: Vec<String> = crate::service::members::people_with_roles(&ws, state).into_keys().collect();
         let mut seen = BTreeSet::new();
         for m in members {
             if by_person.contains_key(&m) || !seen.insert(m) {
