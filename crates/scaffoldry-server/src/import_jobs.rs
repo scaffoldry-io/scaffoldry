@@ -27,6 +27,8 @@ struct UnitColumn {
     default_name: Option<String>,
     /// The units the caller may see. A refusal names none other.
     visible: scaffoldry_data::units::Visible,
+    /// The table requires a unit (data layer phase 3). A blank value is refused, and no unit is taken for it.
+    required: bool,
 }
 
 impl UnitColumn {
@@ -43,6 +45,7 @@ impl UnitColumn {
             default_unit: c.get("default_unit").and_then(Value::as_str).map(str::to_string),
             default_name: c.get("default_unit_name").and_then(Value::as_str).map(str::to_string),
             visible,
+            required: c.get("required").and_then(Value::as_bool).unwrap_or(false),
         })
     }
 }
@@ -69,6 +72,9 @@ fn apply_unit_column<E>(
         Some(Value::String(s)) => s.trim().to_string(),
         Some(other) => other.to_string(),
     };
+    if text.is_empty() && uc.required {
+        return Ok(RowUnit::Refused(format!("field '{}': {}", uc.field, scaffoldry_data::units::required_sentence(&uc.field, &uc.hierarchy))));
+    }
     if text.is_empty() {
         return Ok(match &uc.default_unit {
             Some(d) => {

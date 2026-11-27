@@ -28,7 +28,7 @@ fn sync_units_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest) -> Resu
     for table in &m.tables {
         let want = table.unit_field.as_ref().and_then(|name| {
             let hierarchy = table.fields.iter().find(|f| &f.name == name)?.hierarchy.clone()?;
-            Some(UnitSpec { field: name.clone(), hierarchy })
+            Some(UnitSpec { field: name.clone(), hierarchy, required: table.unit_required })
         });
         if spec_for(tx, &m.slug, &table.id)? == want {
             continue;
@@ -36,7 +36,7 @@ fn sync_units_in_tx(tx: &mut postgres::Transaction<'_>, m: &AppManifest) -> Resu
         if let Err(ids) = declare(tx, &m.slug, &table.id, want.as_ref())? {
             let more = if ids.len() >= scaffoldry_data::units::MAX_LISTED { " (the list is cut here)" } else { "" };
             return Err(RepositoryError::UnitValues(format!(
-                "The unit column cannot be set on the table '{}' while rows hold a value that is not a unit of the '{}' hierarchy. Fix or delete these rows, then approve again. Rows, by id: {}{more}",
+                "The unit column cannot be set on the table '{}' while rows hold a value that is not a unit of the '{}' hierarchy, or, when the table requires a unit, name none. Fix or delete these rows, then approve again. Rows, by id: {}{more}",
                 table.name,
                 want.map(|w| w.hierarchy).unwrap_or_default(),
                 ids.join(", ")

@@ -13,6 +13,10 @@
 //! Naming the nearest units is a separate step, because it depends on who is asking: [`nearest`] takes the units the
 //! caller may see.
 //!
+//! A table may also require the column (data layer phase 3, `required`). A blank value is then refused too, as a check
+//! violation that [`is_required_missing`] names, because a row that names no unit is read by the dataset's unit and nobody
+//! chose that.
+//!
 //! A unit that is retired later keeps its rows, and the column keeps its id. Nothing here follows a retirement. A finding
 //! for such rows is later work.
 
@@ -23,6 +27,9 @@ use uuid::Uuid;
 
 /// The constraint a refusal names.
 pub const REFUSED: &str = "unit_not_on_list";
+
+/// The constraint a refusal of a blank value names, for a table that requires its unit column.
+pub const REQUIRED: &str = "unit_required";
 
 /// The most record ids a list of bad values carries.
 pub const MAX_LISTED: usize = 200;
@@ -35,15 +42,21 @@ pub const MAX_NEAREST: usize = 3;
 pub struct UnitSpec {
     pub field: String,
     pub hierarchy: String,
+    /// A row that names no unit is refused. Off by default, so a table that declared its column before phase 3 is unchanged.
+    pub required: bool,
 }
 
 impl UnitSpec {
     pub fn to_json(&self) -> Value {
-        serde_json::json!({ "field": self.field, "hierarchy": self.hierarchy })
+        serde_json::json!({ "field": self.field, "hierarchy": self.hierarchy, "required": self.required })
     }
 
     pub fn from_json(v: &Value) -> Option<Self> {
-        Some(Self { field: v.get("field")?.as_str()?.to_string(), hierarchy: v.get("hierarchy")?.as_str()?.to_string() })
+        Some(Self {
+            field: v.get("field")?.as_str()?.to_string(),
+            hierarchy: v.get("hierarchy")?.as_str()?.to_string(),
+            required: v.get("required").and_then(Value::as_bool).unwrap_or(false),
+        })
     }
 }
 
@@ -76,6 +89,22 @@ pub fn refusal(e: &postgres::Error) -> Option<Refusal> {
     Some(Refusal { value: d.message().to_string(), field: d.column().unwrap_or_default().to_string(), hierarchy: d.detail().unwrap_or_default().to_string() })
 }
 
+/// True when the error is a blank value in a table that requires its unit column.
+pub fn is_required_missing(e: &postgres::Error) -> bool {
+    e.as_db_error().is_some_and(|d| d.code() == &SqlState::CHECK_VIOLATION && d.constraint() == Some(REQUIRED))
+}
+
+/// The field and hierarchy of a blank value refused for a table that requires its unit column.
+pub fn required_missing(e: &postgres::Error) -> Option<(String, String)> {
+    let d = e.as_db_error().filter(|d| d.code() == &SqlState::CHECK_VIOLATION && d.constraint() == Some(REQUIRED))?;
+    Some((d.column().unwrap_or_default().to_string(), d.detail().unwrap_or_default().to_string()))
+}
+
+/// What a writer is told when a table requires a unit and the row names none.
+pub fn required_sentence(field: &str, hierarchy: &str) -> String {
+    format!("This dataset requires a unit. Name one in '{field}', a unit of the '{hierarchy}' hierarchy.")
+}
+
 /// The unit column a table declares, as the dataset row holds it.
 pub fn spec_for<C: GenericClient>(c: &mut C, app_slug: &str, table_id: &str) -> Result<Option<UnitSpec>, postgres::Error> {
     let row = c.query_opt("SELECT unit_spec FROM datasets WHERE app_slug = $1 AND table_id = $2", &[&app_slug, &table_id])?;
@@ -95,7 +124,7 @@ pub fn write_with<C: GenericClient>(tx: &mut C, spec: Option<&UnitSpec>, record_
     let Some(spec) = spec else { return Ok(()) };
     let raw = raw_of(data.get(&spec.field));
     let unit: Option<Uuid> = raw.as_deref().and_then(|r| Uuid::parse_str(r).ok());
-    tx.execute("SELECT set_record_unit($1, $2, $3, $4, $5)", &[&record_id, &unit, &raw, &spec.hierarchy, &spec.field])?;
+    tx.execute("SELECT set_record_unit_checked($1, $2, $3, $4, $5, $6)", &[&record_id, &unit, &raw, &spec.hierarchy, &spec.field, &spec.required])?;
     Ok(())
 }
 
@@ -109,15 +138,17 @@ pub fn declare<C: GenericClient>(tx: &mut C, app_slug: &str, table_id: &str, spe
     let Some(spec) = spec else { return Ok(Ok(0)) };
 
     // The value of a live row is its text, trimmed. A value that is blank is no unit. Any other must be a unit on the list.
+    // A table that requires the column also counts a blank value as bad.
     const VALUE: &str = "NULLIF(btrim(r.data ->> $3), '')";
     let bad: Vec<String> = tx
         .query(
             &format!(
-                "SELECT r.id FROM dataset_records r WHERE r.app_slug = $1 AND r.table_id = $2 AND r.deleted_at IS NULL AND {VALUE} IS NOT NULL \
-                 AND NOT EXISTS (SELECT 1 FROM organizations o WHERE o.hierarchy_key = $4 AND o.id::text = lower({VALUE})) ORDER BY r.id LIMIT {}",
+                "SELECT r.id FROM dataset_records r WHERE r.app_slug = $1 AND r.table_id = $2 AND r.deleted_at IS NULL \
+                 AND (($5 AND {VALUE} IS NULL) OR ({VALUE} IS NOT NULL \
+                      AND NOT EXISTS (SELECT 1 FROM organizations o WHERE o.hierarchy_key = $4 AND o.id::text = lower({VALUE})))) ORDER BY r.id LIMIT {}",
                 MAX_LISTED + 1
             ),
-            &[&app_slug, &table_id, &spec.field, &spec.hierarchy],
+            &[&app_slug, &table_id, &spec.field, &spec.hierarchy, &spec.required],
         )?
         .iter()
         .map(|r| r.get(0))

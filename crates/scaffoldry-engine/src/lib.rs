@@ -603,6 +603,25 @@ pub fn effective_sensitivity(
     sensitivity::Sensitivity { protected, categories: carried }
 }
 
+/// What a row is sensitive for (data layer phase 3): the largest of the dataset's floor, the row's own tags, and the categories of its
+/// fields' effective sensitivities. Categories are a set, so the largest of them is their union. The row is protected when any field is
+/// protected or any category it carries is marked protected in settings. Nothing here lowers anything: a floor, a tag or a field can
+/// only add. The caller says which fields count. The stored flag Cedar reads is `protected` over the fields the row holds a value in.
+/// Who may read the row asks the same question over every field of the table: the server's `row_labels` builds the gate from it.
+pub fn effective_label(
+    floor: &[String],
+    tags: &[String],
+    fields: &[sensitivity::Sensitivity],
+    categories: &[sensitivity::Category],
+) -> sensitivity::Sensitivity {
+    let mut carried: std::collections::BTreeSet<String> = floor.iter().chain(tags.iter()).cloned().collect();
+    for s in fields {
+        carried.extend(s.categories.iter().cloned());
+    }
+    let protected = fields.iter().any(|s| s.protected) || carried.iter().any(|id| categories.iter().any(|c| &c.id == id && c.protected));
+    sensitivity::Sensitivity { protected, categories: carried }
+}
+
 /// What a reader who is not cleared for the field sees of it when the field names no mask: the strongest default among the
 /// categories it carries. A category that settings do not list, and a field with none, give `hide`.
 pub fn default_mask(field: &FieldSpec, categories: &[sensitivity::Category]) -> scaffoldry_core::mask::Mask {
@@ -801,6 +820,10 @@ pub struct AppTable {
     /// so a proposal carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit_field: Option<String>,
+    /// A row that names no unit is refused (data layer phase 3). It needs a unit column. Off by default, so a table that
+    /// declared its column earlier takes rows with no unit as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unit_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1418,6 +1441,20 @@ impl ManifestEngine {
         labels: &LabelSet,
         categories: &[sensitivity::Category],
     ) -> Result<SubmittedRecord, EngineError> {
+        self.submit_record_floored(caller, app_slug, payload, labels, categories, &[])
+    }
+
+    /// Submits a record under the dataset's floor (data layer phase 3). The stored flag is `protected` of the record's effective
+    /// label: the floor, the record's own tags in `_tags`, and the fields it holds a value in.
+    pub fn submit_record_floored(
+        &self,
+        caller: &EduPersonIdentity,
+        app_slug: &str,
+        payload: &Value,
+        labels: &LabelSet,
+        categories: &[sensitivity::Category],
+        floor: &[String],
+    ) -> Result<SubmittedRecord, EngineError> {
         let manifest = self
             .manifests_by_slug
             .get(app_slug)
@@ -1425,7 +1462,7 @@ impl ManifestEngine {
 
         let _ = caller;
 
-        let mut is_ferpa_sensitive = false;
+        let mut held: Vec<sensitivity::Sensitivity> = Vec::new();
         let mut applied_ceds = HashMap::new();
 
         let record_table_id = payload.get("_table_id").and_then(|v| v.as_str());
@@ -1450,8 +1487,8 @@ impl ManifestEngine {
                     view.table_id.clone().unwrap_or_default(),
                     field.name.clone(),
                 );
-                if val.is_some() && effective_sensitivity(field, labels.get(&key), categories).is_protected() {
-                    is_ferpa_sensitive = true;
+                if val.is_some() {
+                    held.push(effective_sensitivity(field, labels.get(&key), categories));
                 }
 
                 if let Some(ceds_code) = manifest.ceds_mappings.get(&field.name) {
@@ -1464,13 +1501,16 @@ impl ManifestEngine {
         // for a value is the one the stored flag is set again with when a label changes: not null, not empty text, not an empty list.
         if let Some(table) = record_table_id.and_then(|t| manifest.tables.iter().find(|x| x.id == t || x.slug == t)) {
             for field in &table.fields {
-                let held = payload.get(&field.name).is_some_and(|v| !v.is_null() && v.as_str() != Some("") && v.as_array().is_none_or(|a| !a.is_empty()));
+                let is_held = payload.get(&field.name).is_some_and(|v| !v.is_null() && v.as_str() != Some("") && v.as_array().is_none_or(|a| !a.is_empty()));
                 let key = (app_slug.to_string(), table.id.clone(), field.name.clone());
-                if held && effective_sensitivity(field, labels.get(&key), categories).is_protected() {
-                    is_ferpa_sensitive = true;
+                if is_held {
+                    held.push(effective_sensitivity(field, labels.get(&key), categories));
                 }
             }
         }
+
+        let tags: Vec<String> = payload.get("_tags").and_then(Value::as_array).map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let is_ferpa_sensitive = effective_label(floor, &tags, &held, categories).protected;
 
         Ok(SubmittedRecord {
             id: Uuid::new_v4(),

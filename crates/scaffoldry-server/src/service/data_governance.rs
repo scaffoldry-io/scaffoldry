@@ -225,12 +225,13 @@ pub fn fields(caller: &AuthUser, q: &std::collections::HashMap<String, String>, 
 /// again from these.
 pub(crate) fn flag_tables(state: &SharedState, manifests: &[AppManifest], touched: &BTreeSet<(String, String)>, after: &LabelSet) -> Vec<FlagTable> {
     let categories = state.sensitivity_categories();
+    let keep: Vec<String> = categories.iter().filter(|c| c.protected).map(|c| c.id.clone()).collect();
     touched
         .iter()
         .filter_map(|(app, table)| {
             let t = manifests.iter().find(|m| &m.slug == app)?.tables.iter().find(|t| &t.id == table)?;
             let names = t.fields.iter().filter(|f| effective_sensitivity(f, label_for(after, app, table, &f.name), &categories).protected).map(|f| f.name.clone()).collect();
-            Some(FlagTable { app_slug: app.clone(), table_id: table.clone(), names })
+            Some(FlagTable { app_slug: app.clone(), table_id: table.clone(), names, keep: keep.clone() })
         })
         .collect()
 }

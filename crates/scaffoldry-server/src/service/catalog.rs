@@ -509,13 +509,18 @@ pub fn name_of(state: &SharedState, id: &str) -> Option<String> {
 /// The unit a table dataset sits at: the unit its app names by code or name, else its workspace's unit. `None` for a
 /// published dataset, which has no app.
 pub fn unit_of(state: &SharedState, row: &CatalogRow) -> Option<Uuid> {
-    use scaffoldry_engine::HostRouter;
     if row.published_id.is_some() {
         return None;
     }
+    unit_of_app(state, &row.app_slug)
+}
+
+/// The unit an app's datasets sit at (data layer phase 3 reads it for a row that names no unit of its own).
+pub fn unit_of_app(state: &SharedState, app_slug: &str) -> Option<Uuid> {
+    use scaffoldry_engine::HostRouter;
     let (code, workspace) = {
         let engine = state.engine.read().ok()?;
-        let m = engine.resolve_by_slug(&row.app_slug)?;
+        let m = engine.resolve_by_slug(app_slug)?;
         (m.organization_code.clone(), m.workspace_id.clone())
     };
     let named = {
