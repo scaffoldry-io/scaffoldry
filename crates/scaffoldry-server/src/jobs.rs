@@ -302,7 +302,7 @@ pub static JOB_KINDS: &[JobKind] = &[
     JobKind {
         name: "end_row_shares",
         title: "Ending row shares on their dates",
-        description: "Ends each approved row share whose date has come, once, with one ledger entry, and tells the owners of the rows. A read of a row never waits for this: it checks the date itself.",
+        description: "Ends each approved row share whose date has come, once, with one ledger entry, and tells the owners of the rows.",
         max_attempts: 3,
         max_concurrent: 1,
         run: crate::service::row_shares::end_job,
