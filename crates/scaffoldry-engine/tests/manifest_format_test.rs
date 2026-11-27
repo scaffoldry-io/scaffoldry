@@ -254,3 +254,14 @@ fn an_audience_names_fields_of_its_own_table_and_grants_write_only_where_a_perso
     let nine: Vec<serde_json::Value> = (0..9).map(|i| serde_json::json!({ "field": format!("a{i}"), "fields": ["name"] })).collect();
     assert!(problems(serde_json::Value::Array(nine)).iter().any(|p| p.contains("at most")), "too many audience fields");
 }
+
+#[test]
+fn a_named_person_may_not_write_an_audience_field_so_a_name_never_adds_more_names() {
+    // Writing the field that names you would let you name anyone else, who would then read the row.
+    let own = with_audience(serde_json::json!([{ "field": "advisor", "grants": "write", "fields": ["name", "advisor"] }]));
+    assert!(validate_manifest(&own).unwrap_err().iter().any(|p| p.contains("audience field 'advisor'") && p.contains("grants write on 'advisor'")), "its own field");
+    let other = with_audience(serde_json::json!([{ "field": "advisor", "grants": "write", "fields": ["partner"] }, { "field": "partner", "fields": ["name"] }]));
+    assert!(validate_manifest(&other).unwrap_err().iter().any(|p| p.contains("grants write on 'partner'")), "another audience field");
+    // Reading an audience field is fine: it shows who else the row names.
+    assert!(validate_manifest(&with_audience(serde_json::json!([{ "field": "advisor", "fields": ["name", "advisor"] }]))).is_ok());
+}

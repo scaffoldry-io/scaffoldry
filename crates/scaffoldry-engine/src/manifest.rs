@@ -170,6 +170,10 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                     Some(f) if rule.grants == crate::AudienceGrant::Write && f.field_type.is_computed() => {
                         problems.push(format!("table '{}': the audience field '{}' grants write on '{name}', which is computed", table.id, rule.field));
                     }
+                    // A person who could write an audience field could name anyone else, who would then read the row.
+                    Some(_) if rule.grants == crate::AudienceGrant::Write && table.audience.iter().any(|a| a.field == *name) => {
+                        problems.push(format!("table '{}': the audience field '{}' grants write on '{name}', which is an audience field", table.id, rule.field));
+                    }
                     Some(_) => {}
                 }
             }
