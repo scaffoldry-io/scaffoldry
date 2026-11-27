@@ -44,7 +44,23 @@ A field is `Suggested` when its CEDS code is protected under the standard and th
 | `PUT /admin/labels` | Body `changes` (1 to 200 of `{ app_slug, table_id, field, ferpa_sensitive }`, where `null` removes the label) and `reason`. Every field must exist, or the whole request is `400` and nothing changes. One ledger entry, `DataLabelChanged`, `RA-02` |
 | `GET /admin/datasets` | The published datasets: id, name, department, level, record count |
 | `PUT /admin/datasets/{id}/classification` | Body `sensitivity_level` (`Public`, `Directory`, `Internal` or `Restricted / FERPA`) and `reason`. The column and the stored payload change together. Ledger `DataLabelChanged` |
-| `PUT /admin/datasets/{id}/label-floor` | Body `floor` (a list of category ids, at most 20, each defined in the settings) and `reason`. Every row of the dataset carries these categories, whatever its own tags say. A Platform Admin or a compliance officer may raise it. Lowering it needs a Platform Admin. The floor, the flag Cedar reads on each row and the ledger entry (`DataLabelChanged`, setting `label_floor`) commit together. The answer holds `floor` and `was` |
+| `PUT /admin/datasets/{id}/label-floor` | Body `floor` (a list of category ids, at most 20, each defined in the settings) and `reason`. Every row of the dataset carries these categories, whatever its own tags say. A Platform Admin or a compliance officer may raise it. It does not lower one: lowering is a label change that two approvers decide (see below), and this route answers `409` to it. The floor, the flag Cedar reads on each row and the ledger entry (`DataLabelChanged`, setting `label_floor`) commit together. The answer holds `floor` and `was` |
+
+## Changing a label
+
+A change to tags or to a floor is a **label change**. It is proposed, read, and decided. Nothing applies by itself. Lowering a floor goes through this path only.
+
+| Route | What it does |
+| --- | --- |
+| `POST /data/datasets/{id}/label-changes` | Proposes a change. Body: `kind` (`tags` or `floor`), `reason`, and either `add`, `remove` and `records` (1 to 1,000 row ids) or `floor`. For the dataset's steward, a Platform Admin or a compliance officer. It is stored as `Pending`. It applies nothing |
+| `GET /data/label-changes` | The changes the caller may decide. Query: `status`, `dataset` |
+| `GET /data/label-changes/{id}` | The change and its evaluation, built now: `locked_out` (first when it is not empty), `what_changes`, `why`, `access`, `depends_on`, `options`, `undo` |
+| `POST /data/label-changes/{id}/decide` | Body: `decision` (`approve`, `decline` or `change`) and `reason`. When the evaluation lists people who would be locked out of open work, an approval also names `open_work`: `now`, or `new_work_only`, which holds the change until that work has ended. There is no default |
+| `POST /data/label-changes/{id}/apply` | Applies a change that was approved and held, once no one is locked out any more |
+
+The steward is the holder of the dataset's `steward_position`, found from its unit upward. A Platform Admin or a compliance officer may also decide.
+
+Raising protection takes one approval. Removing it takes two, from two people, and neither is the proposer. Removing is lowering a floor, or removing a tag whose category is protected or has a requirement. Approving applies the change, sets again the flag Cedar reads, writes a history row for each row whose tags changed, and writes one `DataLabelChanged` ledger entry. The entry names the proposer, the deciders, the review finding if there is one, and the choice about open work. Apply on a date is not built yet.
 
 ## Who may read a row
 
