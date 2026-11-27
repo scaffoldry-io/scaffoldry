@@ -40,11 +40,12 @@ fn ledger(caller: &AuthUser, kind: DecisionType, rationale: String, payload: Val
     AppendDecisionParams { principal: caller.eppn.clone(), organization_code: "DIV-ADMIN-CONSOLE".to_string(), app_slug: None, decision_type: kind, oscal_control_id: "RA-02".to_string(), rationale, payload }
 }
 
-/// `POST /admin/content-scans`: queues a scan of one table, or of every table.
+/// `POST /admin/content-scans`: queues a scan of one table, or of every table. With `review: true` it queues the AI review instead.
 pub fn scan(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<Value, ServiceError> {
     require_platform_admin_or_compliance(caller, state)?;
+    let review = body.get("review").and_then(Value::as_bool) == Some(true);
     if body.get("all").and_then(Value::as_bool) == Some(true) {
-        let n = crate::content_scan::enqueue_all(state, &caller.eppn);
+        let n = if review { crate::content_review::enqueue_all(state, &caller.eppn) } else { crate::content_scan::enqueue_all(state, &caller.eppn) };
         return Ok(json!({ "queued": n }));
     }
     let text = |k: &str| body.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string);
@@ -54,7 +55,8 @@ pub fn scan(caller: &AuthUser, body: &Value, state: &SharedState) -> Result<Valu
         return Err(ServiceError::NotFound(format!("There is no table '{table}' in app '{app}'")));
     }
     let batch = body.get("batch_size").and_then(Value::as_i64).filter(|n| (1..=10_000).contains(n));
-    let id = crate::content_scan::enqueue(&state.repository, &app, &table, batch, &caller.eppn).map_err(|e| ServiceError::QuotaExceeded(format!("The scan could not be queued: {e:?}")))?;
+    let queued = if review { crate::content_review::enqueue(&state.repository, &app, &table, batch, &caller.eppn) } else { crate::content_scan::enqueue(&state.repository, &app, &table, batch, &caller.eppn) };
+    let id = queued.map_err(|e| ServiceError::QuotaExceeded(format!("The job could not be queued: {e:?}")))?;
     Ok(json!({ "job_id": id }))
 }
 
@@ -67,9 +69,37 @@ pub fn findings(caller: &AuthUser, q: &HashMap<String, String>, state: &SharedSt
     }
     let start = q.get("cursor").filter(|c| !c.is_empty()).map(|c| decode_cursor(c)).transpose()?.unwrap_or(0);
     let limit = q.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(PAGE).clamp(1, MAX_PAGE);
-    let (rows, total) = state.repository.list_findings(FindingFilter { status: pick("status"), category: pick("category"), app_slug: pick("app_slug") }, start as i64, limit as i64).map_err(storage)?;
-    let next = (start + rows.len() < total as usize).then(|| encode_cursor(start + rows.len()));
-    Ok(json!({ "findings": rows, "total": total, "next_cursor": next }))
+    let filter = FindingFilter { status: pick("status"), category: pick("category"), app_slug: pick("app_slug") };
+    // A finding holds record ids, so a reader sees it only for rows the label requirements let them read. Whoever has no requirement to
+    // meet reads the page as it is. Whoever has one is shown a page of what they may see, filled from the pages after it.
+    if !crate::service::row_labels::in_force(state) {
+        let (rows, total) = state.repository.list_findings(filter, start as i64, limit as i64).map_err(storage)?;
+        let next = (start + rows.len() < total as usize).then(|| encode_cursor(start + rows.len()));
+        return Ok(json!({ "findings": rows, "total": total, "next_cursor": next }));
+    }
+    let (mut shown, mut at, mut altered) = (Vec::new(), start, false);
+    let next = loop {
+        let (rows, total) = state.repository.list_findings(filter.clone(), at as i64, limit as i64).map_err(storage)?;
+        let order: Vec<Value> = rows.iter().map(|f| f["id"].clone()).collect();
+        let (seen, changed) = crate::content_review::visible_to(caller, rows, state);
+        altered |= changed;
+        let mut seen: HashMap<String, Value> = seen.into_iter().map(|f| (f["id"].to_string(), f)).collect();
+        for id in &order {
+            if shown.len() >= limit {
+                break;
+            }
+            at += 1;
+            shown.extend(seen.remove(&id.to_string()));
+        }
+        if at >= total as usize || order.is_empty() {
+            break None;
+        }
+        if shown.len() >= limit {
+            break Some(encode_cursor(at));
+        }
+    };
+    let total = if altered { Value::Null } else { json!(state.repository.list_findings(filter, 0, 1).map_err(storage)?.1) };
+    Ok(json!({ "findings": shown, "total": total, "next_cursor": next }))
 }
 
 /// `POST /admin/content-findings/{id}/decide`.
@@ -83,6 +113,14 @@ pub fn decide(caller: &AuthUser, id: &str, body: &Value, state: &SharedState) ->
     let reason = reason_of(body)?;
     let id = Uuid::parse_str(id).map_err(|_| ServiceError::NotFound("Finding not found".to_string()))?;
     let finding = state.repository.get_finding(id).map_err(storage)?.ok_or_else(|| ServiceError::NotFound("Finding not found".to_string()))?;
+    // A finding the caller may not see is not found, as it is not listed.
+    if crate::service::row_labels::in_force(state) && crate::content_review::visible_to(caller, vec![finding.clone()], state).0.is_empty() {
+        return Err(ServiceError::NotFound("Finding not found".to_string()));
+    }
+    // A review finding proposes tags for rows. Labelling the whole field would be far more than it asks, and applying a change is phase 6.
+    if confirm && finding["source"] == crate::content_review::SOURCE {
+        return Err(ServiceError::Conflict("A review finding proposes tags for rows, and a steward applies them in the evaluation. It can be dismissed here".to_string()));
+    }
     let text = |k: &str| finding[k].as_str().unwrap_or("").to_string();
     let (app, table, field, category) = (text("app_slug"), text("table_id"), text("field"), text("category"));
 

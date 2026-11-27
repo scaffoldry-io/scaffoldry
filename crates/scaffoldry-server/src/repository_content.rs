@@ -180,7 +180,7 @@ impl PostgresRepository {
         self.with_client(|c| {
             Ok(c.query(
                 "SELECT detector_id, count(*), count(*) FILTER (WHERE status = 'confirmed'), count(*) FILTER (WHERE status = 'dismissed') \
-                 FROM content_findings GROUP BY detector_id ORDER BY detector_id",
+                 FROM content_findings WHERE source <> 'review' GROUP BY detector_id ORDER BY detector_id",
                 &[],
             )?
             .iter()

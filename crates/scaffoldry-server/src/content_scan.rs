@@ -100,6 +100,11 @@ fn setting(state: &SharedState, key: &str) -> Option<Value> {
 }
 
 impl Plan {
+    /// The fields a check of this table reads.
+    pub fn fields(&self) -> &[String] {
+        &self.fields
+    }
+
     /// A plan from the parts. `detectors` and `categories` are the two settings, or `None` for the defaults of a new installation.
     pub fn build(scope: &Scope, workspace: Option<String>, table_fields: &[FieldSpec], detectors: Option<Value>, categories: Option<Value>, stores: Vec<Store>) -> Plan {
         let (default_categories, default_detectors) = default_settings();
@@ -207,7 +212,7 @@ impl Plan {
 }
 
 /// The text a field is read as. A number is read as its digits.
-fn text_of(v: &Value) -> Option<String> {
+pub(crate) fn text_of(v: &Value) -> Option<String> {
     match v {
         Value::String(s) => Some(s.clone()),
         Value::Number(n) => Some(n.to_string().chars().filter(char::is_ascii_digit).collect()),
@@ -348,14 +353,18 @@ pub fn enqueue(repo: &PostgresRepository, app_slug: &str, table_id: &str, batch:
     crate::jobs::enqueue(repo, "scan_records", payload, by, Some(&format!("scan_records:{app_slug}:{table_id}")))
 }
 
-/// Queues a scan of every table of every app. A change to a detector or a category does this.
-pub fn enqueue_all(state: &SharedState, by: &str) -> usize {
-    let tables: Vec<(String, String)> = state
+/// Every table of every app, as (app slug, table id).
+pub fn all_tables(state: &SharedState) -> Vec<(String, String)> {
+    state
         .engine
         .read()
         .map(|e| e.list_manifests().into_iter().flat_map(|m| m.tables.iter().map(|t| (m.slug.clone(), t.id.clone())).collect::<Vec<_>>()).collect())
-        .unwrap_or_default();
-    tables.iter().filter(|(a, t)| enqueue(&state.repository, a, t, None, by).is_ok()).count()
+        .unwrap_or_default()
+}
+
+/// Queues a scan of every table of every app. A change to a detector or a category does this.
+pub fn enqueue_all(state: &SharedState, by: &str) -> usize {
+    all_tables(state).iter().filter(|(a, t)| enqueue(&state.repository, a, t, None, by).is_ok()).count()
 }
 
 /// Leaves findings for what a write, an import or a file held. A match is counted and a record id is kept, and no value is. A repeat adds to the
