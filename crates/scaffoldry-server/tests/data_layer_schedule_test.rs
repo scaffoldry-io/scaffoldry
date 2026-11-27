@@ -571,8 +571,8 @@ async fn a_read_returns_upcoming_changes_to_an_affected_reader_and_not_to_an_una
     // The block is small and says nothing of another person or a row.
     let text = json!(up).to_string();
     assert!(text.len() < 1_200, "the block is small: {}", text.len());
-    for secret in [STEWARD, STEWARD2, CHEM_REG, OWNER, COMPLIANCE, sc.p1.as_str(), sc.c1.as_str(), "Secretname", "Hiddenvalue"] {
-        assert!(!text.contains(secret), "{secret} is in {text}");
+    for unwanted in [STEWARD, STEWARD2, CHEM_REG, OWNER, COMPLIANCE, sc.p1.as_str(), sc.c1.as_str(), "Secretname", "Hiddenvalue"] {
+        assert!(!text.contains(unwanted), "a name or row the reader may not learn is in the block: {text}");
     }
     // The records are still all there.
     assert_eq!(body["records"].as_array().unwrap().len(), 2);
