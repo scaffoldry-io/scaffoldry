@@ -124,6 +124,7 @@ const SCHEMA_0117: &str = include_str!("../../scaffoldry-core/migrations/0117_re
 const SCHEMA_0118: &str = include_str!("../../scaffoldry-core/migrations/0118_catalog.sql");
 const SCHEMA_0119: &str = include_str!("../../scaffoldry-core/migrations/0119_catalog_requests.sql");
 const SCHEMA_0120: &str = include_str!("../../scaffoldry-core/migrations/0120_row_labels.sql");
+const SCHEMA_0121: &str = include_str!("../../scaffoldry-core/migrations/0121_review_findings.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -1286,6 +1287,7 @@ impl PostgresRepository {
                             ("0118_catalog.sql", SCHEMA_0118),
                             ("0119_catalog_requests.sql", SCHEMA_0119),
                             ("0120_row_labels.sql", SCHEMA_0120),
+                            ("0121_review_findings.sql", SCHEMA_0121),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 

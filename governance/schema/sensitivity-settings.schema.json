@@ -39,7 +39,11 @@
         "source": { "type": "string", "maxLength": 128 },
         "protected": { "type": "boolean" },
         "default_mask": { "$ref": "mask.schema.json", "description": "What a reader who is not cleared sees of a field of this category. Hide when absent." },
-        "detectors": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "detectors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" },
+          "description": "The detectors whose matches signal this category. The content scan and the AI review both read this list, so it is the one mapping from patterns to categories."
+        },
         "requires": {
           "type": "array",
           "maxItems": 8,

@@ -140,3 +140,27 @@ pub fn raise_flag<C: GenericClient>(c: &mut C, id: &str) -> Result<(), postgres:
     c.execute("UPDATE dataset_records SET is_ferpa_sensitive = true WHERE id = $1 AND NOT is_ferpa_sensitive", &[&id])?;
     Ok(())
 }
+
+/// One live row as a reader of whole tables sees it: its id, its JSON, and its creation time as text (half of the paging cursor).
+pub struct PagedRow {
+    pub id: String,
+    pub data: Value,
+    pub created_at: String,
+}
+
+/// The next rows of a table after a cursor `(created_at, id)`, in the order the paging index holds them. `None` starts at the top.
+pub fn page_after<C: GenericClient>(c: &mut C, app_slug: &str, table_id: &str, after: Option<(&str, &str)>, limit: i64) -> Result<Vec<PagedRow>, postgres::Error> {
+    let (from_at, from_id) = (after.map(|a| a.0), after.map(|a| a.1));
+    let rows = c.query(
+        "SELECT id, data, created_at::text FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL \
+         AND ($3::text IS NULL OR (created_at, id) > ($3::text::timestamptz, $4::text)) ORDER BY created_at, id LIMIT $5",
+        &[&app_slug, &table_id, &from_at, &from_id, &limit],
+    )?;
+    Ok(rows.iter().map(|r| PagedRow { id: r.get(0), data: r.get(1), created_at: r.get(2) }).collect())
+}
+
+/// The JSON of the live rows of a table that carry these ids. An id that names no live row of the table is left out.
+pub fn data_of_ids<C: GenericClient>(c: &mut C, app_slug: &str, table_id: &str, ids: &[String]) -> Result<Vec<(String, Value)>, postgres::Error> {
+    let rows = c.query("SELECT id, data FROM dataset_records WHERE app_slug = $1 AND table_id = $2 AND deleted_at IS NULL AND id = ANY($3)", &[&app_slug, &table_id, &ids])?;
+    Ok(rows.iter().map(|r| (r.get(0), r.get(1))).collect())
+}

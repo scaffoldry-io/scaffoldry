@@ -44,7 +44,7 @@ All are for a Platform Admin or a compliance officer.
 
 | Route | What it does |
 | --- | --- |
-| `POST /admin/content-scans` | Body `app_slug` and `table_id`, or `all: true`. Answers `202` with the job id, or the number queued |
+| `POST /admin/content-scans` | Body `app_slug` and `table_id`, or `all: true`. Add `review: true` to queue the AI review (`review_records`) instead of a scan. It writes findings with the source `review` and changes no tag or access. Answers `202` with the job id, or the number queued |
 | `GET /admin/content-findings` | Filters `status`, `category`, `app_slug`. Paged |
 | `POST /admin/content-findings/{id}/decide` | Body `decision` (`confirm` or `dismiss`) and `reason` |
 | `GET /admin/authorized-stores` | The designations |

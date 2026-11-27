@@ -4,6 +4,7 @@ pub mod files;
 pub mod guard;
 pub mod cache;
 pub mod calc_jobs;
+pub mod content_review;
 pub mod content_scan;
 pub mod index_jobs;
 pub mod jobs;
