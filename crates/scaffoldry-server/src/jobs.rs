@@ -292,6 +292,14 @@ pub static JOB_KINDS: &[JobKind] = &[
         run: crate::service::access_requests::remind_job,
     },
     JobKind {
+        name: "apply_label_changes",
+        title: "Applying scheduled label changes",
+        description: "Applies each scheduled change to who may read a dataset whose date has come and whose plan the steward approved, once, with one ledger entry, and decides nothing.",
+        max_attempts: 3,
+        max_concurrent: 1,
+        run: crate::service::label_changes::schedule::apply_job,
+    },
+    JobKind {
         name: "reresolve_work",
         title: "Updating My Work",
         description: "Resolves who acts on each waiting step again after a change to who holds what, and opens or closes their work items.",

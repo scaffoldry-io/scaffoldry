@@ -31,6 +31,7 @@ pub const ALLOWED_KEYS: &[&str] = &[
     "jobs.schedules_disabled",
     "sensitivity.categories",
     "sensitivity.detectors",
+    "sensitivity.notice_days",
     "platform.timezone",
     "files.max_mb",
     "files.app_quota_mb",
@@ -126,6 +127,8 @@ pub fn validate_setting(key: &str, value: &Value) -> bool {
         // The shape of these two is checked in full, with a path, where the state is known.
         "sensitivity.detectors" => scaffoldry_engine::sensitivity::validate_detectors(value).is_ok(),
         "sensitivity.categories" => value.is_array(),
+        // The shortest notice of a scheduled label change, by class of category (data layer phase 6b).
+        "sensitivity.notice_days" => crate::service::label_changes::schedule::valid_notice_days(value),
         _ => false,
     }
 }

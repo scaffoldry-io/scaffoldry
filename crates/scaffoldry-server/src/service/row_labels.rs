@@ -100,13 +100,34 @@ fn gate_for(who: &AuthUser, app_slug: &str, table: &str, categories: &[Category]
     if who.affiliation == "central_admin" || who.affiliation == "guest" {
         return None;
     }
-    gate_over(&held_by(&who.eppn, state), app_slug, table, None, categories, state)
+    let waived = waived_for(&who.eppn, app_slug, table, state);
+    gate_waiving(&held_by(&who.eppn, state), app_slug, table, None, categories, &waived, state)
+}
+
+/// The categories a person's approved exceptions waive on this table (data layer phase 6b). An exception is a grant with an expiry that a
+/// steward approved for one scheduled label change. It waives only the categories that change added, and only once it was applied, and only
+/// while its grant is neither revoked nor over. A read that fails waives nothing, so the gate stays closed.
+fn waived_for(eppn: &str, app_slug: &str, table: &str, state: &SharedState) -> Vec<String> {
+    let (app, table_id) = (crate::service::preview::stored_slug(app_slug), table_id_of(app_slug, table, state));
+    state.repository.label_waivers(eppn, app, &table_id).unwrap_or_default()
+}
+
+/// The id of a table named by its id or its slug.
+pub fn table_id_of(app_slug: &str, table: &str, state: &SharedState) -> String {
+    let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+    engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table).map(|t| t.id.clone())).unwrap_or_else(|| table.to_string())
 }
 
 /// The gate for a reader who holds `held` (each position with the unit it is held at), on one table. `floor` is the dataset floor to
 /// judge by, and `None` reads the stored one. A change's evaluation passes the floor as it would be, so it asks the same question
 /// the gate asks, of a world that does not exist yet.
 pub fn gate_over(held: &[(String, Uuid)], app_slug: &str, table: &str, floor: Option<Vec<String>>, categories: &[Category], state: &SharedState) -> Option<Gate> {
+    gate_waiving(held, app_slug, table, floor, categories, &[], state)
+}
+
+/// The same gate for a reader whose exceptions waive the categories in `waived`: the requirement of those categories is not asked of this
+/// reader, on the rows that carry them. The floor and the tags are read as they are, so nothing else about the row changes.
+pub fn gate_waiving(held: &[(String, Uuid)], app_slug: &str, table: &str, floor: Option<Vec<String>>, categories: &[Category], waived: &[String], state: &SharedState) -> Option<Gate> {
     let stored = crate::service::preview::stored_slug(app_slug);
     let (table_id, unit_field, unit_required) = {
         let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
@@ -121,7 +142,13 @@ pub fn gate_over(held: &[(String, Uuid)], app_slug: &str, table: &str, floor: Op
         let sens: Vec<_> = fields.iter().map(|f| effective_sensitivity(f, labels.get(&(stored.to_string(), table_id.clone(), f.name.clone())), categories)).collect();
         effective_label(floor.as_deref().unwrap_or_default(), &[], &sens, categories).categories
     };
-    let (mut always, by_tag) = needs(categories, &fixed, held);
+    let asked: Vec<Category>;
+    let (mut always, by_tag) = if waived.is_empty() {
+        needs(categories, &fixed, held)
+    } else {
+        asked = categories.iter().filter(|c| !waived.contains(&c.id)).cloned().collect();
+        needs(&asked, &fixed, held)
+    };
     if floor.is_none() {
         always.push(Cover::default());
     }

@@ -409,9 +409,9 @@ async fn the_evaluation_counts_who_gains_and_loses_and_puts_the_lock_out_list_fi
     assert_eq!(ev["order"][0], "locked_out", "{ev}");
     assert_eq!(ev["locked_out"]["count"], 1);
     assert_eq!(ev["locked_out"]["people"][0]["person"], OUTSIDER);
-    // The options: apply now, apply for new work only. A date is the next phase, and the evaluation says so.
+    // The options: apply now, apply for new work only, apply on a date (phase 6b).
     let options: Vec<(String, bool)> = ev["options"].as_array().unwrap().iter().map(|o| (o["id"].as_str().unwrap().to_string(), o["available"].as_bool().unwrap())).collect();
-    assert_eq!(options, vec![("now".to_string(), true), ("new_work_only".to_string(), true), ("date".to_string(), false)]);
+    assert_eq!(options, vec![("now".to_string(), true), ("new_work_only".to_string(), true), ("date".to_string(), true)]);
     assert!(ev["undo"]["text"].as_str().unwrap().len() > 10);
 
     // The physics row has no open work. Nobody is locked out, and the list is not first.
@@ -568,7 +568,7 @@ async fn approving_with_people_locked_out_needs_a_choice_about_open_work() {
     let (s, b) = decide(&w, &w.steward, &id, json!({ "decision": "approve", "reason": "Yes", "open_work": "whenever" })).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
     let (s, b) = decide(&w, &w.steward, &id, json!({ "decision": "approve", "reason": "Yes", "open_work": "date" })).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "apply on a date is the next phase: {b}");
+    assert_eq!(s, StatusCode::BAD_REQUEST, "a date needs an effective_at: {b}");
     assert_eq!(fingerprint(&w), before, "a refused decision changed nothing");
 
     // Apply for new work only: the change is approved and held. Nothing applies while the work is open.

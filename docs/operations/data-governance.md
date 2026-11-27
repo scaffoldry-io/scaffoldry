@@ -57,10 +57,40 @@ A change to tags or to a floor is a **label change**. It is proposed, read, and 
 | `GET /data/label-changes/{id}` | The change and its evaluation, built now: `locked_out` (first when it is not empty), `what_changes`, `why`, `access`, `depends_on`, `options`, `undo` |
 | `POST /data/label-changes/{id}/decide` | Body: `decision` (`approve`, `decline` or `change`) and `reason`. When the evaluation lists people who would be locked out of open work, an approval also names `open_work`: `now`, or `new_work_only`, which holds the change until that work has ended. There is no default |
 | `POST /data/label-changes/{id}/apply` | Applies a change that was approved and held, once no one is locked out any more |
+| `POST /data/label-changes/{id}/plan/approve` | The steward approves the communications plan of a scheduled change. Body: `reason`. Each person on the plan is told, and each notice is recorded. Nothing is sent before this. Approving again sends only what is missing |
+| `POST /data/label-changes/{id}/withdraw` | The steward withdraws a scheduled change before its date. Body: `reason`. Its exceptions end and the people who were told are told |
+| `POST /data/label-changes/{id}/exceptions` | A person who will lose access asks to keep it. Body: `justification` (1 to 500 characters) and `expires_at`. Not before the plan is approved, and not after the date |
+| `GET /data/label-changes/{id}/exceptions` | The exceptions asked for a change, for its steward |
+| `POST /data/label-changes/{id}/exceptions/{exception}/decide` | The steward approves or declines. Body: `decision`, `reason`. An approval records a grant with the exception's expiry. It is anchored on the change, so it opens no app, table or row |
 
 The steward is the holder of the dataset's `steward_position`, found from its unit upward. A Platform Admin or a compliance officer may also decide.
 
-Raising protection takes one approval. Removing it takes two, from two people, and neither is the proposer. Removing is lowering a floor, or removing a tag whose category is protected or has a requirement. Approving applies the change, sets again the flag Cedar reads, writes a history row for each row whose tags changed, and writes one `DataLabelChanged` ledger entry. The entry names the proposer, the deciders, the review finding if there is one, and the choice about open work. Apply on a date is not built yet.
+Raising protection takes one approval. Removing it takes two, from two people, and neither is the proposer. Removing is lowering a floor, or removing a tag whose category is protected or has a requirement. Approving applies the change, sets again the flag Cedar reads, writes a history row for each row whose tags changed, and writes one `DataLabelChanged` ledger entry. The entry names the proposer, the deciders, the review finding if there is one, and the choice about open work. Apply on a date is below.
+
+### Apply on a date
+
+A steward may approve a change with `effective_at` instead of applying it now. Nothing changes and nobody is told yet. The change is `Scheduled`, and the answer holds a communications plan. The plan follows `governance/schema/label-change-plan.schema.json`. The server builds it from the evaluation: the people who lose access, the owners and admins of the app's workspace, the stewards, and the people who hold a compliance role. Nobody types the lists.
+
+The steward reads the plan and approves it. Only then is each person on it told. A notice goes to the inbox, and to email where the person's preferences allow. It names the dataset and the days left, and no record value. The notice kinds are forced into the inbox. Each notice is recorded in `label_change_audience`.
+
+**The notice period.** The date must be at least the minimum away. A shorter date is a 400. A steward may choose a longer one, up to 366 days. The minimum is the setting `sensitivity.notice_days`, by class of category. `protected` is a category marked protected, or one that has a requirement, or one that settings no longer define. `other` is any other category. A change takes the class of the most protective category it touches.
+
+| Class | Raising (adds a label) | Lowering (only removes one) |
+| --- | --- | --- |
+| `protected` | 30 days | 14 days |
+| `other` | 14 days | 7 days |
+
+These are the defaults. An institution sets its own, as `{ "protected": { "raise": 45, "lower": 21 } }`. The schema is `sensitivity-settings.schema.json`.
+
+**Exceptions.** After the plan is approved, a person who will lose access may ask to keep it: a justification and an `expires_at` after the date. The steward decides. An approved exception is a grant, source `request`, with that expiry. It is anchored on the change, so it reaches no object and adds no role or row. The person must read the app today, else the exception is refused. It waives the categories the change adds, for that person, on that dataset. It does so only after the change is applied, and only while the grant is neither revoked nor over. A request nobody decided by the date lapses. When a change tags named rows and other rows already carry the category, the exception is refused, because it would open those rows too.
+
+**Reading it coming.** A read of the table's records returns `upcoming_changes` to a person who has a recorded notice. Each entry has the date, the days left, the categories added and removed, a sentence, whether the reader loses access, and the reader's own exception. It names no other person and no row.
+
+**The date.** The job `apply_label_changes` runs every minute. It applies each scheduled change whose date has come and whose plan was approved, through the same path as "apply now", with one `DataLabelChanged` entry. Scheduling, approving the plan and withdrawing each write their own entry, with `setting` `label_change_schedule`.
+
+**Withdrawing.** The steward may withdraw a change before its date. The job reads only scheduled changes, so nothing is left to run. Exceptions end and their grants are revoked. The people who were told are told.
+
+Not built: reminders between the notice and the date, a notice on the day and a confirmation afterward, acknowledgements, the closing report, and the urgent path.
 
 ## Who may read a row
 
