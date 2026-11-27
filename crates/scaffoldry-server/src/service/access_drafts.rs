@@ -67,7 +67,7 @@ fn checks(d: &Drafted) -> Value {
 }
 
 /// Drafts a change as `caller`, or with `store` false, says what drafting it would do. A draft applies nothing.
-pub fn draft(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Value, store: bool) -> Result<Value, ServiceError> {
+pub fn draft(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Value, store: bool, tool: &str) -> Result<Value, ServiceError> {
     // Before anything in the body is read: a person with no right to change access at all is refused, whatever they send.
     let rights = crate::service::access_grants::rights(state, caller);
     if !rights.platform && rights.admin_units.is_empty() {
@@ -86,14 +86,10 @@ pub fn draft(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Val
         _ => json!({ "kind": d.kind, "gain": [], "lose": [], "per_role": {}, "note": "This change has no per-person effect to count before it is confirmed." }),
     };
     let (id, expires) = if store {
-        let (client, task) = match origin.session {
-            Some(session) => state.repository.session_client_and_task(session).map_err(internal)?.map_or((None, None), |(c, t)| (Some(c), t)),
-            None => (None, None),
-        };
         // The sentence is stored with the change, so the console reads out what was drafted.
         let mut stored = d.built.change.clone();
         stored["sentence"] = json!(d.built.sentence);
-        let (id, expires) = state.repository.propose_access_draft(&stored, d.built.widens, &d.built.reason, &caller.eppn, client.as_deref(), task.as_deref()).map_err(internal)?;
+        let (id, expires) = store_draft(state, caller, origin, stored, d.built.widens, &d.built.reason, tool)?;
         (Some(id), Some(expires))
     } else {
         (None, None)
@@ -102,8 +98,31 @@ pub fn draft(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Val
         "status": if store { "Pending" } else { "Preview" },
         "change_id": id, "kind": d.kind, "widens": d.built.widens, "reason": d.built.reason,
         "sentences": [d.built.sentence], "checks": checks(&d), "impact": impact, "expires_at": expires,
-        "message": if store { "Nothing has changed. A person confirms this in the console." } else { "Nothing was stored." },
+        "desk_link": id.map(desk_link),
+        "message": if store { "Nothing has changed. A person confirms this in the desk. Give them desk_link." } else { "Nothing was stored." },
     }))
+}
+
+/// Where a person confirms a draft in the desk.
+pub fn desk_link(id: Uuid) -> String {
+    format!("/admin/access?change={id}")
+}
+
+/// Stores a change a tool drafted. The row names the person it was drafted for, the client, the task and `tool`, the MCP tool
+/// that drafted it, and it ends in seven days. Nothing is applied.
+pub fn store_draft(state: &SharedState, caller: &AuthUser, origin: &Origin, mut change: Value, widens: bool, reason: &str, tool: &str) -> Result<(Uuid, String), ServiceError> {
+    let (client, task) = match origin.session {
+        Some(session) => state.repository.session_client_and_task(session).map_err(internal)?.map_or((None, None), |(c, t)| (Some(c), t)),
+        None => (None, None),
+    };
+    change["via_tool"] = json!(tool);
+    state.repository.propose_access_draft(&change, widens, reason, &caller.eppn, client.as_deref(), task.as_deref()).map_err(internal)
+}
+
+/// Who proposed a change, as the ledger names them when a person decides it: the person it was drafted for, the client, the MCP
+/// tool and the task. `null` for a change a person proposed in the desk.
+pub fn proposer(state: &SharedState, id: Uuid) -> Value {
+    state.repository.access_change_origin(id).ok().flatten().unwrap_or(Value::Null)
 }
 
 // --- Suggestions ------------------------------------------------------------------------------------------------

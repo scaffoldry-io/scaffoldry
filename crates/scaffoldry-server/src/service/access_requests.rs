@@ -476,7 +476,10 @@ pub fn file(state: &SharedState, caller: &AuthUser, origin: &Origin, body: &Valu
     };
     state.repository.insert_request(&row).map_err(internal)?;
     if by_tool {
-        return view(state, &row_of(state, row.id)?);
+        // The request waits for the person. The link opens their requests in the desk, where they confirm it.
+        let mut waiting = view(state, &row_of(state, row.id)?)?;
+        waiting["desk_link"] = json!(format!("/me/access/requests?request={}", row.id));
+        return Ok(waiting);
     }
     settle(state, caller, &row, &obj, &a)
 }
@@ -779,7 +782,7 @@ pub fn decide_rule_change(state: &SharedState, caller: &AuthUser, id: Uuid, chan
     }
     let decide = || state.repository.decide_access_change(id, &caller.eppn, confirm).map_err(internal);
     let outcome = if confirm {
-        let payload = json!({ "action": "request_rule_confirmed", "change_id": id, "change": change, "proposed_by": proposed_by });
+        let payload = json!({ "action": "request_rule_confirmed", "change_id": id, "change": change, "proposed_by": proposed_by, "proposer": crate::service::access_drafts::proposer(state, id) });
         admin_write(state, caller, DecisionType::AccessGrantChanged, OSCAL_CONTROL, reason, &payload, decide)?
     } else {
         decide()?

@@ -412,6 +412,15 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
         let reason = reason_of(body)?;
         return crate::service::access_requests::decide_rule_change(state, caller, id, &change, &proposed_by, confirm, &reason);
     }
+    if change["kind"].as_str().is_some_and(|k| k.starts_with("workspace_")) {
+        let confirm = match body.get("decision").and_then(Value::as_str) {
+            Some("confirm") => true,
+            Some("reject") => false,
+            _ => return Err(bad("decision must be 'confirm' or 'reject'")),
+        };
+        let reason = reason_of(body)?;
+        return crate::service::workspace_drafts::decide(state, caller, id, &change, &proposed_by, confirm, &reason);
+    }
     let hierarchy_change = change["kind"] == "hierarchy";
     let revoke_change = change["kind"] == "revoke";
     let g = if hierarchy_change || revoke_change {
@@ -456,15 +465,15 @@ pub fn decide_change(state: &SharedState, caller: &AuthUser, id: Uuid, body: &Va
     let outcome = if confirm {
         match &g {
             Some(g) => {
-                let payload = json!({ "action": "grant_confirmed", "change_id": id, "grant": g.json(), "proposed_by": proposed_by });
+                let payload = json!({ "action": "grant_confirmed", "change_id": id, "grant": g.json(), "proposed_by": proposed_by, "proposer": crate::service::access_drafts::proposer(state, id) });
                 admin_write(state, caller, DecisionType::AccessGrantChanged, "AC-02", &reason, &payload, decide)?
             }
             None if revoke_change => {
-                let payload = json!({ "action": "grant_revoked", "change_id": id, "grant": change["grant"], "proposed_by": proposed_by });
+                let payload = json!({ "action": "grant_revoked", "change_id": id, "grant": change["grant"], "proposed_by": proposed_by, "proposer": crate::service::access_drafts::proposer(state, id) });
                 admin_write(state, caller, DecisionType::AccessGrantChanged, "AC-02", &reason, &payload, decide)?
             }
             None => {
-                let payload = json!({ "action": "hierarchy_created", "change_id": id, "hierarchy": change["hierarchy"], "proposed_by": proposed_by });
+                let payload = json!({ "action": "hierarchy_created", "change_id": id, "hierarchy": change["hierarchy"], "proposed_by": proposed_by, "proposer": crate::service::access_drafts::proposer(state, id) });
                 let outcome = admin_write(state, caller, DecisionType::HierarchyChanged, "AC-02", &reason, &payload, decide)?;
                 let _ = state.refresh();
                 outcome

@@ -62,6 +62,8 @@ pub mod shares;
 pub mod proposals;
 pub mod hints;
 pub mod next_step;
+pub mod untrusted;
+pub mod workspace_drafts;
 pub mod prompts;
 pub mod tool_meta;
 pub mod tools;

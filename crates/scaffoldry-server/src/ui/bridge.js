@@ -28,6 +28,23 @@
   Object.defineProperty(context, "selection", { enumerable: true, get: function () { return selection; } });
   Object.freeze(context);
 
+  // The server moves typed text under "untrusted_text" so a model reads it as data. This screen renders it as text, so it
+  // puts it back. It is a copy of untrusted::restore.
+  function restoreText(v) {
+    if (Array.isArray(v)) { v.forEach(restoreText); return v; }
+    if (!v || typeof v !== "object") return v;
+    var t = v.untrusted_text;
+    if (t && typeof t === "object" && !Array.isArray(t)) {
+      delete v.untrusted_text;
+      Object.keys(t).forEach(function (k) {
+        if (v[k] && typeof v[k] === "object" && !Array.isArray(v[k]) && t[k] && typeof t[k] === "object" && !Array.isArray(t[k])) Object.assign(v[k], t[k]);
+        else v[k] = t[k];
+      });
+    }
+    Object.keys(v).forEach(function (k) { restoreText(v[k]); });
+    return v;
+  }
+
   window.addEventListener("message", function (ev) {
     var msg = ev.data;
     if (ev.source === window.parent && msg && msg.jsonrpc === "2.0" && msg.method === "ui/notifications/host-context-changed") {
@@ -43,7 +60,7 @@
       var first = result.content && result.content[0];
       return p.reject(new Error((first && first.text) || "The call failed"));
     }
-    p.resolve(result && result.structuredContent !== undefined ? result.structuredContent : result);
+    p.resolve(restoreText(result && result.structuredContent !== undefined ? result.structuredContent : result));
   });
 
   function call(op, args) {
