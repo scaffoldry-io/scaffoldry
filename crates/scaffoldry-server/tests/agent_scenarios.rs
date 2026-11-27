@@ -15,11 +15,13 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
+use base64::Engine;
 use http_body_util::BodyExt;
 use scaffoldry_server::build_app_with_state;
 use scaffoldry_server::service::identity::{hash_token, issue_test_token_and_user};
 use scaffoldry_server::state::{CollaboratorRecord, ServerState};
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -27,6 +29,11 @@ use uuid::Uuid;
 
 /// An Internal workspace the personas share.
 const WORKSPACE: &str = "ws-physics-optics";
+
+/// An AI tool's sign-in, as `mcp_guidance_phase6_test.rs` does it.
+const AGENT_CALLBACK: &str = "https://tool.example.edu/callback";
+const AGENT_ISSUER: &str = "https://api.test.edu";
+const AGENT_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
 const PERSONAS: &[(&str, &str)] = &[
     ("faculty-owner", "einstein@physics.state.edu"),
@@ -88,7 +95,6 @@ impl Harness {
             .unwrap();
         });
         tokens.insert("agent".to_string(), raw);
-
         // No job runner works inside this suite, so the jobs an approval queues stay queued. The
         // job limits have their own tests in jobs_limits_test.rs.
         std::env::set_var("SCAFFOLDRY_JOB_LIMIT_PER_USER", "100000");
@@ -113,7 +119,42 @@ impl Harness {
                 });
             }
         }
-        Harness { app: build_app_with_state(state).expect("router"), tokens }
+        let mut h = Harness { app: build_app_with_state(state).expect("router"), tokens };
+        // An AI tool signed in as a person: `agent-viewer`, `agent-student`, `agent-platform-admin`.
+        h.sign_in_agents(&[("viewer", &["access"]), ("student", &["access"]), ("platform-admin", &["build", "governance", "data"])]).await;
+        h
+    }
+
+    /// The sign-in an AI tool really goes through: a client an administrator approves, a person who allows it, and a
+    /// token with a session. A request such an agent files waits for the person (`mcp-guidance.md` phase 6). The token
+    /// is read-only, and the tool says what it is doing with `begin_task`.
+    async fn sign_in_agents(&mut self, personas: &[(&str, &[&str])]) {
+        let admin = self.token("platform-admin").to_string();
+        let made = self.post_as(&admin, "/api/v1/clients", &json!({ "name": "Scenario assistant", "operator": "Academic Computing", "kind": "agent", "redirect_uris": [AGENT_CALLBACK] })).await;
+        let client = made["client_id"].as_str().unwrap_or_else(|| panic!("{made}")).to_string();
+        let decided = self.post_as(&admin, &format!("/api/v1/clients/{client}/decide"), &json!({ "decision": "approve", "rationale": "A scenario agent" })).await;
+        assert!(decided.get("error").is_none(), "{decided}");
+        for (persona, toolsets) in personas {
+            let person = self.token(persona).to_string();
+            let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(AGENT_VERIFIER.as_bytes()));
+            let allow = json!({ "client_id": client, "redirect_uri": AGENT_CALLBACK, "response_type": "code", "state": "s", "code_challenge": challenge, "code_challenge_method": "S256", "resource": AGENT_ISSUER, "decision": "allow", "access": "read", "toolsets": toolsets });
+            let allowed = self.post_as(&person, "/oauth/authorize", &allow).await;
+            let code = allowed["redirect_to"].as_str().and_then(|u| u.split_once('?')).and_then(|(_, q)| q.split('&').find_map(|p| p.strip_prefix("code="))).unwrap_or_else(|| panic!("{allowed}")).to_string();
+            let form = format!("grant_type=authorization_code&code={code}&redirect_uri={AGENT_CALLBACK}&client_id={client}&code_verifier={AGENT_VERIFIER}");
+            let req = Request::builder().method("POST").uri("/oauth/token").header("host", "api.test.edu").header("content-type", "application/x-www-form-urlencoded").body(Body::from(form)).unwrap();
+            let resp = self.app.clone().oneshot(req).await.unwrap();
+            let reply: Value = serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap_or(Value::Null);
+            let token = reply["access_token"].as_str().unwrap_or_else(|| panic!("{reply}")).to_string();
+            self.tokens.insert(format!("agent-{persona}"), token);
+            let begun = self.call(&format!("agent-{persona}"), "begin_task", json!({ "task": "A scenario" })).await;
+            assert!(!begun.is_error, "{}", begun.message);
+        }
+    }
+
+    async fn post_as(&self, token: &str, uri: &str, body: &Value) -> Value {
+        let req = Request::builder().method("POST").uri(uri).header("host", "api.test.edu").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(body.to_string())).unwrap();
+        let resp = self.app.clone().oneshot(req).await.unwrap();
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap_or(Value::Null)
     }
 
     fn token(&self, persona: &str) -> &str {
@@ -127,7 +168,7 @@ impl Harness {
         assert_eq!(status, StatusCode::OK, "{tool}: {text}");
         let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         if let Some(err) = v.get("error") {
-            return Called { is_error: true, code: None, message: err["message"].as_str().unwrap_or_default().to_string(), result: Value::Null, raw: text };
+            return Called { is_error: true, code: None, message: err["message"].as_str().unwrap_or_default().to_string(), result: Value::Null, shown: Vec::new(), raw: text };
         }
         let result = &v["result"];
         if result["isError"] == true {
@@ -137,13 +178,26 @@ impl Harness {
                 code: structured["code"].as_str().map(str::to_string),
                 message: result["content"][0]["text"].as_str().unwrap_or_default().to_string(),
                 result: Value::Null,
+                shown: vec![structured.clone()],
                 raw: text,
             };
         }
         // The plain result is the text content. structuredContent wraps a list or a lone value in an object, as the
         // spec requires, so a scenario reads the text to see what the tool returned.
         let plain = result["content"][0]["text"].as_str().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_else(|| result["structuredContent"].clone());
-        Called { is_error: false, code: None, message: String::new(), result: plain, raw: text }
+        let shown = vec![result["structuredContent"].clone(), plain.clone()];
+        Called { is_error: false, code: None, message: String::new(), result: plain, shown, raw: text }
+    }
+
+    /// `prompts/get` over the real endpoint. Returns the prompt text and the raw response.
+    async fn prompt(&self, persona: &str, name: &str, args: Value) -> Result<(String, String), String> {
+        let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": "prompts/get", "params": { "name": name, "arguments": args } });
+        let (status, raw) = self.post("/api/mcp", persona, &payload).await;
+        let v: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        match v["result"]["messages"][0]["content"]["text"].as_str() {
+            Some(t) if status == StatusCode::OK => Ok((t.to_string(), raw)),
+            _ => Err(format!("prompts/get {name} gave no text: {status} {raw}")),
+        }
     }
 
     async fn post(&self, uri: &str, persona: &str, body: &Value) -> (StatusCode, String) {
@@ -178,6 +232,8 @@ pub struct Called {
     code: Option<String>,
     message: String,
     result: Value,
+    /// Every form of the result a client reads: `structuredContent` and the parsed text copy.
+    shown: Vec<Value>,
     raw: String,
 }
 
@@ -314,6 +370,105 @@ pub fn check_no_leaks(responses: &[String], secrets: &[String]) -> Result<(), St
 }
 
 // ---------------------------------------------------------------------------------------------
+// Prompts: what a generated prompt allows, where it stops, and the shape of its answer.
+// ---------------------------------------------------------------------------------------------
+
+/// The parts of a generated prompt that a scenario holds the agent to.
+#[derive(Debug, Clone)]
+pub struct PromptParts {
+    pub name: String,
+    pub allowed: Vec<String>,
+    pub avoid: Vec<String>,
+    pub stops: Vec<String>,
+    pub shape: Value,
+}
+
+fn backticked(line: &str) -> Vec<String> {
+    line.split('`').skip(1).step_by(2).map(str::to_string).collect()
+}
+
+/// Reads the five parts of a prompt's text. The tools come from the `Tools you may use` list, the stops from the
+/// `Stop and ask the person` list, and the shape from the `Output shape` block, which must be JSON.
+pub fn parse_prompt(name: &str, text: &str) -> Result<PromptParts, String> {
+    for part in ["Task: ", "\nContext:\n", "\nTools you may use:\n", "\nStop and ask the person:\n", "\nOutput shape:\n"] {
+        if !text.contains(part) {
+            return Err(format!("the prompt {name} has no '{}' part", part.trim()));
+        }
+    }
+    let between = |from: &str, to: &str| -> String {
+        let after = text.split(from).nth(1).unwrap_or_default();
+        after.split(to).next().unwrap_or_default().to_string()
+    };
+    let tools_block = between("\nTools you may use:\n", "\nStop and ask the person:\n");
+    let mut allowed = Vec::new();
+    let mut avoid = Vec::new();
+    for line in tools_block.lines() {
+        if line.starts_with("- `") {
+            allowed.extend(backticked(line).into_iter().take(1));
+        } else if line.starts_with("Do not use:") {
+            avoid.extend(backticked(line));
+        }
+    }
+    let stops: Vec<String> = between("\nStop and ask the person:\n", "\nOutput shape:\n").lines().filter_map(|l| l.strip_prefix("- ")).map(str::to_string).collect();
+    let shape_text = between("\nOutput shape:\n", "\n\nYou work for");
+    let shape: Value = serde_json::from_str(shape_text.trim()).map_err(|e| format!("the output shape of {name} is not JSON ({e}): {shape_text}"))?;
+    if allowed.is_empty() || stops.is_empty() {
+        return Err(format!("the prompt {name} lists no tools or no stopping points"));
+    }
+    Ok(PromptParts { name: name.to_string(), allowed, avoid, stops, shape })
+}
+
+/// Where an answer differs from the output shape. A shape string stands for a string or a number. A shape string that
+/// starts with `optional` may be left out. An array shape holds one example element that every element must follow.
+pub fn shape_problems(shape: &Value, got: &Value, path: &str) -> Vec<String> {
+    let here = if path.is_empty() { "the answer" } else { path };
+    match (shape, got) {
+        (Value::Object(want), Value::Object(have)) => {
+            let mut out = Vec::new();
+            for (k, w) in want {
+                match have.get(k) {
+                    Some(g) => out.extend(shape_problems(w, g, &format!("{path}.{k}"))),
+                    None if w.as_str().is_some_and(|s| s.starts_with("optional")) => {}
+                    None => out.push(format!("{here} has no '{k}'")),
+                }
+            }
+            for k in have.keys() {
+                if !want.contains_key(k) {
+                    out.push(format!("{here} has '{k}', which the shape does not name"));
+                }
+            }
+            out
+        }
+        (Value::Array(want), Value::Array(have)) => {
+            let Some(example) = want.first() else { return Vec::new() };
+            have.iter().enumerate().flat_map(|(i, g)| shape_problems(example, g, &format!("{path}[{i}]"))).collect()
+        }
+        (Value::String(_), Value::String(_) | Value::Number(_)) => Vec::new(),
+        (w, g) => {
+            let kind = |v: &Value| match v {
+                Value::Null => "null",
+                Value::Bool(_) => "a boolean",
+                Value::Number(_) => "a number",
+                Value::String(_) => "a string",
+                Value::Array(_) => "an array",
+                Value::Object(_) => "an object",
+            };
+            vec![format!("{here} is {}, and the shape wants {}", kind(g), kind(w))]
+        }
+    }
+}
+
+/// Typed text may appear in a result only under `untrusted_text`. Returns the first place it appears outside.
+pub fn typed_text_outside_untrusted(v: &Value, text: &str, under: bool) -> Option<String> {
+    match v {
+        Value::String(s) => (!under && s.contains(text)).then(|| s.chars().take(120).collect()),
+        Value::Array(items) => items.iter().find_map(|i| typed_text_outside_untrusted(i, text, under)),
+        Value::Object(map) => map.iter().find_map(|(k, i)| typed_text_outside_untrusted(i, text, under || k == "untrusted_text")),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Scenarios.
 // ---------------------------------------------------------------------------------------------
 
@@ -390,20 +545,76 @@ async fn run_scenario(h: &Harness, s: &Scenario) -> Outcome {
     vars.insert("suffix".to_string(), json!(unique));
 
     let mut responses: Vec<String> = Vec::new();
+    // What the last prompt allows, and the tables to hold still from the moment it was asked for.
+    let mut prompt: Option<PromptParts> = None;
+    let mut shown: Vec<Value> = Vec::new();
+    let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     let mut by_persona: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let steps = s.raw["steps"].as_array().cloned().unwrap_or_default();
     for (n, step) in steps.iter().enumerate() {
         let persona = step["as"].as_str().unwrap_or(&s.persona).to_string();
         let tool = step["tool"].as_str().unwrap_or_default().to_string();
         let repeat = step["repeat"].as_u64().unwrap_or(1);
+        let label = format!("{}: step {} ({persona})", s.id, n + 1);
+
+        // A prompt step: the person's agent asks for a generated prompt, as the persona.
+        if let Some(name) = step["prompt"].as_str() {
+            let args = substitute(&step["args"], &vars);
+            let (text, raw) = match h.prompt(&persona, name, args).await {
+                Ok(got) => got,
+                Err(e) => return Outcome::Fail(format!("{label}\n  {e}")),
+            };
+            responses.push(raw.clone());
+            by_persona.entry(persona.clone()).or_default().push(raw);
+            let parts = match parse_prompt(name, &text) {
+                Ok(p) => p,
+                Err(e) => return Outcome::Fail(format!("{label}\n  {e}")),
+            };
+            for needle in step["contains"].as_array().cloned().unwrap_or_default() {
+                let needle = substitute(&needle, &vars);
+                if !text.contains(needle.as_str().unwrap_or_default()) {
+                    return Outcome::Fail(format!("{label}\n  the prompt does not say '{needle}'"));
+                }
+            }
+            for table in s.raw["after"].as_array().into_iter().flatten().filter_map(|c| c["unchanged"].as_array()).flatten().filter_map(Value::as_str) {
+                counts.insert(table.to_string(), count_rows(table));
+            }
+            prompt = Some(parts);
+            continue;
+        }
+
+        // A person step: the person's reply, recorded. It is what lets an agent go past a stopping point.
+        if step.get("person").is_some() {
+            continue;
+        }
+
+        // An answer step: what the agent hands the person, held to the prompt's output shape.
+        if step.get("answer").is_some() {
+            let answer = substitute(&step["answer"], &vars);
+            if step["matches_output_shape"] == true {
+                let Some(p) = &prompt else { return Outcome::Fail(format!("{label}\n  an answer is checked against a prompt, and none was asked for")) };
+                let problems = shape_problems(&p.shape, &answer, "");
+                if !problems.is_empty() {
+                    return Outcome::Fail(format!("{label}\n  the answer does not match the output shape of {}:\n    {}", p.name, problems.join("\n    ")));
+                }
+            }
+            continue;
+        }
+
         for i in 0..repeat {
             let mut local = vars.clone();
             local.insert("i".to_string(), json!(i));
             let args = substitute(&step["args"], &local);
             let called = h.call(&persona, &tool, args).await;
             responses.push(called.raw.clone());
+            shown.extend(called.shown.clone());
             by_persona.entry(persona.clone()).or_default().push(called.raw.clone());
             let label = format!("{}: step {} ({tool} as {persona})", s.id, n + 1);
+            if let Some(p) = &prompt {
+                if !p.allowed.contains(&tool) {
+                    return Outcome::Fail(format!("{label}\n  {tool} is not among the tools {} allows: {}", p.name, p.allowed.join(", ")));
+                }
+            }
 
             if let Some(err) = step.get("error") {
                 if !called.is_error {
@@ -458,6 +669,23 @@ async fn run_scenario(h: &Harness, s: &Scenario) -> Outcome {
                 return Outcome::Fail(format!("{}: after: the ledger has no {kind} entry for {app}", s.id));
             }
         }
+        if let Some(tables) = check["unchanged"].as_array() {
+            for table in tables.iter().filter_map(Value::as_str) {
+                let was = counts.get(table).copied();
+                if was.is_none() || was != Some(count_rows(table)) {
+                    return Outcome::Fail(format!("{}: after: {table} changed after the prompt, or no prompt was asked for", s.id));
+                }
+            }
+        }
+        if let Some(texts) = check["typed_text_only_under_untrusted"].as_array() {
+            for text in texts {
+                let text = substitute(text, &vars);
+                let text = text.as_str().unwrap_or_default();
+                if let Some(at) = shown.iter().find_map(|v| typed_text_outside_untrusted(v, text, false)) {
+                    return Outcome::Fail(format!("{}: after: typed text '{text}' appears outside untrusted_text: {at}", s.id));
+                }
+            }
+        }
         if check["no_error_leaks"] == true {
             if let Err(e) = check_no_leaks(&responses, &secrets) {
                 return Outcome::Fail(format!("{}: after: {e}", s.id));
@@ -467,12 +695,21 @@ async fn run_scenario(h: &Harness, s: &Scenario) -> Outcome {
             let who = spec["persona"].as_str().unwrap_or_default();
             let text = substitute(&spec["text"], &vars);
             let text = text.as_str().unwrap_or_default();
-            if by_persona.get(who).is_some_and(|rs| rs.iter().any(|r| r.contains(text))) {
-                return Outcome::Fail(format!("{}: after: {who} saw '{text}'", s.id));
+            if let Some(r) = by_persona.get(who).and_then(|rs| rs.iter().find(|r| r.contains(text))) {
+                let at = r.find(text).unwrap_or(0);
+                let near: String = r.chars().skip(at.saturating_sub(100)).take(240).collect();
+                return Outcome::Fail(format!("{}: after: {who} saw '{text}', near: {near}", s.id));
             }
         }
     }
     Outcome::Pass
+}
+
+/// The rows in a table, for the checks that hold a table still.
+fn count_rows(table: &str) -> i64 {
+    assert!(table.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "a table name: {table}");
+    let sql = format!("SELECT COUNT(*) FROM {table}");
+    db(move |c| c.query_one(sql.as_str(), &[]).unwrap().get(0))
 }
 
 /// The gap register: unsupported scenarios with their asks and reasons.
@@ -643,4 +880,114 @@ fn the_runner_calls_the_http_endpoint_and_not_the_service_layer() {
     let service_uses: Vec<&str> = code.lines().filter(|l| l.contains("scaffoldry_server::service::")).collect();
     assert!(service_uses.iter().all(|l| l.contains("identity::{hash_token, issue_test_token_and_user}")), "{service_uses:?}");
     let _ = Map::<String, Value>::new();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Prompt scenarios (mcp-guidance phase 7): the runner's own checks.
+// ---------------------------------------------------------------------------------------------
+
+const FIVE_PROMPTS: [&str; 5] = ["request_dataset_access", "review_a_change", "write_a_policy", "review_a_share_request", "explain_a_refusal"];
+
+fn fixture(raw: Value) -> Scenario {
+    Scenario { id: raw["id"].as_str().unwrap().to_string(), ask: "A fixture.".to_string(), persona: "agent-viewer".to_string(), raw }
+}
+
+// Every generated prompt can be parsed: five parts, its tools and stops, and an output shape that is JSON.
+#[tokio::test]
+async fn every_prompt_parses_into_tools_stops_and_a_json_output_shape() {
+    let _db = common::TestDb::new();
+    let h = harness().await;
+    for name in FIVE_PROMPTS {
+        let (text, _) = h.prompt("faculty-owner", name, json!({})).await.unwrap();
+        let parts = parse_prompt(name, &text).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!parts.allowed.is_empty() && !parts.stops.is_empty() && parts.shape.is_object(), "{name}: {parts:?}");
+    }
+}
+
+// A call outside the prompt's tool list fails the scenario, and says which tool and which prompt.
+#[tokio::test]
+async fn a_tool_outside_the_prompts_list_fails() {
+    let _db = common::TestDb::new();
+    let h = harness().await;
+    let s = fixture(json!({ "id": "fixture-outside", "status": "supported", "steps": [
+        { "prompt": "request_dataset_access", "args": {} },
+        { "tool": "list_datasets", "args": {} },
+        { "tool": "list_records", "args": { "app_slug": "$app" } }
+    ] }));
+    match run_scenario(&h, &s).await {
+        Outcome::Fail(d) => assert!(d.contains("list_records is not among the tools request_dataset_access allows"), "{d}"),
+        other => panic!("it should fail: {other:?}"),
+    }
+}
+
+// An answer that misses the output shape fails with what is wrong. One that follows it passes.
+#[tokio::test]
+async fn an_answer_that_misses_the_output_shape_fails() {
+    let _db = common::TestDb::new();
+    let h = harness().await;
+    let bad = fixture(json!({ "id": "fixture-shape", "status": "supported", "steps": [
+        { "prompt": "explain_a_refusal", "args": {} },
+        { "answer": { "why": "Because.", "invented": true }, "matches_output_shape": true }
+    ] }));
+    match run_scenario(&h, &bad).await {
+        Outcome::Fail(d) => assert!(d.contains("has no 'rule'") && d.contains("has 'invented'"), "{d}"),
+        other => panic!("it should fail: {other:?}"),
+    }
+    let good = fixture(json!({ "id": "fixture-shape-ok", "status": "supported", "steps": [
+        { "prompt": "explain_a_refusal", "args": {} },
+        { "answer": { "why": "w", "rule": "r", "what_would_change_it": ["a"], "who_can_grant": "g", "offer": "yes" }, "matches_output_shape": true }
+    ] }));
+    assert_eq!(run_scenario(&h, &good).await, Outcome::Pass);
+}
+
+// A table that changes after the prompt fails the `unchanged` check.
+#[tokio::test]
+async fn a_table_that_changes_after_the_prompt_fails_the_unchanged_check() {
+    let _db = common::TestDb::new();
+    let h = harness().await;
+    let s = fixture(json!({ "id": "fixture-unchanged", "status": "supported", "steps": [
+        { "prompt": "request_dataset_access", "args": {} },
+        { "tool": "request_access", "args": { "object_kind": "workspace", "object_id": "$ws", "role": "editor", "reason": "To edit", "days": 7 } }
+    ], "after": [ { "unchanged": ["access_requests"] } ] }));
+    match run_scenario(&h, &s).await {
+        Outcome::Fail(d) => assert!(d.contains("access_requests changed"), "{d}"),
+        other => panic!("it should fail: {other:?}"),
+    }
+}
+
+#[test]
+fn the_shape_check_names_missing_extra_and_wrong_kinds() {
+    let _db = common::TestDb::new();
+    let shape = json!({ "a": "text", "b": ["x"], "c": "optional note", "d": { "e": "text" } });
+    assert!(shape_problems(&shape, &json!({ "a": "t", "b": ["p", "q"], "d": { "e": 3 } }), "").is_empty());
+    let p = shape_problems(&shape, &json!({ "a": ["t"], "b": [1, {}], "d": {}, "z": 1 }), "").join("|");
+    assert!(p.contains(".a is an array") && p.contains(".d has no 'e'") && p.contains("has 'z'") && p.contains(".b[1] is an object"), "{p}");
+}
+
+#[test]
+fn typed_text_is_found_outside_untrusted_text_only() {
+    let _db = common::TestDb::new();
+    let inside = json!({ "id": 1, "untrusted_text": { "reason": "board asked" } });
+    assert_eq!(typed_text_outside_untrusted(&inside, "board asked", false), None);
+    let outside = json!({ "id": 1, "reason": "the board asked", "untrusted_text": { "reason": "board asked" } });
+    assert!(typed_text_outside_untrusted(&outside, "board asked", false).is_some());
+}
+
+// Each of the first five prompts has a recorded scenario that asks for it, as `mcp-guidance.md` phase 7 requires. A
+// scenario for a prompt is supported, or it says why not. None is left out.
+#[test]
+fn each_of_the_first_five_prompts_has_a_scenario() {
+    let _db = common::TestDb::new();
+    let all = load_scenarios();
+    for name in FIVE_PROMPTS {
+        let found: Vec<&Scenario> = all.iter().filter(|s| s.raw["steps"].as_array().is_some_and(|st| st.iter().any(|x| x["prompt"] == name))).collect();
+        assert_eq!(found.len(), 1, "one scenario asks for the prompt {name}: {}", found.len());
+        let s = found[0];
+        let steps = s.raw["steps"].as_array().unwrap();
+        let tool_steps = steps.iter().filter(|x| x["tool"].is_string()).count();
+        assert!(tool_steps >= 2 || s.raw["status"] == "unsupported", "{} makes the calls the prompt names", s.id);
+        assert!(steps.iter().any(|x| x.get("answer").is_some() && x["matches_output_shape"] == true) || s.raw["status"] == "unsupported", "{} checks the answer shape", s.id);
+        let after = s.raw["after"].as_array().cloned().unwrap_or_default();
+        assert!(after.iter().any(|c| c["no_error_leaks"] == true), "{} checks for leaks", s.id);
+    }
 }

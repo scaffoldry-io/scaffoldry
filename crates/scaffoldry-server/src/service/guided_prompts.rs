@@ -194,7 +194,7 @@ fn request_access_prompt(state: &SharedState, caller: &AuthUser, args: &Value) -
             "If the dataset, the role or the reason is unclear. Ask. Do not guess a dataset from its name.",
             "If the person already holds the role. Say so and file nothing.",
         ],
-        output: "{ \"object_kind\": \"app|workspace\", \"object_id\": \"slug or id\", \"role\": \"viewer|commenter|editor|admin|owner\", \"days\": 1-max, \"clearance\": \"optional level\", \"reason\": \"the person's words, up to 500 characters\", \"who_decides\": \"from the explain answer\" }",
+        output: "{ \"object_kind\": \"app|workspace\", \"object_id\": \"slug or id\", \"role\": \"viewer|commenter|editor|admin|owner\", \"days\": \"a whole number, 1 up to the limit above\", \"clearance\": \"optional level\", \"reason\": \"the person's words, up to 500 characters\", \"who_decides\": \"from the explain answer\" }",
     })
 }
 
