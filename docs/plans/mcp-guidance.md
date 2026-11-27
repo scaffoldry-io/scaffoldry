@@ -103,7 +103,7 @@ The agent always works for a person, and a person decides. This holds in every p
 | 4 | A prompt is built from policy data. Changing the policy changes the prompt, with no code change. Each prompt names its tools and stopping points. No prompt contains a record value | Generated prompts. The first five above. **Built** |
 | 5 | `tools/list` omits a tool the caller cannot use. It signals a change when access changes | Tools shown by access |
 | 6 | Untrusted fields are marked in every result that carries typed text. A tool that would change access returns a proposal and a link. The ledger names the agent as the proposer | Untrusted marking and propose-then-confirm. **Built** |
-| 7 | A recorded scenario for each of the first five prompts passes against the real server | Scenarios as the contract, from `agent-coverage.md` |
+| 7 | A recorded scenario for each of the first five prompts passes against the real server | Scenarios as the contract, from `agent-coverage.md`. **Built** |
 
 ### Phase 2, as built
 
@@ -145,6 +145,25 @@ The agent always works for a person, and a person decides. This holds in every p
 - **Tests.** `tests/mcp_guidance_phase6_test.rs`. About 30 older test files, and the scenario files in `tests/agent_scenarios/`, read a text field that moved on purpose. They now read it from `untrusted_text`, or put it back with `untrusted::restore` when they compare a tool with a route that does not mark. No assertion was weakened.
 - **Not done.** Resources, prompts and error bodies are not marked, only tool results. `decide_proposal` is a person's tool and stays closed to agent sessions. `save_view` and record writes run under the person's own rights and stay direct.
 
+### Phase 7, as built
+
+- **Scenarios.** One file for each prompt in `tests/agent_scenarios/`. All five are supported. None is unsupported.
+  - `an-agent-requests-access.json`: a viewer asks for edit access to the Optics workspace. The agent reads the prompt, lists datasets, explains the held role, and reads the rule with `explain: true`. It shows the draft, waits for the person's yes, then files. The request waits for the person and carries a `desk_link`. No grant is made.
+  - `an-agent-reviews-a-change.json`: a proposal adds an SSN field and fails the sensitivity check. A Platform Admin's agent reads the prompt, lists proposals, reads the proposal, the app and the workspace, and gives an answer in the output shape. It never decides. The proposal is still pending.
+  - `an-agent-writes-a-policy.json`: a Platform Admin asks for a policy that stops staff exporting student records. The agent lists datasets, tests one case with `simulate_cedar_policy`, and answers in the output shape. No policy version is saved.
+  - `an-agent-reviews-a-share-request.json`: a faculty owner's agent reads the prompt with a justification, then reads the app, its views and the workspace. It gives an advisory answer and creates no link. The justification does not appear outside `untrusted_text`.
+  - `an-agent-explains-a-refusal.json`: a student asks why they cannot edit the workspace. The agent reads the rule and the facts, finds the route, and offers a request. It files nothing.
+- **Runner features.** All are generic, and each has a test in `agent_scenarios.rs`.
+  - A `prompt` step runs `prompts/get` as the persona. The runner reads the allowed tools, the stopping points and the output shape from the text. From then on, a call to a tool the prompt does not list fails the scenario.
+  - An `answer` step with `matches_output_shape` checks the agent's recorded answer against the prompt's output shape. It names a missing key, an extra key and a wrong kind.
+  - A `person` step records the person's reply, which is how a scenario passes a stopping point.
+  - Two `after` checks: `unchanged` (a table has the same row count as when the prompt was asked for) and `typed_text_only_under_untrusted` (a typed string never appears in a result outside `untrusted_text`).
+  - Prompt text counts as a response for `no_error_leaks` and `never_seen_by`.
+  - The personas `agent-viewer`, `agent-student` and `agent-platform-admin` are AI tools that sign in through the real OAuth flow, with a session. A request they file waits for the person. A bare agent token does not do that.
+- **Prompt change.** The output shape of `request_dataset_access` held `"days": 1-max`, which is not JSON. It is now a string. Every output shape must parse as JSON, and a test holds that.
+- **Test.** `each_of_the_first_five_prompts_has_a_scenario` fails if a prompt has no scenario.
+- **Not done.** A scenario tests the server, not an agent's judgment. The answers are recorded, so they show that the shape can be met, not that a model meets it. The prompts for a steward evaluation and a share request still tell the agent that those records do not exist.
+
 ## Enterprise objections
 
 | Objection | Answer |
@@ -164,4 +183,4 @@ The agent always works for a person, and a person decides. This holds in every p
 
 ## Prompt for the session
 
-Read this file, `agent-coverage.md`, and `data-layer.md`. Phases 1 to 4 are built. Do one phase at a time. Stop when its tests pass.
+Read this file, `agent-coverage.md`, and `data-layer.md`. Phases 1 to 4, 6 and 7 are built. Do one phase at a time. Stop when its tests pass.

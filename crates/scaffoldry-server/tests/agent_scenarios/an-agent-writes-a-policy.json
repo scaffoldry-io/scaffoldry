@@ -1,0 +1,61 @@
+{
+  "id": "an-agent-writes-a-policy",
+  "ask": "Staff may not export student records. Write that as a policy and show me what it does before I save it.",
+  "persona": "agent-platform-admin",
+  "status": "supported",
+  "steps": [
+    {
+      "prompt": "write_a_policy",
+      "args": {
+        "description": "Staff may not export student records"
+      },
+      "contains": [
+        "is never switched on by you",
+        "explain it back in plain words"
+      ]
+    },
+    {
+      "tool": "list_datasets",
+      "args": {}
+    },
+    {
+      "tool": "simulate_cedar_policy",
+      "args": {
+        "eppn": "staff.test@state.edu",
+        "affiliation": "staff",
+        "action": "export",
+        "ferpa_sensitive": true,
+        "department": "physics"
+      }
+    },
+    {
+      "answer": {
+        "policy_text": "@id(\"staff-no-export\")\n@oscal(\"AC-3\")\n@description(\"Staff may not export student records\")\nforbid (principal, action == Action::\"export\", resource) when { principal.affiliation == \"staff\" && resource.ferpa_sensitive };",
+        "in_words": "Staff may not export any record that holds a student's protected data.",
+        "sample_cases": [
+          {
+            "principal": "a staff member",
+            "action": "export",
+            "resource": "a sensitive record",
+            "expected": "Deny"
+          }
+        ],
+        "may_conflict_with": []
+      },
+      "matches_output_shape": true
+    },
+    {
+      "person": "Yes, that says what I meant. I will save it as a draft."
+    }
+  ],
+  "after": [
+    {
+      "unchanged": [
+        "policy_versions"
+      ]
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

@@ -1,0 +1,99 @@
+{
+  "id": "an-agent-requests-access",
+  "ask": "I can read the Optics workspace, but I need to edit it so my teaching assistant can add lab data. Ask for edit access for me.",
+  "persona": "agent-viewer",
+  "status": "supported",
+  "steps": [
+    {
+      "prompt": "request_dataset_access",
+      "args": {
+        "dataset": "the Optics workspace",
+        "role": "editor"
+      },
+      "contains": [
+        "Never file without it",
+        "waits for the person to confirm it in the desk"
+      ]
+    },
+    {
+      "tool": "list_datasets",
+      "args": {}
+    },
+    {
+      "tool": "explain_access",
+      "args": {
+        "object": "workspace:$ws"
+      },
+      "expect": {
+        "role": "viewer"
+      }
+    },
+    {
+      "tool": "request_access",
+      "args": {
+        "object_kind": "workspace",
+        "object_id": "$ws",
+        "role": "editor",
+        "explain": true
+      },
+      "expect": {
+        "allowed": false,
+        "would_route.route": "approver"
+      }
+    },
+    {
+      "answer": {
+        "object_kind": "workspace",
+        "object_id": "$ws",
+        "role": "editor",
+        "days": 7,
+        "reason": "I need to add my teaching assistant's lab data",
+        "who_decides": "A person confirms the request in the desk."
+      },
+      "matches_output_shape": true
+    },
+    {
+      "person": "Yes, file it."
+    },
+    {
+      "tool": "request_access",
+      "args": {
+        "object_kind": "workspace",
+        "object_id": "$ws",
+        "role": "editor",
+        "reason": "I need to add my teaching assistant's lab data",
+        "days": 7
+      },
+      "expect": {
+        "status": "Waiting for person",
+        "desk_link": {
+          "contains": "/me/access/requests?request="
+        },
+        "untrusted_text.reason": {
+          "contains": "teaching assistant"
+        }
+      }
+    }
+  ],
+  "after": [
+    {
+      "unchanged": [
+        "access_grants"
+      ]
+    },
+    {
+      "typed_text_only_under_untrusted": [
+        "I need to add my teaching assistant's lab data"
+      ]
+    },
+    {
+      "never_seen_by": {
+        "persona": "agent-viewer",
+        "text": "compliance.officer@state.edu"
+      }
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

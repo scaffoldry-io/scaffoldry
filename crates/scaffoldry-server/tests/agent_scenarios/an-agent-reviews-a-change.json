@@ -1,0 +1,221 @@
+{
+  "id": "an-agent-reviews-a-change",
+  "ask": "Someone asked to add a social security number column to the scholarship app. Explain the change to me and tell me what I need to decide.",
+  "persona": "faculty-owner",
+  "status": "supported",
+  "steps": [
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "A change",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p": "$.proposal_id",
+        "d_p": "$.digest"
+      },
+      "expect": {
+        "checks.schema": "pass"
+      }
+    },
+    {
+      "tool": "decide_proposal",
+      "args": {
+        "proposal_id": "$p",
+        "decision": "approve",
+        "rationale": "Reviewed",
+        "digest": "$d_p"
+      },
+      "expect": {
+        "status": "Approved"
+      }
+    },
+    {
+      "tool": "propose_app_change",
+      "args": {
+        "workspace_id": "$ws",
+        "summary": "Add an SSN column",
+        "manifest": {
+          "slug": "$app",
+          "title": "Scholarships",
+          "description": "Scholarship applications",
+          "organization_code": "PHYS",
+          "department": "physics",
+          "views": [],
+          "tables": [
+            {
+              "id": "applications",
+              "name": "Applications",
+              "slug": "applications",
+              "fields": [
+                {
+                  "name": "applicant",
+                  "label": "Applicant",
+                  "field_type": "Text",
+                  "required": true,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "amount",
+                  "label": "Amount",
+                  "field_type": "Number",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "status",
+                  "label": "Status",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": false
+                },
+                {
+                  "name": "ssn",
+                  "label": "Ssn",
+                  "field_type": "Text",
+                  "required": false,
+                  "ferpa_sensitive": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "save": {
+        "p2": "$.proposal_id"
+      },
+      "expect": {
+        "checks.sensitivity": "fail"
+      }
+    },
+    {
+      "prompt": "review_a_change",
+      "args": {
+        "proposal_id": "$p2"
+      },
+      "as": "agent-platform-admin",
+      "contains": [
+        "Never approve or reject",
+        "needs a second person"
+      ]
+    },
+    {
+      "tool": "list_proposals",
+      "args": {
+        "workspace_id": "$ws"
+      },
+      "as": "agent-platform-admin",
+      "expect": {
+        "$.": {
+          "has": {
+            "id": "$p2"
+          }
+        }
+      }
+    },
+    {
+      "tool": "get_proposal",
+      "args": {
+        "proposal_id": "$p2"
+      },
+      "as": "agent-platform-admin",
+      "expect": {
+        "checks.sensitivity": "fail"
+      }
+    },
+    {
+      "tool": "describe_app",
+      "args": {
+        "app_slug": "$app"
+      },
+      "as": "agent-platform-admin"
+    },
+    {
+      "tool": "get_workspace",
+      "args": {
+        "workspace_id": "$ws"
+      },
+      "as": "agent-platform-admin"
+    },
+    {
+      "answer": {
+        "plain_summary": "The change adds a sensitive field called ssn to Applications. It fails the sensitivity check. A second person must decide.",
+        "what_changes": [
+          "Adds the field ssn to Applications"
+        ],
+        "who_gains_or_loses_access": [
+          "Nobody gains access yet. Editors would see a sensitive field"
+        ],
+        "what_depends_on_it": [
+          "The Applications table"
+        ],
+        "checks_and_who_decides": [
+          "sensitivity: a second person decides"
+        ],
+        "questions_for_the_steward": [
+          "Is a social security number needed?"
+        ],
+        "communications_draft": "Draft: the scholarship app may gain a sensitive field."
+      },
+      "matches_output_shape": true
+    },
+    {
+      "tool": "get_proposal",
+      "args": {
+        "proposal_id": "$p2"
+      },
+      "as": "agent-platform-admin",
+      "expect": {
+        "status": "Pending"
+      }
+    }
+  ],
+  "after": [
+    {
+      "unchanged": [
+        "access_grants"
+      ]
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "id": "an-agent-explains-a-refusal",
+  "ask": "I tried to edit the Optics workspace and was refused. Why, and what would change it?",
+  "persona": "agent-student",
+  "status": "supported",
+  "steps": [
+    {
+      "prompt": "explain_a_refusal",
+      "args": {
+        "object_kind": "workspace",
+        "object_id": "$ws",
+        "role": "editor"
+      },
+      "contains": [
+        "Never file one on your own"
+      ]
+    },
+    {
+      "tool": "request_access",
+      "args": {
+        "object_kind": "workspace",
+        "object_id": "$ws",
+        "role": "editor",
+        "explain": true
+      },
+      "expect": {
+        "allowed": false,
+        "would_route.route": "approver"
+      }
+    },
+    {
+      "tool": "explain_access",
+      "args": {
+        "object": "workspace:$ws"
+      },
+      "expect": {
+        "role": {
+          "absent": true
+        }
+      }
+    },
+    {
+      "tool": "list_workspaces",
+      "args": {}
+    },
+    {
+      "answer": {
+        "why": "A student cannot edit this workspace.",
+        "rule": "default_deny: no rule gives a student edit access",
+        "what_would_change_it": [
+          "A grant of the editor role, approved by the owner"
+        ],
+        "who_can_grant": "The route the explain answer names",
+        "offer": "Draft a request, yes or no?"
+      },
+      "matches_output_shape": true
+    }
+  ],
+  "after": [
+    {
+      "unchanged": [
+        "access_grants",
+        "access_requests"
+      ]
+    },
+    {
+      "never_seen_by": {
+        "persona": "agent-student",
+        "text": "compliance.officer@state.edu"
+      }
+    },
+    {
+      "no_error_leaks": true
+    }
+  ]
+}
