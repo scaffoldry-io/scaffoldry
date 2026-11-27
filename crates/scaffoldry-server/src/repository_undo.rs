@@ -119,6 +119,10 @@ impl PostgresRepository {
                         let mut next = data.clone();
                         if let Some(map) = next.as_object_mut() {
                             for (field, change) in &changes {
+                                // A change of tags is never undone: it would lower or raise who reads the row by a side door.
+                                if field == "_tags" {
+                                    continue;
+                                }
                                 match change.get("old") {
                                     Some(old) => map.insert(field.clone(), old.clone()),
                                     None => map.remove(field),

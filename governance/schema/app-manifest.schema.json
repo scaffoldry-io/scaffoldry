@@ -402,6 +402,10 @@
           "minLength": 1,
           "description": "The unit column: the name of one of the table's Unit fields. Each row's value is copied to an indexed column, and a value that is not a unit of the field's hierarchy is refused. A row that leaves it blank is the dataset's own. Setting it needs a proposal, and it is refused while a row holds a value that is not a unit."
         },
+        "unit_required": {
+          "type": "boolean",
+          "description": "A row that names no unit is refused, by every door. It needs a unit_field. Off by default, so a table that named its unit column earlier still takes rows with none. Setting it needs a proposal, and it is refused while a row names none."
+        },
         "retired_fields": {
           "type": "array",
           "maxItems": 200,

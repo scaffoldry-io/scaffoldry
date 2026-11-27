@@ -177,6 +177,13 @@ fn change_list(proposal: &AppManifest, live: Option<&AppManifest>, state: &Share
                         None => format!("The unit column of table \"{}\" is removed.", t.name),
                     });
                 }
+                if l.unit_required != t.unit_required {
+                    out.push(if t.unit_required {
+                        format!("Table \"{}\" now requires a unit. A row that names none is refused. The approval is refused while a row names none.", t.name)
+                    } else {
+                        format!("Table \"{}\" no longer requires a unit. A row that names none is read by the dataset's unit.", t.name)
+                    });
+                }
                 for f in &t.fields {
                     match l.fields.iter().find(|x| x.name == f.name) {
                         None if l.retired_fields.iter().any(|x| x.name == f.name) => {

@@ -306,7 +306,7 @@ fn sensitive_app(state: &ServerState, slug: &str, ws: &str) {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
-            retired_fields: Vec::new(), key: None, unit_field: None,
+            retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
             id: "people".to_string(),
             name: "people".to_string(),
             slug: "people".to_string(),

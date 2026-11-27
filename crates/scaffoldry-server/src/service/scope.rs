@@ -291,18 +291,21 @@ pub fn allows_data(caller: &AuthUser, app_slug: &str, table: &str, data: &Value,
     if caller.affiliation == "guest" {
         return op != RowOp::Delete && data.get("_submitter").and_then(Value::as_str) == Some(caller.eppn.as_str());
     }
-    match scope_of(caller, app_slug, table, op, state) {
+    let by_rules = match scope_of(caller, app_slug, table, op, state) {
         RowScope::AllowAll => true,
         RowScope::DenyAll => false,
         RowScope::Mixed(pred) => scaffoldry_engine::access::eval(&pred, data, &fields_of(app_slug, table, state)),
-    }
+    };
+    // The row's effective label asks one more thing of the reader (data layer phase 3), for every operation: a person who may not read a
+    // row may not change it, and a write may not tag or move a row out of its writer's own reach.
+    by_rules && crate::service::row_labels::admits(caller, app_slug, table, data, state)
 }
 
 /// The records of `rows` inside the caller's read scope.
 pub fn retain_readable(caller: &AuthUser, app_slug: &str, rows: Vec<DatasetRecord>, state: &SharedState) -> Vec<DatasetRecord> {
     match rules_loaded(app_slug, state) {
         None => return Vec::new(),
-        Some(rules) if rules.is_empty() => return rows,
+        Some(rules) if rules.is_empty() && !crate::service::row_labels::in_force(state) => return rows,
         Some(_) => {}
     }
     rows.into_iter().filter(|r| allows(caller, app_slug, r, RowOp::Read, state)).collect()
@@ -311,12 +314,14 @@ pub fn retain_readable(caller: &AuthUser, app_slug: &str, rows: Vec<DatasetRecor
 /// What a SQL statement over one table applies to stay inside the caller's read scope. `None` means
 /// the whole table.
 pub fn plan_of(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> Option<crate::repository::ScopePlan> {
+    let labels = crate::service::row_labels::gates_of(caller, app_slug, table, state);
     let pred: Pred = match scope_of(caller, app_slug, table, RowOp::Read, state) {
-        RowScope::AllowAll => return None,
+        RowScope::AllowAll if labels.is_empty() => return None,
+        RowScope::AllowAll => Pred::True,
         RowScope::DenyAll => never(),
         RowScope::Mixed(p) => p,
     };
-    Some(crate::repository::ScopePlan { pred, indexed: fields_of(app_slug, table, state) })
+    Some(crate::repository::ScopePlan { pred, indexed: fields_of(app_slug, table, state), labels })
 }
 
 /// The fields the app's rules read for a table. They are indexed, so a rule compiles to the index.
@@ -344,7 +349,7 @@ pub fn rule_fields(app_slug: &str, table: &str, state: &SharedState) -> Vec<Stri
 pub fn readable_ids(caller: &AuthUser, app_slug: &str, ids: &[String], state: &SharedState) -> std::collections::HashSet<String> {
     match rules_loaded(app_slug, state) {
         None => return std::collections::HashSet::new(),
-        Some(rules) if rules.is_empty() || caller.affiliation == "central_admin" => return ids.iter().cloned().collect(),
+        Some(rules) if caller.affiliation == "central_admin" || (rules.is_empty() && !crate::service::row_labels::in_force(state)) => return ids.iter().cloned().collect(),
         Some(_) => {}
     }
     let repo = &state.repository;
@@ -505,6 +510,7 @@ pub fn preview_access(
                 let plan = crate::repository::ScopePlan {
                     pred,
                     indexed: fields.clone(),
+                    labels: Vec::new(),
                 };
                 count_scoped(app_slug, &input.table_id, Some(&plan), state)
             }

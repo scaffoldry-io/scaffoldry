@@ -44,6 +44,22 @@ A field is `Suggested` when its CEDS code is protected under the standard and th
 | `PUT /admin/labels` | Body `changes` (1 to 200 of `{ app_slug, table_id, field, ferpa_sensitive }`, where `null` removes the label) and `reason`. Every field must exist, or the whole request is `400` and nothing changes. One ledger entry, `DataLabelChanged`, `RA-02` |
 | `GET /admin/datasets` | The published datasets: id, name, department, level, record count |
 | `PUT /admin/datasets/{id}/classification` | Body `sensitivity_level` (`Public`, `Directory`, `Internal` or `Restricted / FERPA`) and `reason`. The column and the stored payload change together. Ledger `DataLabelChanged` |
+| `PUT /admin/datasets/{id}/label-floor` | Body `floor` (a list of category ids, at most 20, each defined in the settings) and `reason`. Every row of the dataset carries these categories, whatever its own tags say. A Platform Admin or a compliance officer may raise it. Lowering it needs a Platform Admin. The floor, the flag Cedar reads on each row and the ledger entry (`DataLabelChanged`, setting `label_floor`) commit together. The answer holds `floor` and `was` |
+
+## Who may read a row
+
+A category in the settings may carry a requirement, `requires`: a list of a position key and a reach. Any one of them is enough. The reach is `unit` (the unit where the holder holds the position), `unit_and_below`, or `anywhere` (any unit).
+
+```json
+{ "id": "phi", "name": "PHI", "protected": true, "detectors": [],
+  "requires": [{ "position": "registrar", "reach": "unit_and_below" }] }
+```
+
+A row carries a category when its dataset's floor holds it, when its own tags hold it (`_tags` in the record's data), or when the table has a field that carries it. A reader may read the row when they hold one of the category's positions today, at a unit that covers the row's unit. The row's unit is its unit column. A row with no unit takes the dataset's own unit. A row with neither is read by nobody, unless the reach is `anywhere`. A category with no `requires` asks nothing, so nothing changes until an institution sets one. A Platform Admin is not held back, as with a row rule.
+
+A table that names a unit column may also set `unit_required: true`. A row that names no unit is then refused, by a write, an import row and a sync. Taking the flag on needs a proposal and is refused while a row names none.
+
+**Row tags.** A record's data may hold `_tags`, a list of category ids. A write that leaves `_tags` out keeps the stored tags. A write that names them replaces them. A tag is added by anyone who may write the row and who still reads it afterwards. A tag whose category is protected or carries a requirement is removed only by a Platform Admin or a compliance officer. Undo and restore never change tags. A tag change shows in the record's history as the field `_tags`.
 
 The labels, the records' flags, the cache counter and the ledger entry commit in one transaction.
 

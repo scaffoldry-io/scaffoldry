@@ -39,7 +39,22 @@
         "source": { "type": "string", "maxLength": 128 },
         "protected": { "type": "boolean" },
         "default_mask": { "$ref": "mask.schema.json", "description": "What a reader who is not cleared sees of a field of this category. Hide when absent." },
-        "detectors": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+        "detectors": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "requires": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "description": "Who may read a row that carries this category: any one of these. A reader meets one when they hold the position at a unit its reach covers for the row. No list means no requirement.",
+          "items": {
+            "type": "object",
+            "required": ["position", "reach"],
+            "additionalProperties": false,
+            "properties": {
+              "position": { "$ref": "#/$defs/id", "description": "A position key, such as registrar." },
+              "reach": { "enum": ["unit", "unit_and_below", "anywhere"], "description": "unit: rows at the unit where the position is held. unit_and_below: that unit and every unit under it. anywhere: every row." }
+            }
+          }
+        }
       }
     }
   },

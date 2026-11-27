@@ -69,7 +69,7 @@ fn manifest(slug: &str) -> AppManifest {
         custom_domain: None,
         custom_domain_verified: false,
         tables: vec![AppTable {
-            retired_fields: Vec::new(), key: None, unit_field: None,
+            retired_fields: Vec::new(), key: None, unit_field: None, unit_required: false,
             id: "students".to_string(),
             name: "students".to_string(),
             slug: "students".to_string(),
@@ -393,6 +393,7 @@ async fn a_scoped_list_at_200000_rows_is_fast_and_does_not_scan() {
     let plan = ScopePlan {
         pred: Pred::Cmp { field: "advisor".into(), op: Op::Eq, value: Operand::Literal(json!(w.ann.to_lowercase())) },
         indexed: manifest(&w.slug).tables[0].fields.clone(),
+        labels: vec![],
     };
     let (sql, params) = build_record_query(&w.slug, &RecordQuery { table_id: "students".into(), any: false, clauses: vec![], sort: None, after: None, limit: 51, scope: Some(plan), search: None, expr: None, unit: None });
     let explained = format!("EXPLAIN {sql}");

@@ -107,7 +107,7 @@ impl PostgresRepository {
             if let Some((l, category)) = &label {
                 label_with_category(&mut tx, l, category, &reason, &by)?;
                 for t in &flags {
-                    reflag_table(&mut tx, &t.app_slug, &t.table_id, &t.names)?;
+                    reflag_table(&mut tx, &t.app_slug, &t.table_id, &t.names, &t.keep)?;
                 }
                 crate::cache::bump(&mut tx, "labels")?;
             }
@@ -131,7 +131,7 @@ impl PostgresRepository {
                 label_with_category(&mut tx, l, &store.category, &reason, &by)?;
             }
             for t in &flags {
-                reflag_table(&mut tx, &t.app_slug, &t.table_id, &t.names)?;
+                reflag_table(&mut tx, &t.app_slug, &t.table_id, &t.names, &t.keep)?;
             }
             crate::cache::bump(&mut tx, "labels")?;
             append_ledger_in_tx(&mut tx, ledger)?;

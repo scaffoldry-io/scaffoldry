@@ -56,3 +56,20 @@ pub fn add_category<C: GenericClient>(tx: &mut C, app_slug: &str, table_id: &str
     )?;
     Ok(())
 }
+
+/// The floor of a dataset: the categories every row of it carries (data layer phase 3). Empty for a dataset with none, and for a
+/// table that has no dataset row.
+pub fn floor_of<C: GenericClient>(c: &mut C, app_slug: &str, table_id: &str) -> Result<Vec<String>, postgres::Error> {
+    Ok(c.query_opt("SELECT label_floor FROM datasets WHERE app_slug = $1 AND table_id = $2", &[&app_slug, &table_id])?.map(|r| r.get(0)).unwrap_or_default())
+}
+
+/// Sets a dataset's floor, kept sorted and without repeats. The change is a governed one, and the caller writes its ledger entry
+/// in the same transaction. Returns the floor it replaced, or `None` when the dataset does not exist.
+pub fn set_floor<C: GenericClient>(tx: &mut C, dataset_id: &str, floor: &[String]) -> Result<Option<Vec<String>>, postgres::Error> {
+    let Some(was) = tx.query_opt("SELECT label_floor FROM datasets WHERE id = $1 FOR UPDATE", &[&dataset_id])?.map(|r| r.get::<_, Vec<String>>(0)) else { return Ok(None) };
+    let mut next = floor.to_vec();
+    next.sort();
+    next.dedup();
+    tx.execute("UPDATE datasets SET label_floor = $2 WHERE id = $1", &[&dataset_id, &next])?;
+    Ok(Some(was))
+}

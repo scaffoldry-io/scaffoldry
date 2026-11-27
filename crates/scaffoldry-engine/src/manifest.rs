@@ -139,6 +139,9 @@ pub fn validate_manifest(m: &AppManifest) -> Result<(), Vec<String>> {
                 Some(_) => {}
             }
         }
+        if table.unit_required && table.unit_field.is_none() {
+            problems.push(format!("table '{}': unit_required needs a unit column, and the table names none", table.id));
+        }
         for (hierarchy, field) in &table.row_place {
             // A hierarchy of units places a row by a Unit field of that hierarchy. A hierarchy of people places it by a
             // Collaborator field, because the people a unit holds are the ones its reach names.
