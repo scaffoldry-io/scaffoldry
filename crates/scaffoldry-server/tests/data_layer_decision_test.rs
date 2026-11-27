@@ -2,7 +2,7 @@
 //!
 //! A label change is proposed by a person or by a review finding. It is stored and applies nothing. The evaluation is built on
 //! request: what changes, why, who gains and loses access, what depends on it, and who would be locked out of unfinished work.
-//! A steward approves, changes or declines. A removal of protection needs two approvers, and neither is the proposer. Raising
+//! A steward approves, changes or declines. A removal of protection needs two people: the proposer and one approver who is not the proposer. Raising
 //! protection needs one steward. Nothing applies by itself.
 
 mod common;
@@ -442,7 +442,7 @@ async fn the_evaluation_counts_who_gains_and_loses_and_puts_the_lock_out_list_fi
     assert_eq!(ev4["access"]["lose"]["people"], 0);
 }
 
-// 3. Lowering protection cannot be completed by the proposer or a single approver. A second person completes it.
+// 3. Lowering protection takes two people: the proposer, and one approver who is not the proposer.
 #[tokio::test(flavor = "multi_thread")]
 async fn lowering_protection_is_completed_by_a_second_person() {
     let w = world().await;
@@ -453,29 +453,23 @@ async fn lowering_protection_is_completed_by_a_second_person() {
     let (s, made) = propose_tags(&w, &dataset, &w.steward, &[], &["phi"], &[&tagged]).await;
     assert_eq!(s, StatusCode::CREATED, "{made}");
     let id = made["id"].as_str().unwrap().to_string();
-    assert_eq!(made["approvals_needed"], 2);
+    assert_eq!(made["approvals_needed"], 1);
 
     // The proposer may not decide it.
     let (s, b) = decide(&w, &w.steward, &id, approve()).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
-    // One approver does not complete it. The row is still protected.
-    let (s, b) = decide(&w, &w.steward2, &id, approve()).await;
-    assert_eq!(s, StatusCode::OK, "{b}");
-    assert_eq!(b["status"], "Pending", "{b}");
-    assert_eq!(b["approvals"], 1);
-    assert_eq!(tags_of_row(&w, &tagged), vec!["phi".to_string()]);
-    assert_eq!(listed(&w, &w.outsider).await, set(&[]));
-    // The same approver cannot approve twice.
-    let (s, b) = decide(&w, &w.steward2, &id, approve()).await;
-    assert_eq!(s, StatusCode::CONFLICT, "{b}");
     assert_eq!(tags_of_row(&w, &tagged), vec!["phi".to_string()]);
     // A person who is not a steward cannot be the second.
     let (s, _) = decide(&w, &w.outsider, &id, approve()).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
+    assert_eq!(listed(&w, &w.outsider).await, set(&[]));
     // A second person completes it.
-    let (s, b) = decide(&w, &w.admin, &id, approve()).await;
+    let (s, b) = decide(&w, &w.steward2, &id, approve()).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert_eq!(b["status"], "Applied", "{b}");
+    // Nobody approves it again.
+    let (s, b) = decide(&w, &w.admin, &id, approve()).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
     assert!(tags_of_row(&w, &tagged).is_empty());
     assert_eq!(listed(&w, &w.outsider).await, set(&["tagged"]));
     // History shows the tag change, as for any write: the row was made with its tag, and the change took it off.
@@ -495,15 +489,16 @@ async fn lowering_protection_is_completed_by_a_second_person() {
     assert_eq!(listed(&w, &w.outsider).await, set(&[]));
     let (s, b) = propose_floor(&w, &dataset, &w.steward2, &[]).await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
-    assert_eq!(b["approvals_needed"], 2);
+    assert_eq!(b["approvals_needed"], 1);
     let lower = b["id"].as_str().unwrap().to_string();
     let (s, b) = rest(&w.app, "PUT", &format!("/api/v1/admin/datasets/{dataset}/label-floor"), &w.admin, Some(json!({ "floor": [], "reason": "Not through here" }))).await;
     assert_eq!(s, StatusCode::CONFLICT, "the floor route does not lower a floor: {b}");
     assert_eq!(listed(&w, &w.outsider).await, set(&[]));
-    for who in [&w.steward, &w.admin] {
-        let (s, b) = decide(&w, who, &lower, approve()).await;
-        assert_eq!(s, StatusCode::OK, "{b}");
-    }
+    let (s, b) = decide(&w, &w.steward2, &lower, approve()).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "the proposer of a lowered floor cannot approve it: {b}");
+    let (s, b) = decide(&w, &w.steward, &lower, approve()).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["status"], "Applied", "{b}");
     assert_eq!(listed(&w, &w.outsider).await, set(&["tagged"]));
 }
 
@@ -610,9 +605,10 @@ async fn the_ledger_names_the_proposer_and_the_deciders() {
     assert_eq!(s, StatusCode::CREATED, "{made}");
     let id = made["id"].as_str().unwrap().to_string();
     let before: i64 = w.db.run(|c| c.query_one("SELECT count(*) FROM governance_ledger WHERE decision_type = 'DataLabelChanged'", &[]).unwrap().get(0));
-    decide(&w, &w.steward2, &id, approve()).await;
+    let (s, b) = decide(&w, &w.steward, &id, approve()).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "the proposer cannot approve a removal: {b}");
     let mid: i64 = w.db.run(|c| c.query_one("SELECT count(*) FROM governance_ledger WHERE decision_type = 'DataLabelChanged'", &[]).unwrap().get(0));
-    assert_eq!(mid, before, "an approval that completes nothing writes no label entry");
+    assert_eq!(mid, before, "a refused approval writes no label entry");
     let (s, b) = decide(&w, &w.admin, &id, approve()).await;
     assert_eq!(s, StatusCode::OK, "{b}");
 
@@ -624,7 +620,7 @@ async fn the_ledger_names_the_proposer_and_the_deciders() {
     let (principal, p) = &entries[0];
     assert_eq!(principal, ADMIN);
     assert_eq!(p["proposed_by"], STEWARD);
-    assert_eq!(p["decided_by"], json!([STEWARD2, ADMIN]));
+    assert_eq!(p["decided_by"], json!([ADMIN]));
     assert_eq!(p["dataset"], json!(dataset));
     assert_eq!(p["setting"], "row_tags");
     assert!(p["finding"].is_null());
@@ -731,7 +727,7 @@ async fn removing_a_protected_tag_directly_is_still_refused() {
     assert_eq!(listed(&w, &w.outsider).await, set(&[]));
 }
 
-// A steward may change the proposal before approving it. A change takes back the approvals already given.
+// A steward may change the proposal before approving it, and the approval then applies the changed proposal.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_steward_may_change_a_proposal_and_the_approvals_start_again() {
     let w = world().await;
@@ -741,9 +737,6 @@ async fn a_steward_may_change_a_proposal_and_the_approvals_start_again() {
     let (s, made) = propose_tags(&w, &dataset, &w.steward, &[], &["phi"], &[&a, &b_row]).await;
     assert_eq!(s, StatusCode::CREATED, "{made}");
     let id = made["id"].as_str().unwrap().to_string();
-    let (s, b) = decide(&w, &w.steward2, &id, approve()).await;
-    assert_eq!(s, StatusCode::OK, "{b}");
-    assert_eq!(b["approvals"], 1);
     // The second steward narrows it to one row.
     let (s, b) = decide(&w, &w.steward2, &id, json!({ "decision": "change", "reason": "Only the chemistry row", "records": [a] })).await;
     assert_eq!(s, StatusCode::OK, "{b}");
@@ -751,10 +744,9 @@ async fn a_steward_may_change_a_proposal_and_the_approvals_start_again() {
     assert_eq!(b["approvals"], 0, "{b}");
     let got = evaluation(&w, &w.steward, &id).await;
     assert_eq!(got["evaluation"]["what_changes"]["rows"], 1);
-    for who in [&w.steward2, &w.admin] {
-        let (s, b) = decide(&w, who, &id, approve()).await;
-        assert_eq!(s, StatusCode::OK, "{b}");
-    }
+    let (s, b) = decide(&w, &w.steward2, &id, approve()).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["status"], "Applied", "{b}");
     assert!(tags_of_row(&w, &a).is_empty());
     assert_eq!(tags_of_row(&w, &b_row), vec!["phi".to_string()], "the row left out is still tagged");
 }

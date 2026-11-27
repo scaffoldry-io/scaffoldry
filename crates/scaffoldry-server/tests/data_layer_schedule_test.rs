@@ -707,7 +707,7 @@ async fn a_notice_period_shorter_than_the_minimum_is_refused() {
     assert_eq!(b["status"], "Scheduled");
     assert!(b["notice_days"].as_i64().unwrap() >= 90 && b["notice_days_min"] == 30, "{b}");
 
-    // Lowering protection takes two approvers and may use a shorter minimum: 14 days for a protected category.
+    // Lowering protection takes one approver who is not the proposer, and may use a shorter minimum: 14 days for a protected category.
     let (s, low) = propose_tags(&w, &dataset, &w.steward, &[], &["phi"], &[&t1]).await;
     assert_eq!(s, StatusCode::CREATED, "{low}");
     let low = low["id"].as_str().unwrap().to_string();
@@ -715,17 +715,9 @@ async fn a_notice_period_shorter_than_the_minimum_is_refused() {
     assert_eq!(s, StatusCode::BAD_REQUEST, "10 days is under 14: {b}");
     assert!(b.to_string().contains("14"), "{b}");
     let (s, b) = decide(&w, &w.steward2, &low, on(15)).await;
-    assert_eq!(s, StatusCode::OK, "the first of two approvers: {b}");
-    assert_eq!(b["status"], "Pending");
-    // The first approver's date is kept. The second says nothing about a date, and the change is held for the first one's date, not applied.
-    let (s, kept) = rest(&w.app, "GET", &format!("/api/v1/data/label-changes/{low}"), &w.steward, None).await;
-    assert_eq!(s, StatusCode::OK, "{kept}");
-    assert!(kept["change"]["effective_at"].is_string(), "the date waits on the change: {kept}");
-    let (s, b) = decide(&w, &w.admin, &low, json!({ "decision": "approve", "reason": "A second person agrees" })).await;
     assert_eq!(s, StatusCode::OK, "{b}");
-    assert_eq!(b["status"], "Scheduled", "an approver who gives no date does not apply it at once: {b}");
+    assert_eq!(b["status"], "Scheduled", "one approver who is not the proposer completes it, for its date: {b}");
     assert_eq!(b["notice_days_min"], 14);
-    assert_eq!(b["effective_at"], kept["change"]["effective_at"]);
     assert!(tags_of_row(&w, &t1).contains(&"phi".to_string()), "nothing was removed yet");
 }
 
