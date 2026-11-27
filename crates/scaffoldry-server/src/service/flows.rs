@@ -141,6 +141,9 @@ struct Run<'a> {
     /// it did or would do in `notes` instead.
     dry: bool,
     notes: Vec<DryNote>,
+    /// Data layer phase 9: the system user a run reads as. Every row the run addresses must pass its category gates, so a row that asks for
+    /// a position is closed to it. `None` for a flow with no system user, and for a test run.
+    system_user: Option<crate::state::AuthUser>,
 }
 
 /// What one step of a test run did or would do: a sentence, and the records it found or would create.
@@ -155,6 +158,12 @@ pub struct DryNote {
 impl Run<'_> {
     fn grant(&self, app: &str, table: &str) -> Option<&FlowGrant> {
         self.rule.grants.iter().find(|g| g.app_slug == app && g.table_id == table)
+    }
+
+    /// Whether the system user the run reads as may see this row: the category gates close it when they ask for something it does not
+    /// hold. A flow with no system user reads as it always did.
+    fn admitted(&self, app: &str, table: &str, rec: &DatasetRecord) -> bool {
+        self.system_user.as_ref().is_none_or(|u| crate::service::row_labels::admits(u, app, table, &rec.data, self.state))
     }
 
     fn may_read(&self, app: &str, table: &str, field: &str) -> Result<(), Stop> {
@@ -228,7 +237,9 @@ impl Run<'_> {
                 let mut out = Vec::new();
                 for id in crate::repository_links::linked_ids(self.trigger.data.get(link_field)) {
                     if let Some(r) = load(self.state, &self.trigger.app_slug, &id)? {
-                        out.push(r);
+                        if self.admitted(&self.trigger.app_slug, &target, &r) {
+                            out.push(r);
+                        }
                     }
                 }
                 Ok((self.trigger.app_slug.clone(), target, out))
@@ -266,7 +277,8 @@ impl Run<'_> {
             ActionType::FindRecord { id, app, table, field, equals, limit } => {
                 self.may_read(app, table, field)?;
                 let value = self.eval(equals)?;
-                let found = find_records(self.state, app, table, field, &value, *limit as usize).map_err(Stop)?;
+                let mut found = find_records(self.state, app, table, field, &value, *limit as usize).map_err(Stop)?;
+                found.retain(|r| self.admitted(app, table, r));
                 let n = found.len();
                 self.note(format!("found {n} {} in {}", plural(n, "record"), place(self.state, app, table)), true, Some((app.clone(), table.clone(), found.clone())));
                 self.produced.insert(id.clone(), (app.clone(), table.clone(), found));
@@ -417,7 +429,7 @@ fn plural(n: usize, word: &str) -> String {
 }
 
 /// `App / Table`, in the names people see.
-fn place(state: &SharedState, app: &str, table: &str) -> String {
+pub(crate) fn place(state: &SharedState, app: &str, table: &str) -> String {
     let Ok(eng) = state.engine.read() else { return format!("{app} / {table}") };
     let Some(m) = eng.resolve_by_slug(app) else { return format!("{app} / {table}") };
     let t = m.tables.iter().find(|t| t.id == table).map(|t| t.name.clone()).unwrap_or_else(|| table.to_string());
@@ -584,7 +596,11 @@ fn start_flow_at(state: &SharedState, rule: &AutomationRule, trigger: Option<&Da
     let mut names: Vec<String> = chain.to_vec();
     names.push(rule.name.clone());
     // Refusals that are not the flow's failure: nothing ran, and the breaker does not count them.
-    let refused = if breaker(state, &rule.id).1 {
+    // Data layer phase 9: a flow that is a system user runs only on grants that are approved and have not reached their review date.
+    let admission = crate::service::system_users::admit(state, rule);
+    let refused = if let crate::service::system_users::Admission::Refused(why) = &admission {
+        Some(why.clone())
+    } else if breaker(state, &rule.id).1 {
         Some(format!("The flow is turned off after {BREAKER_FAILURES} failed runs in a row. Save a new version of it to turn it on again"))
     } else if chain.len() >= scaffoldry_core::workflow::MAX_CHAIN_DEPTH {
         None
@@ -618,6 +634,10 @@ fn start_flow_at(state: &SharedState, rule: &AutomationRule, trigger: Option<&Da
         chain: names.clone(),
         dry: false,
         notes: Vec::new(),
+        system_user: match admission {
+            crate::service::system_users::Admission::Gated(u) => Some(*u),
+            _ => None,
+        },
     };
     let outcome = (|| {
         if chain.len() >= scaffoldry_core::workflow::MAX_CHAIN_DEPTH {
@@ -626,6 +646,9 @@ fn start_flow_at(state: &SharedState, rule: &AutomationRule, trigger: Option<&Da
                 names.join(" > "),
                 scaffoldry_core::workflow::MAX_CHAIN_DEPTH
             )));
+        }
+        if trigger.is_some() && !run.admitted(&run.trigger.app_slug, &run.trigger_table, &run.trigger) {
+            return Err(Stop("system_user_category: the record that started the run is in a category the automation's system user does not hold, so it did not run".to_string()));
         }
         let limit = max_steps(state);
         let count = scaffoldry_core::workflow::all_steps(&rule.steps).len();
@@ -735,6 +758,7 @@ pub fn test_run(
         chain: vec![rule.name.clone()],
         dry: true,
         notes: Vec::new(),
+        system_user: None,
     };
     let mut out = TestRun { trace: Vec::new(), first_failure: None, writes: 0 };
     if let Err((step, path, reason)) = dry_steps(&mut run, &rule.steps, &[], outcomes, approvers, &mut out.trace) {
