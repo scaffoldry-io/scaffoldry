@@ -22,6 +22,8 @@ pub struct FlagTable {
     pub app_slug: String,
     pub table_id: String,
     pub names: Vec<String>,
+    /// The categories settings mark protected. A record that carries one as a tag, or whose dataset's floor holds one, stays flagged.
+    pub keep: Vec<String>,
 }
 
 impl PostgresRepository {
@@ -52,7 +54,7 @@ impl PostgresRepository {
             }
             // A record is flagged when it holds a value in any field that is now sensitive. The same test the backfill of a category uses.
             for t in &flags {
-                crate::repository::reflag_table(&mut tx, &t.app_slug, &t.table_id, &t.names)?;
+                crate::repository::reflag_table(&mut tx, &t.app_slug, &t.table_id, &t.names, &t.keep)?;
             }
             crate::cache::bump(&mut tx, "labels")?;
             let entry = append_ledger_in_tx(&mut tx, ledger)?;

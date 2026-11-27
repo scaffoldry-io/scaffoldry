@@ -19,6 +19,7 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/datasets", get(datasets))
         .route("/admin/datasets/{id}/classification", put(classify))
         .route("/admin/datasets/{id}/discoverability", put(discoverability))
+        .route("/admin/datasets/{id}/label-floor", put(label_floor))
 }
 
 fn caller(user: Option<Extension<AuthUser>>, headers: &HeaderMap, state: &SharedState) -> Result<AuthUser, ServiceError> {
@@ -59,4 +60,11 @@ async fn discoverability(State(state): State<SharedState>, user: Option<Extensio
     let caller = caller(user, &headers, &state)?;
     let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
     Ok(Json(tokio::task::spawn_blocking(move || catalog::set_policy(&caller, &id, &body, &state)).await.map_err(stopped)??))
+}
+
+/// Data layer phase 3: the categories every row of a dataset carries, whatever its own tags say.
+async fn label_floor(State(state): State<SharedState>, user: Option<Extension<AuthUser>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<Value>>) -> Result<impl IntoResponse, ServiceError> {
+    let caller = caller(user, &headers, &state)?;
+    let body = body.map(|Json(b)| b).unwrap_or(Value::Null);
+    Ok(Json(tokio::task::spawn_blocking(move || crate::service::row_labels::set_floor(&caller, &id, &body, &state)).await.map_err(stopped)??))
 }

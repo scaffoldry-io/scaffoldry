@@ -124,4 +124,35 @@ impl PostgresRepository {
             Ok(Some(now))
         })
     }
+
+    /// Replaces a dataset's floor, sets again the flag Cedar reads on every row of its table, and appends the ledger entry, in one
+    /// transaction. `names` are the table's fields that are sensitive now and `keep` the categories settings mark protected, which
+    /// the flag is set from with the rows' tags and the new floor. `None` when there is no such dataset. Otherwise the floor it now has.
+    /// The ledger closure is given the floor as it was.
+    pub fn set_label_floor(
+        &self,
+        id: &str,
+        floor: Vec<String>,
+        names: Vec<String>,
+        keep: Vec<String>,
+        ledger: impl FnOnce(&[String]) -> AppendDecisionParams + Send + 'static,
+    ) -> Result<Option<Vec<String>>, RepositoryError> {
+        let (id, floor) = (id.to_string(), floor);
+        self.with_client(move |c| {
+            let mut tx = c.transaction()?;
+            let Some(was) = scaffoldry_data::labels::set_floor(&mut tx, &id, &floor)? else { return Ok(None) };
+            let (app, table): (String, String) = tx.query_one("SELECT app_slug, table_id FROM datasets WHERE id = $1", &[&id]).map(|r| (r.get(0), r.get(1)))?;
+            crate::repository::reflag_table(&mut tx, &app, &table, &names, &keep)?;
+            append_ledger_in_tx(&mut tx, ledger(&was))?;
+            let now = scaffoldry_data::labels::floor_of(&mut tx, &app, &table)?;
+            tx.commit()?;
+            Ok(Some(now))
+        })
+    }
+
+    /// Flags a record as sensitive for Cedar. It only raises.
+    pub fn raise_flag(&self, id: &str) -> Result<(), RepositoryError> {
+        let id = id.to_string();
+        self.with_client(move |c| Ok(scaffoldry_data::records::raise_flag(c, &id)?))
+    }
 }

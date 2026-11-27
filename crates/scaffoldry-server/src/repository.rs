@@ -123,6 +123,7 @@ const SCHEMA_0116: &str = include_str!("../../scaffoldry-core/migrations/0116_re
 const SCHEMA_0117: &str = include_str!("../../scaffoldry-core/migrations/0117_record_units.sql");
 const SCHEMA_0118: &str = include_str!("../../scaffoldry-core/migrations/0118_catalog.sql");
 const SCHEMA_0119: &str = include_str!("../../scaffoldry-core/migrations/0119_catalog_requests.sql");
+const SCHEMA_0120: &str = include_str!("../../scaffoldry-core/migrations/0120_row_labels.sql");
 const SCHEMA_0098: &str = include_str!("../../scaffoldry-core/migrations/0098_flow_runs.sql");
 const SCHEMA_0069: &str = include_str!("../../scaffoldry-core/migrations/0069_grant_review.sql");
 const SCHEMA_0062: &str = include_str!("../../scaffoldry-core/migrations/0062_proposal_digest.sql");
@@ -184,6 +185,8 @@ impl From<postgres::Error> for RepositoryError {
             // A value that is not a unit, from a door that does not know who is asking: no unit is named.
             let message = scaffoldry_data::units::sentence(&r.value, &r.hierarchy, &[]);
             RepositoryError::ConstraintViolation { message, field: r.field, constraint: scaffoldry_data::units::REFUSED.to_string() }
+        } else if let Some((field, hierarchy)) = scaffoldry_data::units::required_missing(&e) {
+            RepositoryError::ConstraintViolation { message: scaffoldry_data::units::required_sentence(&field, &hierarchy), field, constraint: scaffoldry_data::units::REQUIRED.to_string() }
         } else {
             RepositoryError::Db(e)
         }
@@ -334,7 +337,8 @@ pub struct HistoryFilter {
 
 /// The fields that differ, as `{ field: { old, new } }`. A field missing on one side has no `old`
 /// or no `new`. Keys that start with `_` belong to the platform, and computed fields follow from
-/// the rest, so neither is recorded.
+/// the rest, so neither is recorded. The one exception is `_tags` (data layer phase 3): a change to who may read a row is a change
+/// a history must show, and a write that only changes tags is a write.
 pub fn diff_fields(
     old: Option<&Value>,
     new: Option<&Value>,
@@ -349,7 +353,7 @@ pub fn diff_fields(
     keys.dedup();
     let mut out = serde_json::Map::new();
     for key in keys {
-        if key.starts_with('_') || computed.iter().any(|c| c == key) {
+        if (key.starts_with('_') && key != "_tags") || computed.iter().any(|c| c == key) {
             continue;
         }
         let (o, n) = (old.get(key), new.get(key));
@@ -670,6 +674,9 @@ pub enum SqlParam {
 pub struct ScopePlan {
     pub pred: scaffoldry_core::access::Pred,
     pub indexed: Vec<scaffoldry_engine::FieldSpec>,
+    /// What the reader must be covered for by each row's effective label (data layer phase 3). Empty for a reader with nothing
+    /// to meet. Each gate is one more condition on the row, read from its `unit_id` and `tags` columns.
+    pub labels: Vec<scaffoldry_data::gate::Gate>,
 }
 
 /// How many values a scope may name before a statement that reads every match is planned for a large set.
@@ -705,8 +712,8 @@ impl ScopePlan {
         table_id: &str,
         first_param: usize,
     ) -> (String, Vec<SqlParam>) {
-        use scaffoldry_engine::access::to_sql;
-        Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param), first_param)
+        let rows = self.clause_at_rows(id_expr, app_slug, table_id, first_param);
+        self.with_labels(rows, id_expr, app_slug, table_id, first_param)
     }
 
     /// The same, for a statement that reads records in order and stops after a page. An OR of memberships is probed
@@ -719,11 +726,17 @@ impl ScopePlan {
         first_param: usize,
     ) -> (String, Vec<SqlParam>) {
         use scaffoldry_engine::access::to_sql_probes;
-        match to_sql_probes(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
+        let rows = match to_sql_probes(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param) {
             Ok(Some(compiled)) => Self::wrap(Ok(compiled), first_param),
-            Ok(None) => self.clause_at(id_expr, app_slug, table_id, first_param),
+            Ok(None) => self.clause_at_rows(id_expr, app_slug, table_id, first_param),
             Err(e) => Self::wrap(Err(e), first_param),
-        }
+        };
+        self.with_labels(rows, id_expr, app_slug, table_id, first_param)
+    }
+
+    fn clause_at_rows(&self, id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
+        use scaffoldry_engine::access::to_sql;
+        Self::wrap(to_sql(&self.pred, &self.indexed, id_expr, app_slug, table_id, first_param), first_param)
     }
 
     fn wrap(
@@ -749,6 +762,26 @@ impl ScopePlan {
             }
             Err(_) => (" AND FALSE".to_string(), Vec::new()),
         }
+    }
+
+    /// Adds the label gates after the rows' clause. Each gate names the app and the table by two placeholders, bound after the rows'
+    /// own, and every other value in one is a unit id or a category id of the allowed shape. A scope that only has gates (its predicate
+    /// is `True`) leaves out the clause for the rows, which would match all.
+    fn with_labels(&self, rows: (String, Vec<SqlParam>), id_expr: &str, app_slug: &str, table_id: &str, first_param: usize) -> (String, Vec<SqlParam>) {
+        if self.labels.is_empty() {
+            return rows;
+        }
+        let (mut sql, mut params) = if self.pred == scaffoldry_core::access::Pred::True { (String::new(), Vec::new()) } else { rows };
+        let (app, table) = (first_param + params.len(), first_param + params.len() + 1);
+        let (app_ph, table_ph) = (format!("${app}"), format!("${table}"));
+        let gates: String = self.labels.iter().map(|g| format!(" AND ({})", g.sql(id_expr, &app_ph, &table_ph))).collect();
+        // Postgres refuses a parameter nothing refers to. A gate made only of tag conditions names neither placeholder.
+        if gates.contains(&app_ph) {
+            params.push(SqlParam::Text(app_slug.to_string()));
+            params.push(SqlParam::Text(table_id.to_string()));
+        }
+        sql.push_str(&gates);
+        (sql, params)
     }
 
     /// The same, appended to a statement's parameters.
@@ -1252,6 +1285,7 @@ impl PostgresRepository {
                             ("0117_record_units.sql", SCHEMA_0117),
                             ("0118_catalog.sql", SCHEMA_0118),
                             ("0119_catalog_requests.sql", SCHEMA_0119),
+                            ("0120_row_labels.sql", SCHEMA_0120),
                             ("0098_flow_runs.sql", SCHEMA_0098),
                         ];
 
@@ -3558,15 +3592,18 @@ impl PostgresRepository {
 }
 
 /// Sets the stored sensitivity flag of every record of one table from the names of its effective sensitive fields: a record is flagged when it
-/// holds a value (not `null`, not empty text, not an empty list) in any of them. It changes no data and no version, so it writes no history.
-/// Records are written only in this file, so this statement lives here.
-pub(crate) fn reflag_table(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &str, names: &[String]) -> Result<u64, postgres::Error> {
+/// holds a value (not `null`, not empty text, not an empty list) in any of them, when it carries a tag whose category is in `keep`
+/// (the categories settings mark protected), or when the dataset's floor holds one (data layer phase 3). It changes no data and no
+/// version, so it writes no history. Records are written only in this file, so this statement lives here.
+pub(crate) fn reflag_table(tx: &mut postgres::Transaction<'_>, app_slug: &str, table_id: &str, names: &[String], keep: &[String]) -> Result<u64, postgres::Error> {
     tx.execute(
-        "UPDATE dataset_records SET is_ferpa_sensitive = EXISTS ( \
-             SELECT 1 FROM unnest($3::text[]) AS f(name) \
-             WHERE data->f.name IS NOT NULL AND data->f.name NOT IN ('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb)) \
+        "UPDATE dataset_records SET is_ferpa_sensitive = ( \
+             EXISTS (SELECT 1 FROM unnest($3::text[]) AS f(name) \
+                     WHERE data->f.name IS NOT NULL AND data->f.name NOT IN ('null'::jsonb, '\"\"'::jsonb, '[]'::jsonb)) \
+             OR tags && $4::text[] \
+             OR COALESCE((SELECT d.label_floor && $4::text[] FROM datasets d WHERE d.app_slug = $1 AND d.table_id = $2), false)) \
          WHERE app_slug = $1 AND table_id = $2",
-        &[&app_slug, &table_id, &names],
+        &[&app_slug, &table_id, &names, &keep],
     )
 }
 

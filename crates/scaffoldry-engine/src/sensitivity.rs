@@ -45,7 +45,33 @@ pub struct Category {
     /// What a reader who is not cleared for a field of this category sees of it. `hide` when the settings say nothing.
     #[serde(default)]
     pub default_mask: Mask,
+    /// Who may read a row that carries this category (data layer phase 3). A reader meets it when they hold any listed position at
+    /// a unit that its reach covers for the row. Empty means no requirement, which is how every category behaved before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<Requirement>,
 }
+
+/// How far above its unit a position reaches over the rows of a category.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Reach {
+    /// Rows whose unit is the unit where the holder holds the position.
+    Unit,
+    /// Rows whose unit is that unit or any unit under it.
+    UnitAndBelow,
+    /// Every row, wherever the holder holds the position. The row needs no unit.
+    Anywhere,
+}
+
+/// One way to meet a category: a position, and how far its holder reaches.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Requirement {
+    pub position: String,
+    pub reach: Reach,
+}
+
+pub const MAX_REQUIREMENTS: usize = 8;
 
 /// A category and its detectors, as shipped in a release and copied into settings when switched on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +172,17 @@ pub fn validate_categories(value: &Value, detectors: &[DetectorSpec]) -> Result<
         }
         if let Some(problem) = c.default_mask.problem() {
             return Err(SettingsError::at(format!("[{i}].default_mask"), problem));
+        }
+        if c.requires.len() > MAX_REQUIREMENTS {
+            return Err(SettingsError::at(format!("[{i}].requires"), format!("a category holds at most {MAX_REQUIREMENTS} requirements")));
+        }
+        for (j, r) in c.requires.iter().enumerate() {
+            if !id_valid(&r.position) {
+                return Err(SettingsError::at(format!("[{i}].requires[{j}].position"), format!("a position key {ID_RULE}")));
+            }
+            if c.requires[..j].contains(r) {
+                return Err(SettingsError::at(format!("[{i}].requires[{j}]"), "this requirement is listed twice"));
+            }
         }
         for (j, d) in c.detectors.iter().enumerate() {
             if !detectors.iter().any(|x| &x.id == d) {

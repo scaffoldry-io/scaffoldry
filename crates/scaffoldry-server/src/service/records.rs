@@ -193,13 +193,13 @@ fn apply_set_on_change(
 /// `None` for a table that names no unit column. The job has no access to the server's state, so it is given this.
 pub fn unit_column_context(caller: &AuthUser, app_slug: &str, table: &str, state: &SharedState) -> Option<Value> {
     use scaffoldry_engine::HostRouter;
-    let (manifest, table_id, field, hierarchy) = {
+    let (manifest, table_id, field, hierarchy, required) = {
         let engine = state.engine.read().ok()?;
         let m = engine.resolve_by_slug(app_slug)?.clone();
         let t = m.tables.iter().find(|t| t.id == table || t.slug == table)?.clone();
         let field = t.unit_field.clone()?;
         let hierarchy = t.fields.iter().find(|f| f.name == field)?.hierarchy.clone()?;
-        (m, t.id, field, hierarchy)
+        (m, t.id, field, hierarchy, t.unit_required)
     };
     let workspace = manifest.workspace_id.as_ref().and_then(|id| state.workspaces.read().ok().and_then(|w| w.get(id).cloned()));
     let unit = workspace.and_then(|ws| {
@@ -214,8 +214,10 @@ pub fn unit_column_context(caller: &AuthUser, app_slug: &str, table: &str, state
     Some(json!({
         "field": field,
         "hierarchy": hierarchy,
-        "default_unit": unit.map(|u| u.to_string()),
-        "default_unit_name": unit_name,
+        // A table that requires a unit takes none for a blank value.
+        "default_unit": unit.filter(|_| !required).map(|u| u.to_string()),
+        "default_unit_name": unit_name.filter(|_| !required),
+        "required": required,
         "visible": match visible {
             scaffoldry_data::units::Visible::All => json!("all"),
             scaffoldry_data::units::Visible::Under(roots) => json!(roots.iter().map(|r| r.to_string()).collect::<Vec<_>>()),
@@ -249,8 +251,21 @@ fn validate_record_constraints(
     state: &SharedState,
 ) -> Result<(), ServiceError> {
     let (fields, _) = table_fields_lenient(app_slug, table, state);
+    // A table that requires its unit column refuses a row that names no unit (data layer phase 3).
+    let unit_required: Option<String> = {
+        use scaffoldry_engine::HostRouter;
+        let engine = state.engine.read().unwrap_or_else(|p| p.into_inner());
+        engine.resolve_by_slug(app_slug).and_then(|m| m.tables.iter().find(|t| t.id == table || t.slug == table)).filter(|t| t.unit_required).and_then(|t| t.unit_field.clone())
+    };
     for f in &fields {
         let val = data.get(&f.name);
+        if unit_required.as_deref() == Some(f.name.as_str()) && val.is_none_or(|v| v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty())) {
+            return Err(ServiceError::ConstraintViolation {
+                message: format!("field '{}': {}", f.name, scaffoldry_data::units::required_sentence(&f.name, f.hierarchy.as_deref().unwrap_or_default())),
+                field: f.name.clone(),
+                constraint: scaffoldry_data::units::REQUIRED.to_string(),
+            });
+        }
         let is_req = (f.required || f.constraints.as_ref().is_some_and(|c| c.required)) && !skip_required.contains(&f.name);
         if is_req {
             let empty = match val {
@@ -880,12 +895,15 @@ pub fn create_record_noted(
     }
     let table = cleaned.get("_table_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     apply_defaults_and_set_on_create(app_slug, &table, &mut cleaned, state);
+    // The row's own tags (data layer phase 3): a list of categories of this organization, which a guest never sets.
+    crate::service::row_labels::prepare_tags(caller, None, &mut cleaned, state)?;
     validate_known_fields_and_types(app_slug, &table, &cleaned, state)?;
     validate_record_constraints(caller, app_slug, &table, &cleaned, skip_required, state)?;
     let data_payload = &cleaned;
     validate_links(caller, app_slug, None, None, data_payload, state)?;
     let guarded = guard_content(app_slug, &table, data_payload, None, state)?;
 
+    let floor = crate::service::row_labels::floor_for(app_slug, &table, state);
     let mut submitted = {
         let engine = state
             .engine
@@ -894,7 +912,7 @@ pub fn create_record_noted(
         let labels = state.labels.read().map_err(|e| ServiceError::Internal(e.to_string()))?;
         let categories = state.sensitivity_categories();
         engine
-            .submit_record_labelled(&identity, app_slug, data_payload, &labels, &categories)
+            .submit_record_floored(&identity, app_slug, data_payload, &labels, &categories, &floor)
             .map_err(|e| match e {
                 EngineError::AccessDenied(msg) => ServiceError::Forbidden {
                     message: format!("403 Forbidden: Cedar Policy denies record mutation: {msg}"),
@@ -1187,6 +1205,8 @@ pub fn update_record_noted(
     }
 
     apply_set_on_change(app_slug, &table, &current.data, &mut new_data, state);
+    // A write that leaves `_tags` out keeps the row's tags. One that names them may add, and may remove only what the caller's role may.
+    crate::service::row_labels::prepare_tags(caller, Some(&current.data), &mut new_data, state)?;
     validate_known_fields_and_types(app_slug, &table, &new_data, state)?;
     validate_record_constraints(caller, app_slug, &table, &new_data, &[], state)?;
     validate_select_options(app_slug, &table, &new_data, state)?;
@@ -1249,6 +1269,8 @@ pub fn update_record_noted(
     };
     attach_attachments(app_slug, &table, id, &attachments, state)?;
     let notes = guarded.settle(app_slug, &table, id, state);
+    // A row that now carries a protected label is flagged for Cedar (data layer phase 3).
+    crate::service::row_labels::flag_after_update(app_slug, &table, id, &updated_rec.data, current.is_ferpa_sensitive, state);
 
     let affiliation = match caller.affiliation.to_lowercase().as_str() {
         "faculty" => EduPersonAffiliation::Faculty,

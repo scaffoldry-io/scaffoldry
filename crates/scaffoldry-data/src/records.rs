@@ -134,3 +134,9 @@ pub fn restore<C: GenericClient>(tx: &mut C, app_slug: &str, id: &str) -> Result
     )?;
     Ok(row.map(|r| Deleted { data: r.get(0), version: r.get(1), table_id: r.get(2) }))
 }
+
+/// Flags a record as sensitive, for the flag Cedar reads. It only raises: a flagged record stays flagged.
+pub fn raise_flag<C: GenericClient>(c: &mut C, id: &str) -> Result<(), postgres::Error> {
+    c.execute("UPDATE dataset_records SET is_ferpa_sensitive = true WHERE id = $1 AND NOT is_ferpa_sensitive", &[&id])?;
+    Ok(())
+}

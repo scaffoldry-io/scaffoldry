@@ -69,6 +69,7 @@ pub fn add(m: &mut Entries) {
     m.insert("DELETE /api/v1/admin/authorized-stores".into(), case!(authorized_store_delete));
     m.insert("PUT /api/v1/admin/datasets/{id}/classification".into(), case!(dataset_classify));
     m.insert("PUT /api/v1/admin/datasets/{id}/discoverability".into(), case!(dataset_discoverability));
+    m.insert("PUT /api/v1/admin/datasets/{id}/label-floor".into(), case!(dataset_label_floor));
     m.insert("POST /api/v1/admin/guests/forms/{id}/close".into(), case!(guest_form_close));
     m.insert("POST /api/v1/admin/guests/forms/{id}/open".into(), case!(guest_form_open));
     m.insert("POST /api/v1/admin/guests/{id}/disable".into(), case!(guest_disable));
@@ -852,6 +853,28 @@ async fn dataset_discoverability(w: World) -> Outcome {
     ensure(after["total"].as_i64() == before["total"].as_i64().map(|n| n - 1), "the total drops by one")?;
     let admin = status(w.rb("GET", &format!("/api/v1/datasets/{id}"), ADMIN, None).await, StatusCode::OK, "B still shows it to the administrator")?;
     ensure(admin["discoverability"] == "hidden", format!("B shows the policy A set: {admin}"))
+}
+
+/// Data layer phase 3: A raises a dataset's floor. B, which has never been asked, reads the floor from the database: when B
+/// lowers it, the floor it replaces is the one A set.
+async fn dataset_label_floor(w: World) -> Outcome {
+    let slug = make_app(&w).await?;
+    let category = json!([{ "id": "phi", "name": "PHI", "protected": true, "detectors": [], "requires": [{ "position": "registrar", "reach": "unit" }] }]);
+    // The category is written to the settings table directly. Saving it through the settings route queues a content scan for
+    // the administrator, which would use up the job limit the cancel-job case needs.
+    w.db.run(move |c| {
+        c.execute("INSERT INTO platform_settings (key, value, updated_by) VALUES ('sensitivity.categories', $1, 'test') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", &[&category]).unwrap();
+        c.execute("UPDATE cache_versions SET version = version + 1 WHERE name = 'settings'", &[]).unwrap();
+    });
+    let listed = status(w.wa("GET", "/api/v1/data/datasets", ADMIN, None).await, StatusCode::OK, "A lists the datasets")?;
+    let id = listed["datasets"].as_array().and_then(|l| l.iter().find(|d| d["app_slug"] == slug.as_str() && d["table_id"] == "apps")).and_then(|d| d["id"].as_str()).ok_or("the app's dataset")?.to_string();
+    let uri = format!("/api/v1/admin/datasets/{id}/label-floor");
+    let raised = status(w.wa("PUT", &uri, ADMIN, Some(json!({ "floor": ["phi"], "reason": "Health data is held here." }))).await, StatusCode::OK, "A raises the floor")?;
+    ensure(raised["floor"] == json!(["phi"]) && raised["was"] == json!([]), format!("A's floor: {raised}"))?;
+    let lowered = status(w.rb("PUT", &uri, ADMIN, Some(json!({ "floor": [], "reason": "It was a mistake." }))).await, StatusCode::OK, "B lowers it")?;
+    ensure(lowered["was"] == json!(["phi"]), format!("B replaces the floor A set: {lowered}"))?;
+    let back = status(w.wa("PUT", &uri, ADMIN, Some(json!({ "floor": [], "reason": "Nothing changes." }))).await, StatusCode::OK, "A reads what B wrote")?;
+    ensure(back["was"] == json!([]), format!("A sees B's floor: {back}"))
 }
 
 async fn guest_stop(w: World) -> Outcome {
